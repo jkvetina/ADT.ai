@@ -2,7 +2,7 @@
 
 ADT.ai is a Python command-line tool for exporting Oracle database, APEX, and data assets into deterministic, Git-friendly files.
 
-Version `0.4.1` ships these public commands:
+Version `0.4.2` ships these public commands:
 
 - `adtai export_db` exports Oracle database objects to files.
 - `adtai doctor` checks local setup, runs explicit updates, and bootstraps project config.
@@ -71,17 +71,17 @@ adtai export_data
 
 - [SETUP.md](SETUP.md) covers install and environment setup.
 - [USAGE.md](USAGE.md) is the command index.
-- [USAGE/export_db.md](USAGE/export_db.md) documents database object export.
-- [USAGE/doctor.md](USAGE/doctor.md) documents setup checks and project bootstrap.
-- [USAGE/export_apex.md](USAGE/export_apex.md) documents APEX workspace and application export.
-- [USAGE/export_data.md](USAGE/export_data.md) documents table data export.
-- [USAGE/recompile.md](USAGE/recompile.md) documents invalid object recompilation.
-- [USAGE/rebuild.md](USAGE/rebuild.md) documents Git commit cache rebuilds.
-- [USAGE/search_repo.md](USAGE/search_repo.md) documents cached Git history search.
-- [USAGE/discovery.md](USAGE/discovery.md) documents read-only SELECT discovery queries.
+  - [USAGE/export_db.md](USAGE/export_db.md) documents database object export.
+  - [USAGE/doctor.md](USAGE/doctor.md) documents setup checks and project bootstrap.
+  - [USAGE/export_apex.md](USAGE/export_apex.md) documents APEX workspace and application export.
+  - [USAGE/export_data.md](USAGE/export_data.md) documents table data export.
+  - [USAGE/recompile.md](USAGE/recompile.md) documents invalid object recompilation.
+  - [USAGE/rebuild.md](USAGE/rebuild.md) documents Git commit cache rebuilds.
+  - [USAGE/search_repo.md](USAGE/search_repo.md) documents cached Git history search.
+  - [USAGE/discovery.md](USAGE/discovery.md) documents read-only SELECT discovery queries.
 - [SKILLS/README.md](SKILLS/README.md) explains which repo-local skill to install and when to use setup.
-- [SKILLS/adt/SKILL.md](SKILLS/adt/SKILL.md) is the agent-facing ADT.ai command guide.
-- [SKILLS/adt-setup/SKILL.md](SKILLS/adt-setup/SKILL.md) is the agent-facing setup checklist.
+  - [SKILLS/adt/SKILL.md](SKILLS/adt/SKILL.md) is the agent-facing ADT.ai command guide.
+  - [SKILLS/adt-setup/SKILL.md](SKILLS/adt-setup/SKILL.md) is the agent-facing setup checklist.
 - [CHANGELOG.md](CHANGELOG.md) records released versions.
 - [LICENSE](LICENSE) covers public use.
 
