@@ -42,6 +42,7 @@ SQLCL_DOWNLOAD_PAGE = "https://www.oracle.com/database/sqldeveloper/technologies
 JAVA_DOWNLOAD_PAGE = "https://www.oracle.com/java/technologies/downloads/"
 INSTANT_CLIENT_PAGE = "https://www.oracle.com/database/technologies/instant-client.html"
 PYPI_PACKAGE_URL = "https://pypi.org/pypi/{package}/json"
+ADT_AI_GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/jkvetina/ADT.ai/releases/latest"
 
 # Each action renders as a single line: a two-space indent, the label, a run of
 # dots, and the outcome whose final character lands on column 72.
@@ -735,7 +736,18 @@ class DoctorRunner:
         remote_version = self._adt_ai_remote_git_version()
         if remote_version:
             return remote_version
+        github_version = self._latest_adt_ai_github_release_version()
+        if github_version:
+            return github_version
         return self._latest_pypi_version("adt-ai")
+
+    def _latest_adt_ai_github_release_version(self) -> str:
+        try:
+            payload = json.loads(self.oracle_page_fetcher(ADT_AI_GITHUB_LATEST_RELEASE_URL))
+        except Exception:
+            return ""
+        version = str(payload.get("tag_name") or payload.get("name") or "").strip()
+        return version.removeprefix("v").removeprefix("V")
 
     def _adt_ai_remote_git_version(self) -> str:
         if not self._is_git_repo():

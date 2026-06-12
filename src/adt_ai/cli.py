@@ -235,7 +235,7 @@ class DebugQueryGateway:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = AdtArgumentParser(
-        prog="adt-ai",
+        prog="adtai",
         description="Modern ADT command line tool.",
     )
     parser.add_argument("--version", action="store_true", help="show version and exit")

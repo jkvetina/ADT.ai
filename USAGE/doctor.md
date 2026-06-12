@@ -6,7 +6,7 @@ Run the setup check from any folder:
 adtai doctor
 ```
 
-Plain `doctor` is read-only. It checks Python, Git, Java, SQLcl, the Python `oracledb` module, Instant Client, `JAVA_TOOL_OPTIONS`, and ADT-compatible environment variables. By default it also checks online update availability for ADT.ai, Java, SQLcl, `oracledb`, and Instant Client. It prints current versions, runtime environment, row-level update/warning statuses, and the explicit update actions available. Install and environment setup guidance is in [SETUP.md](../SETUP.md); this file owns the detailed Doctor command behavior.
+Plain `doctor` is read-only. It checks Python, Git, Java, SQLcl, the Python `oracledb` module, Instant Client, `JAVA_TOOL_OPTIONS`, and ADT-compatible environment variables. By default it also checks online update availability for ADT.ai, Java, SQLcl, `oracledb`, and Instant Client. For ADT.ai, editable/git installs are compared against the configured `origin`, and normal installs are compared against the latest public GitHub Release in [`jkvetina/ADT.ai`](https://github.com/jkvetina/ADT.ai) before falling back to PyPI metadata. It prints current versions, runtime environment, row-level update/warning statuses, and the explicit update actions available. Install and environment setup guidance is in [SETUP.md](../SETUP.md); this file owns the detailed Doctor command behavior.
 
 Old ADT had a self-update path that could run `git pull` from inside the tool and reinstall Python requirements. ADT.ai keeps update behavior explicit and always prints current versions before any action.
 
