@@ -1,0 +1,1 @@
+"""Search Git repository history."""

@@ -20,6 +20,13 @@ from adt_ai.config import ConfigError, ConfigLoader
 from adt_ai.connections import ConnectionError as ConnectionConfigError
 from adt_ai.connections import ConnectionLoader, ConnectionResult
 from adt_ai.db import OracleGateway, QueryGateway
+from adt_ai.discovery.render import DEFAULT_ROW_LIMIT
+from adt_ai.discovery.runner import (
+    RESULT_BLOCK_END,
+    RESULT_BLOCK_START,
+    DiscoveryRequest,
+    DiscoveryRunner,
+)
 from adt_ai.doctor.runner import ActionReporter, DoctorRequest, DoctorRunner, format_action_line
 from adt_ai.export_apex.inventory import (
     ApexApplication,
@@ -38,12 +45,29 @@ from adt_ai.export_db.runner import (
     print_adt_header,
     print_adt_table,
 )
+from adt_ai.rebuild.runner import (
+    REVEAL_DEFAULT_LIMIT,
+    BranchInfo,
+    RebuildRequest,
+    RebuildRunner,
+    _current_branch,
+    branch_commits,
+    reveal_branches,
+    switch_to_branch,
+)
+from adt_ai.recompile.inventory import ObjectOverview
+from adt_ai.recompile.runner import RecompileRequest, RecompileRunner
+from adt_ai.search_repo.runner import SearchRepoError, SearchRepoRequest, SearchRepoRunner
 
 PUBLIC_MODULES = (
     ("export_db", "export database objects", ()),
     ("doctor", "check local setup and run explicit updates", ()),
     ("export_apex", "export APEX applications", ()),
     ("export_data", "export table data", ()),
+    ("recompile", "recompile invalid database objects", ()),
+    ("rebuild", "rebuild the git commit cache", ()),
+    ("search_repo", "search cached Git commit history", ()),
+    ("discovery", "run read-only SELECT discovery queries", ()),
 )
 
 PUBLIC_COMMANDS = tuple(
@@ -288,6 +312,78 @@ def build_parser() -> argparse.ArgumentParser:
     export_data.add_argument("--schema", "-schema", action="append", help="schema to export")
     export_data.add_argument("--name", "-name", action="append", nargs="+", help="table name pattern(s) to export, supports %% wildcards")
     export_data.add_argument("--debug", "-debug", action="store_true", help="show input parameters and SQL queries with bind values")
+
+    recompile = subparsers.add_parser(
+        "recompile",
+        description="recompile invalid database objects",
+        help="recompile invalid database objects",
+    )
+    recompile.add_argument("--root", "-root", default=".", help="project root folder")
+    recompile.add_argument("--config-dir", "-config-dir", action="append", help="folder containing config YAML")
+    recompile.add_argument("--env", "-env", help="connection environment")
+    recompile.add_argument("--target", "-target", help="connection environment (alias of -env)")
+    recompile.add_argument("--schema", "-schema", help="schema to recompile")
+    recompile.add_argument("--type", "-type", default="%", help="object type pattern to recompile, supports %% wildcards")
+    recompile.add_argument("--name", "-name", default="%", help="object name pattern to recompile, supports %% wildcards")
+    recompile.add_argument("--force", "-force", action="store_true", help="recompile all matching objects, not just invalid ones")
+    recompile.add_argument("--level", "-level", type=int, help="PL/SQL optimize level (1-3)")
+    recompile.add_argument("--native", "-native", action="store_true", help="compile PL/SQL to native code")
+    recompile.add_argument("--interpreted", "-interpreted", action="store_true", help="compile PL/SQL to interpreted code (default)")
+    recompile.add_argument("--scope", "-scope", nargs="*", help="PL/Scope settings (IDENTIFIERS, STATEMENTS, ALL)")
+    recompile.add_argument("--warnings", "-warnings", nargs="*", help="PL/SQL warnings (SEVERE, PERF, INFO)")
+    recompile.add_argument("--silent", "-silent", action="store_true", help="suppress object overview details; keep required command chrome")
+    recompile.add_argument("--debug", "-debug", action="store_true", help="show input parameters and SQL queries with bind values")
+
+    rebuild = subparsers.add_parser(
+        "rebuild",
+        description="rebuild the git commit cache for the current branch",
+        help="rebuild the git commit cache",
+    )
+    rebuild.add_argument("--root", "-root", default=".", help="project root folder")
+    rebuild.add_argument("--branch", "-branch", action="append", nargs="+", help="branch name(s) to include; default is the current branch")
+    rebuild.add_argument("--reveal", "-reveal", nargs="*", default=None, metavar="WORD", help="list the remote branches (origin/*) without touching the cache, newest first")
+    rebuild.add_argument("--limit", "-limit", type=int, default=None, metavar="N", help=f"max rows or commits depending on mode (default {REVEAL_DEFAULT_LIMIT}; 0 = all)")
+    rebuild.add_argument("--since", "-since", metavar="WHEN", help="rebuild every commit since WHEN; accepts YYYY-MM-DD or days back")
+    rebuild.add_argument("--my", "-my", dest="my", action="store_true", help="in reveal mode, limit to branches whose tip commit is yours")
+    rebuild.add_argument("--switch", "-switch", nargs="?", type=int, const=1, default=None, metavar="N", help="in reveal mode, check out the Nth filtered branch")
+
+    search_repo = subparsers.add_parser(
+        "search_repo",
+        description="search cached Git commit history",
+        help="search cached Git commit history",
+    )
+    search_repo.add_argument("--root", "-root", default=".", help="project root folder")
+    search_repo.add_argument("--branch", "-branch", help="branch or ref to search")
+    search_repo.add_argument("--limit", "-limit", type=int, default=REVEAL_DEFAULT_LIMIT, metavar="N", help=f"max commits to print (default {REVEAL_DEFAULT_LIMIT}; 0 = all)")
+    search_repo.add_argument("--files", "-files", nargs="?", type=int, const=20, default=None, metavar="N", help="print at most N changed files per commit; file selectors auto-print 20")
+    search_repo.add_argument("--summary", "-summary", nargs="*", help="summary word(s), AND-matched case-insensitively")
+    search_repo.add_argument("--file", "-file", nargs="*", help="file path word(s), AND-matched case-insensitively")
+    search_repo.add_argument("--type", "-type", action="append", help="object type text")
+    search_repo.add_argument("--name", "-name", action="append", help="object name text")
+    search_repo.add_argument("--by", "-by", action="append", help="author email/name text")
+    search_repo.add_argument("--my", "-my", action="store_true", help="show only my commits")
+    search_repo.add_argument("--commit", "--commits", "-commit", "-commits", dest="commit_refs", action="append", nargs="+", help="commit number/hash ref(s); N+ selects N and newer")
+    search_repo.add_argument("--hash", "-hash", action="append", nargs="+", help="commit hash prefix(es)")
+    search_repo.add_argument("--recent", "-recent", type=int, help="only commits from recent DAYS")
+    search_repo.add_argument("--since", "-since", help="oldest commit date, YYYY-MM-DD")
+    search_repo.add_argument("--until", "-until", help="newest commit date, YYYY-MM-DD")
+    search_repo.add_argument("--restore", "-restore", action="store_true", help="write matching historical file versions next to the original files")
+    search_repo.add_argument("--stage", "-stage", action="store_true", help="with -restore, restore to original paths and git add them")
+
+    discovery = subparsers.add_parser(
+        "discovery",
+        description="run read-only SELECT discovery queries against the target database",
+        help="run read-only SELECT discovery queries",
+    )
+    discovery.add_argument("--root", "-root", default=".", help="project root folder")
+    discovery.add_argument("--config-dir", "-config-dir", action="append", help="folder containing config YAML")
+    discovery.add_argument("--env", "-env", help="connection environment")
+    discovery.add_argument("--schema", "-schema", help="schema to query")
+    discovery.add_argument("--sql", "-sql", help="a single SELECT statement to run")
+    discovery.add_argument("--file", "-file", dest="statements_file", help="path to a file of ;-separated SELECT statements")
+    discovery.add_argument("--limit", "-limit", type=int, default=DEFAULT_ROW_LIMIT, help=f"max rows rendered per query (default: {DEFAULT_ROW_LIMIT})")
+    discovery.add_argument("--no-log", "-nolog", dest="no_log", action="store_true", help="run queries and print results without writing a discovery report")
+    discovery.add_argument("--debug", "-debug", action="store_true", help="show input parameters and SQL queries with bind values")
 
     return parser
 

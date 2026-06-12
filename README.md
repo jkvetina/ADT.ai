@@ -2,12 +2,16 @@
 
 ADT.ai is a Python command-line tool for exporting Oracle database, APEX, and data assets into deterministic, Git-friendly files.
 
-Version `0.2.0` ships these public commands:
+Version `0.3.0` ships these public commands:
 
 - `adtai export_db` exports Oracle database objects to files.
 - `adtai doctor` checks local setup, runs explicit updates, and bootstraps project config.
 - `adtai export_apex` reveals and exports APEX workspaces, applications, REST definitions, and files.
 - `adtai export_data` exports table data as CSV plus generated MERGE SQL.
+- `adtai recompile` recompiles invalid Oracle database objects with scoped filters.
+- `adtai rebuild` refreshes the Git commit cache used by repository search workflows.
+- `adtai search_repo` searches cached Git commit history and can restore selected file versions.
+- `adtai discovery` runs read-only SELECT discovery queries and can print without writing logs.
 
 ## Install
 
@@ -71,7 +75,12 @@ adtai export_data
 - [USAGE/doctor.md](USAGE/doctor.md) documents setup checks and project bootstrap.
 - [USAGE/export_apex.md](USAGE/export_apex.md) documents APEX workspace and application export.
 - [USAGE/export_data.md](USAGE/export_data.md) documents table data export.
+- [USAGE/recompile.md](USAGE/recompile.md) documents invalid object recompilation.
+- [USAGE/rebuild.md](USAGE/rebuild.md) documents Git commit cache rebuilds.
+- [USAGE/search_repo.md](USAGE/search_repo.md) documents cached Git history search.
+- [USAGE/discovery.md](USAGE/discovery.md) documents read-only SELECT discovery queries.
 - [CHANGELOG.md](CHANGELOG.md) records released versions.
+- [LICENSE](LICENSE) covers public use.
 
 ## Public Scope
 
