@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "adt-ai"
-version = "0.3.0"
+version = "0.4.0"
 description = "Modern Python rewrite of ADT focused on YAML-configured Oracle/APEX deployment tooling."
 readme = "README.md"
 license = {text = "MIT"}
@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-adt-ai = "adt_ai.cli:console_main"
+adt = "adt_ai.cli:console_main"
 adtai = "adt_ai.cli:console_main"
 
 [tool.pytest.ini_options]

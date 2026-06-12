@@ -422,7 +422,7 @@ def _generated_command_usage(command: str, parser: argparse.ArgumentParser) -> s
         for action in parser._actions
         if action.option_strings
     ]
-    return f"adt-ai {command} {' '.join(tokens)}"
+    return f"adt {command} {' '.join(tokens)}"
 
 
 def _usage_token(action: argparse.Action) -> str:
@@ -1930,7 +1930,7 @@ def _deployment_rows(results: Sequence[object]) -> list[dict[str, object]]:
 
 
 _NO_DEPENDENCY_INDEX_MESSAGE = (
-    "No dependency index found. Run 'adt-ai dependencies --refresh' to build it."
+    "No dependency index found. Run 'adt dependencies --refresh' to build it."
 )
 
 
@@ -2147,7 +2147,7 @@ def _refresh_dependency_index(
         print_adt_header("PL/SCOPE SESSION ENABLED")
         print("  PL/Scope data appears only for objects compiled with the setting on.")
         print("  To gather column-level data, recompile first (review before running):")
-        print("    adt-ai recompile -force -scope ALL")
+        print("    adt recompile -force -scope ALL")
 
     print_adt_header(f"BUILDING DEPENDENCY INDEX: {', '.join(schemas)}")
     DependencyIndexRunner(selected_gateway_factory).refresh(

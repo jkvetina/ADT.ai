@@ -1,7 +1,8 @@
 # Changelog
 
-## 0.3.0 - 2026-06-12
+## 0.4.0 - 2026-06-12
 
-- Published ADT.ai `0.3.0` with public commands: `export_db`, `doctor`, `export_apex`, `export_data`, `recompile`, `rebuild`, `search_repo`, `discovery`.
+- Published ADT.ai `0.4.0` with public commands: `export_db`, `doctor`, `export_apex`, `export_data`, `recompile`, `rebuild`, `search_repo`, `discovery`.
 - Included public README, setup reference, LICENSE, and usage documentation for the released commands only.
+- Included repo-local skills: `SKILLS/adt` and `SKILLS/adt-setup`.
 - Excluded private tests, connection files, wallets, and unrelated runtime modules.
