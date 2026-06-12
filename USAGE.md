@@ -1,6 +1,6 @@
 # ADT.ai Usage
 
-This is the public usage index for ADT.ai `0.1.0`.
+This is the public usage index for ADT.ai `0.2.0`.
 
 ## Commands
 
@@ -8,6 +8,8 @@ This is the public usage index for ADT.ai `0.1.0`.
 | ------- | --------- | ------- |
 | `export_db` | [USAGE/export_db.md](USAGE/export_db.md) | Export database objects to files. |
 | `doctor` | [USAGE/doctor.md](USAGE/doctor.md) | Check local setup and bootstrap project config. |
+| `export_apex` | [USAGE/export_apex.md](USAGE/export_apex.md) | Reveal and export APEX workspaces and applications. |
+| `export_data` | [USAGE/export_data.md](USAGE/export_data.md) | Export table data as CSV plus generated MERGE SQL. |
 
 ## Install
 
@@ -17,21 +19,11 @@ python3 -m pip install -e .
 
 ## Help
 
-Show the command overview:
-
 ```bash
 adtai --help
-```
-
-Show all arguments for a command:
-
-```bash
-adtai export_db --help
-adtai doctor --help
+adtai <command> --help
 ```
 
 ## Config, Connections, and Wallets
 
-ADT.ai loads defaults from this checkout's `config/`, then overlays project config from `-config-dir`, `<root>/config/`, and `<root>/`.
-
-Connection files are resolved by first match. By default ADT.ai checks `<root>/connections.yaml`, `<root>/connections/<FOLDER>.yaml`, then this checkout's ignored `connections/<FOLDER>.yaml`. Use `connections.path`, `connections.file`, and `connections.wallet_path` in config to keep sensitive files outside project repos.
+See [SETUP.md](SETUP.md) for local setup. Keep connection YAML files and Oracle wallets outside Git-tracked content.

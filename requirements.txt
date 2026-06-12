@@ -1,2 +1,3 @@
+chime>=0.7
 oracledb>=2.2
 PyYAML>=6.0

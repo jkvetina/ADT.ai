@@ -4,11 +4,16 @@ build-backend = "hatchling.build"
 
 [project]
 name = "adt-ai"
-version = "0.1.0"
+version = "0.2.0"
 description = "Modern Python rewrite of ADT focused on YAML-configured Oracle/APEX deployment tooling."
 readme = "README.md"
+license = {text = "MIT"}
 requires-python = ">=3.11"
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+]
 dependencies = [
+    "chime>=0.7",
     "oracledb>=2.2",
     "PyYAML>=6.0",
 ]
