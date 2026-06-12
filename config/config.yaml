@@ -1,0 +1,75 @@
+#
+# BASIC PATHS
+#
+path_objects            : 'database/'
+auto_delete             : True
+file_crlf               : False
+
+object_types:
+    FUNCTION            : ['functions/',        .sql]
+    GRANT               : ['grants/',           .sql]
+    INDEX               : ['indexes/',          .sql]
+    JOB                 : ['jobs/',             .sql]
+    SCHEDULE            : ['job_schedules/',    .sql]
+    MATERIALIZED VIEW   : ['mviews/',           .sql]
+    MVIEW LOG           : ['mview_logs/',       .sql]
+    PACKAGE             : ['packages/',         .spec.sql]
+    PACKAGE BODY        : ['packages/',         .sql]
+    PROCEDURE           : ['procedures/',       .sql]
+    SEQUENCE            : ['sequences/',        .sql]
+    SYNONYM             : ['synonyms/',         .sql]
+    TABLE               : ['tables/',           .sql]
+    TRIGGER             : ['triggers/',         .sql]
+    TYPE                : ['types/',            .sql]
+    TYPE BODY           : ['types/',            .body.sql]
+    VIEW                : ['views/',            .sql]
+
+immutables:
+    - TABLE
+    - SEQUENCE
+
+drop_objects:
+    - MATERIALIZED VIEW
+    - MVIEW LOG
+    - TYPE
+    - TYPE BODY
+
+object_comments:
+    - TABLE
+    - VIEW
+    - MATERIALIZED VIEW
+
+object_col_comments:
+    - TABLE
+    - MATERIALIZED VIEW
+
+tablespace:
+    TABLE       : ''
+    PARTITION   : ''
+    INDEX       : ''
+
+cleanup_view:
+    keep_force          : True
+cleanup_db:
+    package_ends        : False
+
+add_if_not_exists       : True
+editionable_keep        : False
+editionable_force       : ''
+editionable_types:
+    - FUNCTION
+    - PACKAGE
+    - PACKAGE BODY
+    - PROCEDURE
+    - SYNONYM
+    - TRIGGER
+    - TYPE
+    - TYPE BODY
+    - VIEW
+
+grants_recd             : '/received/#SCHEMA_NAME#.sql'
+grants_privs            : '/#SCHEMA_NAME#_schema.sql'
+grants_directories      : '/#SCHEMA_NAME#_directories.sql'
+
+sqlcl_root              : './.temp.nosync/'
+sqlcl_temp_file         : 'sqlcl.tmp'

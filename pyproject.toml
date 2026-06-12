@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "adt-ai"
+version = "0.1.0"
+description = "Modern Python rewrite of ADT focused on YAML-configured Oracle/APEX deployment tooling."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "oracledb>=2.2",
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+adt-ai = "adt_ai.cli:console_main"
+adtai = "adt_ai.cli:console_main"
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    "E203",  # aligned annotations use whitespace before ':'
+    "E221",  # aligned assignments use multiple spaces before operators
+    "E241",  # aligned assignments use multiple spaces after operators
+    "E251",  # aligned keyword arguments use spaces around '='
+]

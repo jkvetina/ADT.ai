@@ -1,0 +1,14 @@
+# macOS and local scratch
+.DS_Store
+.temp.nosync/
+
+# Python bytecode/cache
+__pycache__/
+*.py[cod]
+
+# Local connection files and Oracle wallets are sensitive runtime material.
+connections/*
+!connections/.gitkeep
+!connections/wallets/
+connections/wallets/*
+!connections/wallets/.gitkeep

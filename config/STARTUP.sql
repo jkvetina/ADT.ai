@@ -1,0 +1,22 @@
+--
+-- STARTUP.sql -- statements run once on every new database connection.
+--
+-- Drop session setup here (NLS settings, ALTER SESSION tuning, an identifier
+-- block, ...). A project-level config/STARTUP.sql overrides this default.
+--
+-- Mixed SQL*Plus / SQL / PL/SQL is supported, the same way SQLcl reads it:
+--   * SQL*Plus directives (SET SERVEROUTPUT ON, SET DEFINE OFF, ...) are client
+--     commands -- they are skipped on the python-oracledb path; SET SERVEROUTPUT
+--     is emulated server-side. SQLcl deploys run the file verbatim.
+--   * ALTER SESSION / SQL statements end with ';'.
+--   * PL/SQL blocks (BEGIN ... END;) end with a lone '/' on its own line.
+--
+-- Example:
+--
+-- ALTER SESSION SET NLS_NUMERIC_CHARACTERS = '. ';
+-- ALTER SESSION SET NLS_DATE_FORMAT        = 'YYYY-MM-DD HH24:MI';
+--
+-- BEGIN
+--     DBMS_SESSION.SET_IDENTIFIER('JAN');
+-- END;
+-- /
