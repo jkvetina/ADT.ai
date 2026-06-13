@@ -9,6 +9,15 @@ from typing import Protocol
 import yaml
 
 from adt_ai.git_files import changed_files
+from adt_ai.history.cache import (
+    cache_path as history_cache_path,
+)
+from adt_ai.history.cache import (
+    current_branch as history_current_branch,
+)
+from adt_ai.history.cache import (
+    load_history_cache,
+)
 from adt_ai.patch.discovery import (
     FIELD_SEPARATOR,
     CommitRecord,
@@ -123,14 +132,7 @@ def _branch_exists(root: Path, branch: str) -> bool:
 
 
 def _current_branch(root: Path) -> str:
-    result = subprocess.run(
-        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-        cwd=root,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout.strip() or "HEAD"
+    return history_current_branch(root)
 
 
 def _build_records(
@@ -293,8 +295,7 @@ def _write_caches(
 
 
 def _cache_path(root: Path, cache_file_template: str, branch: str) -> Path:
-    path = Path(cache_file_template.replace("#BRANCH#", branch)).expanduser()
-    return path if path.is_absolute() else root / path
+    return history_cache_path(root, cache_file_template, branch)
 
 
 def _resume_point(
@@ -320,23 +321,7 @@ def _resume_point(
 def _load_cache(
     root: Path, cache_file_template: str, branch: str
 ) -> dict[int, CommitRecord]:
-    path = _cache_path(root, cache_file_template, branch)
-    if not path.is_file():
-        return {}
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    records: dict[int, CommitRecord] = {}
-    for number, fields in data.items():
-        records[int(number)] = CommitRecord(
-            number  = int(number),
-            id      = fields["id"],
-            summary = fields.get("summary", ""),
-            author  = fields.get("author", ""),
-            date    = fields.get("date", ""),
-            files   = fields.get("files") or {},
-            deleted = fields.get("deleted") or [],
-            patch   = fields.get("patch"),
-        )
-    return records
+    return load_history_cache(root, branch, cache_file_template)
 
 
 def _commit_in_history(root: Path, branch: str, commit: str) -> bool:
@@ -494,7 +479,7 @@ def _branch_infos(root: Path) -> list[BranchInfo]:
         if len(parts) < 5:
             continue
         name, updated, committed, email, author = parts[0], parts[1], parts[2], parts[3], parts[4]
-        if name == "origin/HEAD":
+        if name in {"origin", "origin/HEAD"}:
             continue  # symbolic ref, not a real branch
         short = name[len("origin/"):] if name.startswith("origin/") else name
         infos.append(

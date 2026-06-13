@@ -5,13 +5,15 @@ inline ``-sql`` or a ``;``-split ``-file``), validate each as a single SELECT
 (safety layer 1), run it under a READ ONLY transaction (safety layer 2), render
 the result as a Markdown section, and append the run to a timestamped report.
 
-Validation and database failures are captured into the report as error sections
-rather than raised — a discovery run reports every query it was asked to run.
+Validation and per-query database failures are captured into the report as error
+sections rather than raised. Callers can still mark setup/connection failures as
+fatal so an unreachable database fails the command instead of becoming a result.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -78,8 +80,13 @@ def split_statements(text: str) -> list[str]:
 
 
 class DiscoveryRunner:
-    def __init__(self, gateway: QueryGateway) -> None:
+    def __init__(
+        self,
+        gateway: QueryGateway,
+        fatal_error: Callable[[Exception], bool] | None = None,
+    ) -> None:
         self.gateway = gateway
+        self.fatal_error = fatal_error or (lambda error: False)
 
     def run(self, request: DiscoveryRequest) -> DiscoveryResult:
         statements = self._statements(request)
@@ -132,6 +139,8 @@ class DiscoveryRunner:
         try:
             rows = self.gateway.read_only_fetch_all(validated)
         except Exception as error:
+            if self.fatal_error(error):
+                raise
             result = render_result(error=str(error), limit=limit)
             section = render_section(index=index, sql=validated, error=str(error), limit=limit)
             return section, result, QueryOutcome(index=index, ok=False, label=label, error=str(error))

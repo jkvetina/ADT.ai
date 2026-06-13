@@ -10,7 +10,7 @@ description: "Install and verify ADT.ai: pip install, PATH and environment varia
 
 Install ADT.ai, wire up the runtime environment, and verify the machine with `adtai doctor`. The repo's `SETUP.md` is the concise human install/environment reference; this skill is the operating checklist. Day-to-day command usage is the separate `adt` skill.
 
-The command is `adtai` (aliases: `adt-ai`, `python -m adt_ai`).
+The command is `adtai` (aliases: `adt`, `python -m adt_ai`).
 
 ## Install
 
@@ -20,7 +20,7 @@ From the ADT.ai repo folder:
 python3 -m pip install -e .
 ```
 
-This puts `adtai` on `PATH`. Re-run after pulling changes only if dependencies changed — or use `adtai doctor -update` (below).
+This puts `adtai` and `adt` on `PATH`. Re-run after pulling changes only if dependencies changed — or use `adtai doctor -update` (below).
 
 Windows uses `python` instead of `python3`:
 
@@ -138,9 +138,9 @@ It writes the project config template, repo ignore rules for generated artifacts
 
 ## Troubleshooting
 
-- `adtai: command not found` → re-run `python3 -m pip install -e .`, then open a new shell; confirm the Python scripts dir is on `PATH`.
+- `adtai: command not found` or `adt: command not found` → re-run `python3 -m pip install -e .`, then open a new shell; confirm the Python scripts dir is on `PATH`.
 - Garbled or non-English SQLcl/Oracle messages → set `JAVA_TOOL_OPTIONS="-Duser.language=en"`.
-- Thick-client connect failures → check `ORACLE_HOME` points at Instant Client and is on `PATH`; confirm with `adtai doctor`.
+- `DPI-1047` or `libclntsh.dylib` missing → thick Oracle mode cannot locate Instant Client. Check `ORACLE_HOME` points at Instant Client, add it to `PATH`, open a new shell, and confirm with `adtai doctor` or `adtai doctor -offline`.
 - "Schema/environment not configured" → open the connection file named in the error and add the listed choice.
 - Always start troubleshooting with `adtai doctor` (or `adtai doctor -offline` when offline) — it pinpoints which prerequisite is the `FAIL`/`WARN`.
 

@@ -18,7 +18,11 @@ from adt_ai.export_db.files import (
     ObjectWriteRequest,
 )
 from adt_ai.export_db.inventory import DatabaseObject, ObjectDiscovery, has_exact_name_filter
-from adt_ai.export_db.normalizers import NormalizerRegistry, normalize_ddl
+from adt_ai.export_db.normalizers import (
+    NormalizerRegistry,
+    build_table_fix_sql,
+    normalize_ddl,
+)
 
 DROPBOX_PATH_RE = re.compile(r"/Users/[^/]+/Library/CloudStorage/Dropbox/")
 
@@ -216,18 +220,34 @@ class ExportDbRunner:
             gateway_factory = gateway_factory,
         )
         if request.dry_run:
-            requests = [
-                ObjectWriteRequest(database_object, content)
-                for database_object, content in object_contents
-            ]
+            requests: list[ObjectWriteRequest] = []
+            for database_object, content, fix_content in object_contents:
+                requests.append(ObjectWriteRequest(database_object, content))
+                if fix_content is not None:
+                    requests.append(
+                        ObjectWriteRequest(
+                            database_object,
+                            fix_content,
+                            path = resolver.fix_path_for(database_object),
+                        )
+                    )
             requests.extend(
                 ObjectWriteRequest(database_object, content)
                 for database_object, content in grant_contents
             )
             return writer.plan(requests, dry_run=True)
         plans: list[ObjectWritePlan] = []
-        for database_object, content in object_contents:
+        for database_object, content, fix_content in object_contents:
             plans.append(writer.write_one(ObjectWriteRequest(database_object, content)))
+            fix_path = resolver.fix_path_for(database_object)
+            if fix_content is not None:
+                plans.append(
+                    writer.write_one(
+                        ObjectWriteRequest(database_object, fix_content, path=fix_path)
+                    )
+                )
+            elif fix_path.exists():
+                fix_path.unlink()
         for database_object, content in grant_contents:
             plans.append(writer.write_one(ObjectWriteRequest(database_object, content)))
         return plans
@@ -237,7 +257,7 @@ class ExportDbRunner:
         request: ExportDbRequest,
         resolver: ObjectFileResolver,
         gateway_factory: GatewayFactory,
-    ) -> Iterable[tuple[DatabaseObject, str]]:
+    ) -> Iterable[tuple[DatabaseObject, str, str | None]]:
         reporter = request.reporter or ExportDbReporter()
         for schema in request.schemas:
             discovery = ObjectDiscovery(gateway_factory(schema))
@@ -284,11 +304,17 @@ class ExportDbRunner:
             for index, database_object in enumerate(database_objects):
                 if reports_objects:
                     reporter.export_object(database_object)
+                raw_ddl = discovery.ddl(database_object)
                 content = normalize_ddl(
-                    discovery.ddl(database_object),
+                    raw_ddl,
                     object_type = database_object.object_type,
                     object_name = database_object.name,
                     registry    = self.normalizer_registry,
+                )
+                fix_content = (
+                    build_table_fix_sql(raw_ddl, database_object.name)
+                    if database_object.object_type == "TABLE"
+                    else None
                 )
                 if database_object.object_type == "JOB":
                     content = _append_job_arguments(
@@ -307,7 +333,7 @@ class ExportDbRunner:
                     ),
                     ignored_columns = _ignored_comment_columns(request.config),
                 )
-                yield database_object, content
+                yield database_object, content, fix_content
                 next_object = (
                     database_objects[index + 1]
                     if index + 1 < len(database_objects)

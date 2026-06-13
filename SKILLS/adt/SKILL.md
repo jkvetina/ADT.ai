@@ -10,7 +10,7 @@ description: "ADT.ai usage guide for Oracle/APEX work: export database objects, 
 
 ADT.ai is a Python CLI that exports, inspects, and deploys Oracle Database objects and APEX applications. It reads from config files, Git, and the database; it never stores its own metadata in the database. Exports work against any ordinary folder — a Git repository is useful but not required.
 
-The command is `adtai` (aliases: `adt-ai`, `python -m adt_ai`). Full argument tables for every command live in the repo's `USAGE.md`; this skill is the operating cheat-sheet, including the full `doctor` module. The repo-only `adt-setup` skill remains a deeper one-time setup checklist, not a daily runtime skill.
+The command is `adtai` (aliases: `adt`, `python -m adt_ai`). Full argument tables for every command live in the repo's `USAGE.md`; this skill is the operating cheat-sheet, including the full `doctor` module. The repo-only `adt-setup` skill remains a deeper one-time setup checklist, not a daily runtime skill.
 
 Run commands from the project root (the folder holding `config/` and the export output). Every command prints a standard banner, dashed section headers, and a final `TIMER: Ns` footer.
 
@@ -225,6 +225,25 @@ Restore historical versions beside the original file, or stage one version to th
 ```bash
 adtai search_repo -file order_v -commit 42 45 -restore
 adtai search_repo -file order_v -commit 42 -restore -stage
+```
+
+## calendar — patch history calendar
+
+Git-cache-only monthly report for patch commits grouped by author and weekday. It reads the same `adtai rebuild` cache artifacts as `search_repo`; no Oracle connection is required.
+
+Show the current month, a specific month, or old ADT-style offset:
+
+```bash
+adtai calendar
+adtai calendar -month 2026-06
+adtai calendar -calendar 1
+```
+
+Filter and print list output:
+
+```bash
+adtai calendar -by bob@example.com -list
+adtai calendar -my
 ```
 
 ## rebuild — refresh the commit cache

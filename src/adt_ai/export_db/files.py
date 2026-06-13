@@ -21,6 +21,7 @@ class ObjectTypeLayout:
 class ObjectWriteRequest:
     object  : DatabaseObject
     content : str
+    path    : Path | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,10 @@ class ObjectFileResolver:
         filename = f"{object_name}{layout.extension}"
         return self._existing_case_path(folder, filename) or folder / filename
 
+    def fix_path_for(self, database_object: DatabaseObject) -> Path:
+        path = self.path_for(database_object)
+        return path.with_name(f"{path.stem}.fix{path.suffix}")
+
     def missing_files(self, database_objects: list[DatabaseObject]) -> list[Path]:
         expected = {self.path_for(database_object).resolve() for database_object in database_objects}
         existing: set[Path] = set()
@@ -95,6 +100,7 @@ class ObjectFileResolver:
             existing.update(
                 file_path.resolve()
                 for file_path in search_root.rglob(f"*{layout.extension}")
+                if not file_path.name.endswith(f".fix{layout.extension}")
             )
         return sorted(existing - expected)
 
@@ -118,6 +124,8 @@ class ObjectFileResolver:
                 if not search_root.exists():
                     continue
                 for file_path in search_root.rglob(f"*{layout.extension}"):
+                    if file_path.name.endswith(f".fix{layout.extension}"):
+                        continue
                     if not self._is_best_layout_for_file(object_type, layout, file_path):
                         continue
                     if file_path.resolve() in expected:
@@ -251,7 +259,7 @@ class ObjectFileWriter:
         dry_run: bool,
         compare_existing: bool,
     ) -> ObjectWritePlan:
-        path = self.resolver.path_for(request.object)
+        path = request.path or self.resolver.path_for(request.object)
         if not path.exists():
             action: Literal["create", "update", "unchanged"] = "create"
         elif compare_existing and path.read_text(encoding="utf-8") == request.content:

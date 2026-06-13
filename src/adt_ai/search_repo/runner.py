@@ -5,7 +5,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from adt_ai.rebuild.runner import REVEAL_DEFAULT_LIMIT, _current_branch, _load_cache
+from adt_ai.history.cache import current_branch, git_user_email, load_history_cache
+from adt_ai.rebuild.runner import REVEAL_DEFAULT_LIMIT
 
 FIELD_SEPARATOR = "\x1f"
 
@@ -85,8 +86,8 @@ class SearchRepoRunner:
         return SearchRepoResult(records=records, restored_files=restored_files)
 
     def _commits(self, request: SearchRepoRequest, root: Path) -> list[_Commit]:
-        branch = request.branch or _current_branch(root)
-        records = _load_cache(root, "./config/commits/#BRANCH#.yaml", branch)
+        branch = request.branch or current_branch(root)
+        records = load_history_cache(root, branch)
         if not records:
             raise SearchRepoError(
                 f"commit cache not found or empty for branch '{branch}', run adtai rebuild first"
@@ -127,7 +128,7 @@ class SearchRepoRunner:
             return None
         if not _matches_date(commit.date, request):
             return None
-        if request.my and _git_user_email(request.root) != commit.author:
+        if request.my and git_user_email(request.root) != commit.author:
             return None
         if not _contains_all(commit.summary, request.summary_terms):
             return None
@@ -255,16 +256,6 @@ def _contains_any(value: str, terms: list[str]) -> bool:
 
 def _versioned_restore_path(path: Path, number: int) -> Path:
     return path.with_name(f"{path.stem}.{number}{path.suffix}")
-
-
-def _git_user_email(root: Path) -> str:
-    result = subprocess.run(
-        ["git", "config", "user.email"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout.strip()
 
 
 def _git(root: Path, args: list[str]) -> str:

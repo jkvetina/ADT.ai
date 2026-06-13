@@ -20,7 +20,7 @@ This installs both command names:
 
 ```bash
 adtai --help
-adt-ai --help
+adt --help
 ```
 
 Use `adtai` for normal shell usage.

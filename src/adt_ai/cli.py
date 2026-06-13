@@ -235,7 +235,7 @@ class DebugQueryGateway:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = AdtArgumentParser(
-        prog="adtai",
+        prog="adt",
         description="Modern ADT command line tool.",
     )
     parser.add_argument("--version", action="store_true", help="show version and exit")
@@ -602,7 +602,9 @@ def main(
     timer_stdout = _command_timer_stdout(args, tracked_stdout)
     exit_code = 0
     try:
-        if args.command == "export_db":
+        if args.command == "calendar":
+            exit_code = _run_calendar(args)
+        elif args.command == "export_db":
             exit_code = _run_export_db(args, gateway_factory=gateway_factory)
         elif args.command == "export_data":
             exit_code = _run_export_data(args, gateway_factory=gateway_factory)
@@ -1031,6 +1033,79 @@ def _run_search_repo(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_calendar(args: argparse.Namespace) -> int:
+    print_adt_header("APEX DEPLOYMENT TOOL: CALENDAR")
+    try:
+        result = CalendarRunner().run(
+            CalendarRequest(
+                root      = Path(args.root).resolve(),
+                branch    = args.branch,
+                month     = _resolve_calendar_month(args.month) if args.month else None,
+                offset    = args.calendar_offset or 0,
+                authors   = args.by or [],
+                my        = args.my,
+                list_mode = args.list,
+            )
+        )
+    except (CalendarError, ValueError) as exc:
+        print(f"Error: {exc}")
+        print()
+        return 1
+
+    print_adt_header(f"MONTHLY OVERVIEW: {result.month}")
+    if not result.authors:
+        print("No patch commits found.")
+        return 0
+    for author in result.authors:
+        print(f"  {author.author:<49} {author.commit_count}")
+
+    for author in result.authors:
+        print()
+        print_adt_header(
+            f"{author.commit_count} COMMITS BY {author.author} ({author.ticket_count})"
+        )
+        if args.list:
+            for day, tickets in author.days.items():
+                print(f"{day} {', '.join(tickets)}")
+            print()
+        else:
+            _print_calendar_grid(result.month, author.days)
+    return 0
+
+
+def _resolve_calendar_month(value: str) -> str:
+    if not re.fullmatch(r"\d{4}-\d{2}", value):
+        raise ValueError(f"-month: '{value}' must be YYYY-MM")
+    datetime.strptime(f"{value}-01", "%Y-%m-%d")
+    return value
+
+
+def _print_calendar_grid(month: str, days: dict[str, list[str]]) -> None:
+    first = datetime.strptime(f"{month}-01", "%Y-%m-%d").date()
+    curr = first - timedelta(days=first.weekday())
+    while True:
+        week_days = [(curr + timedelta(days=index)).isoformat() for index in range(5)]
+        curr += timedelta(days=7)
+        if not any(day.startswith(month) for day in week_days):
+            if curr.month != first.month:
+                break
+            continue
+        print(" | ".join(day if day.startswith(month) else " " * 10 for day in week_days))
+        rows = max((len(days.get(day, [])) for day in week_days), default=0)
+        for row_index in range(rows):
+            print(
+                " | ".join(
+                    (
+                        days.get(day, [])[row_index]
+                        if row_index < len(days.get(day, []))
+                        else ""
+                    ).ljust(10)
+                    for day in week_days
+                )
+            )
+        print()
+
+
 def _search_repo_file_limit(args: argparse.Namespace) -> int:
     if args.files is not None:
         return args.files
@@ -1401,7 +1476,7 @@ def _run_discovery(
     if args.debug:
         _print_startup_debug(startup)
 
-    result = DiscoveryRunner(gateway).run(
+    result = DiscoveryRunner(gateway, fatal_error=_is_database_connection_error).run(
         DiscoveryRequest(
             root            = root,
             when            = datetime.now(),
@@ -2606,6 +2681,27 @@ def _is_user_database_error(error: Exception) -> bool:
         return True
     module = type(error).__module__
     return module.startswith("oracledb")
+
+
+def _is_database_connection_error(error: Exception) -> bool:
+    text = str(error)
+    connection_markers = (
+        "DPY-",
+        "DPI-",
+        "TNS-",
+        "ORA-01017",
+        "ORA-12154",
+        "ORA-12514",
+        "ORA-12541",
+        "ORA-12545",
+        "ORA-12560",
+        "Connect failed",
+        "connection",
+        "listener",
+        "tnsnames.ora",
+        "wallet",
+    )
+    return any(marker.lower() in text.lower() for marker in connection_markers)
 
 
 def _display(value: object) -> str:
