@@ -13,6 +13,22 @@ from adt_ai.startup import apply_startup
 _TEMP_GITIGNORE_ENTRY = "config/temp/"
 
 
+def _attach_sql(error: BaseException, sql: str) -> None:
+    """Record the failing SQL on the exception for the CLI error banner.
+
+    The top-level handler distinguishes a query error (which happens after a
+    successful connect) from a connection failure by the presence of this
+    attribute, and prints the offending query. Best-effort: some driver
+    exception types may reject attribute assignment, in which case the banner
+    simply falls back to message-marker classification.
+    """
+    try:
+        if getattr(error, "adt_sql", None) is None:
+            error.adt_sql = sql  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+
 def _ensure_temp_ignored(root: Path) -> None:
     """Idempotently ensure ``config/temp/`` is git-ignored in ``root``.
 
@@ -180,7 +196,11 @@ class OracleGateway:
     ) -> list[dict[str, Any]]:
         cursor = self.connect().cursor()
         cursor.arraysize = self.FETCH_ARRAYSIZE
-        cursor.execute(sql, dict(params or {}))
+        try:
+            cursor.execute(sql, dict(params or {}))
+        except Exception as error:
+            _attach_sql(error, sql)
+            raise
         columns = [column[0] for column in cursor.description or []]
         return [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()]
 
@@ -204,6 +224,9 @@ class OracleGateway:
             cursor.execute(sql, dict(params or {}))
             columns = [column[0] for column in cursor.description or []]
             return [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()]
+        except Exception as error:
+            _attach_sql(error, sql)
+            raise
         finally:
             connection.rollback()
 
@@ -214,7 +237,11 @@ class OracleGateway:
     ) -> None:
         connection = self.connect()
         cursor = connection.cursor()
-        cursor.execute(sql, dict(params or {}))
+        try:
+            cursor.execute(sql, dict(params or {}))
+        except Exception as error:
+            _attach_sql(error, sql)
+            raise
         connection.commit()
 
     def sqlcl_request(self, request: str, root: Path) -> str:
