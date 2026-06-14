@@ -2225,12 +2225,14 @@ def _refresh_dependency_index(
         print("    adt recompile -force -scope ALL")
 
     print_adt_header(f"BUILDING DEPENDENCY INDEX: {', '.join(schemas)}")
+    silent = getattr(args, "silent", False)
     DependencyIndexRunner(selected_gateway_factory).refresh(
         DependencyIndexRequest(
             root          = root,
             schemas       = schemas,
             config        = config,
             schema_export = schema_export,
+            progress      = None if silent else print,
         )
     )
     print(f"\nDependency index: {_display(root / 'dependencies')}")
@@ -2429,15 +2431,6 @@ def _run_export_apex(args: argparse.Namespace, gateway_factory: GatewayFactory |
             schema_connections[connection_schema],
             debug=args.debug,
         )
-        discovery = ApexDiscovery(export_apex_gateway_factory(connection_schema))
-        workspace = schema_scope[connection_schema]["workspace"]
-        reporter.workspaces(
-            discovery.workspaces(workspace=workspace, max_app_id=args.max_app_id)
-        )
-        owner_filter = None if args.owners else schemas
-        reporter.owner_counts(
-            discovery.owner_app_counts(owner_filter, max_app_id=args.max_app_id)
-        )
     for schema in schemas:
         if not args.reveal:
             _print_connection_block(
@@ -2454,7 +2447,32 @@ def _run_export_apex(args: argparse.Namespace, gateway_factory: GatewayFactory |
             max_app_id = args.max_app_id,
         )
         applications_by_schema[schema] = applications
-        reporter.applications(schema, applications)
+        if not args.reveal:
+            reporter.applications(schema, applications)
+    if args.reveal:
+        discovery = ApexDiscovery(export_apex_gateway_factory(connection_schema))
+        workspace = schema_scope[connection_schema]["workspace"]
+        is_filtered = bool(args.app) or bool(args.schema)
+        active_workspaces = {
+            app.workspace
+            for apps in applications_by_schema.values()
+            for app in apps
+        }
+        schema_filter = None if is_filtered else schemas
+        all_workspaces = discovery.workspaces(workspace=workspace, schemas=schema_filter, max_app_id=args.max_app_id)
+        reporter.workspaces(
+            [w for w in all_workspaces if w.workspace in active_workspaces]
+            if (is_filtered and active_workspaces) else all_workspaces
+        )
+        owner_filter = None if args.owners else schemas
+        all_owner_counts = discovery.owner_app_counts(owner_filter, max_app_id=args.max_app_id)
+        active_owners = {s for s, apps in applications_by_schema.items() if apps}
+        reporter.owner_counts(
+            [oc for oc in all_owner_counts if oc.owner in active_owners]
+            if (is_filtered and active_owners) else all_owner_counts
+        )
+        for schema in schemas:
+            reporter.applications(schema, applications_by_schema[schema])
     if not args.reveal:
         requested_app_ids = _flatten_arg_groups(args.app)
         if requested_app_ids:
@@ -2634,7 +2652,8 @@ class ConsoleApexRevealReporter:
     def applications(self, schema: str, applications: list[ApexApplication]) -> None:
         if not applications:
             return
-        print_adt_header("APEX APPLICATIONS:", schema)
+        workspace = applications[0].workspace
+        print_adt_header("APEX APPLICATIONS:", f"{workspace} | {schema}")
         print_adt_table(
             [
                 {

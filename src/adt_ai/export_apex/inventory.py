@@ -74,12 +74,14 @@ class ApexDiscovery:
     def workspaces(
         self,
         workspace: str | None = None,
+        schemas: Iterable[str] | None = None,
         max_app_id: int | None = None,
     ) -> list[ApexWorkspace]:
         rows = self.gateway.fetch_all(
             self.WORKSPACES_QUERY,
             {
                 "workspace": workspace,
+                "schemas": _pipe_list(schemas),
                 "max_app_id": max_app_id,
             },
         )

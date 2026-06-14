@@ -61,7 +61,14 @@ SELECT
     t.apex_developers   AS developers
 FROM apex_workspaces t
 WHERE 1 = 1
+    AND t.workspace     NOT IN ('INTERNAL')
+    AND t.workspace     NOT LIKE 'COM.ORACLE.%'
     AND (t.workspace    = :workspace    OR :workspace IS NULL)
+    AND (:schemas IS NULL OR EXISTS (
+        SELECT 1 FROM apex_workspace_schemas s
+        WHERE  s.workspace_id = t.workspace_id
+            AND '|' || :schemas || '|' LIKE '%|' || s.schema || '|%'
+    ))
 ORDER BY
     t.workspace
 """.strip()
