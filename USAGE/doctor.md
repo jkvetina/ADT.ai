@@ -69,7 +69,7 @@ adtai doctor -init -root /path/to/project
 | `-init` | No | off | Scaffold project config, repo ignore rules, and safe local connection/wallet placeholders. |
 | `-root`, `--root` | No | `.` | Project root folder for `-init`. |
 | `-force`, `--force` | No | off | With `-init`, overwrite generated template files that already exist. |
-| `-h`, `--help` | No | off | Show command help. |
+| `-beep`, `--beep` | No | off | Force the completion chime on for this run, even from a worktree checkout. |
 
 ---
 

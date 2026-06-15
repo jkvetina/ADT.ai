@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Removed the `calendar` command section: it is a new module held back from the v0.5.0 public release (existing-module improvements only, no new modules).
 - Aligned skill guidance with current ADT.ai CLI: project bootstrap now uses `doctor -init`, obsolete patch source-flag guidance was removed, and no-write discovery examples use `-nolog`.
 - Updated `search_repo` guidance for cache-backed search, opt-in `-files`, newest-first limits, and rebuild-cache dependency.
 - Added `search_repo` to the ADT.ai usage skill, including Git-history search and historical file restore examples.

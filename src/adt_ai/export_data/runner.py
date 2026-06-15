@@ -44,12 +44,13 @@ class ExportDataRunner:
 
     def run(self, request: ExportDataRequest) -> list[Path]:
         written: list[Path] = []
-        names = request.names or _existing_data_names(request.root, request.config)
         export_items: list[tuple[DataDiscovery, DataTable]] = []
         for schema in request.schemas:
             gateway = self.gateway_factory(schema)
             discovery = DataDiscovery(gateway)
             schema_export = (request.schema_export or {}).get(schema, {})
+            # default the name list per schema – data folders may be schema-scoped
+            names = request.names or _existing_data_names(request.root, request.config, schema)
             for table in discovery.tables(
                 schema = schema,
                 names  = names,
@@ -84,7 +85,7 @@ class ExportDataRunner:
         order_by = ", ".join(_key_columns(table, columns)) or "ROWID"
         where_filter = _where_filter(request.config, table.name, columns)
         rows = discovery.rows(table.name, columns, where_filter, order_by)
-        path = _data_path(request.root, request.config, table.name)
+        path = _data_path(request.root, request.config, table.name, table.schema)
         path.parent.mkdir(parents=True, exist_ok=True)
         row_count = 0
         with path.open("w", encoding="utf-8", newline="") as handle:
@@ -112,15 +113,24 @@ class ExportDataRunner:
         return path, row_count
 
 
-def _data_path(root: Path, config: dict[str, Any], table_name: str) -> Path:
-    return _data_folder(root, config) / f"{table_name.lower()}.csv"
+def _data_path(root: Path, config: dict[str, Any], table_name: str, schema: str = "") -> Path:
+    return _data_folder(root, config, schema) / f"{table_name.lower()}.csv"
 
 
-def _data_folder(root: Path, config: dict[str, Any]) -> Path:
+def _data_folder(root: Path, config: dict[str, Any], schema: str = "") -> Path:
+    # Mirrors export_db.files.ObjectFileResolver._folder_for so data lands beside
+    # its database objects. Placeholders in ``path_objects``:
+    #   <schema>       schema / owner name (lowercased)
+    #   <object_type>  the DATA layout folder (e.g. data/); auto-appended if absent
     layout = (config.get("object_types") or {}).get("DATA", ["data", ".sql"])
     folder = str(layout[0]) if isinstance(layout, list | tuple) and layout else "data"
-    path_objects = Path(str(config.get("path_objects") or "database"))
-    return root / path_objects / folder.strip("/")
+    folder = folder.strip("/")
+    template = str(config.get("path_objects") or "database/<schema>/<object_type>")
+    rendered = template.replace("<schema>", (schema or "").lower())
+    if "<object_type>" in rendered:
+        rendered = rendered.replace("<object_type>", folder)
+        return root / Path(rendered.strip("/"))
+    return root / Path(rendered.strip("/")) / folder
 
 
 def _data_extension(config: dict[str, Any]) -> str:
@@ -128,8 +138,8 @@ def _data_extension(config: dict[str, Any]) -> str:
     return str(layout[1]) if isinstance(layout, list | tuple) and len(layout) > 1 else ".sql"
 
 
-def _existing_data_names(root: Path, config: dict[str, Any]) -> list[str]:
-    data_folder = _data_folder(root, config)
+def _existing_data_names(root: Path, config: dict[str, Any], schema: str = "") -> list[str]:
+    data_folder = _data_folder(root, config, schema)
     extension = _data_extension(config)
     if not data_folder.exists():
         return []

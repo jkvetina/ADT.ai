@@ -101,7 +101,7 @@ adtai export_db -silent
 | `-delete`, `--delete` | No | off | Delete existing object files before export, excluding `DATA`. |
 | `-silent`, `--silent` | No | off | Suppress per-object names and per-object progress callbacks while keeping the standard banner, connection block, overview, export header, and final timer. Use it when calling `export_db` from an LLM or agent to avoid flooding the console. |
 | `-debug`, `--debug` | No | off | Show input parameters and SQL queries with bind values. |
-| `-h`, `--help` | No | off | Show command help. |
+| `-beep`, `--beep` | No | off | Force the completion chime on for this run, even from a worktree checkout. |
 
 ---
 

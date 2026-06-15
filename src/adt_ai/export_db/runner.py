@@ -389,9 +389,9 @@ class ExportDbRunner:
             )
 
 def _with_default_layout(config: dict[str, Any]) -> dict[str, Any]:
-    if "path_template" in config:
+    if "path_objects" in config:
         return config
-    return {**config, "path_template": "database/<schema>/<object_type>"}
+    return {**config, "path_objects": "database/<schema>/<object_type>"}
 
 
 def _cached_gateway_factory(gateway_factory: GatewayFactory) -> GatewayFactory:

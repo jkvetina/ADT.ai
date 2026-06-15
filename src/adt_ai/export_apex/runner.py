@@ -73,7 +73,7 @@ class ApexExportRunner:
         self.gateway_factory = gateway_factory
 
     def run(self, request: ApexExportRequest) -> None:
-        resolver = ApexFileResolver.from_config(request.root, dict(request.config))
+        base_resolver = ApexFileResolver.from_config(request.root, dict(request.config))
         reporter = request.reporter or ConsoleApexProgressReporter()
         timers_file = request.timers_file or request.root / "config" / "apex_timers.yaml"
         timers = _load_timers(timers_file)
@@ -86,6 +86,7 @@ class ApexExportRunner:
             ],
         )
         for schema in request.schemas:
+            resolver = base_resolver.for_schema(schema)
             gateway = self.gateway_factory(schema)
             developer_rows = gateway.fetch_all(self.WORKSPACE_DEVELOPERS_QUERY)
             developers = _workspace_developers_from_rows(developer_rows)

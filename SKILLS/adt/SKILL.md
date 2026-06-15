@@ -1,6 +1,6 @@
 ---
 created: 2026-06-10
-updated: 2026-06-12
+updated: 2026-06-14
 name: adt
 version: 1.0.0
 tags: [oracle, apex, deployment, cli, database]
@@ -225,25 +225,6 @@ Restore historical versions beside the original file, or stage one version to th
 ```bash
 adtai search_repo -file order_v -commit 42 45 -restore
 adtai search_repo -file order_v -commit 42 -restore -stage
-```
-
-## calendar — patch history calendar
-
-Git-cache-only monthly report for patch commits grouped by author and weekday. It reads the same `adtai rebuild` cache artifacts as `search_repo`; no Oracle connection is required.
-
-Show the current month, a specific month, or old ADT-style offset:
-
-```bash
-adtai calendar
-adtai calendar -month 2026-06
-adtai calendar -calendar 1
-```
-
-Filter and print list output:
-
-```bash
-adtai calendar -by bob@example.com -list
-adtai calendar -my
 ```
 
 ## rebuild — refresh the commit cache

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,8 @@ class ApexFileResolver:
     path_files    : str = "files/"
     path_rest     : str = "workspace/rest/"
     workspace_dir : str = "workspace/"
+    # Schema bound at runtime (per export loop); substitutes <schema> in path_apex.
+    schema        : str = ""
 
     @classmethod
     def from_config(cls, root: Path, config: dict[str, Any]) -> ApexFileResolver:
@@ -28,8 +30,12 @@ class ApexFileResolver:
             workspace_dir = str(config.get("apex_workspace_dir") or "workspace/"),
         )
 
+    def for_schema(self, schema: str) -> ApexFileResolver:
+        return replace(self, schema=schema or "")
+
     def apex_root(self) -> Path:
-        return self.root / _clean_relative(self.path_apex)
+        rendered = self.path_apex.replace("<schema>", (self.schema or "").lower())
+        return self.root / _clean_relative(rendered)
 
     def app_root(self, application: ApexApplication) -> Path:
         return self.apex_root() / _render_app_folder(self.path_app, application)

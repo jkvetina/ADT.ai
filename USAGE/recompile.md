@@ -40,7 +40,7 @@ The command reads the object overview, recompiles invalid (or all, with `-force`
 | `-warnings`, `--warnings` | No | none | PL/SQL warnings (`SEVERE`, `PERF`, `INFO`). |
 | `-silent`, `--silent` | No | off | Suppress object overview details while keeping the standard banner, connection block, and final timer. |
 | `-debug`, `--debug` | No | off | Show input parameters and SQL queries with bind values; keep Python tracebacks. |
-| `-h`, `--help` | No | off | Show command help. |
+| `-beep`, `--beep` | No | off | Force the completion chime on for this run, even from a worktree checkout. |
 
 ---
 

@@ -38,13 +38,14 @@ class ObjectFileResolver:
         root: Path,
         path_objects: str | Path,
         object_types: dict[str, ObjectTypeLayout],
-        path_template: str | None = None,
         schema_folders: dict[str, str] | None = None,
     ) -> None:
         self.root = Path(root)
-        self.path_objects = Path(path_objects)
+        # path_objects is a path template; it may contain <schema> and
+        # <object_type> placeholders. When <object_type> is omitted the
+        # per-type folder is appended automatically (legacy 'database/' layout).
+        self.path_objects = str(path_objects)
         self.object_types = {key.upper(): value for key, value in object_types.items()}
-        self.path_template = path_template
         self.schema_folders = {
             str(schema): str(folder).strip("/")
             for schema, folder in (schema_folders or {}).items()
@@ -60,8 +61,7 @@ class ObjectFileResolver:
 
         return cls(
             root          = root,
-            path_objects  = config.get("path_objects", "database"),
-            path_template = config.get("path_template"),
+            path_objects  = config.get("path_objects", "database/<schema>/<object_type>"),
             schema_folders = _parse_schema_folders(config.get("schema_folders", {})),
             object_types={
                 object_type: _parse_layout(object_type, raw_layout)
@@ -91,17 +91,16 @@ class ObjectFileResolver:
     def missing_files(self, database_objects: list[DatabaseObject]) -> list[Path]:
         expected = {self.path_for(database_object).resolve() for database_object in database_objects}
         existing: set[Path] = set()
-        for layout in self.object_types.values():
-            search_root = (
-                self.root
-                if self.path_template
-                else self.root / self.path_objects / layout.folder
-            )
-            existing.update(
-                file_path.resolve()
-                for file_path in search_root.rglob(f"*{layout.extension}")
-                if not file_path.name.endswith(f".fix{layout.extension}")
-            )
+        schemas = sorted({database_object.schema for database_object in database_objects})
+        for object_type, layout in self.object_types.items():
+            for search_root in self._search_roots_for(object_type, layout, schemas):
+                if not search_root.exists():
+                    continue
+                existing.update(
+                    file_path.resolve()
+                    for file_path in search_root.rglob(f"*{layout.extension}")
+                    if not file_path.name.endswith(f".fix{layout.extension}")
+                )
         return sorted(existing - expected)
 
     def missing_objects(
@@ -171,15 +170,13 @@ class ObjectFileResolver:
         return deleted
 
     def _folder_for(self, database_object: DatabaseObject, layout: ObjectTypeLayout) -> Path:
-        if not self.path_template:
-            return self.root / self.path_objects / layout.folder
-
-        rendered = (
-            self.path_template
-            .replace("<schema>", self._schema_folder(database_object.schema).lower())
-            .replace("<object_type>", layout.folder)
+        rendered = self.path_objects.replace(
+            "<schema>", self._schema_folder(database_object.schema).lower()
         )
-        return self.root / Path(rendered.strip("/"))
+        if "<object_type>" in rendered:
+            rendered = rendered.replace("<object_type>", layout.folder)
+            return self.root / Path(rendered.strip("/"))
+        return self.root / Path(rendered.strip("/")) / layout.folder
 
     def _schema_folder(self, schema: str) -> str:
         return self.schema_folders.get(schema, schema)
@@ -190,8 +187,8 @@ class ObjectFileResolver:
         layout: ObjectTypeLayout,
         schemas: list[str],
     ) -> list[Path]:
-        if not self.path_template:
-            return [self.root / self.path_objects / layout.folder]
+        if "<schema>" not in self.path_objects:
+            return [self._folder_for(DatabaseObject("", object_type, "scan"), layout)]
         return [
             self._folder_for(DatabaseObject(schema, object_type, "scan"), layout)
             for schema in schemas

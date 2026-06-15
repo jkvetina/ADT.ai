@@ -59,10 +59,10 @@ PROJECT_CONFIG_TEMPLATE = """
 # Keep sensitive connection files and wallets outside the project repo.
 
 # Default export layout:
-# path_template: database/<schema>/<object_type>
+# path_objects: database/<schema>/<object_type>
 
 # Alternative export layout example:
-# path_template: <schema>/database/<object_type>
+# path_objects: <schema>/database/<object_type>
 
 # Optional external connection and wallet locations:
 # connections:

@@ -73,7 +73,7 @@ When `-stage` matches more than one version for the same file, the newest matchi
 | `-until`, `--until` | No | none | Newest commit date, `YYYY-MM-DD`, or number of days back. |
 | `-restore`, `--restore` | No | off | Write matched historical file versions. |
 | `-stage`, `--stage` | No | off | With `-restore`, write to original paths and `git add` them. |
-| `-h`, `--help` | No | off | Show command help. |
+| `-beep`, `--beep` | No | off | Force the completion chime on for this run, even from a worktree checkout. |
 
 ---
 

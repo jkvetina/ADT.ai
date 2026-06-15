@@ -55,7 +55,7 @@ ADT.ai exports only the sections named on the command line. Use `-all` to export
 | `-files`, `--files` | No | off | Export application files. |
 | `-files_ws`, `--files_ws`, `--files-ws` | No | off | Export workspace files. |
 | `-debug`, `--debug` | No | off | Show input parameters and SQL queries with bind values. |
-| `-h`, `--help` | No | off | Show command help. |
+| `-beep`, `--beep` | No | off | Force the completion chime on for this run, even from a worktree checkout. |
 
 ---
 

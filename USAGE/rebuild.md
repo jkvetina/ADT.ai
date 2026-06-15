@@ -139,7 +139,7 @@ If you are already on the target branch, `-switch` runs **no git operations** â€
 | `-since`, `--since` | No | off | `WHEN` is a `YYYY-MM-DD` date or an integer number of days back (`7` = 7 days ago). **Normal mode:** rebuild a full bounded window of every commit since `WHEN`; header reads `COMMITS | <count> SINCE <date>`; mutually exclusive with `-limit`. **`-reveal` mode:** keep only branches whose tip commit is on or after `WHEN`; composes with `-limit` (date-filter first, then cap) and adds a ` SINCE <date>` title suffix. |
 | `-my`, `--my` | No | off | In `-reveal` mode, limit results to branches whose tip-commit author email equals `git config user.email`. Under `-switch`, it also limits the COMMITS section to commits you authored. |
 | `-switch`, `--switch` | No (optional `N`) | `1` when given | In `-reveal` mode, check the working tree out to the `N`th branch in the filtered order (1-based; bare `-switch` = `-switch 1`), then print `BRANCH SWITCHED` + that branch's recent `COMMITS` (only commits made on the branch â€” those inherited from the default branch at creation are excluded; newest-first, every line clipped to 78 chars) instead of the branch list. `-limit` caps the commits; `-my` keeps only yours. Out-of-range rank errors without switching; if already on the target branch it runs no git ops (WiP untouched). Errors if used without `-reveal`. |
-| `-h`, `--help` | No | off | Show command help. |
+| `-beep`, `--beep` | No | off | Force the completion chime on for this run, even from a worktree checkout. |
 
 ---
 
