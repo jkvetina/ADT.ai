@@ -39,7 +39,7 @@ java --version
 sql -V
 ```
 
-`python3` and `git` are required. `java` and `sql` (SQLcl) are needed for APEX export, `diff`, and SQLcl-backed flows.
+`python3` and `git` are required. `java` and `sql` (SQLcl) are needed for APEX export and SQLcl-backed flows.
 
 ## Environment variables
 

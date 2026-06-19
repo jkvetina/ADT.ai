@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from adt_ai.git_files import run_git, run_git_bytes
-from adt_ai.history.cache import current_branch, git_user_email, load_history_cache
+from adt_ai.commit_cache import current_branch, git_user_email, load_history_cache
 from adt_ai.rebuild.runner import REVEAL_DEFAULT_LIMIT
 
 FIELD_SEPARATOR = "\x1f"

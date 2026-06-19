@@ -1,1 +1,0 @@
-"""Patch command support."""

@@ -94,8 +94,7 @@ COMMAND_SUMMARIES = {
         "Runs configured read-only SELECT discovery queries against an Oracle schema.",
         "Use it to collect inventory or diagnostic facts without changing the database.",
         "Queries can be scoped to a schema and written back into the project as reports.",
-        "The command is intended for safe metadata exploration before export, patch, or "
-        "cleanup work.",
+        "The command is intended for safe metadata exploration before export or cleanup work.",
         "Result handling keeps discovery output reproducible instead of relying on "
         "ad hoc SQL scratchpads.",
     ),
@@ -135,8 +134,7 @@ COMMAND_SUMMARIES = {
         "view, and index formatting.",
     ),
     "rebuild": (
-        "Refreshes the cached Git commit index that powers patch, calendar, and "
-        "repository search flows.",
+        "Refreshes the cached Git commit index that powers repository search workflows.",
         "Use it after new commits, branch switches, or repository fetches so ADT.ai "
         "sees current history.",
         "Incremental mode updates only missing commit data for normal day-to-day use.",

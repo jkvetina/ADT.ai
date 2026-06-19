@@ -9,16 +9,16 @@ from typing import Protocol
 import yaml
 
 from adt_ai.git_files import changed_files, run_git
-from adt_ai.history.cache import (
+from adt_ai.commit_cache import (
     cache_path as history_cache_path,
 )
-from adt_ai.history.cache import (
+from adt_ai.commit_cache import (
     current_branch as history_current_branch,
 )
-from adt_ai.history.cache import (
+from adt_ai.commit_cache import (
     load_history_cache,
 )
-from adt_ai.patch.discovery import (
+from adt_ai.commit_discovery import (
     FIELD_SEPARATOR,
     CommitRecord,
     _classify_file,

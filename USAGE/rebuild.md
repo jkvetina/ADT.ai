@@ -14,7 +14,7 @@ adtai rebuild -branch main -branch feature/foo -limit 200
 
 In normal rebuild mode `-limit N` is the per-branch commit cap (this is the flag formerly named `-commits`). The same `-limit` flag means something different in `-reveal` mode — there it caps the number of branch rows listed. See "Inspecting branches (`-reveal`)" below. To bound the window by time instead of count, use `-since` (a date or a number of days back) — see "Bounded window since a date (`-since`)" below.
 
-The command refreshes the multi-branch Git commit cache used by patch previews. It writes one cache file per branch using `repo_commits_file` (default `./config/commits/#BRANCH#.yaml`), skips gitlinks safely, and scans the current branch (or the branches named with `-branch`).
+The command refreshes the multi-branch Git commit cache used by repository search. It writes one cache file per branch using `repo_commits_file` (default `./config/commits/#BRANCH#.yaml`), skips gitlinks safely, and scans the current branch (or the branches named with `-branch`).
 
 Each branch passed to `-branch` is validated before the scan: a name git cannot resolve (a typo such as `-branch mai`) fails fast with `Error: branch 'mai' not found in this repo — run 'adtai rebuild -reveal' to list available branches` and exit 1, rather than a raw git exit-128 dump. Any commit-ish git accepts is allowed — a local branch, `origin/<name>`, a tag, or a SHA.
 

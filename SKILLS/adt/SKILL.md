@@ -4,20 +4,20 @@ updated: 2026-06-18
 name: adt
 version: 1.0.0
 tags: [oracle, apex, deployment, cli, database]
-description: "ADT.ai usage guide for Oracle/APEX work: export database objects, APEX apps and data, run read-only SQL discovery, search Git history, query the dependency graph, diff, recompile, and build/deploy patches. Use for any ADT.ai command help."
+description: "ADT.ai usage guide for Oracle/APEX work: export database objects, APEX apps and data, run read-only SQL discovery, search Git history, and recompile invalid objects. Use for any ADT.ai command help."
 ---
 # ADT.ai
 
 ADT.ai is a Python CLI that exports, inspects, and deploys Oracle Database objects and APEX applications. It reads from config files, Git, and the database; it never stores its own metadata in the database. Exports work against any ordinary folder — a Git repository is useful but not required.
 
-The command is `adtai` (aliases: `adt`, `python -m adt_ai`). Full argument tables for every command live in per-command files under the repo's `USAGE/`; this skill is the operating cheat-sheet for the common commands, including the full `doctor` module. Lower-frequency commands (`connection`, `calendar`, `flow`) are not expanded here — see their pages under `USAGE/`. The repo-only `adt-setup` skill remains a deeper one-time setup checklist, not a daily runtime skill.
+The command is `adtai` (aliases: `adt`, `python -m adt_ai`). Full argument tables for every command live in per-command files under the repo's `USAGE/`; this skill is the operating cheat-sheet for the common commands, including the full `doctor` module. Lower-frequency commands such as `flow` are not expanded here — see its page under `USAGE/`. The repo-only `adt-setup` skill remains a deeper one-time setup checklist, not a daily runtime skill.
 
 Run commands from the project root (the folder holding `config/` and the export output). Every command prints a standard banner, dashed section headers, and a final `TIMER: Ns` footer.
 
 ## Conventions in this skill
 
 - Pick one quick-reference line and run it as its own shell call.
-- Show the user the full console output of export/recompile/patch commands — the overview tables and progress are the point.
+- Show the user the full console output of export/recompile commands — the overview tables and progress are the point.
 - `-debug` on any command prints the resolved parameters and the SQL with bind values.
 - `--help` (or `-h`) on any command prints its full argument list.
 
@@ -133,35 +133,6 @@ Target a schema and raise the per-query row cap (default 200):
 adtai discovery -env DEV -schema APP -sql "SELECT * FROM app_settings" -limit 500
 ```
 
-## dependencies — query the object graph
-
-Answers "what uses this?" / "what would I break?" against a committed graph (`dependencies/index.yaml` + `edges.yaml`). Day-to-day queries are offline; only `-refresh` touches the database.
-
-Build or rebuild the index from the database:
-
-```bash
-adtai dependencies -refresh -env DEV -schema APP
-```
-
-Query the graph:
-
-```bash
-adtai dependencies -uses "PACKAGE BODY.CORE"
-adtai dependencies -used-by "TABLE.CORE_LOGS"
-adtai dependencies -impact "TABLE.CORE_LOGS"
-adtai dependencies -unused
-```
-
-`-format yaml` or `-format md` moves the chrome to stderr so stdout stays pipeable.
-
-## diff — compare two environments or schemas
-
-Generates a SQLcl DIFF artifact between two configured environments or schemas. See `USAGE/diff.md` for the source/target argument shape.
-
-```bash
-adtai diff -source DEV -target UAT
-```
-
 ## recompile — recompile invalid objects
 
 Dependency-aware retry built in. Supports PL/SQL compile flags (native/interpreted, optimization level, PL/Scope, warnings) and old-ADT-style overview with PL/Scope gap counts.
@@ -177,31 +148,6 @@ Force-recompile all with native code + optimization, scoped by type/name:
 ```bash
 adtai recompile -env DEV -force -native -level 3 -type PACKAGE% -name XX%
 ```
-
-## patch — build and deploy patches from commits
-
-Reads commits, resolves dependencies, orders objects, and generates deployment scripts. Object ordering follows `patch_map` in `config.yaml`.
-
-Preview matching commits:
-
-```bash
-adtai patch -target UAT -patch TASK_ID
-```
-
-Create, then create-and-deploy:
-
-```bash
-adtai patch -target UAT -patch TASK_ID -create
-adtai patch -target UAT -patch TASK_ID -create -deploy
-```
-
-Cherry-pick commits (ranges like `1-20` supported) and ignore some:
-
-```bash
-adtai patch -target UAT -patch TASK_ID -commit 1-20 -ignore 5
-```
-
-Full flag set in `USAGE/patch.md`. ADT.ai no longer accepts old placeholder source flags; use the default commit-resolved files, hash mode (`-hash` / `-locked`), or the explicit create/deploy/install/refresh/archive actions.
 
 ## search_repo — search Git history
 
@@ -278,8 +224,7 @@ adtai doctor -init
    - `adtai export_apex -app 100 -split -readable -recent 1`
    - `adtai export_data -name TABLE_NAME` (if data changed)
 3. Stage and commit with the task-id prefix.
-4. Build the patch: `adtai patch -target UAT -patch TASK-123 -create`.
-5. Commit the patch folder and open a pull request.
+4. Open a pull request.
 
 ## Examples
 
@@ -293,16 +238,4 @@ Explore a database safely without writing anything:
 
 ```bash
 adtai discovery -env DEV -sql "SELECT table_name FROM user_tables ORDER BY table_name" -nolog
-```
-
-Find everything that depends on a table before changing it:
-
-```bash
-adtai dependencies -impact "TABLE.CORE_LOGS"
-```
-
-Create and deploy a UAT patch for a task:
-
-```bash
-adtai patch -target UAT -patch TASK-123 -create -deploy
 ```
