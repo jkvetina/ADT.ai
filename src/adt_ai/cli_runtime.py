@@ -1,18 +1,49 @@
 from __future__ import annotations
 
+import argparse
+import sys
+import time
+from collections.abc import Callable, Sequence
+from typing import TextIO
+
 from adt_ai import __version__
+from adt_ai.cli_commands_exports import _run_export_apex, _run_export_data, _run_export_db
+from adt_ai.cli_commands_history import _run_rebuild, _run_search_repo
+from adt_ai.cli_commands_recompile import _run_discovery, _run_doctor, _run_recompile
+from adt_ai.cli_constants import (
+    PUBLIC_COMMANDS,
+    PUBLIC_MODULES,
+    AdtArgumentError,
+    ConfigError,
+    ConnectionConfigError,
+    GatewayFactory,
+    _StderrTracker,
+    _StdoutTracker,
+    print_adt_header,
+)
+from adt_ai.cli_context import (
+    _is_user_database_error,
+    _print_completion_timer,
+    _print_config_error,
+    _print_database_error,
+    _print_unexpected_error,
+)
 from adt_ai.cli_help import format_command_help
-from adt_ai.cli_parser import *
-from adt_ai.cli_context import *
-from adt_ai.cli_commands_history import *
-from adt_ai.cli_commands_recompile import *
-from adt_ai.cli_commands_exports import *
+from adt_ai.cli_parser import (
+    _command_parser,
+    _command_title,
+    _has_help_flag,
+    _removed_compatibility_args,
+    build_parser,
+)
+
 
 def _run_static_screen(
     render: Callable[[], None],
     *,
     exit_code: int = 0,
     timer_stdout: TextIO | None = None,
+    completion_args: argparse.Namespace | None = None,
 ) -> int:
     original_stdout = sys.stdout
     original_stderr = sys.stderr
@@ -32,8 +63,17 @@ def _run_static_screen(
     try:
         render()
     finally:
-        footer_stdout = tracked_stderr if exit_code != 0 and tracked_stderr.had_output else (timer_stdout or tracked_stdout)
-        _print_completion_timer(started_at, stdout=footer_stdout)
+        footer_stdout = (
+            tracked_stderr
+            if exit_code != 0 and tracked_stderr.had_output
+            else (timer_stdout or tracked_stdout)
+        )
+        _print_completion_timer(
+            started_at,
+            stdout=footer_stdout,
+            completion_args=completion_args,
+            exit_code=exit_code,
+        )
         tracked_stdout.finalize()
         if tracked_stderr is not tracked_stdout:
             tracked_stderr.finalize()
@@ -48,13 +88,21 @@ def _run_command_help(command: str, parser: argparse.ArgumentParser) -> int:
     return 0
 
 
-def _run_command_argument_error(command: str, message: str) -> int:
+def _run_command_argument_error(
+    command: str,
+    message: str,
+    raw_args: Sequence[str] | None = None,
+) -> int:
     def render() -> None:
         print_adt_header(f"APEX DEPLOYMENT TOOL: {_command_title(command)}", file=sys.stderr)
         print(f"{command}: error: {message}", file=sys.stderr)
         print(file=sys.stderr)
 
-    return _run_static_screen(render, exit_code=2)
+    return _run_static_screen(
+        render,
+        exit_code=2,
+        completion_args=_completion_args_from_raw(raw_args or []),
+    )
 
 
 def _run_top_level_argument_error(message: str) -> int:
@@ -67,34 +115,55 @@ def _run_top_level_argument_error(message: str) -> int:
     return _run_static_screen(render, exit_code=2)
 
 
+def _run_top_level_error(error: Exception) -> int:
+    # Catch-all for failures during parser construction / setup, before any
+    # command banner has printed. Always show the banner and a friendly
+    # message; the raw traceback only appears under -debug (handled by caller).
+    def render() -> None:
+        print_adt_header("APEX DEPLOYMENT TOOL: ERROR", file=sys.stderr)
+        print(f"Error: {type(error).__name__}: {error}", file=sys.stderr)
+        print(file=sys.stderr)
+        print("This is unexpected. Use -debug to show the Python traceback.", file=sys.stderr)
+
+    return _run_static_screen(render, exit_code=1)
+
+
 def main(
     argv: Sequence[str] | None = None,
     gateway_factory: GatewayFactory | None = None,
 ) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
+    debug_requested = "-debug" in raw_argv or "--debug" in raw_argv
     if not raw_argv or raw_argv in (["-h"], ["--help"]):
         return _run_module_overview()
     if raw_argv and _is_unknown_command(raw_argv[0]):
         return _run_invalid_command(raw_argv[0])
 
-    parser = build_parser()
-    if raw_argv[0] in PUBLIC_COMMANDS:
-        removed_args = _removed_compatibility_args(raw_argv[0], raw_argv[1:])
-        if removed_args:
-            return _run_command_argument_error(
-                raw_argv[0],
-                f"unrecognized arguments: {' '.join(removed_args)}",
-            )
-    if raw_argv[0] in PUBLIC_COMMANDS and _has_help_flag(raw_argv[1:]):
-        return _run_command_help(raw_argv[0], parser)
     try:
+        parser = build_parser()
+        if raw_argv[0] in PUBLIC_COMMANDS:
+            removed_args = _removed_compatibility_args(raw_argv[0], raw_argv[1:])
+            if removed_args:
+                return _run_command_argument_error(
+                    raw_argv[0],
+                    f"unrecognized arguments: {' '.join(removed_args)}",
+                    raw_argv[1:],
+                )
+        if raw_argv[0] in PUBLIC_COMMANDS and _has_help_flag(raw_argv[1:]):
+            return _run_command_help(raw_argv[0], parser)
         args = parser.parse_args(raw_argv)
     except AdtArgumentError as error:
         if raw_argv[0] in PUBLIC_COMMANDS:
-            return _run_command_argument_error(raw_argv[0], str(error))
+            return _run_command_argument_error(raw_argv[0], str(error), raw_argv[1:])
         return _run_top_level_argument_error(str(error))
     except SystemExit as error:
         return int(error.code or 0)
+    except Exception as error:
+        # Parser construction or other setup failed before any command banner.
+        # Show the shared ERROR screen instead of leaking a raw traceback.
+        if debug_requested:
+            raise
+        return _run_top_level_error(error)
 
     if args.version:
         print(f"ADT.ai {__version__}")
@@ -144,17 +213,24 @@ def main(
         _print_config_error(error)
     except Exception as error:
         exit_code = 1
-        if getattr(args, "debug", False) or not _is_user_database_error(error):
+        if getattr(args, "debug", False):
             raise
-        _print_database_error(error)
+        if _is_user_database_error(error):
+            _print_database_error(error)
+        else:
+            _print_unexpected_error(error)
     finally:
         footer_stdout = (
             tracked_stderr
             if exit_code != 0 and tracked_stderr.had_output
             else timer_stdout
         )
-        _print_completion_timer(started_at, stdout=footer_stdout)
-        _notify_completion(args, exit_code)
+        _print_completion_timer(
+            started_at,
+            stdout=footer_stdout,
+            completion_args=args,
+            exit_code=exit_code,
+        )
         tracked_stdout.finalize()
         if tracked_stderr is not tracked_stdout:
             tracked_stderr.finalize()
@@ -191,6 +267,7 @@ def _run_module_overview() -> int:
     print("Modern ADT command line tool.")
     print()
     _print_module_overview()
+    print()
     return 0
 
 
@@ -236,6 +313,48 @@ def _run_invalid_command(command: str) -> int:
 
 def _command_timer_stdout(args: argparse.Namespace, stdout: TextIO) -> TextIO:
     return stdout
+
+
+def _completion_args_from_raw(raw_args: Sequence[str]) -> argparse.Namespace | None:
+    if "-beep" not in raw_args and "--beep" not in raw_args:
+        return None
+    return argparse.Namespace(
+        beep       = True,
+        root       = _raw_option_value(raw_args, ("-root", "--root"), "."),
+        config_dir = _raw_option_values(raw_args, ("-config-dir", "--config-dir")),
+    )
+
+
+def _raw_option_value(
+    raw_args: Sequence[str],
+    names: tuple[str, ...],
+    default: str,
+) -> str:
+    values = _raw_option_values(raw_args, names)
+    return values[-1] if values else default
+
+
+def _raw_option_values(raw_args: Sequence[str], names: tuple[str, ...]) -> list[str]:
+    values: list[str] = []
+    index = 0
+    while index < len(raw_args):
+        value = raw_args[index]
+        matched = False
+        for name in names:
+            if value == name:
+                if index + 1 < len(raw_args):
+                    values.append(raw_args[index + 1])
+                index += 2
+                matched = True
+                break
+            if value.startswith(f"{name}="):
+                values.append(value.split("=", 1)[1])
+                index += 1
+                matched = True
+                break
+        if not matched:
+            index += 1
+    return values
 
 
 def console_main() -> None:

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import re
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
-from adt_ai.git_files import ChangedFile, changed_files
+from adt_ai.git_files import ChangedFile, changed_files, run_git
 
 FIELD_SEPARATOR = "\x1f"
 PATCH_FOLDER_RE = re.compile(r"^(?P<day>\d{6})-(?P<sequence>\d+)-(?P<code>.+)$")
@@ -110,7 +109,7 @@ def parse_patch_folder(path: Path) -> PatchFolder:
 
 class GitCommitCache:
     def build(self, request: PatchRequest) -> list[CommitRecord]:
-        commit_lines = self._git(
+        commit_lines = run_git(
             request.root,
             [
                 "log",
@@ -196,19 +195,10 @@ class GitCommitCache:
     def _head_commit_count(self, root: Path) -> int:
         # Total commits reachable from HEAD, independent of the window limit —
         # the absolute number of the newest commit.
-        return int(self._git(root, ["rev-list", "--count", "HEAD"]).strip() or "0")
+        return int(run_git(root, ["rev-list", "--count", "HEAD"]).strip() or "0")
 
     def _changed_files(self, root: Path, commit_hash: str) -> list[ChangedFile]:
         return changed_files(root, commit_hash)
-
-    def _git(self, root: Path, args: list[str]) -> str:
-        return subprocess.run(
-            ["git", *args],
-            cwd=root,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
 
 
 def _detected_patch(changed_files: list[ChangedFile]) -> str | None:

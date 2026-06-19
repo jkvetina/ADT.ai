@@ -79,10 +79,18 @@ class ApexFileResolver:
         return self.apex_root() / _clean_relative(self.path_rest) / _clean_relative(name)
 
     def application_file(self, application: ApexApplication, relative_path: str) -> Path:
-        return self.app_root(application) / _clean_relative(self.path_files) / _clean_relative(relative_path)
+        return (
+            self.app_root(application)
+            / _clean_relative(self.path_files)
+            / _clean_relative(relative_path)
+        )
 
     def workspace_file(self, relative_path: str) -> Path:
-        return self.workspace_root() / _clean_relative(self.path_files) / _clean_relative(relative_path)
+        return (
+            self.workspace_root()
+            / _clean_relative(self.path_files)
+            / _clean_relative(relative_path)
+        )
 
 
 def _render_app_folder(template: str, application: ApexApplication) -> Path:

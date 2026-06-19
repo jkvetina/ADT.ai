@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from adt_ai.sql_identifiers import safe_identifier, safe_identifiers
+
 TABLES_QUERY = """
 WITH objects_prefix AS (
     SELECT /*+ MATERIALIZE CARDINALITY(t 1) */
@@ -56,7 +58,6 @@ LEFT JOIN (
     ON u.constraint_name    = c.constraint_name
 WHERE t.table_name          = UPPER(:table_name)
     AND t.column_id         > 0
-    AND t.data_type         NOT IN ('BLOB', 'CLOB', 'XMLTYPE', 'JSON')
 GROUP BY
     t.column_name,
     t.data_type,
@@ -72,12 +73,15 @@ def data_query(
     where_filter: str,
     order_by: str,
 ) -> str:
+    safe_identifier(table_name, role="table name")
+    safe_identifiers(columns, role="column name")
     return f"SELECT {', '.join(columns)}\nFROM {table_name}{where_filter}\nORDER BY {order_by}"
 
 
 def update_assignments(columns: list[str], skip_update: str) -> str:
     if not columns:
         return ""
+    safe_identifiers(columns, role="column name")
     width = max(len(f"t.{column}") for column in columns)
     return f",\n{skip_update}        ".join(
         f"{f't.{column}':<{width}} = s.{column}"
@@ -96,6 +100,8 @@ def merge_statement(
     skip_update: str,
     where_filter: str,
 ) -> str:
+    safe_identifier(table, role="table name")
+    safe_identifiers(columns, role="column name")
     all_columns = "t." + ",\n        t.".join(columns)
     all_values = "s." + ",\n        s.".join(columns)
     csv_content = " UNION ALL\n    ".join(csv_selects)
@@ -129,6 +135,7 @@ COMMIT;
 
 
 def row_select(row: dict[str, Any], columns: list[str]) -> str:
+    safe_identifiers(columns, role="column name")
     values = [
         f"{sql_value(row[column])} AS {column}"
         for column in columns

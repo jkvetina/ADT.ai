@@ -1,7 +1,40 @@
 from __future__ import annotations
 
+import argparse
+import re
+import sys
+from collections.abc import Sequence
+from datetime import datetime
+from pathlib import Path
+
 from adt_ai import __version__
-from adt_ai.cli_context import *
+from adt_ai.cli_constants import (
+    RESULT_BLOCK_END,
+    RESULT_BLOCK_START,
+    ActionReporter,
+    DiscoveryRequest,
+    DiscoveryRunner,
+    DoctorRequest,
+    DoctorRunner,
+    GatewayFactory,
+    ObjectOverview,
+    OracleGateway,
+    QueryGateway,
+    RecompileRequest,
+    RecompileRunner,
+    format_action_line,
+    print_adt_header,
+    print_adt_table,
+)
+from adt_ai.cli_context import (
+    DebugQueryGateway,
+    _is_database_connection_error,
+    _load_startup_context,
+    _print_connection_block,
+    _print_startup_debug,
+    _repo_root,
+)
+
 
 def _run_recompile(
     args: argparse.Namespace,
@@ -137,7 +170,13 @@ def _print_recompile_overview_table(overviews: Sequence[ObjectOverview]) -> None
         )
 
 
-_FILE_RESULT_RE = re.compile(r"\n/\*\n.*?\*/", re.DOTALL)
+# Built from the shared result-block sentinel so the write-back and this scrub
+# can never drift apart: only blocks carrying the ADT-RESULT marker are removed
+# on re-run, leaving any hand-written ``/* … */`` comments untouched.
+_FILE_RESULT_RE = re.compile(
+    r"\n" + re.escape(RESULT_BLOCK_START) + r"\n.*?" + re.escape(RESULT_BLOCK_END),
+    re.DOTALL,
+)
 
 
 def _write_file_results(file_path: Path, results: list[str]) -> None:
@@ -294,6 +333,7 @@ def _run_doctor(args: argparse.Namespace) -> int:
         package_root=_repo_root(),
         line_callback=print_doctor_line,
         action_reporter=_ConsoleActionReporter(),
+        version_cache_dir=Path.home() / ".cache" / "adt-ai" / "doctor",
     ).run(
         DoctorRequest(
             update= args.update,

@@ -6,6 +6,7 @@ from typing import Any
 
 from adt_ai.db import QueryGateway
 from adt_ai.export_apex import queries
+from adt_ai.row_values import row_value
 
 
 @dataclass(frozen=True)
@@ -68,7 +69,7 @@ class ApexDiscovery:
         )
         if not rows:
             return None
-        owner = _row_value(rows[0], "OWNER")
+        owner = row_value(rows[0], "OWNER")
         return str(owner) if owner else None
 
     def workspaces(
@@ -112,37 +113,33 @@ class ApexDiscovery:
 
 def _workspace_from_row(row: dict[str, Any]) -> ApexWorkspace:
     return ApexWorkspace(
-        workspace    = str(_row_value(row, "WORKSPACE") or ""),
-        workspace_id = _int_or_none(_row_value(row, "WORKSPACE_ID")),
-        owners       = _int_or_none(_row_value(row, "OWNERS")),
-        applications = _int_or_none(_row_value(row, "APPLICATIONS")),
-        developers   = _int_or_none(_row_value(row, "DEVELOPERS")),
+        workspace    = str(row_value(row, "WORKSPACE") or ""),
+        workspace_id = _int_or_none(row_value(row, "WORKSPACE_ID")),
+        owners       = _int_or_none(row_value(row, "OWNERS")),
+        applications = _int_or_none(row_value(row, "APPLICATIONS")),
+        developers   = _int_or_none(row_value(row, "DEVELOPERS")),
     )
 
 
 def _owner_count_from_row(row: dict[str, Any]) -> ApexOwnerCount:
     return ApexOwnerCount(
-        owner        = str(_row_value(row, "OWNER") or ""),
-        applications = int(_row_value(row, "APP_COUNT") or 0),
+        owner        = str(row_value(row, "OWNER") or ""),
+        applications = int(row_value(row, "APP_COUNT") or 0),
     )
 
 
 def _application_from_row(row: dict[str, Any]) -> ApexApplication:
     return ApexApplication(
-        owner        = str(_row_value(row, "OWNER") or ""),
-        workspace    = str(_row_value(row, "WORKSPACE") or ""),
-        workspace_id = _int_or_none(_row_value(row, "WORKSPACE_ID")),
-        app_group    = str(_row_value(row, "APP_GROUP") or ""),
-        app_id       = int(_row_value(row, "APP_ID") or 0),
-        app_alias    = str(_row_value(row, "APP_ALIAS") or ""),
-        app_name     = str(_row_value(row, "APP_NAME") or ""),
-        pages        = _int_or_none(_row_value(row, "PAGES")),
-        updated_at   = str(_row_value(row, "UPDATED_AT") or ""),
+        owner        = str(row_value(row, "OWNER") or ""),
+        workspace    = str(row_value(row, "WORKSPACE") or ""),
+        workspace_id = _int_or_none(row_value(row, "WORKSPACE_ID")),
+        app_group    = str(row_value(row, "APP_GROUP") or ""),
+        app_id       = int(row_value(row, "APP_ID") or 0),
+        app_alias    = str(row_value(row, "APP_ALIAS") or ""),
+        app_name     = str(row_value(row, "APP_NAME") or ""),
+        pages        = _int_or_none(row_value(row, "PAGES")),
+        updated_at   = str(row_value(row, "UPDATED_AT") or ""),
     )
-
-
-def _row_value(row: dict[str, Any], key: str) -> Any:
-    return row.get(key) if key in row else row.get(key.lower())
 
 
 def _int_or_none(value: Any) -> int | None:

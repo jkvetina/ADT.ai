@@ -1,6 +1,45 @@
 from __future__ import annotations
 
-from adt_ai.cli_context import *
+import argparse
+import sys
+from collections.abc import Mapping
+
+from adt_ai.cli_constants import (
+    APEX_EXPORT_ACTIONS,
+    ApexApplication,
+    ApexDiscovery,
+    ApexExportRequest,
+    ApexExportRunner,
+    ApexOwnerCount,
+    ApexWorkspace,
+    ConnectionConfigError,
+    ConnectionResult,
+    ConsoleExportDbReporter,
+    DataTable,
+    ExportDataRequest,
+    ExportDataRunner,
+    ExportDbRequest,
+    ExportDbRunner,
+    GatewayFactory,
+    OracleGateway,
+    QueryGateway,
+    print_adt_header,
+    print_adt_table,
+)
+from adt_ai.cli_context import (
+    DebugQueryGateway,
+    _apex_actions,
+    _apex_scope,
+    _app_in_selection,
+    _flatten_arg_groups,
+    _has_job_recent_conflict,
+    _load_startup_context,
+    _parse_apex_app_selection,
+    _print_connection_block,
+    _print_startup_debug,
+    _with_schema_folders,
+)
+
 
 def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | None = None) -> int:
     print_adt_header("APEX DEPLOYMENT TOOL: EXPORT_DB")
@@ -70,7 +109,9 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
     return 0
 
 
-def _run_export_data(args: argparse.Namespace, gateway_factory: GatewayFactory | None = None) -> int:
+def _run_export_data(
+    args: argparse.Namespace, gateway_factory: GatewayFactory | None = None
+) -> int:
     print_adt_header("APEX DEPLOYMENT TOOL: EXPORT_DATA")
     startup = _load_startup_context(args)
     root = startup.root
@@ -119,19 +160,30 @@ def _run_export_data(args: argparse.Namespace, gateway_factory: GatewayFactory |
             config        = config,
             schema_export = schema_export,
             names         = _flatten_arg_groups(args.name),
-            reporter      = ConsoleExportDataReporter(),
+            reporter      = ConsoleExportDataReporter(silent=args.silent),
         )
     )
     return 0
 
 
-def _run_export_apex(args: argparse.Namespace, gateway_factory: GatewayFactory | None = None) -> int:
+def _run_export_apex(
+    args: argparse.Namespace, gateway_factory: GatewayFactory | None = None
+) -> int:
     print_adt_header("APEX DEPLOYMENT TOOL: EXPORT_APEX")
     startup = _load_startup_context(args)
     root = startup.root
     config = startup.config
     connections = startup.connections
     environment = args.env or connections.default_environment
+    try:
+        app_selection = _parse_apex_app_selection(_flatten_arg_groups(args.app))
+    except ValueError as exc:
+        print(f"export_apex: {exc}", file=sys.stderr)
+        return 2
+    has_app_ranges = bool(app_selection and app_selection.has_ranges)
+    # With ranges, the SQL scan stays unfiltered by id (ranges can't be
+    # expressed in the pipe-list bind); we filter the discovered apps in Python.
+    sql_app_ids = None if has_app_ranges else _flatten_arg_groups(args.app)
     if args.schema:
         schemas = connections.expand_schemas(args.schema, environment=environment)
         connection_schema = schemas[0]
@@ -150,7 +202,7 @@ def _run_export_apex(args: argparse.Namespace, gateway_factory: GatewayFactory |
             schema_connections[schema].apex,
             workspace = args.ws,
             group     = args.group,
-            app_ids   = _flatten_arg_groups(args.app),
+            app_ids   = sql_app_ids,
         )
         for schema in schemas
     }
@@ -208,6 +260,12 @@ def _run_export_apex(args: argparse.Namespace, gateway_factory: GatewayFactory |
             recent_days = recent_days if args.reveal else None,
             max_app_id = args.max_app_id,
         )
+        if has_app_ranges:
+            applications = [
+                application
+                for application in applications
+                if _app_in_selection(application.app_id, app_selection)
+            ]
         applications_by_schema[schema] = applications
         if not args.reveal:
             reporter.applications(schema, applications)
@@ -221,7 +279,9 @@ def _run_export_apex(args: argparse.Namespace, gateway_factory: GatewayFactory |
             for app in apps
         }
         schema_filter = None if is_filtered else schemas
-        all_workspaces = discovery.workspaces(workspace=workspace, schemas=schema_filter, max_app_id=args.max_app_id)
+        all_workspaces = discovery.workspaces(
+            workspace=workspace, schemas=schema_filter, max_app_id=args.max_app_id
+        )
         reporter.workspaces(
             [w for w in all_workspaces if w.workspace in active_workspaces]
             if (is_filtered and active_workspaces) else all_workspaces
@@ -235,7 +295,7 @@ def _run_export_apex(args: argparse.Namespace, gateway_factory: GatewayFactory |
         )
         for schema in schemas:
             reporter.applications(schema, applications_by_schema[schema])
-    if not args.reveal:
+    if not args.reveal and not has_app_ranges:
         requested_app_ids = _flatten_arg_groups(args.app)
         if requested_app_ids:
             found_ids = {
@@ -440,13 +500,20 @@ def _truncate_console_value(value: object, width: int) -> str:
 class ConsoleExportDataReporter:
     line_width = 78
 
+    def __init__(self, silent: bool = False) -> None:
+        self._silent = silent
+
     def start_export(self, total: int) -> None:
         print_adt_header("EXPORT TABLE DATA:", f"({total})")
 
     def export_table(self, table: DataTable) -> None:
+        if self._silent:
+            return
         print(f"  - {table.name.upper()}", end="", flush=True)
 
     def finish_table(self, table: DataTable, row_count: int) -> None:
+        if self._silent:
+            return
         left = f"  - {table.name.upper()}"
         right = str(row_count)
         dot_count = max(1, self.line_width - len(left) - len(right) - 2)

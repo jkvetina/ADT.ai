@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import re
 import subprocess
 import tempfile
 from collections.abc import Mapping
@@ -63,8 +65,34 @@ def _sqlcl_temp_dir(project_root: Path | None) -> Path | None:
     return temp_dir
 
 
+# Pulls the cleartext password out of a SQLcl ``connect`` line. The connect
+# lines we build all embed it the same way -- ``user/"password"@dsn`` -- so we
+# can recover it from the script we are about to run and scrub it from anything
+# SQLcl echoes back into stdout/stderr.
+_CONNECT_PWD_RE = re.compile(r'/"(?P<pwd>[^"\n]+)"@')
+
+
+def _connect_secrets(script: str) -> set[str]:
+    return {match.group("pwd") for match in _CONNECT_PWD_RE.finditer(script)}
+
+
+def _scrub_secrets(text: str, secrets: set[str]) -> str:
+    """Replace any captured connect-line password with ``***``.
+
+    SQLcl may echo the ``connect`` command into its captured output, which we
+    both return to callers and embed into ``RuntimeError`` messages and on-disk
+    deployment logs. Eliding the password keeps cleartext credentials out of all
+    three sinks.
+    """
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "***")
+    return text
+
+
 def run_sqlcl_script(script: str, root: Path, project_root: Path | None = None) -> str:
     root.mkdir(parents=True, exist_ok=True)
+    secrets = _connect_secrets(script)
     with tempfile.NamedTemporaryFile(
         "w",
         encoding = "utf-8",
@@ -75,9 +103,15 @@ def run_sqlcl_script(script: str, root: Path, project_root: Path | None = None) 
     ) as handle:
         handle.write(script)
         script_path = Path(handle.name)
+    # The script embeds a cleartext connect credential; pin owner-only perms even
+    # if the platform's tempfile defaults ever differ from mkstemp's 0600.
+    os.chmod(script_path, 0o600)
     try:
+        # ``-S`` (silent) suppresses the banner and command echo so SQLcl does not
+        # print the connect line in the first place; the scrub below is the
+        # belt-and-braces backstop for the cases where it still does.
         completed = subprocess.run(
-            ["sql", "/nolog", f"@{script_path}"],
+            ["sql", "-S", "/nolog", f"@{script_path}"],
             cwd            = root,
             check          = False,
             capture_output = True,
@@ -85,7 +119,7 @@ def run_sqlcl_script(script: str, root: Path, project_root: Path | None = None) 
         )
     finally:
         script_path.unlink(missing_ok=True)
-    output = (completed.stdout or "") + (completed.stderr or "")
+    output = _scrub_secrets((completed.stdout or "") + (completed.stderr or ""), secrets)
     if completed.returncode != 0:
         raise RuntimeError(
             output.strip() or f"SQLcl failed with exit code {completed.returncode}"

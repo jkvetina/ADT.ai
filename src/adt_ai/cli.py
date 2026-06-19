@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from adt_ai.cli_startup import print_startup_failure as _print_startup_failure
 
-
 try:
     from adt_ai import cli_commands_exports as _commands_exports
     from adt_ai import cli_commands_history as _commands_history

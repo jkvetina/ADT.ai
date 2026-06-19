@@ -4,10 +4,10 @@ import re
 
 from adt_ai.export_db.normalizers import (
     NormalizationContext,
+    _constraint_column_names,
     _matching_parenthesis_index,
     _normalize_sql_identifier,
     _replace_outside_sql_strings,
-    _split_top_level_commas,
 )
 from adt_ai.export_db.object_normalizers.table_folds import _FoldedConstraint
 
@@ -304,6 +304,3 @@ def _format_constraint_columns(
         ],
         f"{indent})",
     ]
-
-def _constraint_column_names(columns: str) -> list[str]:
-    return [_normalize_sql_identifier(column) for column in _split_top_level_commas(columns)]

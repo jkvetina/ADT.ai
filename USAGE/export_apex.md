@@ -21,6 +21,14 @@ Show owner/application counts for all owners instead of only configured schemas,
 adtai export_apex -reveal -owners -max_app_id 10000
 ```
 
+Export every application in an id range, or from a minimum id upward:
+
+```bash
+adtai export_apex -app 0-9999 -all
+adtai export_apex -app 0+ -all
+adtai export_apex -app 0-99 100-999 -all
+```
+
 Choose export sections explicitly:
 
 ```bash
@@ -39,7 +47,7 @@ ADT.ai exports only the sections named on the command line. Use `-all` to export
 | `-schema`, `--schema` | Yes | all configured schemas in `-reveal`; environment default APEX schema for exports | APEX owner schema. In `-reveal`, omitting it scans every schema configured for the environment. |
 | `-ws`, `--ws` | No | connection `apex.workspace` | APEX workspace scope. |
 | `-group`, `--group` | No | connection `apex.group` | APEX application group scope. |
-| `-app`, `--app` | Yes | connection `apex.app` | Application id or ids to reveal. |
+| `-app`, `--app` | Yes | connection `apex.app` | Application ids to reveal or export. Each value may be a plain id, a closed range `MIN-MAX`, or an open range `MIN+` (no upper bound); combine freely, e.g. `-app 0-99 100-999 5000 9000+`. When any range is given, ADT.ai scans without an id filter and selects matching apps in Python. |
 | `-max_app_id`, `--max_app_id`, `--max-app-id` | No | none | In reveal mode, list only applications with `application_id` below the value; also scopes workspace owner/application counts and per-owner application counts. |
 | `-recent`, `--recent` | No | off | On exports, print components changed in the last DAYS days before the selected formats; with `-reveal`, filter the application list to apps changed in that window without printing component details. |
 | `-by`, `--by` | No | none | Filter the recent component report by exact APEX developer username. |

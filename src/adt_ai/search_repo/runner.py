@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from adt_ai.git_files import run_git, run_git_bytes
 from adt_ai.history.cache import current_branch, git_user_email, load_history_cache
 from adt_ai.rebuild.runner import REVEAL_DEFAULT_LIMIT
 
@@ -169,7 +170,7 @@ class SearchRepoRunner:
         for record in records:
             for file_path in record.files:
                 try:
-                    payload = _git_bytes(root, ["show", f"{record.id}:{file_path}"])
+                    payload = run_git_bytes(root, ["show", f"{record.id}:{file_path}"])
                 except subprocess.CalledProcessError:
                     continue
                 target = root / file_path
@@ -179,7 +180,7 @@ class SearchRepoRunner:
                 target.write_bytes(payload)
                 restored.append(target)
                 if request.stage:
-                    _git(root, ["add", file_path])
+                    run_git(root, ["add", file_path])
         return restored
 
 
@@ -256,22 +257,3 @@ def _contains_any(value: str, terms: list[str]) -> bool:
 
 def _versioned_restore_path(path: Path, number: int) -> Path:
     return path.with_name(f"{path.stem}.{number}{path.suffix}")
-
-
-def _git(root: Path, args: list[str]) -> str:
-    return subprocess.run(
-        ["git", *args],
-        cwd=root,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-
-
-def _git_bytes(root: Path, args: list[str]) -> bytes:
-    return subprocess.run(
-        ["git", *args],
-        cwd=root,
-        check=True,
-        capture_output=True,
-    ).stdout

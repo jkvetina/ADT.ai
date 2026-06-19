@@ -89,7 +89,9 @@ class ObjectFileResolver:
         return path.with_name(f"{path.stem}.fix{path.suffix}")
 
     def missing_files(self, database_objects: list[DatabaseObject]) -> list[Path]:
-        expected = {self.path_for(database_object).resolve() for database_object in database_objects}
+        expected = {
+            self.path_for(database_object).resolve() for database_object in database_objects
+        }
         existing: set[Path] = set()
         schemas = sorted({database_object.schema for database_object in database_objects})
         for object_type, layout in self.object_types.items():
@@ -229,7 +231,9 @@ class ObjectFileWriter:
         self.resolver = resolver
         self.compare_existing = compare_existing
 
-    def plan(self, requests: list[ObjectWriteRequest], dry_run: bool = True) -> list[ObjectWritePlan]:
+    def plan(
+        self, requests: list[ObjectWriteRequest], dry_run: bool = True
+    ) -> list[ObjectWritePlan]:
         return [
             self._plan_one(request, dry_run=dry_run, compare_existing=True)
             for request in requests

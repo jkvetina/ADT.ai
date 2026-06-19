@@ -6,6 +6,8 @@ from typing import Any
 
 import yaml
 
+from adt_ai.dict_merge import deep_merge
+
 
 class ConfigError(Exception):
     """Base error for configuration loading failures."""
@@ -96,21 +98,10 @@ def _as_list(value: Any) -> list[str]:
 
 def _merge_results(base: ConfigResult, overlay: ConfigResult) -> ConfigResult:
     return ConfigResult(
-        data    = _deep_merge(base.data, overlay.data),
+        data    = deep_merge(base.data, overlay.data),
         files   = [*base.files, *overlay.files],
         sources = {**base.sources, **overlay.sources},
     )
-
-
-def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
-    merged = dict(base)
-    for key, value in overlay.items():
-        existing = merged.get(key)
-        if isinstance(existing, dict) and isinstance(value, dict):
-            merged[key] = _deep_merge(existing, value)
-        else:
-            merged[key] = value
-    return merged
 
 
 def _leaf_sources(

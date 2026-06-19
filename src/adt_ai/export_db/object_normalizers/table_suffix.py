@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import re
 
-from adt_ai.export_db.normalizers import NormalizationContext, _normalize_sql_identifier
-from adt_ai.export_db.object_normalizers.table_items import _constraint_column_names
+from adt_ai.export_db.normalizers import (
+    NormalizationContext,
+    _constraint_column_names,
+    _normalize_sql_identifier,
+)
 
 
 def _format_table_suffix(suffix: str, context: NormalizationContext) -> list[str]:

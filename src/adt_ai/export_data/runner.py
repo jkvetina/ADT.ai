@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,7 +9,15 @@ from typing import Any, Protocol
 
 from adt_ai.db import QueryGateway
 from adt_ai.export_data import queries
-from adt_ai.export_data.inventory import DataDiscovery, DataTable
+from adt_ai.export_data.inventory import DataColumn, DataDiscovery, DataTable
+from adt_ai.row_values import row_value
+
+_SIDE_CAR_DATA_TYPES = {
+    "BLOB"   : "bin",
+    "CLOB"   : "txt",
+    "JSON"   : "json",
+    "XMLTYPE": "xml",
+}
 
 
 @dataclass(frozen=True)
@@ -51,13 +60,14 @@ class ExportDataRunner:
             schema_export = (request.schema_export or {}).get(schema, {})
             # default the name list per schema – data folders may be schema-scoped
             names = request.names or _existing_data_names(request.root, request.config, schema)
-            for table in discovery.tables(
-                schema = schema,
+            for table_name in discovery.table_names(
                 names  = names,
                 prefix = schema_export.get("prefix"),
                 ignore = _split_patterns(schema_export.get("ignore")),
             ):
-                export_items.append((discovery, table))
+                export_items.append(
+                    (discovery, DataTable(schema=schema, name=table_name, columns=[]))
+                )
         if request.reporter:
             request.reporter.start_export(len(export_items))
         for discovery, table in export_items:
@@ -77,16 +87,38 @@ class ExportDataRunner:
         discovery: DataDiscovery,
         table: DataTable,
     ) -> tuple[Path, int]:
+        table = (
+            table
+            if table.columns
+            else DataTable(
+                schema  = table.schema,
+                name    = table.name,
+                columns = discovery.columns(table.name),
+            )
+        )
         columns = [
-            column.name
+            column
             for column in table.columns
             if column.name not in _ignored_columns(request.config)
         ]
-        order_by = ", ".join(_key_columns(table, columns)) or "ROWID"
-        where_filter = _where_filter(request.config, table.name, columns)
-        rows = discovery.rows(table.name, columns, where_filter, order_by)
+        csv_columns = [
+            column.name
+            for column in columns
+            if not _is_sidecar_column(column)
+        ]
+        sidecar_columns = [
+            column
+            for column in columns
+            if _is_sidecar_column(column)
+        ]
+        query_columns = [column.name for column in columns]
+        order_by = ", ".join(_key_columns(table, query_columns)) or "ROWID"
+        where_filter = _where_filter(request.config, table.name, csv_columns)
+        rows = discovery.rows(table.name, query_columns, where_filter, order_by)
         path = _data_path(request.root, request.config, table.name, table.schema)
         path.parent.mkdir(parents=True, exist_ok=True)
+        if sidecar_columns:
+            _clear_sidecar_folder(path.with_suffix(""))
         row_count = 0
         with path.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.writer(
@@ -95,11 +127,19 @@ class ExportDataRunner:
                 lineterminator = "\n",
                 quoting        = csv.QUOTE_NONNUMERIC,
             )
-            writer.writerow(columns)
-            for row in rows:
-                writer.writerow([_row_value(row, column) for column in columns])
+            writer.writerow(csv_columns)
+            sidecar_key_columns = _key_columns(table, query_columns)
+            for row_number, row in enumerate(rows, start=1):
+                writer.writerow([row_value(row, column) for column in csv_columns])
+                _write_sidecar_values(
+                    path            = path,
+                    row             = row,
+                    row_number      = row_number,
+                    key_columns     = sidecar_key_columns,
+                    sidecar_columns = sidecar_columns,
+                )
                 row_count += 1
-        primary_columns = _key_columns(table, columns)
+        primary_columns = _key_columns(table, csv_columns)
         if primary_columns:
             merge_sql = _merge_sql_from_csv(
                 path            = path,
@@ -111,6 +151,103 @@ class ExportDataRunner:
             if merge_sql:
                 path.with_suffix(".sql").write_text(merge_sql, encoding="utf-8")
         return path, row_count
+
+
+def _is_sidecar_column(column: DataColumn) -> bool:
+    return _sidecar_extension(column) is not None
+
+
+def _sidecar_extension(column: DataColumn) -> str | None:
+    return _SIDE_CAR_DATA_TYPES.get(column.data_type.upper())
+
+
+def _clear_sidecar_folder(folder: Path) -> None:
+    if not folder.exists():
+        return
+    sidecar_suffixes = {
+        f".{extension}"
+        for extension in _SIDE_CAR_DATA_TYPES.values()
+    }
+    for file_path in folder.iterdir():
+        if file_path.suffix not in sidecar_suffixes:
+            continue
+        if file_path.is_file():
+            file_path.unlink()
+
+
+def _write_sidecar_values(
+    path: Path,
+    row: dict[str, Any],
+    row_number: int,
+    key_columns: list[str],
+    sidecar_columns: list[DataColumn],
+) -> None:
+    folder_created = False
+    row_key = _sidecar_row_key(row, key_columns, row_number)
+    for column in sidecar_columns:
+        value = row_value(row, column.name)
+        payload = _sidecar_payload(value, column)
+        if payload is None:
+            continue
+        folder = path.with_suffix("")
+        if not folder_created:
+            folder.mkdir(parents=True, exist_ok=True)
+            folder_created = True
+        extension = _sidecar_extension(column)
+        if extension is None:
+            continue
+        file_path = folder / f"{row_key}.{column.name.lower()}.{extension}"
+        if isinstance(payload, bytes):
+            file_path.write_bytes(payload)
+        else:
+            file_path.write_text(payload, encoding="utf-8")
+
+
+def _sidecar_payload(value: Any, column: DataColumn) -> str | bytes | None:
+    value = _read_lob_value(value)
+    if value is None or value == "":
+        return None
+    if isinstance(value, bytes | bytearray | memoryview) and len(value) == 0:
+        return None
+
+    data_type = column.data_type.upper()
+    if data_type == "BLOB":
+        if isinstance(value, bytes | bytearray | memoryview):
+            return bytes(value)
+        return str(value).encode("utf-8")
+    if data_type == "JSON" and not isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+    if isinstance(value, bytes | bytearray | memoryview):
+        return bytes(value).decode("utf-8")
+    return str(value)
+
+
+def _read_lob_value(value: Any) -> Any:
+    read = getattr(value, "read", None)
+    if callable(read):
+        return read()
+    return value
+
+
+def _sidecar_row_key(row: dict[str, Any], key_columns: list[str], row_number: int) -> str:
+    if not key_columns:
+        return f"row_{row_number:06d}"
+    key = "__".join(
+        _sidecar_name_part(row_value(row, column))
+        for column in key_columns
+    )
+    return key or f"row_{row_number:06d}"
+
+
+def _sidecar_name_part(value: Any) -> str:
+    text = "" if value is None else str(value).strip()
+    if not text:
+        return "null"
+    safe = "".join(
+        char if char.isalnum() or char in {"-", "_", "."} else "_"
+        for char in text
+    ).strip("._")
+    return safe or "value"
 
 
 def _data_path(root: Path, config: dict[str, Any], table_name: str, schema: str = "") -> Path:
@@ -143,11 +280,17 @@ def _existing_data_names(root: Path, config: dict[str, Any], schema: str = "") -
     extension = _data_extension(config)
     if not data_folder.exists():
         return []
-    return [
-        file_path.name[: -len(extension)].upper()
-        for file_path in sorted(data_folder.glob(f"*{extension}"))
-        if file_path.is_file()
-    ]
+    names: list[str] = []
+    for file_path in sorted(data_folder.glob(f"*{extension}")):
+        if not file_path.is_file():
+            continue
+        name = file_path.name
+        # Guard the slice: name[:-len("")] would be name[:0] == "", collapsing
+        # every recovered name. Only strip a non-empty extension that is present.
+        if extension and name.endswith(extension):
+            name = name[: -len(extension)]
+        names.append(name.upper())
+    return names
 
 
 def _ignored_columns(config: dict[str, Any]) -> set[str]:
@@ -207,10 +350,6 @@ def _key_columns(table: DataTable, columns: list[str]) -> list[str]:
     return [name for _, name in unique]
 
 
-def _row_value(row: dict[str, Any], column: str) -> Any:
-    return row.get(column) if column in row else row.get(column.lower())
-
-
 def _merge_sql_from_csv(
     path: Path,
     table_name: str,
@@ -228,7 +367,11 @@ def _merge_sql_from_csv(
     merge_config = _merge_config(config, table_name)
     skip_delete = "" if _is_enabled(merge_config.get("delete"), default=False) else "--"
     skip_insert = "" if _is_enabled(merge_config.get("insert"), default=True) else "--"
-    skip_update = "" if _is_enabled(merge_config.get("update"), default=True) and update_columns else "--"
+    skip_update = (
+        ""
+        if _is_enabled(merge_config.get("update"), default=True) and update_columns
+        else "--"
+    )
     primary_join = "\n    " + "\n    AND ".join(
         f"t.{column} = s.{column}"
         for column in lower_primary

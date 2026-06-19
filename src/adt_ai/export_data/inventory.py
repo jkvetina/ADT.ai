@@ -5,6 +5,7 @@ from typing import Any
 
 from adt_ai.db import QueryGateway
 from adt_ai.export_data import queries
+from adt_ai.row_values import row_value
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,27 @@ class DataDiscovery:
         prefix: str | None = None,
         ignore: list[str] | None = None,
     ) -> list[DataTable]:
+        return [
+            DataTable(
+                schema  = schema,
+                name    = table_name,
+                columns = self.columns(table_name),
+            )
+            for table_name in self.table_names(
+                names  = names,
+                prefix = prefix,
+                ignore = ignore,
+            )
+        ]
+
+    def table_names(
+        self,
+        names: list[str] | None = None,
+        prefix: str | None = None,
+        ignore: list[str] | None = None,
+    ) -> list[str]:
+        if names is not None and not names:
+            return []
         rows = self.gateway.fetch_all(
             self.TABLES_QUERY,
             {
@@ -44,14 +66,7 @@ class DataDiscovery:
                 "objects_ignore" : ",".join(ignore or []),
             },
         )
-        return [
-            DataTable(
-                schema  = schema,
-                name    = _row_value(row, "OBJECT_NAME"),
-                columns = self.columns(_row_value(row, "OBJECT_NAME")),
-            )
-            for row in rows
-        ]
+        return [_row_value(row, "OBJECT_NAME") for row in rows]
 
     def columns(self, table_name: str) -> list[DataColumn]:
         rows = self.gateway.fetch_all(self.COLUMNS_QUERY, {"table_name": table_name})
@@ -87,7 +102,7 @@ class DataDiscovery:
 
 
 def _row_value(row: dict[str, Any], key: str) -> str:
-    return str(row.get(key) or row.get(key.lower()) or "")
+    return str(row_value(row, key) or "")
 
 
 def _optional_int(row: dict[str, Any], key: str) -> int | None:

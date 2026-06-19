@@ -61,10 +61,9 @@ Optional ADT-compatible defaults:
 ```bash
 export ADT_ENV="DEV"
 export ADT_SCHEMA="CORE"
-export ADT_KEY="your-password-key"
 ```
 
-`ADT_KEY` is reported for ADT compatibility and future encrypted-password parity. Current ADT.ai does not decrypt encrypted connection or wallet passwords from it. `doctor` never prints the value — it renders as `<redacted>` when set and `<empty>` when missing.
+`ADT_KEY` is deliberately omitted: it is **not** an ADT.ai setting and protects nothing. The name is reported for ADT compatibility and future encrypted-password parity — current ADT.ai does not decrypt connection or wallet passwords from it, so do not set it expecting password protection. `doctor` never prints the value — it renders as `<redacted>` when already set and `<empty>` when missing.
 
 On Windows use `setx NAME "value"` for each of these (takes effect in new shells).
 

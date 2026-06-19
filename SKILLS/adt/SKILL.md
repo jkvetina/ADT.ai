@@ -1,6 +1,6 @@
 ---
 created: 2026-06-10
-updated: 2026-06-14
+updated: 2026-06-18
 name: adt
 version: 1.0.0
 tags: [oracle, apex, deployment, cli, database]
@@ -10,7 +10,7 @@ description: "ADT.ai usage guide for Oracle/APEX work: export database objects, 
 
 ADT.ai is a Python CLI that exports, inspects, and deploys Oracle Database objects and APEX applications. It reads from config files, Git, and the database; it never stores its own metadata in the database. Exports work against any ordinary folder — a Git repository is useful but not required.
 
-The command is `adtai` (aliases: `adt`, `python -m adt_ai`). Full argument tables for every command live in the repo's `USAGE.md`; this skill is the operating cheat-sheet, including the full `doctor` module. The repo-only `adt-setup` skill remains a deeper one-time setup checklist, not a daily runtime skill.
+The command is `adtai` (aliases: `adt`, `python -m adt_ai`). Full argument tables for every command live in per-command files under the repo's `USAGE/`; this skill is the operating cheat-sheet for the common commands, including the full `doctor` module. Lower-frequency commands (`connection`, `calendar`, `flow`) are not expanded here — see their pages under `USAGE/`. The repo-only `adt-setup` skill remains a deeper one-time setup checklist, not a daily runtime skill.
 
 Run commands from the project root (the folder holding `config/` and the export output). Every command prints a standard banner, dashed section headers, and a final `TIMER: Ns` footer.
 
@@ -97,17 +97,17 @@ Exports reference/seed tables to CSV with generated MERGE SQL. Not for transacti
 Specific tables:
 
 ```bash
-adtai export_data -name CONFIG_PARAMETERS,LOV_STATUS
+adtai export_data -silent -name CONFIG_PARAMETERS,LOV_STATUS
 ```
 
 Wildcards, or re-export every previously exported table:
 
 ```bash
-adtai export_data -name CONFIG%,LOV_%
-adtai export_data
+adtai export_data -silent -name CONFIG%,LOV_%
+adtai export_data -silent
 ```
 
-**Limitations:** BLOB/CLOB/XMLTYPE/JSON columns are skipped; audit columns are dropped per config; set correct NLS date formats on the target before running the generated SQL.
+**Limitations:** BLOB/CLOB/XMLTYPE/JSON columns are exported to table-named sidecar folders as `<primary-key>.<column>.<ext>`; audit columns are dropped per config; set correct NLS date formats on the target before running the generated SQL.
 
 ## discovery — safe read-only SQL exploration
 
@@ -135,7 +135,7 @@ adtai discovery -env DEV -schema APP -sql "SELECT * FROM app_settings" -limit 50
 
 ## dependencies — query the object graph
 
-Alias: `depends`. Answers "what uses this?" / "what would I break?" against a committed graph (`dependencies/index.yaml` + `edges.yaml`). Day-to-day queries are offline; only `-refresh` touches the database.
+Answers "what uses this?" / "what would I break?" against a committed graph (`dependencies/index.yaml` + `edges.yaml`). Day-to-day queries are offline; only `-refresh` touches the database.
 
 Build or rebuild the index from the database:
 
@@ -229,7 +229,7 @@ adtai search_repo -file order_v -commit 42 -restore -stage
 
 ## rebuild — refresh the commit cache
 
-Incremental by default; one YAML cache per branch at `config/commits/<branch>.yaml`. `-full` rebuilds from scratch. `-reveal` is a read-only remote-branch inspector; `-reveal -switch N` checks out the Nth filtered branch.
+Incremental by default; one YAML cache per branch at `config/commits/<branch>.yaml`. To rebuild a branch from scratch, delete its `config/commits/<branch>.yaml` and re-run. `-reveal` is a read-only remote-branch inspector; `-reveal -switch N` checks out the Nth filtered branch.
 
 ```bash
 adtai rebuild

@@ -16,6 +16,7 @@ from adt_ai.export_apex import queries
 from adt_ai.export_apex.files import ApexFileResolver
 from adt_ai.export_apex.inventory import ApexApplication
 from adt_ai.progress import DottedProgressBar
+from adt_ai.row_values import row_value
 
 GatewayFactory = Callable[[str], QueryGateway]
 
@@ -127,7 +128,9 @@ class ApexExportRunner:
                         timers_file,
                         application,
                         "rest",
-                        lambda gateway=gateway: self._write_rest_export(gateway, resolver, request.config),
+                        lambda gateway=gateway, resolver=resolver: self._write_rest_export(
+                            gateway, resolver, request.config
+                        ),
                     )
                 if request.actions.get("files"):
                     self._run_action(
@@ -136,11 +139,13 @@ class ApexExportRunner:
                         timers_file,
                         application,
                         "files",
-                        lambda gateway=gateway, application=application: self._write_static_files(
-                            gateway,
-                            resolver,
-                            application,
-                            application.app_id,
+                        lambda gateway=gateway, application=application, resolver=resolver: (
+                            self._write_static_files(
+                                gateway,
+                                resolver,
+                                application,
+                                application.app_id,
+                            )
                         ),
                     )
                 if request.actions.get("files_ws"):
@@ -150,8 +155,8 @@ class ApexExportRunner:
                         timers_file,
                         application,
                         "files_ws",
-                        lambda gateway=gateway, application=application: self._write_static_files(
-                            gateway, resolver, application, 0
+                        lambda gateway=gateway, application=application, resolver=resolver: (
+                            self._write_static_files(gateway, resolver, application, 0)
                         ),
                     )
 
@@ -179,7 +184,9 @@ class ApexExportRunner:
             def operation(sql: str = sql, action: str = action) -> None:
                 gateway.execute(
                     sql,
-                    _bind_params(sql, {"app_id": application.app_id, **_export_options(request.config)}),
+                    _bind_params(
+                        sql, {"app_id": application.app_id, **_export_options(request.config)}
+                    ),
                 )
                 self._write_collection_files(
                     gateway,
@@ -230,8 +237,8 @@ class ApexExportRunner:
         release: str | None,
     ) -> None:
         for row in gateway.fetch_all(self.FETCH_FILES_QUERY):
-            file_name = str(_row_value(row, "FILE_NAME") or "")
-            payload = str(_row_value(row, "CLOB_CONTENT") or "")
+            file_name = str(row_value(row, "FILE_NAME") or "")
+            payload = str(row_value(row, "CLOB_CONTENT") or "")
             relative = _strip_app_prefix(file_name, application)
             if _skip_collection_file(action, relative):
                 continue
@@ -259,8 +266,8 @@ class ApexExportRunner:
         app_id: int,
     ) -> None:
         for row in gateway.fetch_all(self.APEX_FILES_QUERY, {"app_id": app_id}):
-            file_name = str(_row_value(row, "FILENAME") or "")
-            payload = _blob_bytes(_row_value(row, "BLOB_CONTENT"))
+            file_name = str(row_value(row, "FILENAME") or "")
+            payload = _blob_bytes(row_value(row, "BLOB_CONTENT"))
             target = (
                 resolver.workspace_file(file_name)
                 if app_id == 0
@@ -277,31 +284,33 @@ class ApexExportRunner:
     ) -> None:
         comments: dict[int, dict[str, Any]] = {}
         for row in gateway.fetch_all(self.PAGE_COMMENTS_QUERY, {"app_id": application.app_id}):
-            page_id = int(_row_value(row, "PAGE_ID") or 0)
+            page_id = int(row_value(row, "PAGE_ID") or 0)
             comments[page_id] = {
                 "page": {
-                    "page_name": _row_value(row, "PAGE_NAME"),
-                    "page_comment": _row_value(row, "PAGE_COMMENT"),
-                    "updated_by": _row_value(row, "LAST_UPDATED_BY"),
-                    "updated_at": _row_value(row, "LAST_UPDATED_ON"),
+                    "page_name": row_value(row, "PAGE_NAME"),
+                    "page_comment": row_value(row, "PAGE_COMMENT"),
+                    "updated_by": row_value(row, "LAST_UPDATED_BY"),
+                    "updated_at": row_value(row, "LAST_UPDATED_ON"),
                 },
                 "regions": {},
             }
-        for row in gateway.fetch_all(self.PAGE_REGION_COMMENTS_QUERY, {"app_id": application.app_id}):
-            page_id = int(_row_value(row, "PAGE_ID") or 0)
-            region_id = int(_row_value(row, "REGION_ID") or 0)
+        for row in gateway.fetch_all(
+            self.PAGE_REGION_COMMENTS_QUERY, {"app_id": application.app_id}
+        ):
+            page_id = int(row_value(row, "PAGE_ID") or 0)
+            region_id = int(row_value(row, "REGION_ID") or 0)
             if page_id not in comments:
                 comments[page_id] = {
                     "page": {
-                        "page_name": _row_value(row, "PAGE_NAME"),
+                        "page_name": row_value(row, "PAGE_NAME"),
                     },
                     "regions": {},
                 }
             comments[page_id]["regions"][region_id] = {
-                "region_name": _row_value(row, "REGION_NAME"),
-                "region_comment": _row_value(row, "COMPONENT_COMMENT"),
-                "updated_by": _row_value(row, "LAST_UPDATED_BY"),
-                "updated_at": _row_value(row, "LAST_UPDATED_ON"),
+                "region_name": row_value(row, "REGION_NAME"),
+                "region_comment": row_value(row, "COMPONENT_COMMENT"),
+                "updated_by": row_value(row, "LAST_UPDATED_BY"),
+                "updated_at": row_value(row, "LAST_UPDATED_ON"),
             }
         comments_root = resolver.app_root(application) / "comments"
         comments_root.mkdir(parents=True, exist_ok=True)
@@ -479,11 +488,11 @@ def _recent_since(recent_days: int) -> str:
 def _print_recent_components(rows: list[dict[str, Any]]) -> None:
     grouped: dict[str, dict[object, dict[str, object]]] = {}
     for row in rows:
-        group = str(_row_value(row, "TYPE_NAME") or "")
-        component_id = _row_value(row, "ID")
+        group = str(row_value(row, "TYPE_NAME") or "")
+        component_id = row_value(row, "ID")
         grouped.setdefault(group, {})[component_id] = {
-            "name": _row_value(row, "NAME"),
-            "pages": _used_on_pages(_row_value(row, "USED_ON_PAGES")),
+            "name": row_value(row, "NAME"),
+            "pages": _used_on_pages(row_value(row, "USED_ON_PAGES")),
         }
     for group in sorted(grouped):
         print(f"  {group}:")
@@ -537,9 +546,9 @@ def _store_workspace_developers(path: Path, rows: list[dict[str, Any]]) -> None:
         return
     payload = _load_yaml_mapping(path)
     for row in rows:
-        workspace = str(_row_value(row, "WORKSPACE") or "")
-        user_name = str(_row_value(row, "USER_NAME") or "")
-        user_mail = str(_row_value(row, "USER_MAIL") or "")
+        workspace = str(row_value(row, "WORKSPACE") or "")
+        user_name = str(row_value(row, "USER_NAME") or "")
+        user_mail = str(row_value(row, "USER_MAIL") or "")
         if not workspace or not user_name:
             continue
         workspace_developers = payload.get(workspace)
@@ -553,9 +562,9 @@ def _store_workspace_developers(path: Path, rows: list[dict[str, Any]]) -> None:
 def _workspace_developers_from_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
     developers: dict[str, dict[str, str]] = {}
     for row in rows:
-        workspace = str(_row_value(row, "WORKSPACE") or "")
-        user_name = str(_row_value(row, "USER_NAME") or "")
-        user_mail = str(_row_value(row, "USER_MAIL") or "")
+        workspace = str(row_value(row, "WORKSPACE") or "")
+        user_name = str(row_value(row, "USER_NAME") or "")
+        user_mail = str(row_value(row, "USER_MAIL") or "")
         if not workspace or not user_name:
             continue
         developers.setdefault(workspace, {})[user_name] = user_mail
@@ -810,20 +819,16 @@ def _extract_first(pattern: str, text: str) -> str:
 def _enrichments(gateway: QueryGateway, application: ApexApplication) -> dict[int, str]:
     rows = gateway.fetch_all(queries.APEX_ID_NAMES_QUERY, {"app_id": application.app_id})
     return {
-        int(_row_value(row, "COMPONENT_ID")): (
-            f"{_row_value(row, 'COMPONENT_TYPE')}: {_row_value(row, 'COMPONENT_NAME')}"
+        int(row_value(row, "COMPONENT_ID")): (
+            f"{row_value(row, 'COMPONENT_TYPE')}: {row_value(row, 'COMPONENT_NAME')}"
         )
         for row in rows
-        if _row_value(row, "COMPONENT_ID") is not None
+        if row_value(row, "COMPONENT_ID") is not None
     }
 
 
 def _flag(value: object) -> str:
     return "Y" if bool(value) else "N"
-
-
-def _row_value(row: Mapping[str, Any], key: str) -> Any:
-    return row.get(key) if key in row else row.get(key.lower())
 
 
 def _blob_bytes(value: Any) -> bytes:

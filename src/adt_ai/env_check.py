@@ -99,7 +99,9 @@ class EnvironmentChecker:
             try:
                 version = str(importlib.import_module("oracledb").__version__)
             except Exception as error:
-                return CheckResult("Oracle DB module", "FAIL", str(error) or "oracledb not installed")
+                return CheckResult(
+                    "Oracle DB module", "FAIL", str(error) or "oracledb not installed"
+                )
         if not version:
             return CheckResult("Oracle DB module", "FAIL", "oracledb not installed")
         return CheckResult("Oracle DB module", "OK", f"oracledb {version}")

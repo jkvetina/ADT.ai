@@ -1,6 +1,6 @@
 # ADT.ai Usage
 
-This is the public usage index for ADT.ai `0.5.0`.
+This is the public usage index for ADT.ai `0.5.1`.
 
 ## Commands
 

@@ -6,6 +6,8 @@ objects_to_recompile / objects_errors_summary) and ``recompile.build_query``.
 
 from __future__ import annotations
 
+from adt_ai.sql_identifiers import safe_identifier, safe_object_type
+
 # PL/SQL object types that accept the PLSQL_* compilation flags + REUSE SETTINGS.
 PLSQL_OBJECT_TYPES = ("PACKAGE", "PACKAGE BODY", "PROCEDURE", "FUNCTION", "TRIGGER")
 
@@ -49,7 +51,8 @@ LEFT JOIN user_plsql_object_settings p
     AND p.type              = o.object_type
 WHERE 1 = 1
     AND g.object_like       IS NULL
-    AND o.object_type       IN ('PACKAGE', 'PACKAGE BODY', 'PROCEDURE', 'FUNCTION', 'TRIGGER', 'VIEW', 'MATERIALIZED VIEW', 'SYNONYM', 'TYPE', 'TYPE BODY')
+    AND o.object_type       IN ('PACKAGE', 'PACKAGE BODY', 'PROCEDURE', 'FUNCTION',
+        'TRIGGER', 'VIEW', 'MATERIALIZED VIEW', 'SYNONYM', 'TYPE', 'TYPE BODY')
     AND (o.object_type      LIKE :object_type ESCAPE '\\' OR :object_type IS NULL)
     AND (o.object_name      LIKE :object_name ESCAPE '\\' OR :object_name IS NULL)
 GROUP BY o.object_type
@@ -119,7 +122,8 @@ FROM (
     WHERE 1 = 1
         AND g.object_like       IS NULL
         AND :force              = 'Y'
-        AND o.object_type       IN ('PACKAGE', 'PACKAGE BODY', 'PROCEDURE', 'FUNCTION', 'TRIGGER', 'VIEW', 'MATERIALIZED VIEW', 'SYNONYM', 'TYPE', 'TYPE BODY')
+        AND o.object_type       IN ('PACKAGE', 'PACKAGE BODY', 'PROCEDURE', 'FUNCTION',
+        'TRIGGER', 'VIEW', 'MATERIALIZED VIEW', 'SYNONYM', 'TYPE', 'TYPE BODY')
         AND (o.object_type      LIKE :object_type ESCAPE '\\' OR :object_type IS NULL)
         AND (o.object_name      LIKE :object_name ESCAPE '\\' OR :object_name IS NULL)
 ) o
@@ -187,6 +191,8 @@ def build_compile_statement(
     Faithful port of old ADT ``Recompile.build_query`` — including the
     ``'PERFORMANE'`` spelling accepted for the PERFORMANCE warning.
     """
+    safe_object_type(object_type, role="object type")
+    safe_identifier(object_name, role="object name")
     type_body   = " BODY" if "BODY" in object_type else ""
     type_family = object_type.replace(" BODY", "")
     extras      = ""
@@ -210,8 +216,14 @@ def build_compile_statement(
         if isinstance(warnings, list):
             warnings_value = ""
             warnings_value += "ENABLE:SEVERE," if ("SEVERE" in warnings) else ""
-            warnings_value += "ENABLE:PERFORMANCE," if ("PERF" in warnings or "PERFORMANE" in warnings) else ""
-            warnings_value += "ENABLE:INFORMATIONAL," if ("INFO" in warnings or "INFORMATIONAL" in warnings) else ""
+            warnings_value += (
+                "ENABLE:PERFORMANCE," if ("PERF" in warnings or "PERFORMANE" in warnings) else ""
+            )
+            warnings_value += (
+                "ENABLE:INFORMATIONAL,"
+                if ("INFO" in warnings or "INFORMATIONAL" in warnings)
+                else ""
+            )
             extras += " PLSQL_WARNINGS = '" + warnings_value.strip(",").replace(",", "','") + "'"
 
         extras += " REUSE SETTINGS"

@@ -7,6 +7,8 @@ from typing import Any
 
 import yaml
 
+from adt_ai.dict_merge import deep_merge
+
 
 class ConnectionError(Exception):
     """Base error for connection loading failures."""
@@ -102,8 +104,8 @@ class ConnectionResult:
                 )
             )
 
-        db = _deep_merge(environment_data.get("db", {}), environment_data.get("wallet", {}))
-        db = _deep_merge(db, schema_data.get("db", {}))
+        db = deep_merge(environment_data.get("db", {}), environment_data.get("wallet", {}))
+        db = deep_merge(db, schema_data.get("db", {}))
         return Connection(
             environment     = environment_name,
             schema          = schema_name,
@@ -271,17 +273,6 @@ def _expand_schema_patterns(patterns: list[str], available: list[str]) -> list[s
             if schema not in schemas:
                 schemas.append(schema)
     return schemas
-
-
-def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
-    merged = dict(base)
-    for key, value in overlay.items():
-        existing = merged.get(key)
-        if isinstance(existing, dict) and isinstance(value, dict):
-            merged[key] = _deep_merge(existing, value)
-        else:
-            merged[key] = value
-    return merged
 
 
 def _is_enabled(value: Any) -> bool:

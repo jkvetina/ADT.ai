@@ -1,6 +1,31 @@
 from __future__ import annotations
 
-from adt_ai.cli_constants import *
+import argparse
+import fnmatch
+import importlib
+import re
+import sys
+import time
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TextIO
+
+from adt_ai.cli_constants import (
+    APEX_EXPORT_ACTIONS,
+    APEX_VERSION_QUERY,
+    DATABASE_VERSION_OLD_QUERY,
+    DATABASE_VERSION_QUERY,
+    DROPBOX_PATH_RE,
+    ConfigError,
+    ConfigLoader,
+    ConnectionLoader,
+    ConnectionResult,
+    QueryGateway,
+    _StdoutTracker,
+    print_adt_header,
+)
+
 
 class DebugQueryGateway:
     def __init__(self, wrapped: QueryGateway) -> None:
@@ -123,6 +148,20 @@ def _print_config_error(error: Exception) -> None:
     print(file=sys.stderr)
 
 
+def _print_unexpected_error(error: Exception) -> None:
+    # Catch-all for any failure that is not a recognised config/database error.
+    # The command banner has already printed (it is the first handler statement),
+    # so this only adds a friendly framing instead of leaking a raw traceback.
+    header = "UNEXPECTED ERROR"
+    print(file=sys.stderr)
+    print(header, file=sys.stderr)
+    print("-" * len(header), file=sys.stderr)
+    print(f"{type(error).__name__}: {_display(error)}", file=sys.stderr)
+    print(file=sys.stderr)
+    print("Use -debug to show the Python traceback.", file=sys.stderr)
+    print(file=sys.stderr)
+
+
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
@@ -161,7 +200,7 @@ def _existing_paths(paths: list[Path]) -> list[Path]:
 
 
 def _remember_completion_config(args: argparse.Namespace, config: dict[str, object]) -> None:
-    setattr(args, "_adt_completion_config", config)
+    args._adt_completion_config = config
 
 
 def _completion_config(args: argparse.Namespace) -> dict[str, object] | None:
@@ -185,7 +224,8 @@ def _completion_config(args: argparse.Namespace) -> dict[str, object] | None:
 def _notify_completion(args: argparse.Namespace, exit_code: int) -> None:
     config = _completion_config(args)
     theme = _configured_chime_theme(config)
-    if not theme:
+    forced = bool(getattr(args, "beep", False))
+    if not theme and not forced:
         return
     if not _chime_run_allowed(args):
         return
@@ -193,11 +233,19 @@ def _notify_completion(args: argparse.Namespace, exit_code: int) -> None:
         chime = importlib.import_module("chime")
     except ImportError:
         return
-    chime.theme(theme)
-    if exit_code == 0:
-        chime.success()
-    else:
-        chime.error()
+    if theme:
+        try:
+            chime.theme(theme)
+        except Exception:
+            if not forced:
+                return
+    try:
+        if exit_code == 0:
+            chime.success(sync=False, raise_error=False) if forced else chime.success()
+        else:
+            chime.error(sync=False, raise_error=False) if forced else chime.error()
+    except Exception:
+        return
 
 
 def _chime_run_allowed(args: argparse.Namespace) -> bool:
@@ -418,6 +466,63 @@ def _flatten_arg_groups(groups: list[list[str]] | None) -> list[str] | None:
     ]
 
 
+@dataclass(frozen=True)
+class ApexAppSelection:
+    """A parsed `-app` selection: plain ids plus closed/open id ranges.
+
+    `explicit_ids` keeps the existing plain-id tokens; `ranges` holds
+    `(min, max)` for closed ranges and `(min, None)` for open `MIN+` ranges.
+    """
+
+    explicit_ids: tuple[str, ...] = ()
+    ranges: tuple[tuple[int, int | None], ...] = ()
+
+    @property
+    def has_ranges(self) -> bool:
+        return bool(self.ranges)
+
+
+def _parse_apex_app_selection(tokens: list[str] | None) -> ApexAppSelection | None:
+    if not tokens:
+        return None
+    explicit: list[str] = []
+    ranges: list[tuple[int, int | None]] = []
+    for raw in tokens:
+        token = raw.strip()
+        if not token:
+            continue
+        open_match = re.fullmatch(r"(\d+)\+", token)
+        closed_match = re.fullmatch(r"(\d+)-(\d+)", token)
+        if open_match:
+            ranges.append((int(open_match.group(1)), None))
+        elif closed_match:
+            low = int(closed_match.group(1))
+            high = int(closed_match.group(2))
+            if low > high:
+                raise ValueError(
+                    f"invalid -app range '{token}': min {low} is greater than max {high}"
+                )
+            ranges.append((low, high))
+        elif "-" in token or "+" in token:
+            raise ValueError(f"invalid -app range '{token}': use MIN-MAX or MIN+")
+        else:
+            explicit.append(token)
+    return ApexAppSelection(explicit_ids=tuple(explicit), ranges=tuple(ranges))
+
+
+def _app_in_selection(app_id: int | str, selection: ApexAppSelection) -> bool:
+    if str(app_id) in selection.explicit_ids:
+        return True
+    try:
+        numeric = int(app_id)
+    except (TypeError, ValueError):
+        return False
+    return any(
+        numeric >= low and (high is None or numeric <= high)
+        for low, high in selection.ranges
+    )
+
+
 def _apex_scope(
     apex_config: Mapping[str, object],
     workspace: str | None = None,
@@ -595,6 +700,8 @@ def _fetch_version(
 def _print_completion_timer(
     started_at: float,
     stdout: TextIO | None = None,
+    completion_args: argparse.Namespace | None = None,
+    exit_code: int = 0,
 ) -> None:
     # Footer spacing is enforced here, in the shared layer, for every command:
     # exactly two empty lines before TIMER (...\n\n\nTIMER). Whatever trailing
@@ -609,6 +716,8 @@ def _print_completion_timer(
         output.write("\n\n")
     print(f"TIMER: {elapsed}s", file=output)
     print(file=output)
+    if completion_args is not None:
+        _notify_completion(completion_args, exit_code)
 
 
 def _config_value(config: dict[str, object], key_path: tuple[str, ...]) -> object | None:

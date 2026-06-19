@@ -28,10 +28,16 @@ from adt_ai.discovery.report import (
 )
 from adt_ai.discovery.validator import DiscoveryValidationError, validate_select_only
 
-RESULT_BLOCK_START = "/*"
+# A distinctive sentinel — not a bare ``/*`` — so a hand-written ``/* … */``
+# block comment in a ``-file`` is never mistaken for a written-back result block
+# and scrubbed. ``-file`` re-runs only strip blocks carrying this marker.
+RESULT_BLOCK_START = "/* ADT-RESULT"
 RESULT_BLOCK_END   = "*/"
 
-_RESULT_BLOCK_RE = re.compile(r"\n/\*\n.*?\*/", re.DOTALL)
+_RESULT_BLOCK_RE = re.compile(
+    r"\n" + re.escape(RESULT_BLOCK_START) + r"\n.*?" + re.escape(RESULT_BLOCK_END),
+    re.DOTALL,
+)
 
 
 @dataclass(frozen=True)
@@ -72,11 +78,58 @@ class DiscoveryResult:
 def split_statements(text: str) -> list[str]:
     """Split a statements file on ``;`` into trimmed, non-empty statements.
 
-    ``/* … */`` result blocks written back by ``-file`` mode are stripped
-    before splitting so re-runs see clean SQL.
+    Written-back result blocks (``/* ADT-RESULT … */``) are scrubbed first so
+    re-runs see clean SQL. Splitting then treats only *top-level* ``;`` as a
+    separator: a ``;`` inside a single-quoted literal, a ``/* … */`` block
+    comment, or a ``--`` line comment is data, not a statement boundary.
     """
     clean = _RESULT_BLOCK_RE.sub("", text)
-    return [statement.strip() for statement in clean.split(";") if statement.strip()]
+    return _split_top_level_semicolons(clean)
+
+
+def _split_top_level_semicolons(text: str) -> list[str]:
+    statements: list[str] = []
+    buffer: list[str] = []
+    in_string = False
+    index = 0
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if in_string:
+            buffer.append(char)
+            if char == "'":
+                # A doubled '' is an escaped quote, not the end of the literal.
+                if text[index : index + 2] == "''":
+                    buffer.append("'")
+                    index += 2
+                    continue
+                in_string = False
+            index += 1
+            continue
+        pair = text[index : index + 2]
+        if char == "'":
+            in_string = True
+            buffer.append(char)
+            index += 1
+        elif pair == "/*":
+            end = text.find("*/", index + 2)
+            stop = length if end == -1 else end + 2
+            buffer.append(text[index:stop])
+            index = stop
+        elif pair == "--":
+            end = text.find("\n", index + 2)
+            stop = length if end == -1 else end
+            buffer.append(text[index:stop])
+            index = stop
+        elif char == ";":
+            statements.append("".join(buffer))
+            buffer = []
+            index += 1
+        else:
+            buffer.append(char)
+            index += 1
+    statements.append("".join(buffer))
+    return [statement.strip() for statement in statements if statement.strip()]
 
 
 class DiscoveryRunner:
@@ -134,7 +187,9 @@ class DiscoveryRunner:
         except DiscoveryValidationError as error:
             result = render_result(error=str(error), limit=limit)
             section = render_section(index=index, sql=statement, error=str(error), limit=limit)
-            return section, result, QueryOutcome(index=index, ok=False, label=label, error=str(error))
+            return section, result, QueryOutcome(
+                index=index, ok=False, label=label, error=str(error)
+            )
 
         try:
             rows = self.gateway.read_only_fetch_all(validated)
@@ -143,7 +198,9 @@ class DiscoveryRunner:
                 raise
             result = render_result(error=str(error), limit=limit)
             section = render_section(index=index, sql=validated, error=str(error), limit=limit)
-            return section, result, QueryOutcome(index=index, ok=False, label=label, error=str(error))
+            return section, result, QueryOutcome(
+                index=index, ok=False, label=label, error=str(error)
+            )
 
         result = render_result(rows=rows, limit=limit)
         section = render_section(index=index, sql=validated, rows=rows, limit=limit)

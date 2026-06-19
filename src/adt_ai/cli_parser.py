@@ -1,7 +1,17 @@
 from __future__ import annotations
 
-from adt_ai.cli_constants import *
+import argparse
+from collections.abc import Sequence
+
+from adt_ai.cli_constants import (
+    DEFAULT_ROW_LIMIT,
+    PUBLIC_MODULES,
+    REMOVED_COMPATIBILITY_FLAGS,
+    REVEAL_DEFAULT_LIMIT,
+    AdtArgumentParser,
+)
 from adt_ai.cli_help import generated_command_usage as _generated_command_usage
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = AdtArgumentParser(
@@ -96,6 +106,12 @@ def build_parser() -> argparse.ArgumentParser:
         help   = "table name pattern(s) to export, supports %% wildcards",
     )
     export_data.add_argument(
+        "--silent",
+        "-silent",
+        action = "store_true",
+        help   = "suppress per-table progress; keep chrome, summary, and timer",
+    )
+    export_data.add_argument(
         "--debug",
         "-debug",
         action = "store_true",
@@ -123,7 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
         "-app",
         action = "append",
         nargs  = "+",
-        help   = "application id(s) to export or reveal",
+        help   = "application id(s), or ranges MIN-MAX / MIN+, to export or reveal",
     )
     export_apex.add_argument(
         "--max-app-id",
@@ -168,12 +184,22 @@ def build_parser() -> argparse.ArgumentParser:
         dest   = "all_formats",
         help   = "export all APEX formats",
     )
-    export_apex.add_argument("--full", "-full", action="store_true", help="export full application SQL")
-    export_apex.add_argument("--split", "-split", action="store_true", help="export split application source")
-    export_apex.add_argument("--readable", "-readable", action="store_true", help="export readable YAML source")
-    export_apex.add_argument("--embedded", "-embedded", action="store_true", help="export embedded code report")
+    export_apex.add_argument(
+        "--full", "-full", action="store_true", help="export full application SQL"
+    )
+    export_apex.add_argument(
+        "--split", "-split", action="store_true", help="export split application source"
+    )
+    export_apex.add_argument(
+        "--readable", "-readable", action="store_true", help="export readable YAML source"
+    )
+    export_apex.add_argument(
+        "--embedded", "-embedded", action="store_true", help="export embedded code report"
+    )
     export_apex.add_argument("--rest", "-rest", action="store_true", help="export REST services")
-    export_apex.add_argument("--files", "-files", action="store_true", help="export application files")
+    export_apex.add_argument(
+        "--files", "-files", action="store_true", help="export application files"
+    )
     export_apex.add_argument(
         "--files-ws",
         "--files_ws",

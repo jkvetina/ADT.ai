@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "adt-ai"
-version = "0.5.0"
+version = "0.5.1"
 description = "Modern Python rewrite of ADT focused on YAML-configured Oracle/APEX deployment tooling."
 readme = "README.md"
 license = {text = "MIT"}
@@ -24,7 +24,7 @@ adt = "adt_ai.cli:console_main"
 adtai = "adt_ai.cli:console_main"
 
 [tool.pytest.ini_options]
-addopts = "-q"
+addopts = "-q --strict-markers"
 testpaths = ["tests"]
 
 [tool.ruff]
@@ -39,3 +39,11 @@ ignore = [
     "E241",  # aligned assignments use multiple spaces after operators
     "E251",  # aligned keyword arguments use spaces around '='
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# cli_constants is a deliberate re-export hub for the CLI layer: it imports the
+# public symbols and re-exports them through a dynamic __all__ built from
+# globals(), which ruff cannot resolve statically. Every re-export therefore
+# reads as an unused import even though the cli_* command modules import these
+# names from here. Suppress F401 for this aggregator only.
+"src/adt_ai/cli_constants.py" = ["F401"]

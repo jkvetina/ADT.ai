@@ -5,7 +5,9 @@ static gate that admits exactly one read-only ``SELECT`` (or ``WITH ... SELECT``
 statement and rejects everything else. Comments and string literals are scrubbed
 before the keyword scan so payloads such as ``'DROP TABLE x'`` or ``-- delete``
 cannot false-trigger. Layer 2 (a ``SET TRANSACTION READ ONLY`` session) defends
-even if this gate were ever fooled.
+even if this gate were ever fooled — but only against *DML*: it does not block
+DDL or autonomous-transaction PL/SQL, so this static gate must catch a non-SELECT
+statement hidden behind a ``WITH`` clause rather than leaning on layer 2 for it.
 """
 
 from __future__ import annotations
@@ -104,6 +106,19 @@ def validate_select_only(sql: str) -> str:
             reason="PL/SQL",
         )
 
+    # A WITH clause may front any statement, not just a SELECT (e.g.
+    # ``WITH t AS (...) DELETE FROM t``). Resolve the real statement keyword that
+    # follows the CTE list and reject it if it is a known write family.
+    if leading == "WITH":
+        main = _main_keyword_after_with(analysis)
+        if main is not None and main in _FAMILY_BY_KEYWORD:
+            family = _FAMILY_BY_KEYWORD[main]
+            raise DiscoveryValidationError(
+                f"{family} statement '{main}' after a WITH clause is not allowed; "
+                "discovery permits SELECT only",
+                reason=family,
+            )
+
     if _FOR_UPDATE_RE.search(analysis):
         raise DiscoveryValidationError(
             "FOR UPDATE locks rows and is not allowed in discovery",
@@ -117,6 +132,53 @@ def validate_select_only(sql: str) -> str:
         )
 
     return _strip_trailing_semicolon(sql.strip())
+
+
+def _main_keyword_after_with(analysis: str) -> str | None:
+    """Return the statement keyword that follows a ``WITH`` CTE list, upper-cased.
+
+    Oracle's ``WITH`` clause is a comma-separated list of ``name [(cols)] AS
+    (body)`` definitions; the statement keyword (normally ``SELECT``) comes after
+    the final body. This walks the scrubbed SQL at parenthesis depth 0, skipping
+    each CTE's optional column list and parenthesised body, and returns the first
+    depth-0 word that appears once a CTE body has closed and no comma introduces a
+    further definition. Returns ``None`` when the structure can't be resolved (the
+    caller then falls back to its other checks).
+    """
+    depth = 0
+    expect_body = False  # seen this CTE's AS, so the next depth-0 "(" is its body
+    closed_body = False  # a CTE body has closed and no comma has followed yet
+    i = 0
+    n = len(analysis)
+    while i < n:
+        ch = analysis[i]
+        if ch == "(":
+            depth += 1
+            i += 1
+            continue
+        if ch == ")":
+            depth -= 1
+            i += 1
+            if depth == 0 and expect_body:
+                closed_body = True
+                expect_body = False
+            continue
+        if depth == 0:
+            if ch == ",":
+                closed_body = False
+                i += 1
+                continue
+            word = _WORD_RE.match(analysis, i)
+            if word is not None:
+                upper = word.group(0).upper()
+                if closed_body:
+                    return upper
+                if upper == "AS":
+                    expect_body = True
+                i = word.end()
+                continue
+        i += 1
+    return None
 
 
 def _strip_trailing_semicolon(text: str) -> str:

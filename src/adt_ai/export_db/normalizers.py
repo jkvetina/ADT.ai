@@ -388,6 +388,9 @@ def _normalize_sql_identifier(
         name = object_name
     return _normalize_identifier_part(name)
 
+def _constraint_column_names(columns: str) -> list[str]:
+    return [_normalize_sql_identifier(column) for column in _split_top_level_commas(columns)]
+
 def _normalize_identifier_part(identifier: str) -> str:
     identifier = identifier.strip()
     quoted_match = re.fullmatch(r'"([A-Z][A-Z0-9_$#]*)"', identifier)

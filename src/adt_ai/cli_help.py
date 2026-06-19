@@ -17,10 +17,12 @@ ACTION_DESTS = {
     "delete",
     "deldiff",
     "deploy",
+    "dump",
     "embedded",
     "fetch",
     "files",
     "files_ws",
+    "from_page",
     "full",
     "impact",
     "init",
@@ -32,6 +34,7 @@ ACTION_DESTS = {
     "rebuild",
     "rebuild_db",
     "refresh",
+    "remove",
     "restore",
     "rest",
     "reveal",
@@ -41,6 +44,7 @@ ACTION_DESTS = {
     "stage",
     "statements_file",
     "switch",
+    "to_page",
     "unused",
     "update",
     "used_by",
@@ -83,57 +87,75 @@ COMMAND_SUMMARIES = {
         "Runs configured read-only SELECT discovery queries against an Oracle schema.",
         "Use it to collect inventory or diagnostic facts without changing the database.",
         "Queries can be scoped to a schema and written back into the project as reports.",
-        "The command is intended for safe metadata exploration before export, patch, or cleanup work.",
-        "Result handling keeps discovery output reproducible instead of relying on ad hoc SQL scratchpads.",
+        "The command is intended for safe metadata exploration before export, patch, or "
+        "cleanup work.",
+        "Result handling keeps discovery output reproducible instead of relying on "
+        "ad hoc SQL scratchpads.",
     ),
     "doctor": (
         "Checks whether the local ADT.ai environment is ready for export and deployment work.",
         "Use it to inspect tool versions, configuration paths, and required external dependencies.",
-        "Init and install actions bootstrap project configuration or missing local tooling deliberately.",
+        "Init and install actions bootstrap project configuration or missing local "
+        "tooling deliberately.",
         "Update actions refresh ADT.ai-managed assets without running a deployment workflow.",
         "Debug output helps separate local setup problems from database or repository problems.",
     ),
     "export_apex": (
         "Exports Oracle APEX workspaces, applications, REST modules, files, and code reports.",
         "Use it to refresh source-controlled APEX artifacts from configured workspaces.",
-        "Discovery actions reveal available workspaces and applications before choosing an export target.",
-        "Format switches cover readable, split, SQLcl, and legacy export layouts used by reviewers.",
-        "Modifiers control static files, embedded code extraction, REST export, cleanup, and dry-run planning.",
+        "Discovery actions reveal available workspaces and applications before choosing "
+        "an export target.",
+        "Format switches cover readable, split, SQLcl, and legacy export layouts "
+        "used by reviewers.",
+        "Modifiers control static files, embedded code extraction, REST export, "
+        "cleanup, and dry-run planning.",
     ),
     "export_data": (
         "Exports configured Oracle table data into CSV files and generated MERGE scripts.",
         "Use it for reference data, seed data, or deployment data that belongs in source control.",
         "The module discovers configured tables and writes replayable scripts for selected rows.",
         "Filters limit work by schema, table name, recent changes, or configured export scope.",
-        "Cleanup and dry-run options make it possible to inspect file changes before rewriting exports.",
+        "Cleanup and dry-run options make it possible to inspect file changes before "
+        "rewriting exports.",
     ),
     "export_db": (
         "Export database object DDL from configured schemas into the project tree.",
-        "Use it to refresh source-controlled tables, views, packages, triggers, grants, jobs, and metadata.",
+        "Use it to refresh source-controlled tables, views, packages, triggers, grants, "
+        "jobs, and metadata.",
         "Filters narrow the export by schema, object type, object name, and recent DDL changes.",
         "The writer preserves configured folder layouts and can clean stale files when requested.",
-        "DDL is normalized toward known ADT output parity, including readable table, view, and index formatting.",
+        "DDL is normalized toward known ADT output parity, including readable table, "
+        "view, and index formatting.",
     ),
     "rebuild": (
-        "Refreshes the cached Git commit index that powers repository search and history flows.",
-        "Use it after new commits, branch switches, or repository fetches so ADT.ai sees current history.",
+        "Refreshes the cached Git commit index that powers patch, calendar, and "
+        "repository search flows.",
+        "Use it after new commits, branch switches, or repository fetches so ADT.ai "
+        "sees current history.",
         "Incremental mode updates only missing commit data for normal day-to-day use.",
         "Full rebuild mode recreates the cache when history, parser rules, or metadata changed.",
-        "Branch actions reveal remote branches and can switch the working tree when reviewing history.",
+        "Branch actions reveal remote branches and can switch the working tree when "
+        "reviewing history.",
     ),
     "recompile": (
-        "Recompiles invalid or selected Oracle database objects through configured database connections.",
-        "Use it after deployment, export validation, or dependency repair to clear invalid objects.",
+        "Recompiles invalid or selected Oracle database objects through configured "
+        "database connections.",
+        "Use it after deployment, export validation, or dependency repair to clear "
+        "invalid objects.",
         "Object filters target specific schemas, names, types, or compiler settings.",
-        "PL/SQL options control warnings, PL/Scope identifiers, native compilation, and interpreted mode.",
-        "Reporting shows remaining errors so failed recompiles can be handled without hunting through SQL clients.",
+        "PL/SQL options control warnings, PL/Scope identifiers, native compilation, "
+        "and interpreted mode.",
+        "Reporting shows remaining errors so failed recompiles can be handled without "
+        "hunting through SQL clients.",
     ),
     "search_repo": (
         "Searches cached Git history for commits, files, database objects, authors, and dates.",
         "Use it to answer where a change happened before opening raw Git logs manually.",
-        "Filters combine branch, commit, file path, object name, hash, author, and date boundaries.",
+        "Filters combine branch, commit, file path, object name, hash, author, and "
+        "date boundaries.",
         "Restore mode can recover historical file contents into the working tree for inspection.",
-        "The command depends on rebuild's cache, so searches stay fast across large ADT repositories.",
+        "The command depends on rebuild's cache, so searches stay fast across large "
+        "ADT repositories.",
     ),
 }
 

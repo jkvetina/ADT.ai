@@ -8,7 +8,7 @@ from typing import Protocol
 
 import yaml
 
-from adt_ai.git_files import changed_files
+from adt_ai.git_files import changed_files, run_git
 from adt_ai.history.cache import (
     cache_path as history_cache_path,
 )
@@ -81,7 +81,9 @@ class RebuildResult:
 
 
 class RebuildRunner:
-    def run(self, request: RebuildRequest, reporter: RebuildReporter | None = None) -> RebuildResult:
+    def run(
+        self, request: RebuildRequest, reporter: RebuildReporter | None = None
+    ) -> RebuildResult:
         _reporter = reporter or _NullReporter()
         branches = _resolve_branches(request)
         _require_branches_exist(request.root, branches)
@@ -337,7 +339,7 @@ def _commit_in_history(root: Path, branch: str, commit: str) -> bool:
 def _branch_commit_count(root: Path, branch: str) -> int:
     # Total commits reachable from the branch tip, independent of any window
     # limit — this is the absolute number of the newest commit.
-    return int(_git(root, ["rev-list", "--count", branch]).strip() or "0")
+    return int(run_git(root, ["rev-list", "--count", branch]).strip() or "0")
 
 
 def _commit_lines(
@@ -360,7 +362,7 @@ def _commit_lines(
     # With a resume point, only fetch commits after the cached tip (exclusive).
     args.append(f"{since}..{branch}" if since else branch)
     result: list[tuple[str, str, str, str]] = []
-    for line in _git(root, args).splitlines():
+    for line in run_git(root, args).splitlines():
         if not line.strip():
             continue
         parts = line.split(FIELD_SEPARATOR, 3)
@@ -369,16 +371,6 @@ def _commit_lines(
         commit_hash, author, date, summary = parts
         result.append((commit_hash, author, date, summary))
     return result
-
-
-def _git(root: Path, args: list[str]) -> str:
-    return subprocess.run(
-        ["git", *args],
-        cwd=root,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
 
 
 # --- reveal: read-only branch inspector -------------------------------------
@@ -469,8 +461,13 @@ def _branch_infos(root: Path) -> list[BranchInfo]:
     # Read the remote branches (`origin/*`), newest commit first. Remote-tracking
     # refs reflect what's actually on the server regardless of the checked-out
     # branch, so the list never goes stale the way local `refs/heads` would.
-    fmt = "%(refname:short)\t%(committerdate:relative)\t%(committerdate:short)\t%(authoremail)\t%(authorname)"
-    out = _git(root, ["for-each-ref", "refs/remotes/origin", f"--format={fmt}", "--sort=-committerdate"])
+    fmt = (
+        "%(refname:short)\t%(committerdate:relative)\t%(committerdate:short)\t"
+        "%(authoremail)\t%(authorname)"
+    )
+    out = run_git(
+        root, ["for-each-ref", "refs/remotes/origin", f"--format={fmt}", "--sort=-committerdate"]
+    )
     infos: list[BranchInfo] = []
     for line in out.splitlines():
         if not line.strip():
@@ -594,7 +591,7 @@ def branch_commits(
     else:
         args.append(name)
     commits: list[tuple[str, str]] = []
-    for line in _git(root, args).splitlines():
+    for line in run_git(root, args).splitlines():
         if not line.strip():
             continue
         when, _, subject = line.partition("\t")

@@ -5,10 +5,10 @@ from dataclasses import dataclass
 
 from adt_ai.export_db.normalizers import (
     NormalizationContext,
+    _constraint_column_names,
     _identifier_key,
     _matching_parenthesis_index,
     _normalize_sql_identifier,
-    _split_top_level_commas,
 )
 
 
@@ -182,7 +182,3 @@ def _make_fold(parsed: dict[str, str], context: NormalizationContext) -> _Folded
 
 def _index_identity_key(name: str) -> str:
     return _identifier_key(name.split(".")[-1])
-
-
-def _constraint_column_names(columns: str) -> list[str]:
-    return [_normalize_sql_identifier(column) for column in _split_top_level_commas(columns)]
