@@ -8,6 +8,7 @@ from typing import TextIO
 
 from adt_ai import __version__
 from adt_ai.cli_commands_exports import _run_export_apex, _run_export_data, _run_export_db
+from adt_ai.cli_commands_flow import _run_flow
 from adt_ai.cli_commands_history import _run_rebuild, _run_search_repo
 from adt_ai.cli_commands_recompile import _run_discovery, _run_doctor, _run_recompile
 from adt_ai.cli_constants import (
@@ -201,6 +202,8 @@ def main(
             exit_code = _run_recompile(args, gateway_factory=gateway_factory)
         elif args.command == "doctor":
             exit_code = _run_doctor(args)
+        elif args.command == "flow":
+            exit_code = _run_flow(args, gateway_factory=gateway_factory)
         elif args.command == "discovery":
             exit_code = _run_discovery(args, gateway_factory=gateway_factory)
     except KeyboardInterrupt:

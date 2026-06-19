@@ -2,6 +2,11 @@
 
 All notable changes to the public ADT.ai release are recorded here, newest first.
 
+## 0.5.2 - 2026-06-19
+
+- Added the `flow` command, which maps an APEX application's page navigation graph. `flow -app <id> -refresh` scrapes one application's navigation links from the database once and stores them in a local SQLite file, then `flow -app <id> -to <page>` and `flow -app <id> -from <page>` answer "what links into this page?" and "which pages can I reach from this page?" entirely offline. Edges cover page branches, buttons, list entries, tabs, navigation-bar entries, and report column links, each tagged by how resolvable its target is — a same-application page, a cross-application link, a runtime-dynamic target, or a link that leaves APEX. Every refresh also writes Mermaid, Graphviz DOT, and JSON diagrams of the graph. See [USAGE/flow.md](USAGE/flow.md).
+- Public commands now: `export_db`, `doctor`, `export_apex`, `export_data`, `recompile`, `rebuild`, `search_repo`, `discovery`, `flow`.
+
 ## 0.5.1 - 2026-06-19
 
 - Hardened the toolkit through a repository-wide correctness and security audit. Correctness: `export_data` now guards its output-filename derivation for table names without a dotted schema prefix, and `discovery -file` scrubs only ADT-generated result blocks (leaving hand-written `/* … */` comments intact) and splits statements on top-level `;` only, so a semicolon inside a string literal no longer mis-splits a query. Security: connection configuration files are parsed with a safe YAML loader before any round-trip edit; SQLcl connect credentials are kept out of captured output and error messages; the SQLcl upgrade verifies the download host and is hardened against zip-slip extraction; TLS certificate errors are now surfaced instead of being silently routed around verification; generated SQL validates Oracle identifiers before emitting them; and the non-functional `ADT_KEY` password "encryption" is no longer presented in the docs as a working setting. Docs: removed dead README links, fixed stale command names, and dropped retired flag claims.

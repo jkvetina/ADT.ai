@@ -512,6 +512,61 @@ def build_parser() -> argparse.ArgumentParser:
         action = "store_true",
         help   = "show input parameters and SQL queries with bind values",
     )
+    flow = subparsers.add_parser(
+        "flow",
+        description="map APEX page navigation: query incoming/outgoing links or refresh diagrams",
+        help="map APEX page navigation links (to/from, refresh)",
+    )
+    flow.add_argument(
+        "--app",
+        "-app",
+        action = "append",
+        nargs  = "+",
+        help   = "application id(s) — repeat or space-separate for multiple",
+    )
+    flow.add_argument(
+        "--to",
+        "-to",
+        dest    = "to_page",
+        type    = int,
+        metavar = "PAGE",
+        help    = "show pages that link INTO this page",
+    )
+    flow.add_argument(
+        "--from",
+        "-from",
+        dest    = "from_page",
+        type    = int,
+        metavar = "PAGE",
+        help    = "show pages reachable FROM this page",
+    )
+    flow.add_argument(
+        "--refresh",
+        "-refresh",
+        action = "store_true",
+        help   = "rescrape the application from the database and rewrite its edges",
+    )
+    flow.add_argument(
+        "--delete",
+        "-delete",
+        dest   = "delete",
+        action = "store_true",
+        help   = "delete the application and its edges from the store",
+    )
+    flow.add_argument("--root", "-root", default=".", help="project root folder")
+    flow.add_argument(
+        "--config-dir",
+        "-config-dir",
+        action="append",
+        help="folder containing config YAML (refresh)",
+    )
+    flow.add_argument("--env", "-env", help="connection environment (refresh)")
+    flow.add_argument(
+        "--debug",
+        "-debug",
+        action = "store_true",
+        help   = "show input parameters and SQL queries with bind values",
+    )
     for command, _description, _aliases in PUBLIC_MODULES:
         _add_completion_args(_command_parser(parser, command))
     _apply_generated_command_usages(parser)

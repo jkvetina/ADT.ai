@@ -83,6 +83,13 @@ FILTER_DESTS = {
 }
 
 COMMAND_SUMMARIES = {
+    "flow": (
+        "Maps APEX page navigation links into a local SQLite store you can query offline.",
+        "Use it to answer where links point to a page and which pages you can reach from a page.",
+        "Refresh mode rescrapes one application from the database and rewrites its edges.",
+        "The to and from queries report incoming and outgoing page links for a chosen page.",
+        "Each refresh writes Mermaid, Graphviz DOT, and JSON diagrams under config/flow.",
+    ),
     "discovery": (
         "Runs configured read-only SELECT discovery queries against an Oracle schema.",
         "Use it to collect inventory or diagnostic facts without changing the database.",

@@ -1,6 +1,6 @@
 # ADT.ai Usage
 
-This is the public usage index for ADT.ai `0.5.1`.
+This is the public usage index for ADT.ai `0.5.2`.
 
 ## Commands
 
@@ -14,6 +14,7 @@ This is the public usage index for ADT.ai `0.5.1`.
 | `rebuild` | [USAGE/rebuild.md](USAGE/rebuild.md) | Refresh the Git commit cache. |
 | `search_repo` | [USAGE/search_repo.md](USAGE/search_repo.md) | Search cached Git commit history. |
 | `discovery` | [USAGE/discovery.md](USAGE/discovery.md) | Run read-only SELECT discovery queries. |
+| `flow` | [USAGE/flow.md](USAGE/flow.md) | Map APEX page navigation into a queryable flow store. |
 
 ## Install
 

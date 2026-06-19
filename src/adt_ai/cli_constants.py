@@ -16,6 +16,7 @@ from typing import TextIO
 import yaml
 
 from adt_ai import __version__
+from adt_ai.apex_owner import ApexOwnerResolutionError, resolve_configured_apex_owner_schema
 from adt_ai.config import ConfigError, ConfigLoader
 from adt_ai.connections import ConnectionError as ConnectionConfigError
 from adt_ai.connections import ConnectionLoader, ConnectionResult
@@ -45,6 +46,15 @@ from adt_ai.export_db.runner import (
     print_adt_header,
     print_adt_table,
 )
+from adt_ai.flow.files import write_all_dumps, write_dump
+from adt_ai.flow.model import FlowApp, FlowEdge, FlowPage
+from adt_ai.flow.runner import (
+    ApexFlowError,
+    ApexFlowRefreshRequest,
+    ApexFlowRefreshResult,
+    ApexFlowRefreshRunner,
+)
+from adt_ai.flow.store import ApexFlowStore
 from adt_ai.progress import DottedProgressBar
 from adt_ai.rebuild.runner import (
     REVEAL_DEFAULT_LIMIT,
@@ -61,6 +71,7 @@ from adt_ai.recompile.runner import RecompileRequest, RecompileRunner
 from adt_ai.search_repo.runner import SearchRepoError, SearchRepoRequest, SearchRepoRunner
 
 PUBLIC_MODULES = (
+    ("flow", "map APEX page navigation links (to/from, refresh)", ()),
     ("discovery", "run read-only SELECT discovery queries", ()),
     ("doctor", "check local setup and run explicit updates", ()),
     ("export_apex", "export APEX applications", ()),
@@ -78,6 +89,10 @@ PUBLIC_COMMANDS = tuple(
 )
 
 REMOVED_COMPATIBILITY_FLAGS = {
+    "flow": (
+        "-dump", "--dump", "-format", "--format", "-out", "--out",
+        "-remove", "--remove", "-schema", "--schema",
+    ),
     "recompile": ("-key", "--key"),
 }
 
