@@ -8,7 +8,6 @@ from typing import Protocol
 
 import yaml
 
-from adt_ai.git_files import changed_files, run_git
 from adt_ai.commit_cache import (
     cache_path as history_cache_path,
 )
@@ -24,6 +23,7 @@ from adt_ai.commit_discovery import (
     _classify_file,
     _detected_patch,
 )
+from adt_ai.git_files import changed_files, run_git
 
 
 class RebuildError(Exception):

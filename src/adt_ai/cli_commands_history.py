@@ -37,8 +37,6 @@ from adt_ai.cli_context import (
 )
 
 
-
-
 class ConsoleRebuildReporter:
     def __init__(self, branch_label: str, since_label: str | None = None) -> None:
         self.branch_label = branch_label

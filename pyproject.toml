@@ -47,3 +47,7 @@ ignore = [
 # reads as an unused import even though the cli_* command modules import these
 # names from here. Suppress F401 for this aggregator only.
 "src/adt_ai/cli_constants.py" = ["F401"]
+# cli_commands_history builds the same dynamic __all__ from globals() (see its
+# final line), so its imported command symbols read as unused to ruff even
+# though they are intentionally re-exported. Suppress F401 here for that reason.
+"src/adt_ai/cli_commands_history.py" = ["F401"]
