@@ -60,7 +60,8 @@ The default diagram paths are `<root>/config/flow/app_<id>.<ext>` (`.mmd`, `.dot
 | `-config-dir`, `--config-dir` | Yes | none | Folder containing project config YAML (refresh only). ADT.ai always loads repo defaults first, then overlays these project configs. |
 | `-env`, `--env` | No | connection default environment | Connection environment to refresh from, for example `DEV` (refresh only). |
 | `-debug`, `--debug` | No | off | Show input parameters and SQL queries with bind values. |
-| `-beep`, `--beep` | No | off | Force the completion chime on for this run, even from a worktree checkout. |
+| `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |
+| `-nobeep`, `--nobeep` | No | off | Suppress completion sounds for this run; this wins over `chime_theme` and `-beep`. |
 
 ---
 

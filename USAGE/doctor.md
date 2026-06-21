@@ -69,7 +69,8 @@ adtai doctor -init -root /path/to/project
 | `-init` | No | off | Scaffold project config, repo ignore rules, and safe local connection/wallet placeholders. |
 | `-root`, `--root` | No | `.` | Project root folder for `-init`. |
 | `-force`, `--force` | No | off | With `-init`, overwrite generated template files that already exist. |
-| `-beep`, `--beep` | No | off | Force the completion chime on for this run, even from a worktree checkout. |
+| `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |
+| `-nobeep`, `--nobeep` | No | off | Suppress completion sounds for this run; this wins over `chime_theme` and `-beep`. |
 
 ---
 

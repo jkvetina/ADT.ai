@@ -231,7 +231,10 @@ def _matches_file(path: str, request: SearchRepoRequest) -> bool:
 
 def _object_identity(path: str) -> tuple[str, str]:
     parts = Path(path).parts
-    if len(parts) < 4 or parts[0].lower() != "database":
+    # The `database` segment leads in the legacy layout (database/<schema>/...)
+    # and follows the schema in the default layout (<schema>/database/...). In
+    # both, the object type is parts[2] and the file name is parts[-1].
+    if len(parts) < 4 or "database" not in (parts[0].lower(), parts[1].lower()):
         return "", ""
     object_type = parts[2].replace("_", " ").replace("-", " ").upper()
     if object_type.endswith("IES"):

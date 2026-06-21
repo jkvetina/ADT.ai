@@ -23,7 +23,7 @@ Run commands from the project root (the folder holding `config/` and the export 
 
 ## export_db — export database objects
 
-Each object becomes a clean `.sql` file under `database/<schema>/<object_type>/`. Filter by time (`-recent`), type (`-type`), and name (`-name`); these combine.
+Each object becomes a clean `.sql` file under `<schema>/database/<object_type>/` (the default layout; the legacy `database/<schema>/<object_type>/` layout is also supported via `path_objects`). Filter by time (`-recent`), type (`-type`), and name (`-name`); these combine.
 
 **Always pass `-silent`** when driving exports from this skill — it suppresses the per-object name/progress flood while keeping the banner, connection block, overview, and timer. Drop `-silent` only when the user is interactively debugging a specific object.
 

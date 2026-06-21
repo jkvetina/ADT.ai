@@ -142,13 +142,36 @@ def _cleanup_table_item(item: str) -> str:
         flags=re.IGNORECASE,
     )
     item = re.sub(r"\s+START WITH 1\b", "", item)
+    item = _strip_sequence_nextval(item)
+    return re.sub(r"\s+", " ", item).strip()
+
+_SEQUENCE_IDENT = r'(?:"[A-Za-z0-9_$#]+"|[A-Za-z0-9_$#]+)'
+
+def _strip_sequence_nextval(item: str) -> str:
+    """Normalize sequence defaults to bare ``sequence.nextval`` like old ADT.
+
+    DBMS_METADATA emits column defaults as a fully qualified, double-quoted
+    reference (``"SCHEMA"."SEQ"."NEXTVAL"``). Old ADT dropped the schema and the
+    quotes and lowercased the identifier so the default reads ``seq.nextval``.
+    Handle the 3-part (schema-qualified) and 2-part forms.
+    """
+
+    def _repl(match: re.Match[str]) -> str:
+        return f"{match.group(1).strip(chr(34)).lower()}.nextval"
+
     item = re.sub(
-        r"\b[a-z][a-z0-9_$#]*\.([a-z][a-z0-9_$#]*\.nextval)",
-        r"\1",
+        rf"{_SEQUENCE_IDENT}\.({_SEQUENCE_IDENT})\.(?:\"NEXTVAL\"|NEXTVAL\b)",
+        _repl,
         item,
         flags=re.IGNORECASE,
     )
-    return re.sub(r"\s+", " ", item).strip()
+    item = re.sub(
+        rf"({_SEQUENCE_IDENT})\.(?:\"NEXTVAL\"|NEXTVAL\b)",
+        _repl,
+        item,
+        flags=re.IGNORECASE,
+    )
+    return item
 
 def _format_table_column(item: str) -> list[str]:
     match = re.match(r"(?P<name>\S+)\s+(?P<body>.*)", item, flags=re.IGNORECASE)

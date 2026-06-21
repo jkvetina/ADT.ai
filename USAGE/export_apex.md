@@ -49,8 +49,8 @@ ADT.ai exports only the sections named on the command line. Use `-all` to export
 | `-group`, `--group` | No | connection `apex.group` | APEX application group scope. |
 | `-app`, `--app` | Yes | connection `apex.app` | Application ids to reveal or export. Each value may be a plain id, a closed range `MIN-MAX`, or an open range `MIN+` (no upper bound); combine freely, e.g. `-app 0-99 100-999 5000 9000+`. When any range is given, ADT.ai scans without an id filter and selects matching apps in Python. |
 | `-max_app_id`, `--max_app_id`, `--max-app-id` | No | none | In reveal mode, list only applications with `application_id` below the value; also scopes workspace owner/application counts and per-owner application counts. |
-| `-recent`, `--recent` | No | off | On exports, print components changed in the last DAYS days before the selected formats; with `-reveal`, filter the application list to apps changed in that window without printing component details. |
-| `-by`, `--by` | No | none | Filter the recent component report by exact APEX developer username. |
+| `-recent`, `--recent` | No | off | On exports, print components changed in the last DAYS days before the selected formats and limit split/readable/embedded output to those components; with `-reveal`, filter the application list to apps changed in that window without printing component details. |
+| `-by`, `--by` | No | none | Filter the recent component report and recent export set by exact APEX developer username. |
 | `-release`, `--release` | No | none | Override `p_release` values in exported SQL files, matching old ADT upgrade-recovery behavior. |
 | `-reveal`, `--reveal` | No | off | Show matching APEX workspaces and applications. |
 | `-owners`, `--owners` | No | off | In reveal mode, list application counts for all APEX owners instead of only configured/scanned schemas. |
@@ -63,7 +63,8 @@ ADT.ai exports only the sections named on the command line. Use `-all` to export
 | `-files`, `--files` | No | off | Export application files. |
 | `-files_ws`, `--files_ws`, `--files-ws` | No | off | Export workspace files. |
 | `-debug`, `--debug` | No | off | Show input parameters and SQL queries with bind values. |
-| `-beep`, `--beep` | No | off | Force the completion chime on for this run, even from a worktree checkout. |
+| `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |
+| `-nobeep`, `--nobeep` | No | off | Suppress completion sounds for this run; this wins over `chime_theme` and `-beep`. |
 
 ---
 

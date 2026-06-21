@@ -10,9 +10,10 @@ from types import ModuleType
 
 @dataclass(frozen=True)
 class NormalizationContext:
-    object_type : str
-    object_name : str
-    object_owner: str | None = None
+    object_type      : str
+    object_name      : str
+    object_owner     : str | None = None
+    add_if_not_exists: bool = True
 
 Normalizer = Callable[[list[str], NormalizationContext], list[str]]
 
@@ -47,6 +48,10 @@ class NormalizerRegistry:
     def builtin(cls) -> NormalizerRegistry:
         from adt_ai.export_db.object_normalizers.index import normalize_index
         from adt_ai.export_db.object_normalizers.job import normalize_job
+        from adt_ai.export_db.object_normalizers.materialized_view import (
+            normalize_materialized_view,
+            normalize_mview_log,
+        )
         from adt_ai.export_db.object_normalizers.sequence import normalize_sequence
         from adt_ai.export_db.object_normalizers.synonym import normalize_synonym
         from adt_ai.export_db.object_normalizers.table import normalize_table
@@ -57,6 +62,8 @@ class NormalizerRegistry:
             {
                 "INDEX": normalize_index,
                 "JOB": normalize_job,
+                "MATERIALIZED VIEW": normalize_materialized_view,
+                "MVIEW LOG": normalize_mview_log,
                 "SEQUENCE": normalize_sequence,
                 "SYNONYM": normalize_synonym,
                 "TABLE": normalize_table,
@@ -83,14 +90,16 @@ def normalize_ddl(
     object_type: str,
     object_name: str,
     registry: NormalizerRegistry | None = None,
+    add_if_not_exists: bool = True,
 ) -> str:
     registry = registry or NormalizerRegistry.builtin()
     normalized_payload = payload.replace("\t", "    ").strip()
     lines = normalized_payload.splitlines()
     context = NormalizationContext(
-        object_type  = object_type.upper(),
-        object_name  = object_name,
-        object_owner = _extract_definition_owner(normalized_payload, object_type),
+        object_type       = object_type.upper(),
+        object_name       = object_name,
+        object_owner      = _extract_definition_owner(normalized_payload, object_type),
+        add_if_not_exists = add_if_not_exists,
     )
     normalizer = registry.get(object_type)
     if normalizer is not None and context.object_type in RAW_NORMALIZER_OBJECT_TYPES:
@@ -285,6 +294,28 @@ def _replace_outside_sql_strings(
     if outside:
         result.append(replace_chunk("".join(outside)))
     return "".join(result)
+
+def _drop_create_wrap(lines: list[str], drop_statement: str) -> list[str]:
+    """Prefix a CREATE block with the old-ADT EXEC_DDL drop-before-create guard.
+
+    Objects that cannot be replaced in place (types, materialized views and
+    their logs) are dropped first inside an autonomous block that swallows
+    errors, then recreated.
+    """
+    return [
+        "BEGIN",
+        f"    DBMS_UTILITY.EXEC_DDL_STATEMENT('{drop_statement}');",
+        "    DBMS_OUTPUT.PUT_LINE('--');",
+        f"    DBMS_OUTPUT.PUT_LINE('-- {drop_statement}, DONE');",
+        "    DBMS_OUTPUT.PUT_LINE('--');",
+        "EXCEPTION",
+        "WHEN OTHERS THEN",
+        "    NULL;",
+        "END;",
+        "/",
+        "--",
+        *_ensure_sql_terminator(lines),
+    ]
 
 def _ensure_sql_terminator(lines: list[str]) -> list[str]:
     if not lines:

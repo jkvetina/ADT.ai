@@ -177,6 +177,189 @@ ORDER BY 1, 2
 """.strip()
 
 
+# get the full compile error messages, one row per error line. ``-errors`` prints
+# these so an AI agent can jump straight to the offending line/position/text. Same
+# 4-key scope and warning filter as ERRORS_SUMMARY_QUERY, so the per-object detail
+# rows match that summary's ``errors`` count exactly.
+ERRORS_DETAIL_QUERY = """
+WITH objects_add AS (
+    SELECT /*+ MATERIALIZE CARDINALITY(t 1) */
+        t.column_value AS object_like
+    FROM TABLE(APEX_STRING.SPLIT(TRIM(BOTH ',' FROM NVL(:objects_prefix, '%')), ',')) t
+),
+objects_ignore AS (
+    SELECT /*+ MATERIALIZE CARDINALITY(t 10) */
+        t.column_value AS object_like
+    FROM TABLE(APEX_STRING.SPLIT(TRIM(BOTH ',' FROM :objects_ignore), ',')) t
+)
+SELECT
+    ROW_NUMBER() OVER (ORDER BY e.type, e.name, e.line, e.position, e.sequence) AS id,
+    e.type          AS object_type,
+    e.name          AS object_name,
+    e.line          AS line,
+    e.position      AS position,
+    e.text          AS text
+FROM user_errors e
+JOIN objects_add a
+    ON e.name       LIKE a.object_like ESCAPE '\\'
+LEFT JOIN objects_ignore g
+    ON e.name       LIKE g.object_like ESCAPE '\\'
+WHERE 1 = 1
+    AND g.object_like   IS NULL
+    AND (e.type         LIKE :object_type ESCAPE '\\' OR :object_type IS NULL)
+    AND (e.name         LIKE :object_name ESCAPE '\\' OR :object_name IS NULL)
+    AND e.text          NOT LIKE 'PLW%'     -- skip warnings
+ORDER BY e.type, e.name, e.line, e.position, e.sequence
+""".strip()
+
+
+# list session/object locks held on the schema's objects (gv$locked_object).
+# Portable across any schema: user_objects keeps it scoped to the connected
+# user, gv$session adds the holding session's identity. Requires SELECT on the
+# gv$ views; callers degrade gracefully when that grant is missing.
+LOCKED_OBJECTS_QUERY = """
+WITH objects_add AS (
+    SELECT /*+ MATERIALIZE CARDINALITY(t 1) */
+        t.column_value AS object_like
+    FROM TABLE(APEX_STRING.SPLIT(TRIM(BOTH ',' FROM NVL(:objects_prefix, '%')), ',')) t
+),
+objects_ignore AS (
+    SELECT /*+ MATERIALIZE CARDINALITY(t 10) */
+        t.column_value AS object_like
+    FROM TABLE(APEX_STRING.SPLIT(TRIM(BOTH ',' FROM :objects_ignore), ',')) t
+)
+SELECT
+    o.object_type,
+    o.object_name,
+    lo.session_id                       AS sid,
+    s.serial#                           AS serial#,
+    NVL(lo.oracle_username, s.username) AS oracle_user,
+    lo.os_user_name                     AS os_user,
+    s.machine                           AS machine,
+    s.program                           AS program,
+    DECODE(lo.locked_mode,
+        0, 'NONE',
+        1, 'NULL',
+        2, 'ROW SHARE',
+        3, 'ROW EXCLUSIVE',
+        4, 'SHARE',
+        5, 'SHARE ROW EXCLUSIVE',
+        6, 'EXCLUSIVE',
+        TO_CHAR(lo.locked_mode)) AS lock_mode
+FROM gv$locked_object lo
+JOIN user_objects o
+    ON o.object_id          = lo.object_id
+LEFT JOIN gv$session s
+    ON s.inst_id            = lo.inst_id
+    AND s.sid               = lo.session_id
+JOIN objects_add a
+    ON o.object_name        LIKE a.object_like ESCAPE '\\'
+LEFT JOIN objects_ignore g
+    ON o.object_name        LIKE g.object_like ESCAPE '\\'
+WHERE 1 = 1
+    AND g.object_like       IS NULL
+    AND (o.object_type      LIKE :object_type ESCAPE '\\' OR :object_type IS NULL)
+    AND (o.object_name      LIKE :object_name ESCAPE '\\' OR :object_name IS NULL)
+ORDER BY o.object_type, o.object_name, lo.session_id
+""".strip()
+
+
+# materialized-view health (staleness, compile state, last refresh, indexes).
+# Modeled on CORE23's core_daily_materialized_views_v but rewritten against the
+# portable user_* views so it works in any schema. Scoped by name/prefix/ignore;
+# object_type is irrelevant here because -mviews opts MVs in explicitly.
+MATERIALIZED_VIEWS_QUERY = """
+WITH objects_add AS (
+    SELECT /*+ MATERIALIZE CARDINALITY(t 1) */
+        t.column_value AS object_like
+    FROM TABLE(APEX_STRING.SPLIT(TRIM(BOTH ',' FROM NVL(:objects_prefix, '%')), ',')) t
+),
+objects_ignore AS (
+    SELECT /*+ MATERIALIZE CARDINALITY(t 10) */
+        t.column_value AS object_like
+    FROM TABLE(APEX_STRING.SPLIT(TRIM(BOTH ',' FROM :objects_ignore), ',')) t
+)
+SELECT
+    m.mview_name                                                          AS object_name,
+    MAX(m.staleness)                                                      AS staleness,
+    MAX(m.compile_state)                                                  AS compile_state,
+    MAX(TO_CHAR(m.last_refresh_end_time, 'YYYY-MM-DD HH24:MI'))           AS last_refreshed_at,
+    MAX(ROUND(86400 * (m.last_refresh_end_time - m.last_refresh_date)))   AS last_timer,
+    MAX(m.refresh_method)                                                 AS refresh_method,
+    MAX(CASE WHEN EXISTS (
+            SELECT 1
+            FROM user_mview_detail_relations d
+            JOIN user_mview_logs l
+                ON l.master = d.detailobj_name
+            WHERE d.mview_name = m.mview_name
+        ) THEN 'Y' END)                                                   AS has_log,
+    LISTAGG(i.index_name, ', ') WITHIN GROUP (ORDER BY i.index_name)      AS indexes
+FROM user_mviews m
+LEFT JOIN user_indexes i
+    ON i.table_name         = m.mview_name
+JOIN objects_add a
+    ON m.mview_name         LIKE a.object_like ESCAPE '\\'
+LEFT JOIN objects_ignore g
+    ON m.mview_name         LIKE g.object_like ESCAPE '\\'
+WHERE 1 = 1
+    AND g.object_like       IS NULL
+    AND (m.mview_name       LIKE :object_name ESCAPE '\\' OR :object_name IS NULL)
+GROUP BY m.mview_name
+ORDER BY m.mview_name
+""".strip()
+
+
+# synonym health: map each local synonym to its target owner object, the
+# privileges this schema holds on that target (collapsed to ALL when the set is
+# complete), whether they are grantable, and the target object's validity.
+# Modeled on CORE23's core_daily_synonyms_v but, like the MV report, scoped with
+# the portable objects_add/objects_ignore CTE so -synonyms works in any schema.
+# object_type is irrelevant here because -synonyms opts synonyms in explicitly;
+# the report-only flag never compiles, so there is no :force bind either.
+SYNONYMS_QUERY = """
+WITH objects_add AS (
+    SELECT /*+ MATERIALIZE CARDINALITY(t 1) */
+        t.column_value AS object_like
+    FROM TABLE(APEX_STRING.SPLIT(TRIM(BOTH ',' FROM NVL(:objects_prefix, '%')), ',')) t
+),
+objects_ignore AS (
+    SELECT /*+ MATERIALIZE CARDINALITY(t 10) */
+        t.column_value AS object_like
+    FROM TABLE(APEX_STRING.SPLIT(TRIM(BOTH ',' FROM :objects_ignore), ',')) t
+)
+SELECT
+    s.synonym_name                                                       AS synonym_name,
+    g.type                                                               AS object_type,
+    s.table_owner                                                        AS owner,
+    s.table_name                                                         AS object_name,
+    REPLACE(
+        LISTAGG(g.privilege, ', ') WITHIN GROUP (ORDER BY g.privilege),
+        'ALTER, DEBUG, DELETE, FLASHBACK, INDEX, INSERT, ON COMMIT REFRESH, '
+            || 'QUERY REWRITE, READ, REFERENCES, SELECT, UPDATE',
+        'ALL'
+    )                                                                    AS privileges,
+    CASE WHEN g.grantable = 'YES' THEN 'Y' END                           AS is_grantable,
+    NVL(o.status, 'UNKNOWN')                                             AS status
+FROM user_synonyms s
+LEFT JOIN user_tab_privs_recd g
+    ON  g.owner             = s.table_owner
+    AND g.table_name        = s.table_name
+LEFT JOIN all_objects o
+    ON  o.owner             = s.table_owner
+    AND o.object_name       = s.table_name
+    AND o.object_type       = g.type
+JOIN objects_add a
+    ON s.synonym_name       LIKE a.object_like ESCAPE '\\'
+LEFT JOIN objects_ignore x
+    ON s.synonym_name       LIKE x.object_like ESCAPE '\\'
+WHERE 1 = 1
+    AND x.object_like       IS NULL
+    AND (s.synonym_name     LIKE :object_name ESCAPE '\\' OR :object_name IS NULL)
+GROUP BY s.synonym_name, s.table_owner, s.table_name, g.type, g.grantable, o.status
+ORDER BY s.synonym_name
+""".strip()
+
+
 def build_compile_statement(
     object_type: str,
     object_name: str,
@@ -229,3 +412,50 @@ def build_compile_statement(
         extras += " REUSE SETTINGS"
 
     return f"ALTER {type_family} {object_name} COMPILE{type_body} {extras}"
+
+
+def _refresh_method_code(refresh_method: str | None) -> str:
+    """Map an MV's configured refresh_method to a DBMS_MVIEW.REFRESH method char.
+
+    COMPLETE → 'C', FAST → 'F'. FORCE, NEVER, anything unknown, and a missing
+    method all fall back to '?' (let Oracle decide). The point is to refresh a
+    view with the method already attached to it, never silently re-picking and
+    flipping a COMPLETE view to FAST.
+    """
+    method = (refresh_method or "").strip().upper()
+    if method == "COMPLETE":
+        return "C"
+    if method == "FAST":
+        return "F"
+    return "?"
+
+
+def mview_type_code(refresh_method: str | None, has_log: bool = False) -> str:
+    """Map an MV's configured refresh_method to the F/C TYPE shown in the report.
+
+    Unlike :func:`_refresh_method_code` (which feeds DBMS_MVIEW.REFRESH and leaves
+    FORCE as '?' so Oracle decides at runtime), the *display* always resolves to a
+    clean letter: COMPLETE → 'C', FAST → 'F'. FORCE resolves to what Oracle would
+    actually do — 'F' when a usable MV log exists, 'C' otherwise. NEVER → 'N', and a
+    missing method → '' (nothing to show).
+    """
+    method = (refresh_method or "").strip().upper()
+    if method == "COMPLETE":
+        return "C"
+    if method == "FAST":
+        return "F"
+    if method == "FORCE":
+        return "F" if has_log else "C"
+    return method[:1]
+
+
+def build_refresh_statement(object_name: str, refresh_method: str | None = None) -> str:
+    """Build the DBMS_MVIEW.REFRESH call that refreshes one materialized view.
+
+    Staleness is fixed by refreshing (not compiling), using the method the MV is
+    configured with (``refresh_method``) so the tool never changes a view's
+    refresh type. Unknown/missing methods fall back to '?' (Oracle decides).
+    """
+    safe_identifier(object_name, role="object name")
+    method = _refresh_method_code(refresh_method)
+    return f"BEGIN DBMS_MVIEW.REFRESH('{object_name}', '{method}'); END;"

@@ -37,11 +37,12 @@ def normalize_table(lines: list[str], context: NormalizationContext) -> list[str
     folds, suffix = _collect_index_backed_constraints(suffix, context)
     formatted_items = _formatted_table_items_reordered(items, folds, context)
 
-    create_header = (
-        "CREATE GLOBAL TEMPORARY TABLE"
-        if is_global_temporary
-        else "CREATE TABLE IF NOT EXISTS"
-    )
+    if is_global_temporary:
+        create_header = "CREATE GLOBAL TEMPORARY TABLE"
+    elif context.add_if_not_exists:
+        create_header = "CREATE TABLE IF NOT EXISTS"
+    else:
+        create_header = "CREATE TABLE"
     result = [f"{create_header} {table_name} ("]
     for index, item_lines in enumerate(formatted_items):
         is_last = index == len(formatted_items) - 1

@@ -5,7 +5,7 @@ import fnmatch
 import re
 import sys
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -60,14 +60,52 @@ def print_adt_header(message: str, append: str = "", file=None) -> None:
     print("-" * len(message), file=file)
 
 
-def print_adt_table(
+def _adt_cell(value: object, width: int, numeric: bool) -> str:
+    # coalesce only None to "" — a legitimate falsy value such as the int 0
+    # (e.g. a sub-second duration) must still render. ``str(value or "")``
+    # disagreed with the width/numeric detection and silently dropped the cell.
+    cell = "" if value is None else str(value)
+    text = DROPBOX_PATH_RE.sub("Dropbox/", cell)
+    align = ">" if numeric else "<"
+    return f"{text:{align}{width}}   "
+
+
+@dataclass(frozen=True)
+class _AdtTableLayout:
+    """Pre-computed column geometry, shared by the batch and streaming renders.
+
+    Holding the widths/alignment lets a single row be emitted in pieces — the
+    object name first, the rest after an action runs — that rejoin byte-for-byte
+    with the whole-row render. ``cells_segment`` carries the two-space table
+    indent only on the leading segment (``start == 0``).
+    """
+
+    columns: tuple[str, ...]
+    widths: tuple[int, ...]
+    numeric: tuple[bool, ...]
+
+    def cells_segment(self, values: Sequence[object], start: int, end: int) -> str:
+        line = "  " if start == 0 else ""
+        for index in range(start, end):
+            line += _adt_cell(values[index], self.widths[index], self.numeric[index])
+        return line
+
+    def row_line(self, values: Sequence[object]) -> str:
+        return self.cells_segment(values, 0, len(self.columns))
+
+    def header_line(self) -> str:
+        return self.row_line([column.upper().replace("_", " ") for column in self.columns])
+
+    def separator_line(self) -> str:
+        return self.row_line(["-" * width for width in self.widths])
+
+
+def _compute_adt_layout(
     rows: list[dict[str, object]],
-    min_widths: Mapping[str, int] | None = None,
-) -> None:
-    if not rows:
-        return
-    min_widths = min_widths or {}
-    columns = list(rows[0].keys())
+    columns: Sequence[str],
+    min_widths: Mapping[str, int],
+) -> _AdtTableLayout:
+    columns = list(columns)
     widths = [
         max(
             len(column),
@@ -77,26 +115,34 @@ def print_adt_table(
         for column in columns
     ]
     numeric = [
-        all(
+        bool(rows)
+        and all(
             str(row.get(column, "")).isnumeric() or row.get(column, "") in {None, ""}
             for row in rows
         )
         for column in columns
     ]
+    return _AdtTableLayout(tuple(columns), tuple(widths), tuple(numeric))
 
-    def format_row(values: list[object]) -> str:
-        line = "  "
-        for index, value in enumerate(values):
-            text = DROPBOX_PATH_RE.sub("Dropbox/", str(value or ""))
-            align = ">" if numeric[index] else "<"
-            line += f"{text:{align}{widths[index]}}   "
-        return line
 
+def print_adt_table(
+    rows: list[dict[str, object]],
+    min_widths: Mapping[str, int] | None = None,
+    columns: Sequence[str] | None = None,
+) -> None:
+    # ``columns`` makes a requested section render even with zero rows: the
+    # header and separator still print so the user sees the feature ran (an
+    # empty table reads as "looked, found nothing", not "silently did nothing").
+    if not rows and not columns:
+        return
+    min_widths = min_widths or {}
+    columns = list(rows[0].keys()) if rows else list(columns)
+    layout = _compute_adt_layout(rows, columns, min_widths)
     print()
-    print(format_row([column.upper().replace("_", " ") for column in columns]))
-    print(format_row(["-" * width for width in widths]))
+    print(layout.header_line())
+    print(layout.separator_line())
     for row in rows:
-        print(format_row([row.get(column, "") for column in columns]))
+        print(layout.row_line([row.get(column, "") for column in columns]))
     print()
     _commit_stdout()
 
@@ -301,15 +347,17 @@ class ExportDbRunner:
                 )
             reporter.start_export(schema, len(database_objects))
             reports_objects = reporter.reports_objects
+            add_if_not_exists = _is_enabled(request.config.get("add_if_not_exists", True))
             for index, database_object in enumerate(database_objects):
                 if reports_objects:
                     reporter.export_object(database_object)
                 raw_ddl = discovery.ddl(database_object)
                 content = normalize_ddl(
                     raw_ddl,
-                    object_type = database_object.object_type,
-                    object_name = database_object.name,
-                    registry    = self.normalizer_registry,
+                    object_type       = database_object.object_type,
+                    object_name       = database_object.name,
+                    registry          = self.normalizer_registry,
+                    add_if_not_exists = add_if_not_exists,
                 )
                 fix_content = (
                     build_table_fix_sql(raw_ddl, database_object.name)
@@ -480,7 +528,7 @@ def _has_comments(object_type: str, config: dict[str, Any]) -> bool:
     return object_type.upper() in _configured_comment_types(
         config,
         key      = "object_comments",
-        defaults = {"TABLE", "VIEW", "MATERIALIZED VIEW"},
+        defaults = {"TABLE", "VIEW"},
     )
 
 
@@ -488,7 +536,7 @@ def _has_column_comments(object_type: str, config: dict[str, Any]) -> bool:
     return object_type.upper() in _configured_comment_types(
         config,
         key      = "object_col_comments",
-        defaults = {"TABLE", "MATERIALIZED VIEW"},
+        defaults = {"TABLE"},
     )
 
 
@@ -512,11 +560,11 @@ def _comment_query_object_types(
     configured = _configured_comment_types(
         config,
         key      = "object_comments",
-        defaults = {"TABLE", "VIEW", "MATERIALIZED VIEW"},
+        defaults = {"TABLE", "VIEW"},
     ) | _configured_comment_types(
         config,
         key      = "object_col_comments",
-        defaults = {"TABLE", "MATERIALIZED VIEW"},
+        defaults = {"TABLE"},
     )
     requested = (
         {object_type.upper() for object_type in request.object_types}

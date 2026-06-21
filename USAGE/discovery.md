@@ -47,7 +47,8 @@ Exactly one of `-sql` or `-file` must be provided; passing both or neither exits
 | `-limit`, `--limit` | No | `200` | Maximum rows rendered per query in the report. |
 | `-nolog`, `--no-log` | No | off | Run and print results without writing a report, touching `.gitignore`, or writing `-file` results back to the source file. |
 | `-debug`, `--debug` | No | off | Show input parameters and SQL queries with bind values. |
-| `-beep`, `--beep` | No | off | Force the completion chime on for this run, even from a worktree checkout. |
+| `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |
+| `-nobeep`, `--nobeep` | No | off | Suppress completion sounds for this run; this wins over `chime_theme` and `-beep`. |
 
 ---
 

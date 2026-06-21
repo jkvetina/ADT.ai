@@ -2,6 +2,15 @@
 
 All notable changes to the public ADT.ai release are recorded here, newest first.
 
+## 0.6.0 - 2026-06-21
+
+- Extended completion sound controls across every public command. `-beep [theme]` now accepts an optional case-insensitive theme override for one run, bare `-beep` forces the configured sound theme or falls back to `chime` when sounds are disabled in config, and `-nobeep` suppresses sounds for a single run with priority over both config and forced sounds. Help, version, and other static screens remain silent.
+- Changed the default exported database layout to the schema-first shape used by current project folders, and tightened `export_db` normalization around materialized-view logs, sequence defaults, and `add_if_not_exists` output.
+- Changed `export_apex -recent [DAYS]` from report-only to report-and-filter for component-based exports: split, readable, and embedded exports now write only the recent components returned by the same recent-component query, and `-by DEVELOPER` narrows both the report and exported component set. Full app SQL, REST services, application files, workspace files, and `-reveal -recent` keep their existing behavior.
+- Extended `export_data` large-value sidecars so BLOB, CLOB, XMLTYPE, and JSON payloads can be imported through generated SQL-only scripts beside the exported table data. The main MERGE SQL now prints visible SQLcl progress prompts for those payload scripts while keeping the scalar MERGE batched.
+- Expanded `recompile` reporting and focused actions. `-mviews [PATTERN]` now targets materialized views without running the invalid-object recompile path, supports forced refresh of every match, streams each view row while work is happening, resolves refresh type to clean `F` or `C`, shows materialized-view log presence, and rounds dictionary timers up to a visible `Ns`. Compile errors are keyed by a stable ID with full messages printed below the table, locked objects are reported, and the new `-synonyms [PATTERN]` report lists synonym targets, privileges, grantability, and target status without changing database objects.
+- Public commands unchanged: `export_db`, `doctor`, `export_apex`, `export_data`, `recompile`, `rebuild`, `search_repo`, `discovery`, `flow`.
+
 ## 0.5.3 - 2026-06-19
 
 - Internal refactor: relocated the shared Git commit-discovery and commit-cache helpers into neutrally-named top-level modules and tidied the package layout. No user-facing change — every command behaves exactly as in 0.5.2.

@@ -23,6 +23,7 @@ class ObjectDiscovery:
     JOBS_QUERY             = queries.JOBS_QUERY
     JOB_ARGUMENTS_QUERY    = queries.JOB_ARGUMENTS_QUERY
     DDL_QUERY              = queries.DDL_QUERY
+    MVIEW_LOGS_QUERY       = queries.MVIEW_LOGS_QUERY
     MVIEW_LOG_DDL_QUERY    = queries.MVIEW_LOG_DDL_QUERY
     JOB_DDL_QUERY          = queries.JOB_DDL_QUERY
     DBMS_METADATA_SETUP_QUERY = queries.DBMS_METADATA_SETUP_QUERY
@@ -73,6 +74,8 @@ class ObjectDiscovery:
             objects.extend(self._discover_indexes(schema, filters, recent_days))
         if _includes_object_type("JOB", filters.object_types) and recent_days is None:
             objects.extend(self._discover_jobs(schema, filters))
+        if _includes_object_type("MVIEW LOG", filters.object_types) and recent_days is None:
+            objects.extend(self._discover_mview_logs(schema, filters))
         return objects
 
     def _object_rows(
@@ -124,6 +127,23 @@ class ObjectDiscovery:
             for row in rows
             if str(row.get("SCHEDULE_TYPE") or "").upper() != "IMMEDIATE"
             if filters.matches("JOB", str(row["OBJECT_NAME"]))
+        ]
+
+    def _discover_mview_logs(
+        self,
+        schema: str,
+        filters: _ObjectFilters,
+    ) -> list[DatabaseObject]:
+        rows = self.gateway.fetch_all(
+            self.MVIEW_LOGS_QUERY,
+            {
+                "schema": schema,
+            },
+        )
+        return [
+            DatabaseObject(schema, "MVIEW LOG", str(row["OBJECT_NAME"]))
+            for row in rows
+            if filters.matches("MVIEW LOG", str(row["OBJECT_NAME"]))
         ]
 
     def _discover_indexes(
@@ -381,7 +401,7 @@ def _user_object_types(object_types: Iterable[str] | None) -> list[str] | None:
         object_type
         for object_type in object_types
         if _matches_like(object_type, "%")
-        and object_type.upper() not in {"INDEX", "JOB"}
+        and object_type.upper() not in {"INDEX", "JOB", "MVIEW LOG"}
     ]
 
 
@@ -417,7 +437,7 @@ def _ddl_query(database_object: DatabaseObject) -> tuple[str, dict[str, str]]:
     if object_type == "MVIEW LOG":
         return (
             queries.MVIEW_LOG_DDL_QUERY,
-            {"object_name": "MLOG$_" + database_object.name},
+            {"object_name": database_object.name},
         )
     return (
         queries.DDL_QUERY,

@@ -10,6 +10,10 @@ from typing import Any, Protocol
 from adt_ai.db import QueryGateway
 from adt_ai.export_data import queries
 from adt_ai.export_data.inventory import DataColumn, DataDiscovery, DataTable
+from adt_ai.export_data.lob_update_scripts import (
+    include_update_scripts,
+    write_lob_update_script,
+)
 from adt_ai.row_values import row_value
 
 _SIDE_CAR_DATA_TYPES = {
@@ -120,6 +124,7 @@ class ExportDataRunner:
         if sidecar_columns:
             _clear_sidecar_folder(path.with_suffix(""))
         row_count = 0
+        update_scripts: list[str] = []
         with path.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.writer(
                 handle,
@@ -131,13 +136,14 @@ class ExportDataRunner:
             sidecar_key_columns = _key_columns(table, query_columns)
             for row_number, row in enumerate(rows, start=1):
                 writer.writerow([row_value(row, column) for column in csv_columns])
-                _write_sidecar_values(
+                update_scripts.extend(_write_sidecar_values(
                     path            = path,
+                    table_name      = table.name,
                     row             = row,
                     row_number      = row_number,
                     key_columns     = sidecar_key_columns,
                     sidecar_columns = sidecar_columns,
-                )
+                ))
                 row_count += 1
         primary_columns = _key_columns(table, csv_columns)
         if primary_columns:
@@ -149,7 +155,10 @@ class ExportDataRunner:
                 where_filter    = where_filter,
             )
             if merge_sql:
-                path.with_suffix(".sql").write_text(merge_sql, encoding="utf-8")
+                path.with_suffix(".sql").write_text(
+                    merge_sql + include_update_scripts(update_scripts),
+                    encoding="utf-8",
+                )
         return path, row_count
 
 
@@ -168,6 +177,7 @@ def _clear_sidecar_folder(folder: Path) -> None:
         f".{extension}"
         for extension in _SIDE_CAR_DATA_TYPES.values()
     }
+    sidecar_suffixes.add(".sql")
     for file_path in folder.iterdir():
         if file_path.suffix not in sidecar_suffixes:
             continue
@@ -177,13 +187,15 @@ def _clear_sidecar_folder(folder: Path) -> None:
 
 def _write_sidecar_values(
     path: Path,
+    table_name: str,
     row: dict[str, Any],
     row_number: int,
     key_columns: list[str],
     sidecar_columns: list[DataColumn],
-) -> None:
+) -> list[str]:
     folder_created = False
     row_key = _sidecar_row_key(row, key_columns, row_number)
+    update_scripts: list[str] = []
     for column in sidecar_columns:
         value = row_value(row, column.name)
         payload = _sidecar_payload(value, column)
@@ -201,6 +213,18 @@ def _write_sidecar_values(
             file_path.write_bytes(payload)
         else:
             file_path.write_text(payload, encoding="utf-8")
+        update_script = write_lob_update_script(
+            folder      = folder,
+            table_name  = table_name,
+            row_key     = row_key,
+            row         = row,
+            key_columns = key_columns,
+            column      = column,
+            payload     = payload,
+        )
+        if update_script:
+            update_scripts.append(update_script)
+    return update_scripts
 
 
 def _sidecar_payload(value: Any, column: DataColumn) -> str | bytes | None:

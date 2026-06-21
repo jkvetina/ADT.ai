@@ -58,8 +58,9 @@ def normalize_index(
     suffix = body[close_index + 1:].strip().rstrip(";")
     option_lines = [line.rstrip() for line in lines[option_start:]]
     kind = "CREATE UNIQUE INDEX" if match.group("unique") else "CREATE INDEX"
+    if_not_exists = " IF NOT EXISTS" if context.add_if_not_exists else ""
     result = [
-        f"{kind} IF NOT EXISTS {_normalize_sql_identifier(match.group('name'))}",
+        f"{kind}{if_not_exists} {_normalize_sql_identifier(match.group('name'))}",
     ]
     table_name = _normalize_sql_identifier(match.group("table"))
     columns = _simple_index_columns(expression)

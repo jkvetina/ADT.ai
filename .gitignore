@@ -1,10 +1,13 @@
 # macOS and local scratch
 .DS_Store
 .temp.nosync/
+.worktrees/
 
 # Python bytecode/cache
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.ruff_cache/
 
 # Local connection files and Oracle wallets are sensitive runtime material.
 connections/*

@@ -319,13 +319,40 @@ def _command_timer_stdout(args: argparse.Namespace, stdout: TextIO) -> TextIO:
 
 
 def _completion_args_from_raw(raw_args: Sequence[str]) -> argparse.Namespace | None:
-    if "-beep" not in raw_args and "--beep" not in raw_args:
+    beep = _raw_beep_value(raw_args)
+    nobeep = _raw_flag_present(raw_args, ("-nobeep", "--nobeep"))
+    if beep is False and not nobeep:
         return None
     return argparse.Namespace(
-        beep       = True,
+        beep       = beep,
+        nobeep     = nobeep,
         root       = _raw_option_value(raw_args, ("-root", "--root"), "."),
         config_dir = _raw_option_values(raw_args, ("-config-dir", "--config-dir")),
     )
+
+
+def _raw_beep_value(raw_args: Sequence[str]) -> bool | str:
+    value: bool | str = False
+    index = 0
+    while index < len(raw_args):
+        arg = raw_args[index]
+        if arg in {"-beep", "--beep"}:
+            value = True
+            if index + 1 < len(raw_args) and not raw_args[index + 1].startswith("-"):
+                value = raw_args[index + 1]
+                index += 2
+                continue
+        else:
+            for name in ("-beep", "--beep"):
+                if arg.startswith(f"{name}="):
+                    value = arg.split("=", 1)[1] or True
+                    break
+        index += 1
+    return value
+
+
+def _raw_flag_present(raw_args: Sequence[str], names: tuple[str, ...]) -> bool:
+    return any(arg in names for arg in raw_args)
 
 
 def _raw_option_value(

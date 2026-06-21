@@ -9,6 +9,11 @@ from adt_ai.db import QueryGateway
 from adt_ai.recompile import queries
 
 
+def _str_or_none(value: Any) -> str | None:
+    """Coerce a catalog cell to text, preserving SQL NULLs as ``None``."""
+    return None if value is None else str(value)
+
+
 @dataclass(frozen=True)
 class RecompileObject:
     object_type: str
@@ -32,10 +37,75 @@ class ObjectError:
     error: str | None
 
 
+@dataclass(frozen=True)
+class CompileError:
+    id: int
+    object_type: str
+    object_name: str
+    line: int
+    position: int | None
+    text: str
+
+
+@dataclass(frozen=True)
+class LockedObject:
+    object_type: str
+    object_name: str
+    session_id: int | None
+    serial: int | None
+    oracle_user: str | None
+    os_user: str | None
+    machine: str | None
+    program: str | None
+    lock_mode: str | None
+
+
+@dataclass(frozen=True)
+class MaterializedView:
+    object_name: str
+    staleness: str | None
+    compile_state: str | None
+    # when the last refresh *finished* (TO_CHAR of last_refresh_end_time).
+    last_refreshed_at: str | None
+    # how long that refresh took, in seconds, as Oracle recorded it:
+    # ROUND(86400 * (last_refresh_end_time - last_refresh_date)).
+    last_timer: int | None
+    # the MV's *configured* refresh method (FAST/COMPLETE/FORCE/NEVER), carried
+    # whole — stable across the tool's own refresh, unlike last_refresh_type. The
+    # report resolves it to F/C; the runner maps it to a DBMS_MVIEW.REFRESH code.
+    refresh_method: str | None
+    # whether a usable MV log backs a FAST/FORCE refresh (the LOG column, and what
+    # resolves a FORCE method to F vs C in the report).
+    has_log: bool
+    indexes: str | None
+
+
+@dataclass(frozen=True)
+class SynonymInfo:
+    synonym_name: str
+    # the target object's type, taken from the received privilege (g.type); NULL
+    # when no privilege is recorded (e.g. a synonym onto an own/public object).
+    object_type: str | None
+    owner: str | None
+    object_name: str | None
+    # the privileges this schema holds on the target, collapsed to ALL when the
+    # full set is present; NULL when none are recorded.
+    privileges: str | None
+    # whether those privileges are grantable onward (g.grantable = 'YES').
+    is_grantable: bool
+    # the target object's validity: VALID / INVALID, or UNKNOWN when all_objects
+    # has no matching row.
+    status: str | None
+
+
 class RecompileDiscovery:
     OVERVIEW_QUERY = queries.OVERVIEW_QUERY
     OBJECTS_TO_RECOMPILE_QUERY = queries.OBJECTS_TO_RECOMPILE_QUERY
     ERRORS_SUMMARY_QUERY = queries.ERRORS_SUMMARY_QUERY
+    ERRORS_DETAIL_QUERY = queries.ERRORS_DETAIL_QUERY
+    LOCKED_OBJECTS_QUERY = queries.LOCKED_OBJECTS_QUERY
+    MATERIALIZED_VIEWS_QUERY = queries.MATERIALIZED_VIEWS_QUERY
+    SYNONYMS_QUERY = queries.SYNONYMS_QUERY
 
     def __init__(self, gateway: QueryGateway) -> None:
         self.gateway = gateway
@@ -116,6 +186,118 @@ class RecompileDiscovery:
                 str(row["OBJECT_NAME"]),
                 int(row["ERRORS"] or 0),
                 (str(row["ERROR"]) if row.get("ERROR") is not None else None),
+            )
+            for row in rows
+        ]
+
+    def errors_detail(
+        self,
+        *,
+        object_name: str = "%",
+        object_type: str = "%",
+        prefix: str = "",
+        ignore: str = "",
+    ) -> list[CompileError]:
+        rows = self.gateway.fetch_all(
+            self.ERRORS_DETAIL_QUERY,
+            self._scope_binds(
+                object_name=object_name, object_type=object_type, prefix=prefix, ignore=ignore
+            ),
+        )
+        return [
+            CompileError(
+                int(row["ID"] or 0),
+                str(row["OBJECT_TYPE"]),
+                str(row["OBJECT_NAME"]),
+                int(row["LINE"] or 0),
+                (int(row["POSITION"]) if row.get("POSITION") is not None else None),
+                str(row["TEXT"] or ""),
+            )
+            for row in rows
+        ]
+
+    def locked_objects(
+        self,
+        *,
+        object_name: str = "%",
+        object_type: str = "%",
+        prefix: str = "",
+        ignore: str = "",
+    ) -> list[LockedObject]:
+        rows = self.gateway.fetch_all(
+            self.LOCKED_OBJECTS_QUERY,
+            self._scope_binds(
+                object_name=object_name, object_type=object_type, prefix=prefix, ignore=ignore
+            ),
+        )
+        return [
+            LockedObject(
+                str(row["OBJECT_TYPE"]),
+                str(row["OBJECT_NAME"]),
+                (int(row["SID"]) if row.get("SID") is not None else None),
+                (int(row["SERIAL#"]) if row.get("SERIAL#") is not None else None),
+                _str_or_none(row.get("ORACLE_USER")),
+                _str_or_none(row.get("OS_USER")),
+                _str_or_none(row.get("MACHINE")),
+                _str_or_none(row.get("PROGRAM")),
+                _str_or_none(row.get("LOCK_MODE")),
+            )
+            for row in rows
+        ]
+
+    def materialized_views(
+        self,
+        *,
+        object_name: str = "%",
+        prefix: str = "",
+        ignore: str = "",
+    ) -> list[MaterializedView]:
+        # The MV query binds only name/prefix/ignore — object_type is irrelevant
+        # because -mviews opts materialized views in explicitly.
+        binds = {
+            "object_name"    : object_name,
+            "objects_prefix" : prefix,
+            "objects_ignore" : ignore,
+        }
+        rows = self.gateway.fetch_all(self.MATERIALIZED_VIEWS_QUERY, binds)
+        return [
+            MaterializedView(
+                str(row["OBJECT_NAME"]),
+                _str_or_none(row.get("STALENESS")),
+                _str_or_none(row.get("COMPILE_STATE")),
+                _str_or_none(row.get("LAST_REFRESHED_AT")),
+                (int(row["LAST_TIMER"]) if row.get("LAST_TIMER") is not None else None),
+                _str_or_none(row.get("REFRESH_METHOD")),
+                (str(row.get("HAS_LOG")).strip().upper() == "Y"),
+                (str(row["INDEXES"]) if row.get("INDEXES") else None),
+            )
+            for row in rows
+        ]
+
+    def synonyms(
+        self,
+        *,
+        object_name: str = "%",
+        prefix: str = "",
+        ignore: str = "",
+    ) -> list[SynonymInfo]:
+        # Like the MV report, the synonyms report binds only name/prefix/ignore —
+        # object_type is irrelevant because -synonyms opts synonyms in explicitly.
+        binds = {
+            "object_name"    : object_name,
+            "objects_prefix" : prefix,
+            "objects_ignore" : ignore,
+        }
+        rows = self.gateway.fetch_all(self.SYNONYMS_QUERY, binds)
+        return [
+            SynonymInfo(
+                str(row["SYNONYM_NAME"]),
+                _str_or_none(row.get("OBJECT_TYPE")),
+                _str_or_none(row.get("OWNER")),
+                _str_or_none(row.get("OBJECT_NAME")),
+                _str_or_none(row.get("PRIVILEGES")),
+                (str(row.get("IS_GRANTABLE")).strip().upper() == "Y"),
+                _str_or_none(row.get("STATUS")),
             )
             for row in rows
         ]

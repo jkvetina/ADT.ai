@@ -34,6 +34,12 @@ from adt_ai.cli_context import (
     _print_startup_debug,
     _repo_root,
 )
+from adt_ai.recompile.render import (
+    _MVIEW_COLUMNS,
+    _ConsoleMViewReporter,
+    _locked_row_cells,
+    _mview_row_cells,
+)
 
 
 def _run_recompile(
@@ -80,26 +86,112 @@ def _run_recompile(
         optimize_level = args.level,
         scope          = args.scope,
         warnings       = args.warnings,
+        mview          = args.mviews is not None,
+        mview_name     = args.mviews or "%",
+        synonyms       = args.synonyms is not None,
+        synonym_name   = args.synonyms or "%",
+        errors         = args.errors,
         debug          = args.debug,
     )
 
-    result = RecompileRunner(recompile_gateway_factory).run(request)
+    # A console reporter streams the LOCKED + MATERIALIZED VIEWS sections live during
+    # an -mviews run, so each refresh's hang attaches to the view being worked on. It
+    # is injected post-construction so the CLI test fakes (single-arg __init__) are
+    # untouched; those fakes never drive the reporter, so `streamed` stays False and
+    # the batch render below runs as the fallback (and for every non-mview run).
+    console_reporter = _ConsoleMViewReporter()
+    runner = RecompileRunner(recompile_gateway_factory)
+    runner.reporter = console_reporter
+    result = runner.run(request)
 
-    if not silent:
-        print_adt_header("OBJECTS OVERVIEW")
-        _print_recompile_overview_table(result.overview)
-        if result.invalid:
-            print_adt_header("INVALID OBJECTS")
+    if not silent and not console_reporter.streamed:
+        # -mviews and -synonyms are report-only runs: skip the objects overview,
+        # invalid-object summary, and compile-error report (no object recompile
+        # ran), keeping only the locks and report sections below.
+        if not request.mview and not request.synonyms:
+            print_adt_header("OBJECTS OVERVIEW")
+            _print_recompile_overview_table(result.overview)
+            if result.invalid:
+                print_adt_header("INVALID OBJECTS")
+                print_adt_table(
+                    [
+                        {
+                            "OBJECT_TYPE": invalid.object_type,
+                            "OBJECT_NAME": invalid.object_name,
+                            "ERRORS":      invalid.errors,
+                            "ERROR":       invalid.error or "",
+                        }
+                        for invalid in result.invalid
+                    ]
+                )
+            if request.errors:
+                print_adt_header("COMPILE ERRORS")
+                print_adt_table(
+                    [
+                        {
+                            "ID":          detail.id,
+                            "OBJECT_TYPE": detail.object_type,
+                            "OBJECT_NAME": detail.object_name,
+                            "LINE":        detail.line,
+                            "POSITION":    detail.position if detail.position is not None else "",
+                        }
+                        for detail in result.error_details
+                    ],
+                    columns=["ID", "OBJECT_TYPE", "OBJECT_NAME", "LINE", "POSITION"],
+                )
+                # the TEXT column would be too wide for the table, so each error's
+                # full message is listed below, keyed back to the table's ID column.
+                for detail in result.error_details:
+                    print(f"  {detail.id}) {detail.text}")
+                if result.error_details:
+                    # keep the two-blank-lines-above-next-header contract: the
+                    # table's trailing blank is consumed by this list, re-emit one.
+                    print()
+        if result.locked:
+            print_adt_header("LOCKED OBJECTS")
+            print_adt_table([_locked_row_cells(lock) for lock in result.locked])
+        if request.mview:
+            # Batch fallback for non-streamed callers (silent path aside, this is the
+            # CLI test fakes). Shares _mview_row_cells with the streamed reporter so
+            # the two renders stay byte-identical: TYPE resolves the configured
+            # refresh_method to F/C, LOG flags the MV log, TIMER is Oracle's recorded
+            # refresh duration re-read after the action, errors listed below.
+            print_adt_header("MATERIALIZED VIEWS")
+            print_adt_table(
+                [_mview_row_cells(mview) for mview in result.mviews],
+                columns=list(_MVIEW_COLUMNS),
+            )
+            # a failed refresh/compile lists its error below the table, keyed by
+            # object name and styled like the COMPILE ERRORS message list.
+            failed_actions = [a for a in result.mview_actions if not a.ok and a.error]
+            for action in failed_actions:
+                print(f"  {action.object_name}) {action.error}")
+            if failed_actions:
+                # keep the two-blank-lines-above-next-header contract: the table's
+                # trailing blank is consumed by this list, re-emit one.
+                print()
+        if request.synonyms:
+            # OWNER/OBJECT_NAME are the synonym's target; PRIVILEGES collapses the
+            # full received grant set to ALL; GRANTABLE flags WITH GRANT OPTION;
+            # STATUS is the target's validity (VALID / INVALID / UNKNOWN).
+            print_adt_header("SYNONYMS")
             print_adt_table(
                 [
                     {
-                        "OBJECT_TYPE": invalid.object_type,
-                        "OBJECT_NAME": invalid.object_name,
-                        "ERRORS":      invalid.errors,
-                        "ERROR":       invalid.error or "",
+                        "SYNONYM_NAME": syn.synonym_name,
+                        "OBJECT_TYPE":  syn.object_type or "",
+                        "OWNER":        syn.owner or "",
+                        "OBJECT_NAME":  syn.object_name or "",
+                        "PRIVILEGES":   syn.privileges or "",
+                        "GRANTABLE":    "Y" if syn.is_grantable else "",
+                        "STATUS":       syn.status or "",
                     }
-                    for invalid in result.invalid
-                ]
+                    for syn in result.synonyms
+                ],
+                columns=[
+                    "SYNONYM_NAME", "OBJECT_TYPE", "OWNER", "OBJECT_NAME",
+                    "PRIVILEGES", "GRANTABLE", "STATUS",
+                ],
             )
 
     return 0 if result.success else 1
@@ -168,6 +260,10 @@ def _print_recompile_overview_table(overviews: Sequence[ObjectOverview]) -> None
                 ["<", ">", ">", ">", ">"],
             )
         )
+    # Trailing blank so the next header gets two empty lines above it (this
+    # blank + the header's own leading blank). print_adt_table sections already
+    # close with a blank; this hand-rolled table must match that contract.
+    print()
 
 
 # Built from the shared result-block sentinel so the write-back and this scrub

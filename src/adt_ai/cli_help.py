@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 from adt_ai.cli_constants import PUBLIC_MODULES
 
-COMMON_DEST_ORDER = ("debug", "beep", "env", "root", "config_dir")
+COMMON_DEST_ORDER = ("debug", "beep", "nobeep", "env", "root", "config_dir")
 
 ACTION_DESTS = {
     "all_formats",
@@ -19,6 +19,7 @@ ACTION_DESTS = {
     "deploy",
     "dump",
     "embedded",
+    "errors",
     "fetch",
     "files",
     "files_ws",
@@ -28,6 +29,7 @@ ACTION_DESTS = {
     "init",
     "install",
     "list",
+    "mviews",
     "offline",
     "owners",
     "readable",
@@ -44,6 +46,7 @@ ACTION_DESTS = {
     "stage",
     "statements_file",
     "switch",
+    "synonyms",
     "to_page",
     "unused",
     "update",

@@ -2,39 +2,28 @@ from __future__ import annotations
 
 import argparse
 import re
-import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from adt_ai.cli_constants import (
-    REVEAL_DEFAULT_LIMIT,
+    _current_branch,
+    branch_commits,
     BranchInfo,
     ConfigLoader,
     DottedProgressBar,
-    GatewayFactory,
-    OracleGateway,
-    QueryGateway,
+    print_adt_header,
     RebuildRequest,
     RebuildRunner,
+    reveal_branches,
+    REVEAL_DEFAULT_LIMIT,
     SearchRepoError,
     SearchRepoRequest,
     SearchRepoRunner,
-    _current_branch,
-    branch_commits,
-    print_adt_header,
-    reveal_branches,
     switch_to_branch,
 )
-from adt_ai.cli_context import (
-    DebugQueryGateway,
-    _config_search_paths,
-    _display,
-    _flatten_arg_groups,
-    _load_startup_context,
-    _print_connection_block,
-    _print_startup_debug,
-    _repo_root,
-)
+from adt_ai.cli_context import _config_search_paths, _display, _flatten_arg_groups, _repo_root
+
+
 
 
 class ConsoleRebuildReporter:

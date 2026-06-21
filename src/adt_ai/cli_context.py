@@ -26,6 +26,9 @@ from adt_ai.cli_constants import (
     print_adt_header,
 )
 
+FORCED_CHIME_DEFAULT_THEME = "chime"
+DISABLED_CHIME_THEME_VALUES = {"", "0", "false", "no", "off"}
+
 
 class DebugQueryGateway:
     def __init__(self, wrapped: QueryGateway) -> None:
@@ -222,9 +225,13 @@ def _completion_config(args: argparse.Namespace) -> dict[str, object] | None:
 
 
 def _notify_completion(args: argparse.Namespace, exit_code: int) -> None:
+    if getattr(args, "nobeep", False):
+        return
     config = _completion_config(args)
-    theme = _configured_chime_theme(config)
-    forced = bool(getattr(args, "beep", False))
+    forced = _beep_requested(args)
+    theme = _beep_theme_override(args) or _configured_chime_theme(config)
+    if forced and not theme:
+        theme = FORCED_CHIME_DEFAULT_THEME
     if not theme and not forced:
         return
     if not _chime_run_allowed(args):
@@ -251,11 +258,15 @@ def _notify_completion(args: argparse.Namespace, exit_code: int) -> None:
 def _chime_run_allowed(args: argparse.Namespace) -> bool:
     """Whether this run may play a completion chime.
 
-    Beeps come only from a real ADT.ai checkout, so interactive runs play while
-    agent worktrees stay silent (background, parallel, and scheduled runs don't
-    beep). ``-beep`` forces the chime on for a single run regardless.
+    ``-nobeep`` is an explicit per-run silence request, so it wins before config
+    or ``-beep``. Otherwise beeps come only from a real ADT.ai checkout, so
+    interactive runs play while agent worktrees stay silent (background,
+    parallel, and scheduled runs don't beep). ``-beep`` forces the chime on for
+    a single run regardless.
     """
-    if getattr(args, "beep", False):
+    if getattr(args, "nobeep", False):
+        return False
+    if _beep_requested(args):
         return True
     return not _running_in_worktree()
 
@@ -280,7 +291,23 @@ def _configured_chime_theme(config: Mapping[str, object] | None) -> str | None:
     value = config.get("chime_theme")
     if not value:
         return None
-    return str(value)
+    theme = str(value).strip()
+    if theme.lower() in DISABLED_CHIME_THEME_VALUES:
+        return None
+    return theme.lower()
+
+
+def _beep_requested(args: argparse.Namespace) -> bool:
+    value = getattr(args, "beep", False)
+    return value is not False and value is not None
+
+
+def _beep_theme_override(args: argparse.Namespace) -> str | None:
+    value = getattr(args, "beep", False)
+    if value is True or value is False or value is None:
+        return None
+    theme = str(value).strip()
+    return theme.lower() if theme else None
 
 
 def _config_search_paths(

@@ -21,7 +21,7 @@ adtai search_repo -file workflow -files 50
 adtai search_repo -file workflow -files 0
 ```
 
-Filter by ADT-style database object metadata derived from paths such as `database/<schema>/<object_type>/<object>.sql`:
+Filter by ADT-style database object metadata derived from paths such as `<schema>/database/<object_type>/<object>.sql` (the default layout; the legacy `database/<schema>/<object_type>/<object>.sql` layout is also recognised):
 
 ```bash
 adtai search_repo -type PACKAGE -name ORDER_API
@@ -62,7 +62,7 @@ When `-stage` matches more than one version for the same file, the newest matchi
 | `-files [N]`, `--files [N]` | No | auto with file selectors | Print changed-file rows. `-file`, `-type`, or `-name` prints the first 20 matching files per commit automatically; bare `-files` also prints the first 20; `-files 50` prints the first 50; `-files 0` prints none. Rows use `D`, `A`, or `M` as delete/add/modify markers. |
 | `-summary`, `--summary` | No | none | Commit-summary terms; all provided words must match. |
 | `-file`, `--file` | No | none | Changed-file path terms; all provided words must match. |
-| `-type`, `--type` | No | none | Object type text derived from `database/<schema>/<object_type>/...`; repeatable. |
+| `-type`, `--type` | No | none | Object type text derived from `<schema>/database/<object_type>/...` (or the legacy `database/<schema>/<object_type>/...`); repeatable. |
 | `-name`, `--name` | No | none | Object name text derived from the filename stem; repeatable. |
 | `-by`, `--by` | No | none | Author email/name substring; repeatable. |
 | `-my`, `--my` | No | off | Keep commits whose author email equals `git config user.email`. |
@@ -73,7 +73,8 @@ When `-stage` matches more than one version for the same file, the newest matchi
 | `-until`, `--until` | No | none | Newest commit date, `YYYY-MM-DD`, or number of days back. |
 | `-restore`, `--restore` | No | off | Write matched historical file versions. |
 | `-stage`, `--stage` | No | off | With `-restore`, write to original paths and `git add` them. |
-| `-beep`, `--beep` | No | off | Force the completion chime on for this run, even from a worktree checkout. |
+| `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |
+| `-nobeep`, `--nobeep` | No | off | Suppress completion sounds for this run; this wins over `chime_theme` and `-beep`. |
 
 ---
 

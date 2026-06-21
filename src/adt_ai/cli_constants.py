@@ -66,8 +66,19 @@ from adt_ai.rebuild.runner import (
     reveal_branches,
     switch_to_branch,
 )
-from adt_ai.recompile.inventory import ObjectOverview
-from adt_ai.recompile.runner import RecompileRequest, RecompileRunner
+from adt_ai.recompile.inventory import (
+    CompileError,
+    LockedObject,
+    MaterializedView,
+    ObjectOverview,
+    SynonymInfo,
+)
+from adt_ai.recompile.runner import (
+    MViewAction,
+    RecompileReporter,
+    RecompileRequest,
+    RecompileRunner,
+)
 from adt_ai.search_repo.runner import SearchRepoError, SearchRepoRequest, SearchRepoRunner
 
 PUBLIC_MODULES = (

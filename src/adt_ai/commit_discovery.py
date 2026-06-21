@@ -296,11 +296,20 @@ def _classify_file(path: str, *, include_full_exports: bool) -> str | None:
     parts = Path(path).parts
     if not parts:
         return "file"
+    # `database`/`apex` lead in the legacy layout and follow the schema in the
+    # default layout (<schema>/database/..., <schema>/apex/...). Recognise both.
     if len(parts) >= 4 and parts[0].lower() == "database":
         return f"database:{parts[1]}:{parts[2]}"
-    if len(parts) >= 3 and parts[0].lower() == "apex":
-        app = parts[1]
-        if len(parts) == 3 and re.fullmatch(r"f\d+\.sql", parts[2].lower()):
+    if len(parts) >= 4 and parts[1].lower() == "database":
+        return f"database:{parts[0]}:{parts[2]}"
+    apex_at = (
+        0 if parts[0].lower() == "apex"
+        else 1 if len(parts) >= 2 and parts[1].lower() == "apex"
+        else None
+    )
+    if apex_at is not None and len(parts) >= apex_at + 3:
+        app = parts[apex_at + 1]
+        if len(parts) == apex_at + 3 and re.fullmatch(r"f\d+\.sql", parts[apex_at + 2].lower()):
             return f"apex:{app}:full" if include_full_exports else None
         return f"apex:{app}:component"
     if len(parts) >= 2 and parts[0].lower() == "patch":

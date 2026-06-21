@@ -59,10 +59,17 @@ WHERE o.object_type = :object_type
 AND o.object_name = :object_name
 """.strip()
 
+MVIEW_LOGS_QUERY = """
+SELECT 'MVIEW LOG' AS object_type, l.master AS object_name
+FROM user_mview_logs l
+WHERE (:schema IS NOT NULL)
+ORDER BY l.master
+""".strip()
+
 MVIEW_LOG_DDL_QUERY = """
 SELECT DBMS_METADATA.GET_DDL('MATERIALIZED_VIEW_LOG', l.log_table) AS ddl
 FROM user_mview_logs l
-WHERE l.log_table = :object_name
+WHERE l.master = :object_name
 """.strip()
 
 JOB_DDL_QUERY = """

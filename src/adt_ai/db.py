@@ -31,6 +31,22 @@ def _attach_sql(error: BaseException, sql: str) -> None:
         pass
 
 
+def _coerce_password(password: str | bytes | None) -> str | None:
+    """Normalise a connection password to ``str`` before it reaches a driver.
+
+    Passwords originate from the connection YAML's ``db.pwd``. A value written
+    with a YAML binary tag (``pwd: !!binary <base64>``) is parsed by
+    ``yaml.safe_load`` as ``bytes``, which the python-oracledb thin driver
+    rejects deep inside ``ConnectParamsImpl._transform_password`` with an opaque
+    ``TypeError: Expected str, got bytes`` — long after the offending field is
+    out of sight. Decode such values here so a binary password connects instead
+    of crashing; ``str`` and ``None`` pass through untouched.
+    """
+    if isinstance(password, bytes):
+        return password.decode("utf-8")
+    return password
+
+
 def _ensure_temp_ignored(root: Path) -> None:
     """Idempotently ensure ``config/temp/`` is git-ignored in ``root``.
 
@@ -328,7 +344,7 @@ class OracleGateway:
     def _connect_kwargs(self, driver: Any) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
             "user": self.connection.username,
-            "password": self.connection.password,
+            "password": _coerce_password(self.connection.password),
             "dsn": self._dsn(driver),
         }
         if self.connection.wallet_path:
@@ -336,7 +352,7 @@ class OracleGateway:
             kwargs["config_dir"] = str(wallet_path)
             kwargs["wallet_location"] = str(wallet_path)
         if self.connection.wallet_password:
-            kwargs["wallet_password"] = self.connection.wallet_password
+            kwargs["wallet_password"] = _coerce_password(self.connection.wallet_password)
         return kwargs
 
     def _dsn(self, driver: Any) -> str:
@@ -352,7 +368,7 @@ class OracleGateway:
 
     def _sqlcl_connect(self) -> str:
         username = self.connection.username
-        password = self.connection.password
+        password = _coerce_password(self.connection.password)
         service = self.connection.service or self.connection.sid or ""
         if self.connection.wallet_path:
             wallet_path = _ensure_wallet_folder(Path(self.connection.wallet_path).expanduser())

@@ -456,6 +456,34 @@ def build_parser() -> argparse.ArgumentParser:
         help  = "PL/SQL warnings (SEVERE, PERF, INFO)",
     )
     recompile.add_argument(
+        "--mviews",
+        "-mviews",
+        nargs   = "?",
+        const   = "%",
+        default = None,
+        metavar = "NAME",
+        help    = "report materialized views (optionally filtered by NAME pattern, e.g. "
+                  "-mviews DEP%%), then COMPILE invalid and REFRESH stale ones; with -force, "
+                  "REFRESH every matching view",
+    )
+    recompile.add_argument(
+        "--synonyms",
+        "-synonyms",
+        nargs   = "?",
+        const   = "%",
+        default = None,
+        metavar = "NAME",
+        help    = "report-only: map each synonym (optionally filtered by NAME pattern, e.g. "
+                  "-synonyms APP%%) to its target owner object, the privileges held on it, "
+                  "and the target's validity; skips the object recompile entirely",
+    )
+    recompile.add_argument(
+        "--errors",
+        "-errors",
+        action = "store_true",
+        help   = "print the full compile error messages (line, position, text) of invalid objects",
+    )
+    recompile.add_argument(
         "--silent",
         "-silent",
         action = "store_true",
@@ -577,8 +605,20 @@ def _add_completion_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--beep",
         "-beep",
+        nargs="?",
+        const=True,
+        default=False,
+        metavar="THEME",
+        help=(
+            "force the completion chime on for this run, optionally with a theme "
+            "override"
+        ),
+    )
+    parser.add_argument(
+        "--nobeep",
+        "-nobeep",
         action="store_true",
-        help="force the completion chime on for this run, even from a worktree checkout",
+        help="suppress completion sounds for this run",
     )
 
 
