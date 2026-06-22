@@ -1,0 +1,71 @@
+from __future__ import annotations
+
+import re
+from collections.abc import Mapping
+
+
+def _cleanup_sqlcl(output: str) -> list[str]:
+    lines = output.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith("Connected."):
+            lines = lines[index + 1:]
+            break
+    if len(lines) >= 2 and lines[-2].startswith("Disconnected") and lines[-1].startswith("Version"):
+        lines = lines[:-2]
+    return lines
+
+def _split_rest_modules(lines: list[str]) -> tuple[list[str], list[list[str]]]:
+    first: list[str] = []
+    modules: list[list[str]] = []
+    current: list[str] = []
+    append = False
+    for index, line in enumerate(lines):
+        module_started = "ORDS.DEFINE_MODULE" in line
+        if not append and not module_started:
+            first.append(line)
+        if module_started:
+            if current:
+                modules.append(current)
+            current = []
+            append = True
+        next_line_is_end = index + 1 < len(lines) and lines[index + 1].startswith("END;")
+        if line.strip().startswith("COMMIT;") and next_line_is_end:
+            append = False
+        if append:
+            current.append(line.rstrip())
+    if current:
+        modules.append(current)
+    return first, modules
+
+def _rest_module_name(module: list[str]) -> str:
+    text = "\n".join(module)
+    match = re.search(r"p_module_name\s*=>\s*'([^']+)'", text)
+    if not match:
+        raise ValueError("Could not find ORDS module name in SQLcl REST export")
+    return match.group(1)
+
+def _schema_definition(lines: list[str]) -> list[str]:
+    content: list[str] = []
+    for line in lines:
+        if line.startswith("BEGIN"):
+            continue
+        if line.startswith("-- Schema:"):
+            line = line.split(" Date:")[0]
+        if line.startswith("END;"):
+            break
+        content.append(line.rstrip())
+    return list(filter(None, content))
+
+def _plsql_block(lines: list[str]) -> str:
+    body = "\n".join(list(filter(None, lines)))
+    return f"BEGIN\n{body}\nEND;\n/\n"
+
+def _rest_prefixes(config: Mapping[str, object]) -> list[str]:
+    value = config.get("apex_rest_prefixes")
+    if value is None:
+        return [""]
+    values = value if isinstance(value, list | tuple) else [value]
+    return [str(item) for item in values]
+
+def _matches_prefix(name: str, prefixes: list[str]) -> bool:
+    return not prefixes or any(name.startswith(prefix) for prefix in prefixes)

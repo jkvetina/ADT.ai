@@ -42,7 +42,7 @@ Bootstrap a project skeleton:
 adtai doctor -init
 ```
 
-`doctor -init` writes the project override config, repo ignore rules for generated artifacts, and the safe `connections/.gitkeep` / `connections/wallets/.gitkeep` placeholders. It does not create generated-cache folders, APEX credentials folders, connection YAML files, or wallet contents. Existing generated files are skipped; use `-force` to overwrite them:
+`doctor -init` writes the project override config, copies the current ADT.ai root `.gitignore` verbatim, and writes the safe `connections/.gitkeep` / `connections/wallets/.gitkeep` placeholders. It does not create generated-cache folders, APEX credentials folders, connection YAML files, or wallet contents. Existing generated files are skipped; use `-force` to overwrite them:
 
 ```bash
 adtai doctor -init -force
@@ -66,7 +66,7 @@ adtai doctor -init -root /path/to/project
 | `-offline` | No | off | Skip online update metadata checks and show local versions only. |
 | `-update` | No | off | Run the full ADT.ai, Python requirements, and SQLcl update workflow. Cannot be combined with `-sqlcl`. |
 | `-sqlcl` | No | off | Upgrade SQLcl only. Runs immediately without `-update`; cannot be combined with `-update`. |
-| `-init` | No | off | Scaffold project config, repo ignore rules, and safe local connection/wallet placeholders. |
+| `-init` | No | off | Scaffold project config, copy ADT.ai's current root `.gitignore`, and add safe local connection/wallet placeholders. |
 | `-root`, `--root` | No | `.` | Project root folder for `-init`. |
 | `-force`, `--force` | No | off | With `-init`, overwrite generated template files that already exist. |
 | `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |

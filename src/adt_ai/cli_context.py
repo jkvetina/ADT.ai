@@ -1,9 +1,8 @@
 from __future__ import annotations
 
+# ruff: noqa: F401 - compatibility facade re-exports moved helpers.
 import argparse
-import fnmatch
 import importlib
-import re
 import sys
 import time
 from collections.abc import Mapping
@@ -12,56 +11,42 @@ from pathlib import Path
 from typing import TextIO
 
 from adt_ai.cli_constants import (
-    APEX_EXPORT_ACTIONS,
-    APEX_VERSION_QUERY,
-    DATABASE_VERSION_OLD_QUERY,
-    DATABASE_VERSION_QUERY,
-    DROPBOX_PATH_RE,
     ConfigError,
     ConfigLoader,
     ConnectionLoader,
     ConnectionResult,
-    QueryGateway,
     _StdoutTracker,
-    print_adt_header,
+)
+from adt_ai.cli_context_apex import (
+    ApexAppSelection,
+    _apex_actions,
+    _apex_scope,
+    _app_in_selection,
+    _has_job_recent_conflict,
+    _is_enabled,
+    _parse_apex_app_selection,
+    _split_config_values,
+)
+from adt_ai.cli_context_connection import (
+    _print_connection_block,
+    _print_connection_versions,
+)
+from adt_ai.cli_context_debug import (
+    DebugQueryGateway,
+    _debug_sql,
+    _print_startup_debug,
+)
+from adt_ai.cli_context_errors import (
+    _display,
+    _is_database_connection_error,
+    _is_user_database_error,
+    _print_config_error,
+    _print_database_error,
+    _print_unexpected_error,
 )
 
 FORCED_CHIME_DEFAULT_THEME = "chime"
 DISABLED_CHIME_THEME_VALUES = {"", "0", "false", "no", "off"}
-
-
-class DebugQueryGateway:
-    def __init__(self, wrapped: QueryGateway) -> None:
-        self.wrapped = wrapped
-
-    def fetch_all(
-        self,
-        sql: str,
-        params: Mapping[str, object] | None = None,
-    ) -> list[dict[str, object]]:
-        print()
-        print("QUERY:")
-        print(_debug_sql(sql, params or {}))
-        print()
-        return self.wrapped.fetch_all(sql, params)
-
-    def execute(
-        self,
-        sql: str,
-        params: Mapping[str, object] | None = None,
-    ) -> None:
-        print()
-        print("QUERY:")
-        print(_debug_sql(sql, params or {}))
-        print()
-        self.wrapped.execute(sql, params)
-
-    def sqlcl_request(self, request: str, root: Path) -> str:
-        print()
-        print("SQLCL REQUEST:")
-        print(request)
-        print()
-        return self.wrapped.sqlcl_request(request, root)
 
 
 @dataclass(frozen=True)
@@ -76,98 +61,8 @@ class StartupContext:
     connections             : ConnectionResult
     startup_sql             : str | None = None
 
-
-def _is_user_database_error(error: Exception) -> bool:
-    text = str(error)
-    if any(marker in text for marker in ("DPY-", "DPI-", "ORA-", "TNS-")):
-        return True
-    module = type(error).__module__
-    return module.startswith("oracledb")
-
-
-def _is_database_connection_error(error: Exception) -> bool:
-    text = str(error)
-    connection_markers = (
-        "DPY-",
-        "DPI-",
-        "TNS-",
-        "ORA-01017",
-        "ORA-12154",
-        "ORA-12514",
-        "ORA-12541",
-        "ORA-12545",
-        "ORA-12560",
-        "Connect failed",
-        "connection",
-        "listener",
-        "tnsnames.ora",
-        "wallet",
-    )
-    return any(marker.lower() in text.lower() for marker in connection_markers)
-
-
-def _display(value: object) -> str:
-    return DROPBOX_PATH_RE.sub("Dropbox/", str(value))
-
-
-def _print_database_error(error: Exception) -> None:
-    # A failing query attaches its SQL to the exception (OracleGateway). When the
-    # SQL is present the failure happened *after* connecting, so it is a query
-    # error, not a connection failure — show the offending query and a query
-    # banner. Otherwise classify by message markers (TNS/wallet/credential codes).
-    sql = getattr(error, "adt_sql", None)
-    is_connection = sql is None and _is_database_connection_error(error)
-    header = "DATABASE CONNECTION FAILED" if is_connection else "DATABASE QUERY FAILED"
-    print(file=sys.stderr)
-    print(header, file=sys.stderr)
-    print("-" * len(header), file=sys.stderr)
-    if sql is not None:
-        print("Query:", file=sys.stderr)
-        print(_display(sql), file=sys.stderr)
-        print(file=sys.stderr)
-    print(_display(error), file=sys.stderr)
-    print(file=sys.stderr)
-    if is_connection:
-        print(
-            "Check the connection file and wallet under ADT.ai connections/wallets, then rerun.",
-            file=sys.stderr,
-        )
-    print("Use -debug to show the Python traceback.", file=sys.stderr)
-    print(file=sys.stderr)
-
-
-def _print_config_error(error: Exception) -> None:
-    print(file=sys.stderr)
-    print("CONFIGURATION NOT FOUND", file=sys.stderr)
-    print("-----------------------", file=sys.stderr)
-    print(_display(error), file=sys.stderr)
-    print(file=sys.stderr)
-    print(
-        "Run ADT.ai from a project folder that has a connection file, or pass "
-        "-config-dir / -root to point at one. See USAGE.md and `adtai doctor -init`.",
-        file=sys.stderr,
-    )
-    print("Use -debug to show the Python traceback.", file=sys.stderr)
-    print(file=sys.stderr)
-
-
-def _print_unexpected_error(error: Exception) -> None:
-    # Catch-all for any failure that is not a recognised config/database error.
-    # The command banner has already printed (it is the first handler statement),
-    # so this only adds a friendly framing instead of leaking a raw traceback.
-    header = "UNEXPECTED ERROR"
-    print(file=sys.stderr)
-    print(header, file=sys.stderr)
-    print("-" * len(header), file=sys.stderr)
-    print(f"{type(error).__name__}: {_display(error)}", file=sys.stderr)
-    print(file=sys.stderr)
-    print("Use -debug to show the Python traceback.", file=sys.stderr)
-    print(file=sys.stderr)
-
-
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
-
 
 def _load_startup_context(args: argparse.Namespace) -> StartupContext:
     root = Path(args.root).expanduser().resolve()
@@ -197,14 +92,11 @@ def _load_startup_context(args: argparse.Namespace) -> StartupContext:
         startup_sql             = _load_startup_sql(args.config_dir, root, repo_root),
     )
 
-
 def _existing_paths(paths: list[Path]) -> list[Path]:
     return [path for path in paths if path.exists()]
 
-
 def _remember_completion_config(args: argparse.Namespace, config: dict[str, object]) -> None:
     args._adt_completion_config = config
-
 
 def _completion_config(args: argparse.Namespace) -> dict[str, object] | None:
     config = getattr(args, "_adt_completion_config", None)
@@ -222,7 +114,6 @@ def _completion_config(args: argparse.Namespace) -> dict[str, object] | None:
         return None
     _remember_completion_config(args, config)
     return config
-
 
 def _notify_completion(args: argparse.Namespace, exit_code: int) -> None:
     if getattr(args, "nobeep", False):
@@ -254,7 +145,6 @@ def _notify_completion(args: argparse.Namespace, exit_code: int) -> None:
     except Exception:
         return
 
-
 def _chime_run_allowed(args: argparse.Namespace) -> bool:
     """Whether this run may play a completion chime.
 
@@ -270,7 +160,6 @@ def _chime_run_allowed(args: argparse.Namespace) -> bool:
         return True
     return not _running_in_worktree()
 
-
 def _running_in_worktree(repo_root: Path | None = None) -> bool:
     """True when ADT.ai runs from a linked git worktree rather than a checkout.
 
@@ -284,7 +173,6 @@ def _running_in_worktree(repo_root: Path | None = None) -> bool:
     except OSError:
         return False
 
-
 def _configured_chime_theme(config: Mapping[str, object] | None) -> str | None:
     if not config:
         return None
@@ -296,11 +184,9 @@ def _configured_chime_theme(config: Mapping[str, object] | None) -> str | None:
         return None
     return theme.lower()
 
-
 def _beep_requested(args: argparse.Namespace) -> bool:
     value = getattr(args, "beep", False)
     return value is not False and value is not None
-
 
 def _beep_theme_override(args: argparse.Namespace) -> str | None:
     value = getattr(args, "beep", False)
@@ -308,7 +194,6 @@ def _beep_theme_override(args: argparse.Namespace) -> str | None:
         return None
     theme = str(value).strip()
     return theme.lower() if theme else None
-
 
 def _config_search_paths(
     config_dirs: list[str] | None,
@@ -319,7 +204,6 @@ def _config_search_paths(
     if not project_paths:
         project_paths = [root / "config", root]
     return [repo_root / "config", *project_paths]
-
 
 def _load_startup_sql(
     config_dirs: list[str] | None,
@@ -348,7 +232,6 @@ def _load_startup_sql(
             return text
     return None
 
-
 def _connection_search_paths(
     config: dict[str, object],
     config_dirs: list[str] | None,
@@ -370,7 +253,6 @@ def _connection_search_paths(
         root,
     ]
 
-
 def _wallet_roots(
     config: dict[str, object],
     root: Path,
@@ -387,7 +269,6 @@ def _wallet_roots(
         *[path / "wallets" for path in connection_search_paths],
         root / "connections" / "wallets",
     ]
-
 
 def _connection_file_candidates(
     config: dict[str, object],
@@ -441,7 +322,6 @@ def _connection_file_candidates(
 
     return _dedup_paths(candidates)
 
-
 def _dedup_paths(paths: list[Path]) -> list[Path]:
     seen: set[Path] = set()
     unique: list[Path] = []
@@ -450,7 +330,6 @@ def _dedup_paths(paths: list[Path]) -> list[Path]:
             seen.add(path)
             unique.append(path)
     return unique
-
 
 def _with_schema_folders(
     config: dict[str, object],
@@ -468,7 +347,6 @@ def _with_schema_folders(
     merged.update(schema_folders)
     return {**config, "schema_folders": merged}
 
-
 def _path_list(*values: object | None) -> list[Path]:
     paths: list[Path] = []
     for value in values:
@@ -480,7 +358,6 @@ def _path_list(*values: object | None) -> list[Path]:
             paths.append(Path(str(value)).expanduser())
     return paths
 
-
 def _flatten_arg_groups(groups: list[list[str]] | None) -> list[str] | None:
     if not groups:
         return None
@@ -491,238 +368,6 @@ def _flatten_arg_groups(groups: list[list[str]] | None) -> list[str] | None:
         for part in item.split(",")
         if part.strip()
     ]
-
-
-@dataclass(frozen=True)
-class ApexAppSelection:
-    """A parsed `-app` selection: plain ids plus closed/open id ranges.
-
-    `explicit_ids` keeps the existing plain-id tokens; `ranges` holds
-    `(min, max)` for closed ranges and `(min, None)` for open `MIN+` ranges.
-    """
-
-    explicit_ids: tuple[str, ...] = ()
-    ranges: tuple[tuple[int, int | None], ...] = ()
-
-    @property
-    def has_ranges(self) -> bool:
-        return bool(self.ranges)
-
-
-def _parse_apex_app_selection(tokens: list[str] | None) -> ApexAppSelection | None:
-    if not tokens:
-        return None
-    explicit: list[str] = []
-    ranges: list[tuple[int, int | None]] = []
-    for raw in tokens:
-        token = raw.strip()
-        if not token:
-            continue
-        open_match = re.fullmatch(r"(\d+)\+", token)
-        closed_match = re.fullmatch(r"(\d+)-(\d+)", token)
-        if open_match:
-            ranges.append((int(open_match.group(1)), None))
-        elif closed_match:
-            low = int(closed_match.group(1))
-            high = int(closed_match.group(2))
-            if low > high:
-                raise ValueError(
-                    f"invalid -app range '{token}': min {low} is greater than max {high}"
-                )
-            ranges.append((low, high))
-        elif "-" in token or "+" in token:
-            raise ValueError(f"invalid -app range '{token}': use MIN-MAX or MIN+")
-        else:
-            explicit.append(token)
-    return ApexAppSelection(explicit_ids=tuple(explicit), ranges=tuple(ranges))
-
-
-def _app_in_selection(app_id: int | str, selection: ApexAppSelection) -> bool:
-    if str(app_id) in selection.explicit_ids:
-        return True
-    try:
-        numeric = int(app_id)
-    except (TypeError, ValueError):
-        return False
-    return any(
-        numeric >= low and (high is None or numeric <= high)
-        for low, high in selection.ranges
-    )
-
-
-def _apex_scope(
-    apex_config: Mapping[str, object],
-    workspace: str | None = None,
-    group: str | None = None,
-    app_ids: list[str] | None = None,
-) -> dict[str, object]:
-    return {
-        "workspace": workspace or _string_or_none(apex_config.get("workspace")),
-        "group": group or _string_or_none(apex_config.get("group")),
-        "app_ids": app_ids or _split_config_values(apex_config.get("app")),
-    }
-
-
-def _apex_actions(
-    args: argparse.Namespace,
-    _config: Mapping[str, object] | None = None,
-) -> dict[str, bool]:
-    actions = dict.fromkeys(APEX_EXPORT_ACTIONS, False)
-    if getattr(args, "all_formats", False):
-        return {action: True for action in APEX_EXPORT_ACTIONS}
-    for action in APEX_EXPORT_ACTIONS:
-        if getattr(args, action, False):
-            actions[action] = True
-    return actions
-
-
-def _string_or_none(value: object) -> str | None:
-    if value is None or value == "":
-        return None
-    return str(value)
-
-
-def _split_config_values(value: object) -> list[str] | None:
-    if value is None:
-        return None
-    values = value if isinstance(value, list | tuple) else [value]
-    normalized = [
-        part.strip()
-        for item in values
-        for part in str(item).replace(" ", ",").split(",")
-        if part.strip()
-    ]
-    return normalized or None
-
-
-def _is_enabled(value: object) -> bool:
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
-    return bool(value)
-
-
-def _has_job_recent_conflict(recent_days: int | None, object_types: list[str]) -> bool:
-    if recent_days is None:
-        return False
-    return any(_matches_adt_like("JOB", object_type) for object_type in object_types)
-
-
-def _matches_adt_like(value: str, pattern: str) -> bool:
-    return fnmatch.fnmatchcase(value.upper(), pattern.upper().replace("%", "*"))
-
-
-def _print_startup_debug(context: StartupContext) -> None:
-    print()
-    print("STARTUP:")
-    _print_debug_value("config_dirs", context.config_dirs)
-    _print_debug_value("connection_files", context.connection_files)
-    print()
-
-
-def _print_debug_value(key: str, value: object) -> None:
-    if value is None or value == "":
-        return
-    if isinstance(value, list):
-        rendered = " | ".join(_display(item) for item in value)
-    else:
-        rendered = _display(value)
-    if not rendered:
-        return
-    print(f"  {key:<18} {rendered}")
-
-
-def _debug_sql(sql: str, params: Mapping[str, object]) -> str:
-    rendered = sql.strip()
-    for key in sorted(params, key=len, reverse=True):
-        rendered = rendered.replace(f":{key}", _debug_value(params[key]))
-    return rendered
-
-
-def _debug_value(value: object) -> str:
-    if value is None:
-        return "NULL"
-    if isinstance(value, str):
-        escaped = value.replace("'", "''")
-        return f"'{escaped}'"
-    return str(value)
-
-
-def _print_connection_block(
-    gateway: QueryGateway,
-    connection: object | None,
-    *,
-    schema: str | None = None,
-    environment: str | None = None,
-    debug: bool = False,
-) -> None:
-    resolved_schema = schema or str(getattr(connection, "schema", "APP"))
-    resolved_environment = environment or str(getattr(connection, "environment", "DEV"))
-    print_adt_header(f"CONNECTING TO SCHEMA {resolved_schema}, {resolved_environment}:")
-    _print_connection_versions(gateway, connection, debug=debug)
-
-
-def _print_connection_versions(
-    gateway: QueryGateway,
-    connection: object | None,
-    *,
-    debug: bool = False,
-) -> None:
-    # in -debug mode surface probe failures instead of silently swallowing them
-    ignore_errors = not debug
-    versions: dict[str, str] = {}
-    apex_version = _fetch_version(gateway, APEX_VERSION_QUERY, ignore_errors=ignore_errors)
-    if apex_version:
-        versions["APEX"] = apex_version
-
-    database_version = _fetch_version(gateway, DATABASE_VERSION_QUERY, ignore_errors=ignore_errors)
-    if not database_version:
-        database_version = _fetch_version(
-            gateway, DATABASE_VERSION_OLD_QUERY, ignore_errors=ignore_errors
-        )
-    if database_version:
-        versions["DATABASE"] = database_version
-
-    thick = getattr(connection, "thick", False)
-    if thick:
-        versions["THICK"] = _oracle_client_version() or "Y"
-
-    if not versions:
-        return
-    for key in sorted(versions):
-        print(f"{key:>18} | {versions[key]}")
-    print()
-
-
-def _oracle_client_version() -> str:
-    try:
-        version = importlib.import_module("oracledb").clientversion()
-    except Exception:
-        return ""
-    if not version:
-        return ""
-    if isinstance(version, tuple) and len(version) >= 2:
-        return f"{version[0]}.{version[1]}"
-    return str(version)
-
-
-def _fetch_version(
-    gateway: QueryGateway,
-    sql: str,
-    ignore_errors: bool = False,
-) -> str | None:
-    try:
-        rows = gateway.fetch_all(sql)
-    except KeyboardInterrupt:
-        raise
-    except Exception:
-        if ignore_errors:
-            return None
-        raise
-    if not rows:
-        return None
-    row = rows[0]
-    return str(row.get("VERSION") or row.get("version") or "") or None
-
 
 def _print_completion_timer(
     started_at: float,
@@ -746,7 +391,6 @@ def _print_completion_timer(
     if completion_args is not None:
         _notify_completion(completion_args, exit_code)
 
-
 def _config_value(config: dict[str, object], key_path: tuple[str, ...]) -> object | None:
     value: object = config
     for key in key_path:
@@ -754,5 +398,6 @@ def _config_value(config: dict[str, object], key_path: tuple[str, ...]) -> objec
             return None
         value = value[key]
     return value
+
 
 __all__ = [name for name in globals() if not name.startswith("__")]

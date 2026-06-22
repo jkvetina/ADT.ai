@@ -170,6 +170,7 @@ def main(
         print(f"ADT.ai {__version__}")
         return 0
 
+
     original_stdout = sys.stdout
     original_stderr = sys.stderr
     tracked_stdout = (

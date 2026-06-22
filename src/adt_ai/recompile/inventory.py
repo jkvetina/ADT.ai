@@ -81,6 +81,26 @@ class MaterializedView:
 
 
 @dataclass(frozen=True)
+class DisabledObject:
+    owner: str
+    object_type: str
+    object_name: str
+    table_name: str | None
+
+
+@dataclass(frozen=True)
+class SchedulerJobRun:
+    owner: str
+    job_name: str
+    last_start_date: str | None
+    status: str | None
+    run_duration: str | None
+    cpu_used: str | None
+    count: int
+    error: str | None
+
+
+@dataclass(frozen=True)
 class SynonymInfo:
     synonym_name: str
     # the target object's type, taken from the received privilege (g.type); NULL
@@ -106,6 +126,9 @@ class RecompileDiscovery:
     LOCKED_OBJECTS_QUERY = queries.LOCKED_OBJECTS_QUERY
     MATERIALIZED_VIEWS_QUERY = queries.MATERIALIZED_VIEWS_QUERY
     SYNONYMS_QUERY = queries.SYNONYMS_QUERY
+    DISABLED_OBJECTS_QUERY = queries.DISABLED_OBJECTS_QUERY
+    SCHEDULER_JOBS_QUERY = queries.SCHEDULER_JOBS_QUERY
+    OBJECTS_MISSING_PLSCOPE_QUERY = queries.OBJECTS_MISSING_PLSCOPE_QUERY
 
     def __init__(self, gateway: QueryGateway) -> None:
         self.gateway = gateway
@@ -164,6 +187,17 @@ class RecompileDiscovery:
         )
         binds["force"] = "Y" if force else ""
         rows = self.gateway.fetch_all(self.OBJECTS_TO_RECOMPILE_QUERY, binds)
+        return [RecompileObject(str(row["OBJECT_TYPE"]), str(row["OBJECT_NAME"])) for row in rows]
+
+    def objects_missing_plscope(self) -> list[RecompileObject]:
+        """VALID PL/SQL objects whose PL/Scope settings are not fully ALL.
+
+        Whole-schema scan with no binds — the dependencies refresh recompiles
+        each returned object with ``scope=["ALL"]`` before pulling the
+        identifier / statement mirror tables. Reuses the recompile module's
+        catalog read; does not touch ``RecompileRunner`` or open a connection.
+        """
+        rows = self.gateway.fetch_all(self.OBJECTS_MISSING_PLSCOPE_QUERY, {})
         return [RecompileObject(str(row["OBJECT_TYPE"]), str(row["OBJECT_NAME"])) for row in rows]
 
     def errors_summary(
@@ -298,6 +332,61 @@ class RecompileDiscovery:
                 _str_or_none(row.get("PRIVILEGES")),
                 (str(row.get("IS_GRANTABLE")).strip().upper() == "Y"),
                 _str_or_none(row.get("STATUS")),
+            )
+            for row in rows
+        ]
+
+    def disabled_objects(
+        self,
+        *,
+        object_name: str = "%",
+        prefix: str = "",
+        ignore: str = "",
+    ) -> list[DisabledObject]:
+        # Like the MV and synonym reports, the disabled-object report binds only
+        # name/prefix/ignore: the flag opts constraints, indexes, and triggers in
+        # explicitly.
+        binds = {
+            "object_name"    : object_name,
+            "objects_prefix" : prefix,
+            "objects_ignore" : ignore,
+        }
+        rows = self.gateway.fetch_all(self.DISABLED_OBJECTS_QUERY, binds)
+        return [
+            DisabledObject(
+                str(row["OWNER"]),
+                str(row["OBJECT_TYPE"]),
+                str(row["OBJECT_NAME"]),
+                _str_or_none(row.get("TABLE_NAME")),
+            )
+            for row in rows
+        ]
+
+    def scheduler_jobs(
+        self,
+        *,
+        object_name: str = "%",
+        prefix: str = "",
+        ignore: str = "",
+    ) -> list[SchedulerJobRun]:
+        # Like the other focused reports, the scheduler-job report binds only
+        # name/prefix/ignore: the flag opts scheduler jobs in explicitly.
+        binds = {
+            "object_name"    : object_name,
+            "objects_prefix" : prefix,
+            "objects_ignore" : ignore,
+        }
+        rows = self.gateway.fetch_all(self.SCHEDULER_JOBS_QUERY, binds)
+        return [
+            SchedulerJobRun(
+                str(row["OWNER"]),
+                str(row["JOB_NAME"]),
+                _str_or_none(row.get("LAST_START_DATE")),
+                _str_or_none(row.get("STATUS")),
+                _str_or_none(row.get("RUN_DURATION")),
+                _str_or_none(row.get("CPU_USED")),
+                int(row.get("COUNT", row.get("COUNT_", 0)) or 0),
+                _str_or_none(row.get("ERROR", row.get("ERROR_"))),
             )
             for row in rows
         ]

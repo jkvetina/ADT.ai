@@ -24,8 +24,6 @@ def write_lob_update_script(
 ) -> str | None:
     if not key_columns:
         return None
-    _ensure_sql_gitignore(folder)
-    _remove_legacy_table_gitignore(folder)
     script_path = folder / f"{row_key}.{column.name.lower()}.sql"
     script_path.write_text(
         lob_update_sql(
@@ -168,20 +166,3 @@ def _where_condition(column_name: str, value: Any) -> str:
 def _sql_name(name: str) -> str:
     safe_identifier(name, role="identifier")
     return name.lower()
-
-
-def _ensure_sql_gitignore(folder: Path) -> None:
-    gitignore = folder.parent / ".gitignore"
-    entry = f"{folder.name}/*.sql"
-    if not gitignore.exists():
-        gitignore.write_text(f"{entry}\n", encoding="utf-8")
-        return
-    lines = gitignore.read_text(encoding="utf-8").splitlines()
-    if entry not in lines:
-        gitignore.write_text("\n".join([*lines, entry, ""]), encoding="utf-8")
-
-
-def _remove_legacy_table_gitignore(folder: Path) -> None:
-    gitignore = folder / ".gitignore"
-    if gitignore.exists() and gitignore.read_text(encoding="utf-8").splitlines() == ["*.sql"]:
-        gitignore.unlink()

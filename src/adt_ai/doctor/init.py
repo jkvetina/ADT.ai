@@ -4,7 +4,6 @@ from pathlib import Path
 
 from adt_ai.doctor._base import (
     PROJECT_CONFIG_TEMPLATE,
-    PROJECT_GITIGNORE_TEMPLATE,
     DoctorResult,
     _init_group_lines,
 )
@@ -18,10 +17,13 @@ class DoctorInitMixin:
         self._add(lines, "PROJECT INIT:")  # type: ignore[attr-defined]
         created: list[Path] = []
         skipped: list[Path] = []
+        source_gitignore = (self.package_root / ".gitignore").read_text(  # type: ignore[attr-defined]
+            encoding="utf-8"
+        )
 
         for relative_path, content in (
             (Path("config/config.yaml"), PROJECT_CONFIG_TEMPLATE),
-            (Path(".gitignore"), PROJECT_GITIGNORE_TEMPLATE),
+            (Path(".gitignore"), source_gitignore),
             (Path("connections/.gitkeep"), ""),
             (Path("connections/wallets/.gitkeep"), ""),
         ):

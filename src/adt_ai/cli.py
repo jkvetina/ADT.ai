@@ -9,6 +9,8 @@ try:
     from adt_ai import cli_commands_recompile as _commands_recompile
     from adt_ai import cli_constants as _constants
     from adt_ai import cli_context as _context
+    from adt_ai import cli_context_connection as _context_connection
+    from adt_ai import cli_context_errors as _context_errors
     from adt_ai import cli_parser as _parser
     from adt_ai import cli_runtime as _runtime
 except Exception as _startup_error:  # noqa: BLE001 - friendly banner instead of raw traceback
@@ -34,6 +36,7 @@ else:
         _runtime,
     )
     _PATCH_MODULES = _EXPORT_MODULES[2:]
+    _PATCH_MODULES = (*_PATCH_MODULES, _context_connection, _context_errors)
     _PATCHABLE_NAMES = (
         "DoctorRunner",
         "DROPBOX_PATH_RE",

@@ -39,6 +39,9 @@ from adt_ai.recompile.render import (
     _ConsoleMViewReporter,
     _locked_row_cells,
     _mview_row_cells,
+    print_disabled_tables,
+    print_job_tables,
+    print_synonym_tables,
 )
 
 
@@ -90,6 +93,10 @@ def _run_recompile(
         mview_name     = args.mviews or "%",
         synonyms       = args.synonyms is not None,
         synonym_name   = args.synonyms or "%",
+        disabled       = args.disabled is not None,
+        disabled_name  = args.disabled or "%",
+        jobs           = args.jobs is not None,
+        job_name       = args.jobs or "%",
         errors         = args.errors,
         debug          = args.debug,
     )
@@ -105,10 +112,10 @@ def _run_recompile(
     result = runner.run(request)
 
     if not silent and not console_reporter.streamed:
-        # -mviews and -synonyms are report-only runs: skip the objects overview,
-        # invalid-object summary, and compile-error report (no object recompile
-        # ran), keeping only the locks and report sections below.
-        if not request.mview and not request.synonyms:
+        # -mviews, -synonyms, -disabled, and -jobs are focused/report-only runs: skip the
+        # objects overview, invalid-object summary, and compile-error report (no
+        # object recompile ran), keeping only their specific report sections below.
+        if not request.mview and not request.synonyms and not request.disabled and not request.jobs:
             print_adt_header("OBJECTS OVERVIEW")
             _print_recompile_overview_table(result.overview)
             if result.invalid:
@@ -171,28 +178,11 @@ def _run_recompile(
                 # trailing blank is consumed by this list, re-emit one.
                 print()
         if request.synonyms:
-            # OWNER/OBJECT_NAME are the synonym's target; PRIVILEGES collapses the
-            # full received grant set to ALL; GRANTABLE flags WITH GRANT OPTION;
-            # STATUS is the target's validity (VALID / INVALID / UNKNOWN).
-            print_adt_header("SYNONYMS")
-            print_adt_table(
-                [
-                    {
-                        "SYNONYM_NAME": syn.synonym_name,
-                        "OBJECT_TYPE":  syn.object_type or "",
-                        "OWNER":        syn.owner or "",
-                        "OBJECT_NAME":  syn.object_name or "",
-                        "PRIVILEGES":   syn.privileges or "",
-                        "GRANTABLE":    "Y" if syn.is_grantable else "",
-                        "STATUS":       syn.status or "",
-                    }
-                    for syn in result.synonyms
-                ],
-                columns=[
-                    "SYNONYM_NAME", "OBJECT_TYPE", "OWNER", "OBJECT_NAME",
-                    "PRIVILEGES", "GRANTABLE", "STATUS",
-                ],
-            )
+            print_synonym_tables(result.synonyms)
+        if request.disabled:
+            print_disabled_tables(result.disabled_objects)
+        if request.jobs:
+            print_job_tables(result.jobs)
 
     return 0 if result.success else 1
 

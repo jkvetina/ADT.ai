@@ -6,6 +6,18 @@ objects_to_recompile / objects_errors_summary) and ``recompile.build_query``.
 
 from __future__ import annotations
 
+from adt_ai.recompile.report_queries import (
+    DISABLED_OBJECTS_QUERY as DISABLED_OBJECTS_QUERY,
+)
+from adt_ai.recompile.report_queries import (
+    MATERIALIZED_VIEWS_QUERY as MATERIALIZED_VIEWS_QUERY,
+)
+from adt_ai.recompile.report_queries import (
+    SCHEDULER_JOBS_QUERY as SCHEDULER_JOBS_QUERY,
+)
+from adt_ai.recompile.report_queries import (
+    SYNONYMS_QUERY as SYNONYMS_QUERY,
+)
 from adt_ai.sql_identifiers import safe_identifier, safe_object_type
 
 # PL/SQL object types that accept the PLSQL_* compilation flags + REUSE SETTINGS.
@@ -264,99 +276,35 @@ ORDER BY o.object_type, o.object_name, lo.session_id
 """.strip()
 
 
-# materialized-view health (staleness, compile state, last refresh, indexes).
-# Modeled on CORE23's core_daily_materialized_views_v but rewritten against the
-# portable user_* views so it works in any schema. Scoped by name/prefix/ignore;
-# object_type is irrelevant here because -mviews opts MVs in explicitly.
-MATERIALIZED_VIEWS_QUERY = """
-WITH objects_add AS (
-    SELECT /*+ MATERIALIZE CARDINALITY(t 1) */
-        t.column_value AS object_like
-    FROM TABLE(APEX_STRING.SPLIT(TRIM(BOTH ',' FROM NVL(:objects_prefix, '%')), ',')) t
-),
-objects_ignore AS (
-    SELECT /*+ MATERIALIZE CARDINALITY(t 10) */
-        t.column_value AS object_like
-    FROM TABLE(APEX_STRING.SPLIT(TRIM(BOTH ',' FROM :objects_ignore), ',')) t
-)
-SELECT
-    m.mview_name                                                          AS object_name,
-    MAX(m.staleness)                                                      AS staleness,
-    MAX(m.compile_state)                                                  AS compile_state,
-    MAX(TO_CHAR(m.last_refresh_end_time, 'YYYY-MM-DD HH24:MI'))           AS last_refreshed_at,
-    MAX(ROUND(86400 * (m.last_refresh_end_time - m.last_refresh_date)))   AS last_timer,
-    MAX(m.refresh_method)                                                 AS refresh_method,
-    MAX(CASE WHEN EXISTS (
-            SELECT 1
-            FROM user_mview_detail_relations d
-            JOIN user_mview_logs l
-                ON l.master = d.detailobj_name
-            WHERE d.mview_name = m.mview_name
-        ) THEN 'Y' END)                                                   AS has_log,
-    LISTAGG(i.index_name, ', ') WITHIN GROUP (ORDER BY i.index_name)      AS indexes
-FROM user_mviews m
-LEFT JOIN user_indexes i
-    ON i.table_name         = m.mview_name
-JOIN objects_add a
-    ON m.mview_name         LIKE a.object_like ESCAPE '\\'
-LEFT JOIN objects_ignore g
-    ON m.mview_name         LIKE g.object_like ESCAPE '\\'
-WHERE 1 = 1
-    AND g.object_like       IS NULL
-    AND (m.mview_name       LIKE :object_name ESCAPE '\\' OR :object_name IS NULL)
-GROUP BY m.mview_name
-ORDER BY m.mview_name
-""".strip()
+# VALID PL/SQL objects missing full PL/Scope (IDENTIFIERS:ALL + STATEMENTS:ALL).
+# Used as the dependencies refresh prerequisite: anything returned here is
+# recompiled with scope=["ALL"] so USER_IDENTIFIERS / USER_STATEMENTS populate.
+# Whole-schema scan — no binds. The IN-list is built from PLSQL_OBJECT_TYPES so
+# it cannot drift from build_compile_statement's accepted types.
+_PLSCOPE_TYPE_IN_LIST = ", ".join(f"'{object_type}'" for object_type in PLSQL_OBJECT_TYPES)
 
-
-# synonym health: map each local synonym to its target owner object, the
-# privileges this schema holds on that target (collapsed to ALL when the set is
-# complete), whether they are grantable, and the target object's validity.
-# Modeled on CORE23's core_daily_synonyms_v but, like the MV report, scoped with
-# the portable objects_add/objects_ignore CTE so -synonyms works in any schema.
-# object_type is irrelevant here because -synonyms opts synonyms in explicitly;
-# the report-only flag never compiles, so there is no :force bind either.
-SYNONYMS_QUERY = """
-WITH objects_add AS (
-    SELECT /*+ MATERIALIZE CARDINALITY(t 1) */
-        t.column_value AS object_like
-    FROM TABLE(APEX_STRING.SPLIT(TRIM(BOTH ',' FROM NVL(:objects_prefix, '%')), ',')) t
-),
-objects_ignore AS (
-    SELECT /*+ MATERIALIZE CARDINALITY(t 10) */
-        t.column_value AS object_like
-    FROM TABLE(APEX_STRING.SPLIT(TRIM(BOTH ',' FROM :objects_ignore), ',')) t
-)
+OBJECTS_MISSING_PLSCOPE_QUERY = f"""
 SELECT
-    s.synonym_name                                                       AS synonym_name,
-    g.type                                                               AS object_type,
-    s.table_owner                                                        AS owner,
-    s.table_name                                                         AS object_name,
-    REPLACE(
-        LISTAGG(g.privilege, ', ') WITHIN GROUP (ORDER BY g.privilege),
-        'ALTER, DEBUG, DELETE, FLASHBACK, INDEX, INSERT, ON COMMIT REFRESH, '
-            || 'QUERY REWRITE, READ, REFERENCES, SELECT, UPDATE',
-        'ALL'
-    )                                                                    AS privileges,
-    CASE WHEN g.grantable = 'YES' THEN 'Y' END                           AS is_grantable,
-    NVL(o.status, 'UNKNOWN')                                             AS status
-FROM user_synonyms s
-LEFT JOIN user_tab_privs_recd g
-    ON  g.owner             = s.table_owner
-    AND g.table_name        = s.table_name
-LEFT JOIN all_objects o
-    ON  o.owner             = s.table_owner
-    AND o.object_name       = s.table_name
-    AND o.object_type       = g.type
-JOIN objects_add a
-    ON s.synonym_name       LIKE a.object_like ESCAPE '\\'
-LEFT JOIN objects_ignore x
-    ON s.synonym_name       LIKE x.object_like ESCAPE '\\'
+    o.object_type,
+    o.object_name
+FROM user_objects o
+LEFT JOIN user_plsql_object_settings p
+    ON p.name               = o.object_name
+    AND p.type              = o.object_type
 WHERE 1 = 1
-    AND x.object_like       IS NULL
-    AND (s.synonym_name     LIKE :object_name ESCAPE '\\' OR :object_name IS NULL)
-GROUP BY s.synonym_name, s.table_owner, s.table_name, g.type, g.grantable, o.status
-ORDER BY s.synonym_name
+    AND o.status            = 'VALID'
+    AND o.object_type       IN ({_PLSCOPE_TYPE_IN_LIST})
+    AND (
+        NVL(p.PLSCOPE_SETTINGS, '-') NOT LIKE '%IDENTIFIERS:ALL%'
+        OR NVL(p.PLSCOPE_SETTINGS, '-') NOT LIKE '%STATEMENTS:ALL%'
+    )
+ORDER BY CASE o.object_type
+    WHEN 'PACKAGE'              THEN 1
+    WHEN 'PROCEDURE'            THEN 2
+    WHEN 'FUNCTION'             THEN 3
+    WHEN 'TRIGGER'              THEN 4
+    WHEN 'PACKAGE BODY'         THEN 5
+    ELSE                             6 END, o.object_name
 """.strip()
 
 

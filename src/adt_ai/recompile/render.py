@@ -1,7 +1,7 @@
-"""Console rendering for the recompile materialized-view report.
+"""Console rendering helpers for recompile reports.
 
-The MATERIALIZED VIEWS / LOCKED OBJECTS row formatting and the streaming console
-reporter live here so a single source of truth feeds both the batch render
+The report row formatting and the streaming materialized-view console reporter
+live here so a single source of truth feeds both the batch render
 (``print_adt_table``) and the live streamed render — they cannot drift. Mirrors
 the ``discovery/render.py`` split.
 """
@@ -39,6 +39,15 @@ def _format_mview_timer(seconds: int | None) -> str:
 
 
 _MVIEW_COLUMNS = ("OBJECT_NAME", "STATUS", "TYPE", "LOG", "LAST_REFRESHED_AT", "TIMER")
+_SYNONYM_COLUMNS = ("SYNONYM_NAME", "OBJECT_NAME", "TYPE", "PRIV", "GRNT", "VALID")
+_DISABLED_COLUMNS = ("OBJECT_NAME", "TABLE_NAME")
+_DISABLED_SECTION_TYPES = (
+    ("CONSTRAINT", "DISABLED CONSTRAINTS:"),
+    ("INDEX", "DISABLED INDEXES:"),
+    ("TRIGGER", "DISABLED TRIGGERS:"),
+)
+_JOBS_COLUMNS = ("JOB_NAME", "LAST_START_DATE", "DURAT", "CPU")
+_JOB_STATUS_ORDER = ("FAILED", "SUCCEEDED")
 
 
 def _mview_row_cells(mview) -> dict[str, object]:
@@ -79,6 +88,122 @@ def _locked_row_cells(lock) -> dict[str, object]:
         "PROGRAM":     lock.program or "",
         "LOCK_MODE":   lock.lock_mode or "",
     }
+
+
+def _disabled_row_cells(item) -> dict[str, object]:
+    """One disabled-object row as an ordered column→cell mapping."""
+    return {
+        "OBJECT_NAME": item.object_name,
+        "TABLE_NAME":  item.table_name or "",
+    }
+
+
+def _disabled_type(item) -> str:
+    return (item.object_type or "").upper()
+
+
+def print_disabled_tables(disabled_objects) -> None:
+    """Render -disabled as one compact table per disabled object type."""
+    for object_type, heading in _DISABLED_SECTION_TYPES:
+        print_adt_header(heading)
+        print_adt_table(
+            [
+                _disabled_row_cells(item)
+                for item in disabled_objects
+                if _disabled_type(item) == object_type
+            ],
+            columns=list(_DISABLED_COLUMNS),
+        )
+
+
+def _job_status(item) -> str:
+    return (item.status or "UNKNOWN").upper()
+
+
+def _format_job_duration(value: object | None) -> str:
+    if value is None:
+        return ""
+    return str(value).split(".", 1)[0]
+
+
+def _job_row_cells(item) -> dict[str, object]:
+    """One scheduler-job run row as an ordered column→cell mapping."""
+    return {
+        "JOB_NAME":        item.job_name,
+        "LAST_START_DATE": item.last_start_date or "",
+        "DURAT":           _format_job_duration(item.run_duration),
+        "CPU":             _format_job_duration(item.cpu_used),
+    }
+
+
+def print_job_tables(jobs) -> None:
+    """Render -jobs as one compact table per scheduler status."""
+    extra_statuses = sorted({_job_status(job) for job in jobs} - set(_JOB_STATUS_ORDER))
+    for status in [*_JOB_STATUS_ORDER, *extra_statuses]:
+        print_adt_header(f"SCHEDULER JOBS - {status}:")
+        print_adt_table(
+            [_job_row_cells(job) for job in jobs if _job_status(job) == status],
+            columns=list(_JOBS_COLUMNS),
+        )
+
+
+def _synonym_owner(synonym) -> str:
+    return synonym.owner or "UNKNOWN"
+
+
+def _synonym_status(synonym) -> str:
+    return synonym.status or "UNKNOWN"
+
+
+def _synonym_privileges(synonym) -> list[str]:
+    if not synonym.privileges:
+        return [""]
+    privileges = [privilege.strip() for privilege in synonym.privileges.split(",")]
+    return [privilege for privilege in privileges if privilege] or [""]
+
+
+def _synonym_sort_key(synonym) -> tuple[str, str, str, str, str]:
+    return (
+        _synonym_owner(synonym),
+        _synonym_status(synonym),
+        synonym.synonym_name,
+        synonym.object_name or "",
+        synonym.object_type or "",
+    )
+
+
+def _synonym_row_cells(synonym, privilege: str) -> dict[str, object]:
+    return {
+        "SYNONYM_NAME": synonym.synonym_name,
+        "OBJECT_NAME":  synonym.object_name or "",
+        "TYPE":         synonym.object_type or "",
+        "PRIV":         privilege,
+        "GRNT":         "Y" if synonym.is_grantable else "",
+        "VALID":        "Y" if _synonym_status(synonym) == "VALID" else "",
+    }
+
+
+def print_synonym_tables(synonyms) -> None:
+    """Render -synonyms as one compact table per target owner."""
+    sorted_synonyms = sorted(synonyms, key=_synonym_sort_key)
+    if not sorted_synonyms:
+        print_adt_header("SYNONYMS")
+        print_adt_table([], columns=list(_SYNONYM_COLUMNS))
+        return
+
+    for owner in sorted({_synonym_owner(synonym) for synonym in sorted_synonyms}):
+        owner_synonyms = [
+            synonym for synonym in sorted_synonyms if _synonym_owner(synonym) == owner
+        ]
+        print_adt_header(f"SYNONYMS TO SCHEMA: {owner}")
+        print_adt_table(
+            [
+                _synonym_row_cells(synonym, privilege)
+                for synonym in owner_synonyms
+                for privilege in _synonym_privileges(synonym)
+            ],
+            columns=list(_SYNONYM_COLUMNS),
+        )
 
 
 class _ConsoleMViewReporter(RecompileReporter):

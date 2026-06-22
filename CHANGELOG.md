@@ -2,6 +2,12 @@
 
 All notable changes to the public ADT.ai release are recorded here, newest first.
 
+## 0.6.1 - 2026-06-22
+
+- Added `recompile -disabled [PATTERN]`, a read-only health report for disabled constraints, invalid or function-disabled indexes, and disabled triggers. The report groups findings by object type in compact tables and can be filtered by object name pattern without running the invalid-object recompile flow.
+- Added `recompile -jobs [PATTERN]`, a read-only scheduler health report for today's job runs. The report groups jobs by run status and shows compact job name, last-start, duration, and CPU timing columns, with optional job-name filtering.
+- Public commands unchanged: `export_db`, `doctor`, `export_apex`, `export_data`, `recompile`, `rebuild`, `search_repo`, `discovery`, `flow`.
+
 ## 0.6.0 - 2026-06-21
 
 - Extended completion sound controls across every public command. `-beep [theme]` now accepts an optional case-insensitive theme override for one run, bare `-beep` forces the configured sound theme or falls back to `chime` when sounds are disabled in config, and `-nobeep` suppresses sounds for a single run with priority over both config and forced sounds. Help, version, and other static screens remain silent.

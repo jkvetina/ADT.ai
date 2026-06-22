@@ -63,26 +63,6 @@ PROJECT_CONFIG_TEMPLATE = """
 #   wallet_path: /secure/path/connections/wallets
 """.lstrip()
 
-PROJECT_GITIGNORE_TEMPLATE = """
-.DS_Store
-.temp.nosync
-
-config/commits/
-config/discovery/
-config/apex_apps.yaml
-config/apex_developers.yaml
-config/apex_timers.yaml
-config/db_dependencies.yaml
-/apex/workspace/credentials
-
-connections/
-connections/**
-!connections/.gitkeep
-!connections/wallets/
-!connections/wallets/.gitkeep
-""".lstrip()
-
-
 def format_action_line(label: str, outcome: str) -> str:
     prefix = f"  {label} "
     suffix = f" {outcome}"
@@ -211,7 +191,6 @@ __all__ = [
     "INSTANT_CLIENT_PAGE",
     "PYPI_PACKAGE_URL",
     "PROJECT_CONFIG_TEMPLATE",
-    "PROJECT_GITIGNORE_TEMPLATE",
     "CommandRunner",
     "ExecutableResolver",
     "OraclePageFetcher",

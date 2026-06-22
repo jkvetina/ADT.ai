@@ -13,12 +13,14 @@ from dataclasses import dataclass, field
 from adt_ai.db import QueryGateway
 from adt_ai.recompile.inventory import (
     CompileError,
+    DisabledObject,
     LockedObject,
     MaterializedView,
     ObjectError,
     ObjectOverview,
     RecompileDiscovery,
     RecompileObject,
+    SchedulerJobRun,
     SynonymInfo,
 )
 from adt_ai.recompile.queries import build_compile_statement, build_refresh_statement
@@ -43,6 +45,10 @@ class RecompileRequest:
     mview_name: str = "%"
     synonyms: bool = False
     synonym_name: str = "%"
+    disabled: bool = False
+    disabled_name: str = "%"
+    jobs: bool = False
+    job_name: str = "%"
     errors: bool = False
     debug: bool = False
 
@@ -65,6 +71,8 @@ class RecompileResult:
     mviews: list[MaterializedView] = field(default_factory=list)
     mview_actions: list[MViewAction] = field(default_factory=list)
     synonyms: list[SynonymInfo] = field(default_factory=list)
+    disabled_objects: list[DisabledObject] = field(default_factory=list)
+    jobs: list[SchedulerJobRun] = field(default_factory=list)
     error_details: list[CompileError] = field(default_factory=list)
     success: bool = True
 
@@ -122,6 +130,30 @@ class RecompileRunner:
                 ignore      = request.ignore,
             )
             return RecompileResult(synonyms=synonyms, success=True)
+
+        # -disabled is a report-only run: no compile/refresh action, no lock pass,
+        # no post-action re-read. Read disabled constraints/indexes/triggers once
+        # and return it; the OBJECTS OVERVIEW / invalid recompile / compile errors
+        # are all skipped.
+        if request.disabled:
+            disabled_objects = discovery.disabled_objects(
+                object_name = request.disabled_name,
+                prefix      = request.prefix,
+                ignore      = request.ignore,
+            )
+            return RecompileResult(disabled_objects=disabled_objects, success=True)
+
+        # -jobs is a report-only run: no compile/refresh action, no lock pass,
+        # no post-action re-read. Read today's scheduler job health once and
+        # return it; the OBJECTS OVERVIEW / invalid recompile / compile errors
+        # are all skipped.
+        if request.jobs:
+            jobs = discovery.scheduler_jobs(
+                object_name = request.job_name,
+                prefix      = request.prefix,
+                ignore      = request.ignore,
+            )
+            return RecompileResult(jobs=jobs, success=True)
 
         # -mviews is a materialized-view-focused run: skip the invalid-object
         # recompile and the OBJECTS OVERVIEW entirely, only collect locks (which
