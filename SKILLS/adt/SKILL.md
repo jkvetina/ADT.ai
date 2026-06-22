@@ -85,9 +85,17 @@ Typical export of one app:
 adtai export_apex -app 100 -full -split -files -rest -readable
 ```
 
+Export only selected pages/shared components from component-based formats:
+
+```bash
+adtai export_apex -app 100 -split -readable -page 1-50 55,56 -component LOV:NAME% LIST:MENU%
+adtai export_apex -app 100 -page 7
+adtai export_apex -app 100 -component LOV:%
+```
+
 **Rules:**
 - Name the formats explicitly. Common set: `-full -split -files -rest -readable`. Skip `-embedded` unless asked — it slows the export.
-- Add `-recent N` only to print a recent-component report before the export; the export itself always writes all selected components. With `-reveal`, `-recent` filters the listed apps.
+- `-recent N`, `-page`, and `-component TYPE:NAME%` filter split/readable/embedded component output. `-page` or `-component` without an explicit format defaults to `-split`. Filtered component exports print affected rows instead of dotted progress and do not update `apex_timers.yaml`. Full app SQL, REST services, app files, and workspace files stay broad. With `-reveal`, `-recent` filters the listed apps.
 - If apps don't appear, the connection's APEX schema likely doesn't match the owner — narrow or widen with `-schema`, or use `-owners` in reveal.
 
 ## export_data — export table data

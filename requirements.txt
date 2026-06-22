@@ -1,4 +1,5 @@
 chime>=0.7
+cryptography>=42
 oracledb>=2.2
 PyYAML>=6.0
 ruamel.yaml>=0.18

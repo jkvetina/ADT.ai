@@ -10,6 +10,11 @@ from typing import Any
 from adt_ai.db import QueryGateway
 from adt_ai.export_apex import queries
 from adt_ai.export_apex.files import ApexFileResolver
+from adt_ai.export_apex.filters import (
+    ApexComponentFilter,
+    ApexExplicitFilter,
+    ApexPageSelection,
+)
 from adt_ai.export_apex.inventory import ApexApplication
 from adt_ai.export_apex.metadata import (
     _load_yaml_mapping,
@@ -20,6 +25,12 @@ from adt_ai.export_apex.metadata import (
     _store_workspace_developers,
     _store_yaml_mapping,
     _workspace_developers_from_rows,
+)
+from adt_ai.export_apex.partial import (
+    _component_row,
+    _has_explicit,
+    _is_partial,
+    _print_components,
 )
 from adt_ai.export_apex.postprocess import (
     _bind_params,
@@ -59,6 +70,13 @@ from adt_ai.export_apex.recent import (
     _slug,
     _used_on_pages,
 )
+from adt_ai.export_apex.recent_authors import (
+    dedupe_recent_rows,
+    merge_workspace_developers,
+    recent_author_label,
+    recent_authors,
+    workspace_developers_from_mapping,
+)
 from adt_ai.export_apex.rest import (
     _cleanup_sqlcl,
     _matches_prefix,
@@ -94,8 +112,15 @@ class ApexExportRequest:
     release     : str | None = None
     recent_days : int | None = None
     changed_by  : str | None = None
+    my_changes  : bool = False
+    my_name     : str | None = None
+    my_email    : str | None = None
+    recent_report_only: bool = False
+    page_selection: ApexPageSelection | None = None
+    component_filters: tuple[ApexComponentFilter, ...] = ()
     reporter    : ApexProgressReporter | None = None
     timers_file : Path | None = None
+
 
 class ApexExportRunner:
     EXPORT_START_QUERY    = queries.EXPORT_START_QUERY
@@ -119,36 +144,64 @@ class ApexExportRunner:
         reporter = request.reporter or ConsoleApexProgressReporter()
         timers_file = request.timers_file or request.root / "config" / "apex_timers.yaml"
         timers = _load_timers(timers_file)
-        _store_application_metadata(
-            request.root / "config" / "apex_apps.yaml",
-            [
-                application
-                for schema in request.schemas
-                for application in request.applications.get(schema, [])
-            ],
-        )
+        developers_path = request.root / "config" / "apex_developers.yaml"
+        if not request.recent_report_only:
+            _store_application_metadata(
+                request.root / "config" / "apex_apps.yaml",
+                [
+                    application
+                    for schema in request.schemas
+                    for application in request.applications.get(schema, [])
+                ],
+            )
         for schema in request.schemas:
             resolver = base_resolver.for_schema(schema)
             gateway = self.gateway_factory(schema)
             developer_rows = gateway.fetch_all(self.WORKSPACE_DEVELOPERS_QUERY)
-            developers = _workspace_developers_from_rows(developer_rows)
-            _store_workspace_developers(
-                request.root / "config" / "apex_developers.yaml",
-                developer_rows,
+            developers = merge_workspace_developers(
+                workspace_developers_from_mapping(_load_yaml_mapping(developers_path)),
+                _workspace_developers_from_rows(developer_rows),
             )
+            if not request.recent_report_only:
+                _store_workspace_developers(developers_path, developer_rows)
             for application in request.applications.get(schema, []):
+                if request.recent_report_only:
+                    recent_components = self._recent_components(
+                        gateway, application, request, developers
+                    )
+                    if recent_components is not None:
+                        self._print_recent_changes(
+                            application,
+                            developers,
+                            request.recent_days,
+                            recent_author_label(application, developers, request),
+                            recent_components,
+                        )
+                    continue
                 gateway.execute(self.EXPORT_START_QUERY, {"app_id": application.app_id})
                 enrichments = _enrichments(gateway, application)
-                recent_components = self._recent_components(gateway, application, request)
+                recent_components = self._recent_components(
+                    gateway, application, request, developers
+                )
                 recent_filter = _recent_component_filter(recent_components)
+                explicit_filter = ApexExplicitFilter(
+                    request.page_selection,
+                    request.component_filters,
+                )
                 (resolver.app_root(application) / "comments").mkdir(parents=True, exist_ok=True)
-                self._write_page_comments(gateway, resolver, application, recent_filter)
+                page_names = self._write_page_comments(
+                    gateway,
+                    resolver,
+                    application,
+                    recent_filter,
+                    explicit_filter,
+                )
                 if recent_components is not None:
                     self._print_recent_changes(
                         application,
                         developers,
                         request.recent_days,
-                        request.changed_by,
+                        recent_author_label(application, developers, request),
                         recent_components,
                     )
                 if any(request.actions.values()):
@@ -164,6 +217,8 @@ class ApexExportRunner:
                     timers,
                     timers_file,
                     recent_filter,
+                    explicit_filter,
+                    page_names,
                 )
                 if request.actions.get("rest"):
                     self._run_action(
@@ -216,6 +271,8 @@ class ApexExportRunner:
         timers: dict[Any, Any],
         timers_file: Path,
         recent_filter: RecentComponentFilter,
+        explicit_filter: ApexExplicitFilter,
+        page_names: dict[int, str],
     ) -> None:
         for action, sql in (
             ("full", self.EXPORT_FULL_QUERY),
@@ -226,14 +283,14 @@ class ApexExportRunner:
             if not request.actions.get(action):
                 continue
 
-            def operation(sql: str = sql, action: str = action) -> None:
+            def operation(sql: str = sql, action: str = action) -> list[dict[str, Any]]:
                 gateway.execute(
                     sql,
                     _bind_params(
                         sql, {"app_id": application.app_id, **_export_options(request.config)}
                     ),
                 )
-                self._write_collection_files(
+                return self._write_collection_files(
                     gateway,
                     resolver,
                     application,
@@ -243,16 +300,23 @@ class ApexExportRunner:
                     developers,
                     request.release,
                     recent_filter,
+                    explicit_filter,
+                    page_names,
                 )
 
-            self._run_action(
-                reporter,
-                timers,
-                timers_file,
-                application,
-                action,
-                operation,
-            )
+            if _is_partial(request):
+                rows = operation()
+                if _has_explicit(request):
+                    _print_components(rows)
+            else:
+                self._run_action(
+                    reporter,
+                    timers,
+                    timers_file,
+                    application,
+                    action,
+                    operation,
+                )
 
     def _run_action(
         self,
@@ -282,7 +346,10 @@ class ApexExportRunner:
         developers: Mapping[str, Mapping[str, str]],
         release: str | None,
         recent_filter: RecentComponentFilter,
-    ) -> None:
+        explicit_filter: ApexExplicitFilter,
+        page_names: dict[int, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        rows = []
         for row in gateway.fetch_all(self.FETCH_FILES_QUERY):
             file_name = str(row_value(row, "FILE_NAME") or "")
             payload = str(row_value(row, "CLOB_CONTENT") or "")
@@ -291,6 +358,12 @@ class ApexExportRunner:
                 continue
             if not recent_filter.matches(action, relative):
                 continue
+            if not explicit_filter.matches(action, relative):
+                continue
+            if page_names is not None:
+                component_row = _component_row(action, relative, page_names)
+                if component_row is not None:
+                    rows.append(component_row)
             target = _target_path(resolver, application, action, file_name)
             target.parent.mkdir(parents=True, exist_ok=True)
             content = _payload_for(
@@ -306,6 +379,7 @@ class ApexExportRunner:
             if action == "readable" and target == resolver.workspace_root() / "app_groups.yaml":
                 content = _merge_app_groups(target, content)
             target.write_text(content, encoding="utf-8")
+        return rows
 
     def _write_static_files(
         self,
@@ -331,11 +405,15 @@ class ApexExportRunner:
         resolver: ApexFileResolver,
         application: ApexApplication,
         recent_filter: RecentComponentFilter,
-    ) -> None:
+        explicit_filter: ApexExplicitFilter,
+    ) -> dict[int, str]:
         comments: dict[int, dict[str, Any]] = {}
         for row in gateway.fetch_all(self.PAGE_COMMENTS_QUERY, {"app_id": application.app_id}):
             page_id = int(row_value(row, "PAGE_ID") or 0)
-            if not recent_filter.matches("split", f"application/pages/page_{page_id:05d}.sql"):
+            relative = f"application/pages/page_{page_id:05d}.sql"
+            if not recent_filter.matches("split", relative):
+                continue
+            if not explicit_filter.matches("split", relative):
                 continue
             comments[page_id] = {
                 "page": {
@@ -350,7 +428,10 @@ class ApexExportRunner:
             self.PAGE_REGION_COMMENTS_QUERY, {"app_id": application.app_id}
         ):
             page_id = int(row_value(row, "PAGE_ID") or 0)
-            if not recent_filter.matches("split", f"application/pages/page_{page_id:05d}.sql"):
+            relative = f"application/pages/page_{page_id:05d}.sql"
+            if not recent_filter.matches("split", relative):
+                continue
+            if not explicit_filter.matches("split", relative):
                 continue
             region_id = int(row_value(row, "REGION_ID") or 0)
             if page_id not in comments:
@@ -370,19 +451,24 @@ class ApexExportRunner:
         comments_root.mkdir(parents=True, exist_ok=True)
         for page_id, payload in comments.items():
             _store_yaml_mapping(comments_root / f"p{page_id:05d}.yaml", payload)
+        return {
+            page_id: str(payload.get("page", {}).get("page_name") or "")
+            for page_id, payload in comments.items()
+        }
 
     def _print_recent_changes(
         self,
         application: ApexApplication,
         developers: Mapping[str, Mapping[str, str]],
         recent_days: int | None,
-        changed_by: str | None,
+        author_label: str | None,
         rows: list[dict[str, Any]],
     ) -> None:
         if recent_days is None:
             return
-        author_label = changed_by if changed_by in developers.get(application.workspace, {}) else ""
-        _print_recent_changes_header(application, _recent_since(recent_days), author_label)
+        if author_label and not rows:
+            return
+        _print_recent_changes_header(application, _recent_since(recent_days), author_label or "")
         _print_recent_components(rows)
 
     def _recent_components(
@@ -390,17 +476,33 @@ class ApexExportRunner:
         gateway: QueryGateway,
         application: ApexApplication,
         request: ApexExportRequest,
+        developers: Mapping[str, Mapping[str, str]],
     ) -> list[dict[str, Any]] | None:
         if not request.recent_days or request.recent_days <= 0:
             return None
-        return gateway.fetch_all(
-            self.RECENT_COMPONENTS_QUERY,
-            {
-                "app_id": application.app_id,
-                "recent": request.recent_days,
-                "author": request.changed_by,
-            },
-        )
+        authors = recent_authors(application, developers, request)
+        if not authors:
+            return gateway.fetch_all(
+                self.RECENT_COMPONENTS_QUERY,
+                {
+                    "app_id": application.app_id,
+                    "recent": request.recent_days,
+                    "author": None,
+                },
+            )
+        rows: list[dict[str, Any]] = []
+        for author in authors:
+            rows.extend(
+                gateway.fetch_all(
+                    self.RECENT_COMPONENTS_QUERY,
+                    {
+                        "app_id": application.app_id,
+                        "recent": request.recent_days,
+                        "author": author,
+                    },
+                )
+            )
+        return dedupe_recent_rows(rows)
 
     def _write_rest_export(
         self,

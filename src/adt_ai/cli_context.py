@@ -20,11 +20,14 @@ from adt_ai.cli_constants import (
 from adt_ai.cli_context_apex import (
     ApexAppSelection,
     _apex_actions,
+    _apex_recent_report_only,
     _apex_scope,
     _app_in_selection,
     _has_job_recent_conflict,
     _is_enabled,
     _parse_apex_app_selection,
+    _parse_apex_export_filter_groups,
+    _parse_apex_page_selection,
     _split_config_values,
 )
 from adt_ai.cli_context_connection import (
@@ -79,6 +82,7 @@ def _load_startup_context(args: argparse.Namespace) -> StartupContext:
     connections = ConnectionLoader(
         connection_search_paths,
         wallet_roots = _wallet_roots(config_result.data, root, repo_root, connection_search_paths),
+        key          = getattr(args, "key", None),
     ).load(candidates=connection_file_candidates)
     return StartupContext(
         root                    = root,

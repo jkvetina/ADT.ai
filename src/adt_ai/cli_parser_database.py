@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from adt_ai.cli_constants import DEFAULT_ROW_LIMIT
+from adt_ai.cli_parser_common import add_connection_key_argument
 
 
 def add_database_parsers(subparsers) -> None:
@@ -131,6 +132,7 @@ def add_database_parsers(subparsers) -> None:
         action = "store_true",
         help   = "show input parameters and SQL queries with bind values",
     )
+    add_connection_key_argument(recompile)
     discovery = subparsers.add_parser(
         "discovery",
         description="run read-only SELECT discovery queries against the target database",
@@ -176,6 +178,7 @@ def add_database_parsers(subparsers) -> None:
         action = "store_true",
         help   = "show input parameters and SQL queries with bind values",
     )
+    add_connection_key_argument(discovery)
     flow = subparsers.add_parser(
         "flow",
         description="map APEX page navigation: query incoming/outgoing links or refresh diagrams",
@@ -231,3 +234,4 @@ def add_database_parsers(subparsers) -> None:
         action = "store_true",
         help   = "show input parameters and SQL queries with bind values",
     )
+    add_connection_key_argument(flow)

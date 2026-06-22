@@ -104,7 +104,6 @@ REMOVED_COMPATIBILITY_FLAGS = {
         "-dump", "--dump", "-format", "--format", "-out", "--out",
         "-remove", "--remove", "-schema", "--schema",
     ),
-    "recompile": ("-key", "--key"),
 }
 
 APEX_VERSION_QUERY = """

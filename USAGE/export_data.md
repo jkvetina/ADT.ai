@@ -36,6 +36,7 @@ tables:
 | `-name`, `--name` | Yes | existing DATA files | Table name pattern or patterns to export. Supports old ADT SQL-like `%` patterns through database table discovery. |
 | `-silent`, `--silent` | No | off | Suppress per-table progress rows while keeping command chrome, export summary, and timer. |
 | `-debug`, `--debug` | No | off | Show input parameters, SQL queries with bind values, and full Python tracebacks for troubleshooting. |
+| `-key`, `--key` | No | `ADT_KEY` | Encryption key value or path to a key file for encrypted connection passwords. |
 | `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |
 | `-nobeep`, `--nobeep` | No | off | Suppress completion sounds for this run; this wins over `chime_theme` and `-beep`. |
 

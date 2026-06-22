@@ -110,6 +110,7 @@ The INVALID OBJECTS table only shows a count and the first error code per object
 | `-errors`, `--errors` | No | off | Print the full per-line compile errors of objects that are still invalid: an ID/object/line/position table with each message listed below as `  <ID>) <text>`. |
 | `-silent`, `--silent` | No | off | Suppress object overview details while keeping the standard banner, connection block, and final timer. |
 | `-debug`, `--debug` | No | off | Show input parameters and SQL queries with bind values; keep Python tracebacks. |
+| `-key`, `--key` | No | `ADT_KEY` | Encryption key value or path to a key file for encrypted connection passwords. |
 | `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |
 | `-nobeep`, `--nobeep` | No | off | Suppress completion sounds for this run; this wins over `chime_theme` and `-beep`. |
 

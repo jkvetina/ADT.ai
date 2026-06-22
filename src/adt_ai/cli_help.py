@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from adt_ai.cli_constants import PUBLIC_MODULES
 
 COMMON_DEST_ORDER = ("debug", "beep", "nobeep", "env", "root", "config_dir")
+OPTION_HELP_WIDTH = 80
 
 ACTION_DESTS = {
     "all_formats",
@@ -73,17 +74,20 @@ FILTER_DESTS = {
     "my",
     "name",
     "patch_code",
+    "prefix",
     "recent",
     "schema",
     "scope",
     "search",
     "source",
     "source_schema",
+    "subfolder",
     "summary",
     "target",
     "target_schema",
     "type",
     "warnings",
+    "workspace",
     "ws",
 }
 
@@ -185,7 +189,9 @@ def format_command_help(command: str, parser: argparse.ArgumentParser) -> str:
         "SUMMARY:",
         "--------",
         *_summary_lines(canonical),
+        "",
         f"More details: USAGE/{canonical}.md",
+        "",
         "",
     ]
     grouped = _group_actions(parser._actions)
@@ -241,7 +247,7 @@ def _section_key(action: argparse.Action) -> str:
 
 
 def _format_action(action: argparse.Action) -> str:
-    option_names = ", ".join(_ordered_option_strings(action.option_strings))
+    option_names = ", ".join(_display_option_strings(action.option_strings))
     suffix = _display_argument_suffix(action)
     left = f"  {option_names}{suffix}"
     help_text = (action.help or "").replace("%%", "%")
@@ -251,14 +257,14 @@ def _format_action(action: argparse.Action) -> str:
     if len(left) >= first_width:
         wrapped = textwrap.fill(
             help_text,
-            width=88,
+            width=OPTION_HELP_WIDTH,
             initial_indent=" " * first_width,
             subsequent_indent=" " * first_width,
         ).lstrip()
         return f"{left}\n{' ' * first_width}{wrapped}"
     wrapped = textwrap.fill(
         help_text,
-        width=88,
+        width=OPTION_HELP_WIDTH,
         initial_indent=left.ljust(first_width),
         subsequent_indent=" " * first_width,
     )
@@ -267,6 +273,16 @@ def _format_action(action: argparse.Action) -> str:
 
 def _ordered_option_strings(option_strings: Sequence[str]) -> list[str]:
     return sorted(option_strings, key=lambda option: (option.startswith("--"), option))
+
+
+def _display_option_strings(option_strings: Sequence[str]) -> list[str]:
+    ordered = _ordered_option_strings(option_strings)
+    preferred = [
+        option
+        for option in ordered
+        if option.startswith("-") and not option.startswith("--")
+    ]
+    return preferred or ordered
 
 
 def _display_argument_suffix(action: argparse.Action) -> str:
@@ -332,4 +348,4 @@ def _canonical_command_name(command: str) -> str:
 
 
 def _summary_lines(command: str) -> tuple[str, ...]:
-    return COMMAND_SUMMARIES[command]
+    return (" ".join(COMMAND_SUMMARIES[command]),)

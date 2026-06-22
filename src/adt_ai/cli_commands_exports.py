@@ -4,6 +4,7 @@ import argparse
 import sys
 from collections.abc import Mapping
 
+from adt_ai import git_identity
 from adt_ai.cli_constants import (
     APEX_EXPORT_ACTIONS,
     ApexApplication,
@@ -29,12 +30,14 @@ from adt_ai.cli_constants import (
 from adt_ai.cli_context import (
     DebugQueryGateway,
     _apex_actions,
+    _apex_recent_report_only,
     _apex_scope,
     _app_in_selection,
     _flatten_arg_groups,
     _has_job_recent_conflict,
     _load_startup_context,
     _parse_apex_app_selection,
+    _parse_apex_export_filter_groups,
     _print_connection_block,
     _print_startup_debug,
     _with_schema_folders,
@@ -177,12 +180,13 @@ def _run_export_apex(
     environment = args.env or connections.default_environment
     try:
         app_selection = _parse_apex_app_selection(_flatten_arg_groups(args.app))
+        page_selection, component_filters = _parse_apex_export_filter_groups(
+            args.page, args.component
+        )
     except ValueError as exc:
         print(f"export_apex: {exc}", file=sys.stderr)
         return 2
     has_app_ranges = bool(app_selection and app_selection.has_ranges)
-    # With ranges, the SQL scan stays unfiltered by id (ranges can't be
-    # expressed in the pipe-list bind); we filter the discovered apps in Python.
     sql_app_ids = None if has_app_ranges else _flatten_arg_groups(args.app)
     if args.schema:
         schemas = connections.expand_schemas(args.schema, environment=environment)
@@ -208,9 +212,11 @@ def _run_export_apex(
     }
     actions = _apex_actions(args, config)
     recent_days = _apex_recent_days(args.recent, config)
+    recent_report_only = _apex_recent_report_only(args, actions, recent_days)
+    my_name, my_email = git_identity.current_git_identity() if args.my else (None, None)
     if args.debug:
         _print_startup_debug(startup)
-    if not args.reveal and not any(actions.values()):
+    if not args.reveal and not any(actions.values()) and not recent_report_only:
         _print_missing_apex_format_guidance()
         return 2
 
@@ -235,10 +241,6 @@ def _run_export_apex(
     reporter = ConsoleApexRevealReporter()
     applications_by_schema: dict[str, list[ApexApplication]] = {}
 
-    # Reveal/listing reads apex_applications, which is scoped by the parsing
-    # schema's workspace association (and the owner/workspace filters in SQL),
-    # not by the APEX security context. The context is set per-app at export
-    # time (EXPORT_START_QUERY), so listing needs no workspace switch here.
     if args.reveal:
         _print_connection_block(
             export_apex_gateway_factory(connection_schema),
@@ -351,7 +353,7 @@ def _run_export_apex(
                     _print_apex_owner_not_configured(app_id, owner, environment)
                 for app_id in not_found:
                     _print_apex_app_not_found(app_id)
-    if not args.reveal and any(actions.values()):
+    if not args.reveal and (any(actions.values()) or recent_report_only):
         ApexExportRunner(export_apex_gateway_factory).run(
             ApexExportRequest(
                 root         = root,
@@ -362,6 +364,12 @@ def _run_export_apex(
                 release      = args.release,
                 recent_days  = recent_days,
                 changed_by   = args.by or None,
+                my_changes   = args.my,
+                my_name      = my_name,
+                my_email     = my_email,
+                recent_report_only=recent_report_only,
+                page_selection=page_selection,
+                component_filters=component_filters,
             )
         )
     return 0

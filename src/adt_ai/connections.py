@@ -7,6 +7,7 @@ from typing import Any
 
 import yaml
 
+from adt_ai import crypto
 from adt_ai.dict_merge import deep_merge
 
 
@@ -43,6 +44,7 @@ class ConnectionResult:
     data         : dict[str, Any]
     files        : list[Path]
     wallet_roots : list[Path]
+    key          : str | None = None
 
     @property
     def default_environment(self) -> str:
@@ -104,13 +106,26 @@ class ConnectionResult:
                 )
             )
 
-        db = deep_merge(environment_data.get("db", {}), environment_data.get("wallet", {}))
+        wallet_data = environment_data.get("wallet", {})
+        db = deep_merge(environment_data.get("db", {}), wallet_data)
         db = deep_merge(db, schema_data.get("db", {}))
+        password = _decrypt_if_enabled(
+            db.get("pwd"),
+            db.get("pwd!"),
+            key     = self.key,
+            context = f"{environment_name}.{schema_name} pwd",
+        )
+        wallet_password = _decrypt_if_enabled(
+            db.get("wallet_password") or db.get("wallet_pwd"),
+            db.get("wallet_password!") or db.get("wallet_pwd!"),
+            key     = self.key,
+            context = f"{environment_name} wallet_pwd",
+        )
         return Connection(
             environment     = environment_name,
             schema          = schema_name,
             username        = str(db.get("user") or schema_name),
-            password        = db.get("pwd"),
+            password        = password,
             password_mode   = db.get("pwd!"),
             hostname        = db.get("hostname"),
             port            = db.get("port"),
@@ -124,7 +139,7 @@ class ConnectionResult:
                 db.get("wallet_path") or db.get("wallet"),
                 self.wallet_roots,
             ),
-            wallet_password = db.get("wallet_password") or db.get("wallet_pwd"),
+            wallet_password = wallet_password,
             client_lib_dir  = db.get("client_lib_dir") or db.get("lib_dir"),
         )
 
@@ -167,9 +182,11 @@ class ConnectionLoader:
         self,
         search_paths: list[Path] | tuple[Path, ...],
         wallet_roots: list[Path] | tuple[Path, ...] = (),
+        key: str | None = None,
     ) -> None:
         self.search_paths = [Path(path) for path in search_paths]
         self.wallet_roots = [Path(path).expanduser() for path in wallet_roots]
+        self.key = key
 
     def load(
         self,
@@ -197,7 +214,12 @@ class ConnectionLoader:
         loaded = yaml.safe_load(chosen.read_text(encoding="utf-8")) or {}
         if not isinstance(loaded, dict):
             raise ConnectionError(f"Connection file must contain a YAML mapping: {chosen}")
-        return ConnectionResult(data=loaded, files=[chosen], wallet_roots=self.wallet_roots)
+        return ConnectionResult(
+            data         = loaded,
+            files        = [chosen],
+            wallet_roots = self.wallet_roots,
+            key          = self.key,
+        )
 
 
 def _expected_connection_paths(filename: str, search_paths: list[Path]) -> list[Path]:
@@ -231,6 +253,24 @@ def _resolve_wallet_path(value: Any, wallet_roots: list[Path]) -> str | None:
         if candidate.exists():
             return str(candidate)
     return str(candidates[0] if candidates else wallet)
+
+
+def _decrypt_if_enabled(
+    value: Any,
+    marker: Any,
+    *,
+    key: str | None,
+    context: str,
+) -> Any:
+    if not _is_enabled(marker):
+        return value
+    try:
+        resolved_key = crypto.resolve_key(key)
+        return crypto.decrypt(value, resolved_key)
+    except crypto.CryptoError as error:
+        raise ConnectionError(
+            f"Could not decrypt {context}; pass -key or set {crypto.KEY_ENV}: {error}"
+        ) from error
 
 
 def _is_legacy_adt_wallet_path(path: Path) -> bool:

@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from adt_ai.cli_constants import APEX_EXPORT_ACTIONS
+from adt_ai.export_apex.filters import ApexComponentFilter, ApexPageSelection
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,85 @@ def _parse_apex_app_selection(tokens: list[str] | None) -> ApexAppSelection | No
             explicit.append(token)
     return ApexAppSelection(explicit_ids=tuple(explicit), ranges=tuple(ranges))
 
+def _parse_apex_page_selection(tokens: list[str] | None) -> ApexPageSelection | None:
+    if not tokens:
+        return None
+    explicit: list[int] = []
+    ranges: list[tuple[int, int | None]] = []
+    for raw in tokens:
+        for token in [part.strip() for part in raw.split(",") if part.strip()]:
+            _append_page_selection_token(token, explicit, ranges)
+    return ApexPageSelection(explicit_ids=tuple(explicit), ranges=tuple(ranges))
+
+def _append_page_selection_token(
+    token: str,
+    explicit: list[int],
+    ranges: list[tuple[int, int | None]],
+) -> None:
+    open_match = re.fullmatch(r"(\d+)\+", token)
+    closed_match = re.fullmatch(r"(\d+)-(\d+)", token)
+    if open_match:
+        ranges.append((int(open_match.group(1)), None))
+    elif closed_match:
+        low = int(closed_match.group(1))
+        high = int(closed_match.group(2))
+        if low > high:
+            raise ValueError(
+                f"invalid -page range '{token}': min {low} is greater than max {high}"
+            )
+        ranges.append((low, high))
+    elif "-" in token or "+" in token:
+        raise ValueError(f"invalid -page range '{token}': use MIN-MAX or MIN+")
+    else:
+        explicit.append(int(token))
+
+def _parse_apex_component_filters(
+    tokens: list[str] | None,
+) -> tuple[ApexComponentFilter, ...]:
+    if not tokens:
+        return ()
+    filters: list[ApexComponentFilter] = []
+    for raw in tokens:
+        token = raw.strip()
+        if not token:
+            continue
+        component_type, separator, name_pattern = token.partition(":")
+        if not separator or not component_type.strip() or not name_pattern.strip():
+            raise ValueError(
+                f"invalid -component filter '{token}': use TYPE:NAME_PATTERN"
+            )
+        filters.append(ApexComponentFilter(component_type.strip(), name_pattern.strip()))
+    return tuple(filters)
+
+def _parse_apex_export_filters(
+    page_tokens: list[str] | None,
+    component_tokens: list[str] | None,
+) -> tuple[ApexPageSelection | None, tuple[ApexComponentFilter, ...]]:
+    return (
+        _parse_apex_page_selection(page_tokens),
+        _parse_apex_component_filters(component_tokens),
+    )
+
+def _parse_apex_export_filter_groups(
+    page_groups: list[list[str]] | None,
+    component_groups: list[list[str]] | None,
+) -> tuple[ApexPageSelection | None, tuple[ApexComponentFilter, ...]]:
+    return _parse_apex_export_filters(
+        _flatten_filter_groups(page_groups),
+        _flatten_filter_groups(component_groups),
+    )
+
+def _flatten_filter_groups(groups: list[list[str]] | None) -> list[str] | None:
+    if not groups:
+        return None
+    return [
+        part.strip()
+        for group in groups
+        for item in group
+        for part in item.split(",")
+        if part.strip()
+    ]
+
 def _app_in_selection(app_id: int | str, selection: ApexAppSelection) -> bool:
     if str(app_id) in selection.explicit_ids:
         return True
@@ -85,7 +165,23 @@ def _apex_actions(
     for action in APEX_EXPORT_ACTIONS:
         if getattr(args, action, False):
             actions[action] = True
+    if not any(actions.values()) and (
+        getattr(args, "page", None) or getattr(args, "component", None)
+    ):
+        actions["split"] = True
     return actions
+
+def _apex_recent_report_only(
+    args: argparse.Namespace,
+    actions: Mapping[str, bool],
+    recent_days: int | None,
+) -> bool:
+    return (
+        not getattr(args, "reveal", False)
+        and not any(actions.values())
+        and recent_days is not None
+        and (getattr(args, "by", None) is not None or getattr(args, "my", False))
+    )
 
 def _string_or_none(value: object) -> str | None:
     if value is None or value == "":

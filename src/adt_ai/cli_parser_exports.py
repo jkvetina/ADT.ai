@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from adt_ai.cli_parser_common import add_connection_key_argument
+
 
 def add_export_parsers(subparsers) -> None:
     export_db = subparsers.add_parser(
@@ -60,6 +62,7 @@ def add_export_parsers(subparsers) -> None:
         action = "store_true",
         help   = "show input parameters and SQL queries with bind values",
     )
+    add_connection_key_argument(export_db)
 
     export_data = subparsers.add_parser(
         "export_data",
@@ -94,6 +97,7 @@ def add_export_parsers(subparsers) -> None:
         action = "store_true",
         help   = "show input parameters and SQL queries with bind values",
     )
+    add_connection_key_argument(export_data)
 
     export_apex = subparsers.add_parser(
         "export_apex",
@@ -119,6 +123,20 @@ def add_export_parsers(subparsers) -> None:
         help   = "application id(s), or ranges MIN-MAX / MIN+, to export or reveal",
     )
     export_apex.add_argument(
+        "--page",
+        "-page",
+        action = "append",
+        nargs  = "+",
+        help   = "page id(s), or ranges MIN-MAX / MIN+, to export from split/readable output",
+    )
+    export_apex.add_argument(
+        "--component",
+        "-component",
+        action = "append",
+        nargs  = "+",
+        help   = "component filters as TYPE:NAME_PATTERN, for example LOV:STATUS%",
+    )
+    export_apex.add_argument(
         "--max-app-id",
         "--max_app_id",
         "-max_app_id",
@@ -140,6 +158,12 @@ def add_export_parsers(subparsers) -> None:
         nargs = "?",
         const = "",
         help  = "show components changed by developer",
+    )
+    export_apex.add_argument(
+        "--my",
+        "-my",
+        action = "store_true",
+        help   = "show components changed by the current git user",
     )
     export_apex.add_argument("--release", "-release", help="override APEX release in SQL exports")
     export_apex.add_argument(
@@ -191,3 +215,4 @@ def add_export_parsers(subparsers) -> None:
         action = "store_true",
         help   = "show input parameters and SQL queries with bind values",
     )
+    add_connection_key_argument(export_apex)
