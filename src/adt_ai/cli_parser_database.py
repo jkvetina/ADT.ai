@@ -115,12 +115,6 @@ def add_database_parsers(subparsers) -> None:
                   "entirely",
     )
     recompile.add_argument(
-        "--errors",
-        "-errors",
-        action = "store_true",
-        help   = "print the full compile error messages (line, position, text) of invalid objects",
-    )
-    recompile.add_argument(
         "--silent",
         "-silent",
         action = "store_true",
@@ -133,6 +127,83 @@ def add_database_parsers(subparsers) -> None:
         help   = "show input parameters and SQL queries with bind values",
     )
     add_connection_key_argument(recompile)
+    dependencies = subparsers.add_parser(
+        "dependencies",
+        description="query the committed dependency index or refresh it from the database",
+        help="query or refresh the dependency index",
+    )
+    dependencies.add_argument("--root", "-root", default=".", help="project root folder")
+    dependencies.add_argument("--uses", "-uses", metavar="OBJ", help="objects OBJ depends on")
+    dependencies.add_argument(
+        "--used-by",
+        "-used-by",
+        metavar="OBJ",
+        help="objects that depend on OBJ",
+    )
+    dependencies.add_argument(
+        "--impact",
+        "-impact",
+        metavar="OBJ",
+        help="transitive reverse impact of OBJ",
+    )
+    dependencies.add_argument(
+        "--tree",
+        "-tree",
+        metavar="CONSTRAINT",
+        help="foreign-key reference and dependency cascade for CONSTRAINT",
+    )
+    dependencies.add_argument(
+        "--unused",
+        "-unused",
+        action="store_true",
+        help="list objects with no dependents (cleanup candidates)",
+    )
+    dependencies.add_argument(
+        "--type",
+        "-type",
+        metavar="TYPE",
+        help="restrict -unused to one object type (e.g. TABLE, PACKAGE)",
+    )
+    dependencies.add_argument(
+        "--refresh",
+        "-refresh",
+        nargs="*",
+        metavar="NAME",
+        help="rebuild the index from the database, optionally scoped to object names",
+    )
+    dependencies.add_argument(
+        "--force",
+        "-force",
+        action="store_true",
+        help="wipe the requested refresh scope before reloading it",
+    )
+    dependencies.add_argument(
+        "--format",
+        "-format",
+        choices=["table", "yaml", "md"],
+        default="table",
+        help="output format (default: table)",
+    )
+    dependencies.add_argument(
+        "--config-dir",
+        "-config-dir",
+        action="append",
+        help="folder containing config YAML (refresh)",
+    )
+    dependencies.add_argument("--env", "-env", help="connection environment (refresh)")
+    dependencies.add_argument(
+        "--schema",
+        "-schema",
+        action="append",
+        help="schema(s) to refresh",
+    )
+    dependencies.add_argument(
+        "--app",
+        "-app",
+        action="append",
+        help="APEX application id(s) to refresh (only with -refresh)",
+    )
+    add_connection_key_argument(dependencies)
     discovery = subparsers.add_parser(
         "discovery",
         description="run read-only SELECT discovery queries against the target database",

@@ -97,7 +97,6 @@ def _run_recompile(
         disabled_name  = args.disabled or "%",
         jobs           = args.jobs is not None,
         job_name       = args.jobs or "%",
-        errors         = args.errors,
         debug          = args.debug,
     )
 
@@ -131,7 +130,7 @@ def _run_recompile(
                         for invalid in result.invalid
                     ]
                 )
-            if request.errors:
+            if result.invalid:
                 print_adt_header("COMPILE ERRORS")
                 print_adt_table(
                     [

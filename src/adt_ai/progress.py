@@ -38,3 +38,87 @@ def format_seconds(seconds: int) -> str:
 def progress_dot_capacity(header: str, width: int) -> int:
     extra = f"{header} " if header else ""
     return width - 5 - len(extra) - 9
+
+
+def fixed_width_count_line(
+    label: str,
+    count: int,
+    *,
+    total: int | None = None,
+    count_width: int = 1,
+    indent: str = "  ",
+    line_width: int = 78,
+) -> str:
+    left = f"{indent}{label}"
+    right = fixed_width_count_suffix(count, total=total, count_width=count_width)
+    dots_len = line_width - len(left) - len(right) - 2
+    dots = "." * max(1, dots_len)
+    return f"{left} {dots} {right}"
+
+
+def fixed_width_status_line(
+    label: str,
+    status: str,
+    *,
+    indent: str = "  ",
+    line_width: int = 78,
+) -> str:
+    left = f"{indent}{label}"
+    right = status
+    dots_len = line_width - len(left) - len(right) - 2
+    dots = "." * max(1, dots_len)
+    return f"{left} {dots} {right}"
+
+
+def fixed_width_count_suffix(
+    count: int,
+    *,
+    total: int | None = None,
+    count_width: int = 1,
+) -> str:
+    if total is None:
+        return f"{count:>{count_width}}"
+    return f"{count:>{count_width}} | {total:>7}"
+
+
+class FixedWidthProgressPrinter:
+    def __init__(self, *, line_width: int = 78, indent: str = "  ") -> None:
+        self.line_width = line_width
+        self.indent = indent
+        self._active_left: str | None = None
+
+    def begin(self, label: str, *, indent: str | None = None) -> None:
+        self._active_left = f"{self.indent if indent is None else indent}{label}"
+        print(self._active_left, end="", flush=True)
+
+    def finish(
+        self,
+        label: str,
+        count: int,
+        *,
+        total: int | None = None,
+        count_width: int = 1,
+        indent: str | None = None,
+    ) -> None:
+        left = self._active_left or f"{self.indent if indent is None else indent}{label}"
+        right = fixed_width_count_suffix(count, total=total, count_width=count_width)
+        dots_len = self.line_width - len(left) - len(right) - 2
+        dots = "." * max(1, dots_len)
+        print(f" {dots} {right}")
+        self._active_left = None
+
+    def fail(
+        self,
+        label: str,
+        *,
+        status: str = "FAILED",
+        indent: str | None = None,
+    ) -> None:
+        left = self._active_left or f"{self.indent if indent is None else indent}{label}"
+        dots_len = self.line_width - len(left) - len(status) - 2
+        dots = "." * max(1, dots_len)
+        print(f" {dots} {status}")
+        self._active_left = None
+
+    def line(self, text: str) -> None:
+        print(text)

@@ -18,18 +18,18 @@ def _print_connection_block(
     schema: str | None = None,
     environment: str | None = None,
     debug: bool = False,
-) -> None:
+) -> dict[str, str]:
     resolved_schema = schema or str(getattr(connection, "schema", "APP"))
     resolved_environment = environment or str(getattr(connection, "environment", "DEV"))
     print_adt_header(f"CONNECTING TO SCHEMA {resolved_schema}, {resolved_environment}:")
-    _print_connection_versions(gateway, connection, debug=debug)
+    return _print_connection_versions(gateway, connection, debug=debug)
 
 def _print_connection_versions(
     gateway: QueryGateway,
     connection: object | None,
     *,
     debug: bool = False,
-) -> None:
+) -> dict[str, str]:
     # in -debug mode surface probe failures instead of silently swallowing them
     ignore_errors = not debug
     versions: dict[str, str] = {}
@@ -50,10 +50,11 @@ def _print_connection_versions(
         versions["THICK"] = _oracle_client_version() or "Y"
 
     if not versions:
-        return
+        return versions
     for key in sorted(versions):
         print(f"{key:>18} | {versions[key]}")
     print()
+    return versions
 
 def _oracle_client_version() -> str:
     try:

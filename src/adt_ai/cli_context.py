@@ -3,6 +3,7 @@ from __future__ import annotations
 # ruff: noqa: F401 - compatibility facade re-exports moved helpers.
 import argparse
 import importlib
+import os
 import sys
 import time
 from collections.abc import Mapping
@@ -50,6 +51,14 @@ from adt_ai.cli_context_errors import (
 
 FORCED_CHIME_DEFAULT_THEME = "chime"
 DISABLED_CHIME_THEME_VALUES = {"", "0", "false", "no", "off"}
+AGENT_ENV_VARS = (
+    "CODEX_THREAD_ID",
+    "CODEX_SHELL",
+    "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+    "CODEX_CI",
+    "CODEX_SANDBOX",
+    "CLAUDE_CODE_SESSION_ID",
+)
 
 
 @dataclass(frozen=True)
@@ -162,7 +171,13 @@ def _chime_run_allowed(args: argparse.Namespace) -> bool:
         return False
     if _beep_requested(args):
         return True
+    if _agent_caller():
+        return False
     return not _running_in_worktree()
+
+def _agent_caller() -> bool:
+    """True when ADT.ai is running under an agent shell rather than a terminal."""
+    return any(os.environ.get(name) for name in AGENT_ENV_VARS)
 
 def _running_in_worktree(repo_root: Path | None = None) -> bool:
     """True when ADT.ai runs from a linked git worktree rather than a checkout.

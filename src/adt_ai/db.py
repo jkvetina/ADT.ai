@@ -10,6 +10,7 @@ from typing import Any, Protocol
 from zipfile import ZipFile
 
 from adt_ai.connections import Connection
+from adt_ai.oracle_session import DDL_LOCK_TIMEOUT_STATEMENT
 from adt_ai.startup import apply_startup
 
 _TEMP_GITIGNORE_ENTRY = "config/temp/"
@@ -235,6 +236,7 @@ class OracleGateway:
         self._initialize_thick_client(driver)
         self._connection = driver.connect(**self._connect_kwargs(driver))
         self._install_output_type_handler(self._connection, driver)
+        self._apply_default_session_settings(self._connection)
         if self.startup_sql:
             apply_startup(self._connection, self.startup_sql)
         return self._connection
@@ -297,10 +299,19 @@ class OracleGateway:
     def sqlcl_request(self, request: str, root: Path) -> str:
         root.mkdir(parents=True, exist_ok=True)
         # SQLcl understands STARTUP.sql natively, so it is injected verbatim
-        # after the connect line and before the request.
+        # after the default session settings and before the request.
         startup = f"{self.startup_sql.rstrip()}\n" if self.startup_sql else ""
-        payload = f"{self._sqlcl_connect()}\n{startup}{request.rstrip()}\nexit;\n"
+        payload = (
+            f"{self._sqlcl_connect()}\n"
+            f"{DDL_LOCK_TIMEOUT_STATEMENT};\n"
+            f"{startup}"
+            f"{request.rstrip()}\n"
+            "exit;\n"
+        )
         return run_sqlcl_script(payload, root, self.project_root)
+
+    def _apply_default_session_settings(self, connection: Any) -> None:
+        connection.cursor().execute(DDL_LOCK_TIMEOUT_STATEMENT)
 
     def _driver(self) -> Any:
         if self.driver is not None:

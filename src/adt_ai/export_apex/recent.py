@@ -85,11 +85,11 @@ def _recent_component_filter(rows: list[dict[str, Any]] | None) -> RecentCompone
     if rows is None:
         return RecentComponentFilter(page_ids=None)
     page_ids = {
-        int(component_id)
+        page_id
         for row in rows
         if str(row_value(row, "TYPE_NAME") or "").upper() == "PAGE"
-        for component_id in [row_value(row, "ID")]
-        if component_id is not None
+        for page_id in [_page_id_from_recent_page_row(row)]
+        if page_id is not None
     }
     component_slugs = {
         slug
@@ -106,6 +106,13 @@ def _recent_component_filter(rows: list[dict[str, Any]] | None) -> RecentCompone
 def _page_id_from_export_path(relative: str) -> int | None:
     match = re.search(r"(?:^|/)pages/(?:page_|p)(\d+)\.", relative)
     return int(match.group(1)) if match else None
+
+def _page_id_from_recent_page_row(row: dict[str, Any]) -> int | None:
+    name_match = re.match(r"\s*(\d+)\s*\.", str(row_value(row, "NAME") or ""))
+    if name_match:
+        return int(name_match.group(1))
+    component_id = row_value(row, "ID")
+    return int(component_id) if component_id is not None else None
 
 def _slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")

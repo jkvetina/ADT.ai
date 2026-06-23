@@ -1,10 +1,10 @@
 ---
 created: 2026-06-10
-updated: 2026-06-18
+updated: 2026-06-22
 name: adt
 version: 1.0.0
 tags: [oracle, apex, deployment, cli, database]
-description: "ADT.ai usage guide for Oracle/APEX work: export database objects, APEX apps and data, run read-only SQL discovery, search Git history, and recompile invalid objects. Use for any ADT.ai command help."
+description: "ADT.ai usage guide for Oracle/APEX work: export database objects, APEX apps and data, run read-only SQL discovery, search Git history, query the dependency graph, and recompile invalid objects. Use for any ADT.ai command help."
 ---
 # ADT.ai
 
@@ -17,7 +17,7 @@ Run commands from the project root (the folder holding `config/` and the export 
 ## Conventions in this skill
 
 - Pick one quick-reference line and run it as its own shell call.
-- Show the user the full console output of export/recompile commands — the overview tables and progress are the point.
+- Show the user the full console output of export/dependencies/recompile commands — the overview tables and progress are the point.
 - `-debug` on any command prints the resolved parameters and the SQL with bind values.
 - `--help` (or `-h`) on any command prints its full argument list.
 
@@ -141,6 +141,27 @@ Target a schema and raise the per-query row cap (default 200):
 adtai discovery -env DEV -schema APP -sql "SELECT * FROM app_settings" -limit 500
 ```
 
+## dependencies — query the object graph
+
+Answers "what uses this?" / "what would I break?" against a committed graph (`dependencies/index.yaml` + `edges.yaml`). Day-to-day queries are offline; only `-refresh` touches the database.
+
+Build or rebuild the index from the database:
+
+```bash
+adtai dependencies -refresh -env DEV -schema APP
+```
+
+Query the graph:
+
+```bash
+adtai dependencies -uses "PACKAGE BODY.CORE"
+adtai dependencies -used-by "TABLE.CORE_LOGS"
+adtai dependencies -impact "TABLE.CORE_LOGS"
+adtai dependencies -unused
+```
+
+`-format yaml` or `-format md` moves the chrome to stderr so stdout stays pipeable.
+
 ## recompile — recompile invalid objects
 
 Dependency-aware retry built in. Supports PL/SQL compile flags (native/interpreted, optimization level, PL/Scope, warnings) and old-ADT-style overview with PL/Scope gap counts.
@@ -246,4 +267,10 @@ Explore a database safely without writing anything:
 
 ```bash
 adtai discovery -env DEV -sql "SELECT table_name FROM user_tables ORDER BY table_name" -nolog
+```
+
+Find everything that depends on a table before changing it:
+
+```bash
+adtai dependencies -impact "TABLE.CORE_LOGS"
 ```

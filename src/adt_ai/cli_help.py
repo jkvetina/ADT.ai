@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 from adt_ai.cli_constants import PUBLIC_MODULES
 
-COMMON_DEST_ORDER = ("debug", "beep", "nobeep", "env", "root", "config_dir")
+COMMON_DEST_ORDER = ("debug", "beep", "nobeep", "env", "root", "config_dir", "key")
 OPTION_HELP_WIDTH = 80
 
 ACTION_DESTS = {
@@ -21,7 +21,6 @@ ACTION_DESTS = {
     "deploy",
     "dump",
     "embedded",
-    "errors",
     "fetch",
     "files",
     "files_ws",
@@ -98,6 +97,13 @@ COMMAND_SUMMARIES = {
         "Refresh mode rescrapes one application from the database and rewrites its edges.",
         "The to and from queries report incoming and outgoing page links for a chosen page.",
         "Each refresh writes Mermaid, Graphviz DOT, and JSON diagrams under config/flow.",
+    ),
+    "dependencies": (
+        "Builds and queries the Oracle dependency index used by ADT.ai impact reports.",
+        "Use it to see what an object uses, what depends on it, and what a change can break.",
+        "Refresh mode reloads dependency metadata from the configured database connection.",
+        "Impact mode walks transitive dependencies instead of stopping at direct relationships.",
+        "Cleanup modes surface unused or owner-specific objects that need review before removal.",
     ),
     "discovery": (
         "Runs configured read-only SELECT discovery queries against an Oracle schema.",

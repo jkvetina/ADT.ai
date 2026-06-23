@@ -2,10 +2,11 @@
 
 ADT.ai is a Python command-line tool for exporting Oracle database, APEX, and data assets into deterministic, Git-friendly files.
 
-Version `0.6.2` ships these public commands:
+Version `0.6.3` ships these public commands:
 
 - `adtai export_db` exports Oracle database objects to files.
 - `adtai doctor` checks local setup, runs explicit updates, and bootstraps project config.
+- `adtai dependencies` queries and refreshes the local Oracle dependency mirror.
 - `adtai export_apex` reveals and exports APEX workspaces, applications, REST definitions, and files.
 - `adtai export_data` exports table data as CSV plus generated MERGE SQL.
 - `adtai recompile` recompiles invalid Oracle database objects with scoped filters.
@@ -74,6 +75,7 @@ adtai export_data
 - [USAGE.md](USAGE.md) is the command index.
   - [USAGE/export_db.md](USAGE/export_db.md) documents database object export.
   - [USAGE/doctor.md](USAGE/doctor.md) documents setup checks and project bootstrap.
+  - [USAGE/dependencies.md](USAGE/dependencies.md) documents dependency mirror queries and refreshes.
   - [USAGE/export_apex.md](USAGE/export_apex.md) documents APEX workspace and application export.
   - [USAGE/export_data.md](USAGE/export_data.md) documents table data export.
   - [USAGE/recompile.md](USAGE/recompile.md) documents invalid object recompilation.

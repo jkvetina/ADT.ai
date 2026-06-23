@@ -42,6 +42,11 @@ from adt_ai.cli_context import (
     _print_startup_debug,
     _with_schema_folders,
 )
+from adt_ai.cli_export_apex_messages import (
+    print_apex_app_not_found,
+    print_apex_owner_not_configured,
+)
+from adt_ai.progress import FixedWidthProgressPrinter
 
 
 def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | None = None) -> int:
@@ -350,28 +355,29 @@ def _run_export_apex(
                     if new_apps:
                         reporter.applications(owner_schema, new_apps)
                 for app_id, owner in not_configured:
-                    _print_apex_owner_not_configured(app_id, owner, environment)
+                    print_apex_owner_not_configured(app_id, owner, environment)
                 for app_id in not_found:
-                    _print_apex_app_not_found(app_id)
+                    print_apex_app_not_found(app_id)
     if not args.reveal and (any(actions.values()) or recent_report_only):
         ApexExportRunner(export_apex_gateway_factory).run(
-            ApexExportRequest(
-                root         = root,
-                schemas      = schemas,
-                applications = applications_by_schema,
-                actions      = actions,
-                config       = config,
-                release      = args.release,
-                recent_days  = recent_days,
-                changed_by   = args.by or None,
-                my_changes   = args.my,
-                my_name      = my_name,
-                my_email     = my_email,
-                recent_report_only=recent_report_only,
-                page_selection=page_selection,
-                component_filters=component_filters,
+                ApexExportRequest(
+                    root         = root,
+                    schemas      = schemas,
+                    applications = applications_by_schema,
+                    actions      = actions,
+                    config       = config,
+                    release      = args.release,
+                    recent_days  = recent_days,
+                    changed_by   = args.by or None,
+                    my_changes   = args.my,
+                    my_name      = my_name,
+                    my_email     = my_email,
+                    recent_report_only=recent_report_only,
+                    page_selection=page_selection,
+                    component_filters=component_filters,
+                    deep=False,
+                )
             )
-        )
     return 0
 
 
@@ -399,11 +405,6 @@ def _resolve_apex_app_owners(
     missing_app_ids: list[str],
     schema_names: list[str],
 ) -> tuple[dict[str, list[str]], list[tuple[str, str]], list[str]]:
-    """Look up the owner schema for each app missing from the scanned schemas.
-
-    Returns the apps grouped by configured owner schema, the apps whose owner is
-    not a configured schema (with that owner), and the apps not found anywhere.
-    """
     schema_lookup = {name.upper(): name for name in schema_names}
     owner_to_app_ids: dict[str, list[str]] = {}
     not_configured: list[tuple[str, str]] = []
@@ -419,20 +420,6 @@ def _resolve_apex_app_owners(
             continue
         owner_to_app_ids.setdefault(owner_schema, []).append(app_id)
     return owner_to_app_ids, not_configured, not_found
-
-
-def _print_apex_owner_not_configured(app_id: str, owner: str, environment: str) -> None:
-    print()
-    print(
-        f"APP {app_id} is owned by schema {owner}, which is not configured "
-        f"for environment {environment}."
-    )
-    print(f"Add {owner} to your connections to export it; skipping APP {app_id}.")
-
-
-def _print_apex_app_not_found(app_id: str) -> None:
-    print()
-    print(f"APP {app_id} was not found in any configured APEX schema.")
 
 
 def _apex_recent_days(argument: int | None, _config: Mapping[str, object]) -> int | None:
@@ -506,10 +493,9 @@ def _truncate_console_value(value: object, width: int) -> str:
 
 
 class ConsoleExportDataReporter:
-    line_width = 78
-
     def __init__(self, silent: bool = False) -> None:
         self._silent = silent
+        self._progress = FixedWidthProgressPrinter()
 
     def start_export(self, total: int) -> None:
         print_adt_header("EXPORT TABLE DATA:", f"({total})")
@@ -517,15 +503,12 @@ class ConsoleExportDataReporter:
     def export_table(self, table: DataTable) -> None:
         if self._silent:
             return
-        print(f"  - {table.name.upper()}", end="", flush=True)
+        self._progress.begin(table.name.upper())
 
     def finish_table(self, table: DataTable, row_count: int) -> None:
         if self._silent:
             return
-        left = f"  - {table.name.upper()}"
-        right = str(row_count)
-        dot_count = max(1, self.line_width - len(left) - len(right) - 2)
-        print(f" {'.' * dot_count} {right}")
+        self._progress.finish(table.name.upper(), row_count)
 
     def finish_export(self) -> None:
         return None

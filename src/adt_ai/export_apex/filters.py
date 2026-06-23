@@ -6,6 +6,13 @@ from dataclasses import dataclass
 
 from adt_ai.export_apex.recent import _page_id_from_export_path, _slug
 
+_COMPONENT_TYPE_ALIASES = {
+    "authorization_scheme": "authorization_scheme",
+    "authorization_schemes": "authorization_scheme",
+    "list_of_values": "lov",
+    "lov": "lov",
+}
+
 
 @dataclass(frozen=True)
 class ApexPageSelection:
@@ -25,7 +32,7 @@ class ApexComponentFilter:
     name_pattern: str
 
     def matches(self, relative: str) -> bool:
-        normalized_type = _slug(self.component_type)
+        normalized_type = _component_type_key(self.component_type)
         parts = {_slug(part) for part in relative.split("/")}
         type_names = {normalized_type, f"{normalized_type}s"}
         if not parts.intersection(type_names):
@@ -60,6 +67,11 @@ def _component_name(relative: str, component_type: str) -> str:
         if name.startswith(marker):
             return name[len(marker):]
     return name
+
+
+def _component_type_key(value: str) -> str:
+    slug = _slug(value)
+    return _COMPONENT_TYPE_ALIASES.get(slug, slug)
 
 
 def _slug_pattern(value: str) -> str:

@@ -1,12 +1,12 @@
 ---
 title: adt
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-06-22
 tags: [SKILL, DEVOPS]
 ---
 # adt
 
-Operating cheat-sheet for the ADT.ai command line — export Oracle database objects and APEX applications, explore the database safely, and search Git history.
+Operating cheat-sheet for the ADT.ai command line — export Oracle database objects and APEX applications, explore the database safely, query the dependency graph, and search Git history.
 
 ## What it is and why you need it
 
