@@ -1,6 +1,6 @@
 # ADT.ai Usage
 
-This is the public usage index for ADT.ai `0.6.2`.
+This is the public usage index for ADT.ai `0.6.3`.
 
 ## Commands
 
@@ -8,6 +8,7 @@ This is the public usage index for ADT.ai `0.6.2`.
 | ------- | --------- | ------- |
 | `export_db` | [USAGE/export_db.md](USAGE/export_db.md) | Export database objects to files. |
 | `doctor` | [USAGE/doctor.md](USAGE/doctor.md) | Check local setup and bootstrap project config. |
+| `dependencies` | [USAGE/dependencies.md](USAGE/dependencies.md) | Query or refresh the dependency mirror. |
 | `export_apex` | [USAGE/export_apex.md](USAGE/export_apex.md) | Reveal and export APEX workspaces and applications. |
 | `export_data` | [USAGE/export_data.md](USAGE/export_data.md) | Export table data as CSV plus generated MERGE SQL. |
 | `recompile` | [USAGE/recompile.md](USAGE/recompile.md) | Recompile invalid database objects. |

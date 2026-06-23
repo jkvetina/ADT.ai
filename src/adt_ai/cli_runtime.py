@@ -7,6 +7,7 @@ from collections.abc import Callable, Sequence
 from typing import TextIO
 
 from adt_ai import __version__
+from adt_ai.cli_commands_dependencies import _dependencies_argument_error, _run_dependencies
 from adt_ai.cli_commands_exports import _run_export_apex, _run_export_data, _run_export_db
 from adt_ai.cli_commands_flow import _run_flow
 from adt_ai.cli_commands_history import _run_rebuild, _run_search_repo
@@ -170,6 +171,10 @@ def main(
         print(f"ADT.ai {__version__}")
         return 0
 
+    if args.command in {"dependencies", "depends"}:
+        dependencies_error = _dependencies_argument_error(args)
+        if dependencies_error is not None:
+            return _run_command_argument_error(raw_argv[0], dependencies_error)
 
     original_stdout = sys.stdout
     original_stderr = sys.stderr
@@ -203,6 +208,8 @@ def main(
             exit_code = _run_recompile(args, gateway_factory=gateway_factory)
         elif args.command == "doctor":
             exit_code = _run_doctor(args)
+        elif args.command == "dependencies":
+            exit_code = _run_dependencies(args, gateway_factory=gateway_factory)
         elif args.command == "flow":
             exit_code = _run_flow(args, gateway_factory=gateway_factory)
         elif args.command == "discovery":
@@ -316,6 +323,8 @@ def _run_invalid_command(command: str) -> int:
 
 
 def _command_timer_stdout(args: argparse.Namespace, stdout: TextIO) -> TextIO:
+    if args.command == "dependencies" and getattr(args, "format", "table") != "table":
+        return sys.stderr
     return stdout
 
 

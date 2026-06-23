@@ -67,7 +67,6 @@ from adt_ai.export_apex.recent import (
     _print_recent_components,
     _recent_component_filter,
     _recent_since,
-    _slug,
     _used_on_pages,
 )
 from adt_ai.export_apex.recent_authors import (
@@ -77,6 +76,7 @@ from adt_ai.export_apex.recent_authors import (
     recent_authors,
     workspace_developers_from_mapping,
 )
+from adt_ai.export_apex.request import ApexExportRequest
 from adt_ai.export_apex.rest import (
     _cleanup_sqlcl,
     _matches_prefix,
@@ -103,23 +103,8 @@ ACTION_HEADERS = {
 
 
 @dataclass(frozen=True)
-class ApexExportRequest:
-    root        : Path
-    schemas     : list[str]
-    applications: dict[str, list[ApexApplication]]
-    actions     : Mapping[str, bool]
-    config      : Mapping[str, object]
-    release     : str | None = None
-    recent_days : int | None = None
-    changed_by  : str | None = None
-    my_changes  : bool = False
-    my_name     : str | None = None
-    my_email    : str | None = None
-    recent_report_only: bool = False
-    page_selection: ApexPageSelection | None = None
-    component_filters: tuple[ApexComponentFilter, ...] = ()
-    reporter    : ApexProgressReporter | None = None
-    timers_file : Path | None = None
+class CollectionWriteResult:
+    rows: list[dict[str, Any]]
 
 
 class ApexExportRunner:
@@ -178,6 +163,7 @@ class ApexExportRunner:
                             recent_components,
                         )
                     continue
+                component_filters = request.component_filters
                 gateway.execute(self.EXPORT_START_QUERY, {"app_id": application.app_id})
                 enrichments = _enrichments(gateway, application)
                 recent_components = self._recent_components(
@@ -186,7 +172,7 @@ class ApexExportRunner:
                 recent_filter = _recent_component_filter(recent_components)
                 explicit_filter = ApexExplicitFilter(
                     request.page_selection,
-                    request.component_filters,
+                    component_filters,
                 )
                 (resolver.app_root(application) / "comments").mkdir(parents=True, exist_ok=True)
                 page_names = self._write_page_comments(
@@ -305,9 +291,15 @@ class ApexExportRunner:
                 )
 
             if _is_partial(request):
-                rows = operation()
+                result = self._run_partial_action(
+                    reporter,
+                    timers,
+                    application,
+                    action,
+                    operation,
+                )
                 if _has_explicit(request):
-                    _print_components(rows)
+                    _print_components(result.rows)
             else:
                 self._run_action(
                     reporter,
@@ -335,6 +327,28 @@ class ApexExportRunner:
         _update_timer(timers, application.app_id, action, elapsed)
         _store_timers(timers_file, timers)
 
+    def _run_partial_action(
+        self,
+        reporter: ApexProgressReporter,
+        timers: dict[Any, Any],
+        application: ApexApplication,
+        action: str,
+        operation: Callable[[], CollectionWriteResult],
+    ) -> CollectionWriteResult:
+        result: CollectionWriteResult | None = None
+
+        def wrapped_operation() -> None:
+            nonlocal result
+            result = operation()
+
+        reporter.run(
+            ACTION_HEADERS[action],
+            _timer_value(timers, application.app_id, action) or 999.0,
+            wrapped_operation,
+        )
+        return result or CollectionWriteResult([])
+
+
     def _write_collection_files(
         self,
         gateway: QueryGateway,
@@ -348,7 +362,7 @@ class ApexExportRunner:
         recent_filter: RecentComponentFilter,
         explicit_filter: ApexExplicitFilter,
         page_names: dict[int, str] | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> CollectionWriteResult:
         rows = []
         for row in gateway.fetch_all(self.FETCH_FILES_QUERY):
             file_name = str(row_value(row, "FILE_NAME") or "")
@@ -379,7 +393,7 @@ class ApexExportRunner:
             if action == "readable" and target == resolver.workspace_root() / "app_groups.yaml":
                 content = _merge_app_groups(target, content)
             target.write_text(content, encoding="utf-8")
-        return rows
+        return CollectionWriteResult(rows)
 
     def _write_static_files(
         self,

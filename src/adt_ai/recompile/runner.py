@@ -49,7 +49,6 @@ class RecompileRequest:
     disabled_name: str = "%"
     jobs: bool = False
     job_name: str = "%"
-    errors: bool = False
     debug: bool = False
 
 
@@ -206,7 +205,7 @@ class RecompileRunner:
         overview = discovery.overview(**scope)
         locked = _collect_locked(discovery, scope)
         todo = discovery.objects_to_recompile(**scope, force=request.force)
-        if not todo and not request.errors:
+        if not todo:
             return RecompileResult(
                 compiled = [],
                 invalid  = [],
@@ -247,9 +246,9 @@ class RecompileRunner:
         remaining = discovery.objects_to_recompile(**scope, force=False)
         invalid = _enrich_invalid(remaining, errors)
 
-        # -errors: surface the full per-line compile messages so an AI agent can
-        # pinpoint the offending line/position/text on whatever is still invalid.
-        error_details = discovery.errors_detail(**scope) if request.errors else []
+        # Surface the full per-line compile messages so an AI agent can pinpoint
+        # the offending line/position/text on whatever is still invalid.
+        error_details = discovery.errors_detail(**scope) if invalid else []
 
         return RecompileResult(
             compiled      = compiled,

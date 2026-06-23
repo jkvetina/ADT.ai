@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 
-
 def add_admin_parsers(subparsers) -> None:
     doctor = subparsers.add_parser(
         "doctor",

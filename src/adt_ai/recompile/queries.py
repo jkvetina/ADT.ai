@@ -189,10 +189,10 @@ ORDER BY 1, 2
 """.strip()
 
 
-# get the full compile error messages, one row per error line. ``-errors`` prints
-# these so an AI agent can jump straight to the offending line/position/text. Same
-# 4-key scope and warning filter as ERRORS_SUMMARY_QUERY, so the per-object detail
-# rows match that summary's ``errors`` count exactly.
+# get the full compile error messages, one row per error line. Normal recompile
+# output prints these when invalid objects remain, so an AI agent can jump straight
+# to the offending line/position/text. Same 4-key scope and warning filter as
+# ERRORS_SUMMARY_QUERY, so per-object detail rows match the summary errors count.
 ERRORS_DETAIL_QUERY = """
 WITH objects_add AS (
     SELECT /*+ MATERIALIZE CARDINALITY(t 1) */

@@ -165,10 +165,6 @@ def _apex_actions(
     for action in APEX_EXPORT_ACTIONS:
         if getattr(args, action, False):
             actions[action] = True
-    if not any(actions.values()) and (
-        getattr(args, "page", None) or getattr(args, "component", None)
-    ):
-        actions["split"] = True
     return actions
 
 def _apex_recent_report_only(
@@ -180,7 +176,6 @@ def _apex_recent_report_only(
         not getattr(args, "reveal", False)
         and not any(actions.values())
         and recent_days is not None
-        and (getattr(args, "by", None) is not None or getattr(args, "my", False))
     )
 
 def _string_or_none(value: object) -> str | None:

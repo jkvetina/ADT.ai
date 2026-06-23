@@ -12,7 +12,11 @@ JOIN requested_types typ
     ON object_type LIKE typ.object_like ESCAPE '\\'
 WHERE (:schema IS NOT NULL)
 AND (:recent_days IS NULL OR last_ddl_time >= SYSDATE - :recent_days)
+AND object_name NOT LIKE 'SYS\\_%' ESCAPE '\\'
+AND object_name NOT LIKE 'ISEQ$$_%'
+AND object_name NOT LIKE 'ST%='
 AND object_name NOT LIKE 'BIN$%'
+AND NOT REGEXP_LIKE(object_name, '^DEPSCAN\\$[[:digit:]]+#[[:digit:]]+$')
 ORDER BY object_type, object_name
 """.strip()
 
@@ -22,7 +26,11 @@ FROM user_objects
 WHERE (:schema IS NOT NULL)
 AND (:recent_days IS NULL OR last_ddl_time >= SYSDATE - :recent_days)
 AND object_name = :object_name
+AND object_name NOT LIKE 'SYS\\_%' ESCAPE '\\'
+AND object_name NOT LIKE 'ISEQ$$_%'
+AND object_name NOT LIKE 'ST%='
 AND object_name NOT LIKE 'BIN$%'
+AND NOT REGEXP_LIKE(object_name, '^DEPSCAN\\$[[:digit:]]+#[[:digit:]]+$')
 ORDER BY object_type, object_name
 """.strip()
 

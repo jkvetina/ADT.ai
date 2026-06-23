@@ -21,6 +21,9 @@ from adt_ai.config import ConfigError, ConfigLoader
 from adt_ai.connections import ConnectionError as ConnectionConfigError
 from adt_ai.connections import ConnectionLoader, ConnectionResult
 from adt_ai.db import OracleGateway, QueryGateway
+from adt_ai.dependencies.queries import PLSCOPE_SESSION_STATEMENT
+from adt_ai.dependencies.runner import DependencyIndexRequest, DependencyIndexRunner
+from adt_ai.dependencies.store import DependencyStore
 from adt_ai.discovery.render import DEFAULT_ROW_LIMIT
 from adt_ai.discovery.runner import (
     RESULT_BLOCK_END,
@@ -83,6 +86,7 @@ from adt_ai.search_repo.runner import SearchRepoError, SearchRepoRequest, Search
 
 PUBLIC_MODULES = (
     ("flow", "map APEX page navigation links (to/from, refresh)", ()),
+    ("dependencies", "query or refresh the dependency index", ()),
     ("discovery", "run read-only SELECT discovery queries", ()),
     ("doctor", "check local setup and run explicit updates", ()),
     ("export_apex", "export APEX applications", ()),

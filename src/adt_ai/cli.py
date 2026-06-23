@@ -3,6 +3,7 @@ from __future__ import annotations
 from adt_ai.cli_startup import print_startup_failure as _print_startup_failure
 
 try:
+    from adt_ai import cli_commands_dependencies as _commands_dependencies
     from adt_ai import cli_commands_exports as _commands_exports
     from adt_ai import cli_commands_flow as _commands_flow
     from adt_ai import cli_commands_history as _commands_history
@@ -31,6 +32,7 @@ else:
         _context,
         _commands_history,
         _commands_recompile,
+        _commands_dependencies,
         _commands_flow,
         _commands_exports,
         _runtime,
