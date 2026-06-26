@@ -164,6 +164,7 @@ class ApexExportRunner:
                         )
                     continue
                 component_filters = request.component_filters
+                deep_rows: list[dict[str, Any]] = []
                 gateway.execute(self.EXPORT_START_QUERY, {"app_id": application.app_id})
                 enrichments = _enrichments(gateway, application)
                 recent_components = self._recent_components(
@@ -205,6 +206,7 @@ class ApexExportRunner:
                     recent_filter,
                     explicit_filter,
                     page_names,
+                    deep_rows,
                 )
                 if request.actions.get("rest"):
                     self._run_action(
@@ -259,6 +261,7 @@ class ApexExportRunner:
         recent_filter: RecentComponentFilter,
         explicit_filter: ApexExplicitFilter,
         page_names: dict[int, str],
+        deep_rows: list[dict[str, Any]],
     ) -> None:
         for action, sql in (
             ("full", self.EXPORT_FULL_QUERY),
@@ -299,7 +302,7 @@ class ApexExportRunner:
                     operation,
                 )
                 if _has_explicit(request):
-                    _print_components(result.rows)
+                    _print_components([*deep_rows, *result.rows])
             else:
                 self._run_action(
                     reporter,

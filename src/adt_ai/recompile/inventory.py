@@ -44,6 +44,7 @@ class CompileError:
     object_name: str
     line: int
     position: int | None
+    error: str
     text: str
 
 
@@ -245,6 +246,7 @@ class RecompileDiscovery:
                 str(row["OBJECT_NAME"]),
                 int(row["LINE"] or 0),
                 (int(row["POSITION"]) if row.get("POSITION") is not None else None),
+                str(row["ERROR"] or ""),
                 str(row["TEXT"] or ""),
             )
             for row in rows

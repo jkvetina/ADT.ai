@@ -81,7 +81,7 @@ class DoctorLatestVersionMixin:
         if cached is not None:
             return cached
         version = self._resolve_latest_version(component)
-        if version:
+        if version and re.match(r"^\d+\.\d+", version):
             self._write_cached_version(component, version)
         return version
 

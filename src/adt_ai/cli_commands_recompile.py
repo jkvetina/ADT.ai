@@ -34,6 +34,7 @@ from adt_ai.cli_context import (
     _print_startup_debug,
     _repo_root,
 )
+from adt_ai.recompile.inventory import CompileError, ObjectError
 from adt_ai.recompile.render import (
     _MVIEW_COLUMNS,
     _ConsoleMViewReporter,
@@ -43,6 +44,9 @@ from adt_ai.recompile.render import (
     print_job_tables,
     print_synonym_tables,
 )
+
+_COMPILE_ERROR_CODE_RE = re.compile(r"\b(?:ORA|PLS)-\d+\b")
+_MAX_COMPILE_ERROR_LINE_WIDTH = 80
 
 
 def _run_recompile(
@@ -119,40 +123,7 @@ def _run_recompile(
             _print_recompile_overview_table(result.overview)
             if result.invalid:
                 print_adt_header("INVALID OBJECTS")
-                print_adt_table(
-                    [
-                        {
-                            "OBJECT_TYPE": invalid.object_type,
-                            "OBJECT_NAME": invalid.object_name,
-                            "ERRORS":      invalid.errors,
-                            "ERROR":       invalid.error or "",
-                        }
-                        for invalid in result.invalid
-                    ]
-                )
-            if result.invalid:
-                print_adt_header("COMPILE ERRORS")
-                print_adt_table(
-                    [
-                        {
-                            "ID":          detail.id,
-                            "OBJECT_TYPE": detail.object_type,
-                            "OBJECT_NAME": detail.object_name,
-                            "LINE":        detail.line,
-                            "POSITION":    detail.position if detail.position is not None else "",
-                        }
-                        for detail in result.error_details
-                    ],
-                    columns=["ID", "OBJECT_TYPE", "OBJECT_NAME", "LINE", "POSITION"],
-                )
-                # the TEXT column would be too wide for the table, so each error's
-                # full message is listed below, keyed back to the table's ID column.
-                for detail in result.error_details:
-                    print(f"  {detail.id}) {detail.text}")
-                if result.error_details:
-                    # keep the two-blank-lines-above-next-header contract: the
-                    # table's trailing blank is consumed by this list, re-emit one.
-                    print()
+                _print_invalid_object_errors(result.invalid, result.error_details)
         if result.locked:
             print_adt_header("LOCKED OBJECTS")
             print_adt_table([_locked_row_cells(lock) for lock in result.locked])
@@ -184,6 +155,111 @@ def _run_recompile(
             print_job_tables(result.jobs)
 
     return 0 if result.success else 1
+
+
+def _print_invalid_object_errors(
+    invalid: Sequence[ObjectError],
+    error_details: Sequence[CompileError],
+) -> None:
+    object_ids = {
+        (obj.object_type, obj.object_name): index
+        for index, obj in enumerate(invalid, start=1)
+    }
+    details_by_object: dict[tuple[str, str], list[CompileError]] = {
+        key: [] for key in object_ids
+    }
+    for detail in error_details:
+        key = (detail.object_type, detail.object_name)
+        if key in details_by_object:
+            details_by_object[key].append(detail)
+
+    print_adt_table(
+        [
+            {
+                "ID":          object_ids[(obj.object_type, obj.object_name)],
+                "OBJECT_TYPE": obj.object_type,
+                "OBJECT_NAME": obj.object_name,
+                "ERROR":       _last_compile_error_code(details_by_object[
+                    (obj.object_type, obj.object_name)
+                ], obj.error),
+                "ERRORS":      obj.errors,
+            }
+            for obj in invalid
+        ],
+        columns=["ID", "OBJECT_TYPE", "OBJECT_NAME", "ERROR", "ERRORS"],
+    )
+    if error_details:
+        print()
+        print_adt_table(
+            _compile_error_message_rows(error_details, object_ids),
+            columns=["ID", "LINE", "POS", "ERROR_MESSAGE"],
+            leading_blank=False,
+        )
+
+
+def _last_compile_error_code(details: Sequence[CompileError], fallback: str | None) -> str:
+    for detail in sorted(details, key=_compile_error_sort_key, reverse=True):
+        code = detail.error or _extract_compile_error_code(detail.text)
+        if code:
+            return code
+    return fallback or ""
+
+
+def _compile_error_message_rows(
+    error_details: Sequence[CompileError],
+    object_ids: dict[tuple[str, str], int],
+) -> list[dict[str, object]]:
+    rows = [
+        {
+            "ID":            object_ids[(detail.object_type, detail.object_name)],
+            "LINE":          detail.line,
+            "POS":           detail.position if detail.position is not None else "",
+            "ERROR_MESSAGE": detail.text,
+        }
+        for detail in sorted(error_details, key=lambda item: (
+            object_ids.get((item.object_type, item.object_name), 0),
+            *_compile_error_sort_key(item),
+        ))
+        if (detail.object_type, detail.object_name) in object_ids
+    ]
+    max_message_width = _compile_error_message_width(rows)
+    return [
+        {
+            **row,
+            "ERROR_MESSAGE": _truncate_compile_error_message(
+                str(row["ERROR_MESSAGE"]),
+                max_message_width,
+            ),
+        }
+        for row in rows
+    ]
+
+
+def _compile_error_message_width(rows: Sequence[dict[str, object]]) -> int:
+    prefix_width = 2
+    for column in ("ID", "LINE", "POS"):
+        prefix_width += max(
+            len(column),
+            *(len(str(row.get(column, ""))) for row in rows),
+        ) + 3
+    return max(13, _MAX_COMPILE_ERROR_LINE_WIDTH - prefix_width - 3)
+
+
+def _truncate_compile_error_message(message: str, width: int) -> str:
+    if len(message) <= width:
+        return message
+    if width <= 3:
+        return message[:width]
+    return f"{message[:width - 3]}..."
+
+
+def _compile_error_sort_key(detail: CompileError) -> tuple[int, int, int]:
+    return (detail.line, detail.position if detail.position is not None else -1, detail.id)
+
+
+def _extract_compile_error_code(text: str) -> str:
+    match = _COMPILE_ERROR_CODE_RE.search(text)
+    return match.group(0) if match else ""
 
 
 def _print_recompile_overview_table(overviews: Sequence[ObjectOverview]) -> None:

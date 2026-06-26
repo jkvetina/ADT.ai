@@ -210,6 +210,7 @@ SELECT
     e.name          AS object_name,
     e.line          AS line,
     e.position      AS position,
+    REGEXP_SUBSTR(e.text, 'ORA-\\d+') AS error,
     e.text          AS text
 FROM user_errors e
 JOIN objects_add a

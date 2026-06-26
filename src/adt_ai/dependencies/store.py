@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from adt_ai.dependencies import apex_pages, refresh, scope
+from adt_ai.dependencies import apex_pages, queries, refresh, scope
 from adt_ai.dependencies.classify import split_node
 from adt_ai.dependencies.db import connect
 from adt_ai.dependencies.foreign_key_tree import foreign_key_tree as _foreign_key_tree
@@ -19,14 +19,6 @@ from adt_ai.dependencies.write import insert_rows as _insert_rows
 
 DEFAULT_MAX_DEPTH = 20
 
-
-def _tracked_owner(owner_sql: str) -> str:
-    return (
-        "(EXISTS (SELECT 1 FROM USER_OBJECTS tracked_object_owner "
-        f"WHERE tracked_object_owner.OWNER = {owner_sql}) "
-        "OR EXISTS (SELECT 1 FROM USER_DEPENDENCIES tracked_dependency_owner "
-        f"WHERE tracked_dependency_owner.OWNER = {owner_sql}))"
-    )
 
 
 def build_db(db_path: str | Path) -> DependencyStore:
@@ -62,7 +54,7 @@ class DependencyStore:
         counts: dict[str, int] = {}
         with self.connection:
             for table in USER_TABLES:
-                self.connection.execute(f"DELETE FROM {table} WHERE OWNER = ?", (owner,))
+                self.connection.execute(queries.delete_owner_rows_query(table), (owner,))
                 counts[table] = _insert_rows(
                     self.connection, table, provided.get(table, ()), stamp={"OWNER": owner}
                 )
@@ -114,7 +106,7 @@ class DependencyStore:
         counts: dict[str, int] = {}
         with self.connection:
             for table in APEX_TABLES:
-                self.connection.execute(f"DELETE FROM {table} WHERE APPLICATION_ID = ?", (app_id,))
+                self.connection.execute(queries.delete_app_rows_query(table), (app_id,))
                 counts[table] = _insert_rows(
                     self.connection,
                     table,
@@ -139,13 +131,7 @@ class DependencyStore:
         """Direct internal objects ``node`` depends on (``TYPE.NAME`` strings)."""
         type_, name = split_node(node)
         rows = self.connection.execute(
-            f"""
-            SELECT DISTINCT d.REFERENCED_TYPE AS t, d.REFERENCED_NAME AS n
-            FROM USER_DEPENDENCIES d
-            WHERE d.TYPE = ? AND d.NAME = ?
-              AND d.REFERENCED_NAME IS NOT NULL
-              AND {_tracked_owner("d.REFERENCED_OWNER")}
-            """,
+            queries.DEPENDENCY_USES_QUERY,
             (type_, name),
         ).fetchall()
         return sorted({f"{row['t']}.{row['n']}" for row in rows})
@@ -154,12 +140,7 @@ class DependencyStore:
         """Direct internal objects that depend on ``node``."""
         type_, name = split_node(node)
         rows = self.connection.execute(
-            f"""
-            SELECT DISTINCT d.TYPE AS t, d.NAME AS n
-            FROM USER_DEPENDENCIES d
-            WHERE d.REFERENCED_TYPE = ? AND d.REFERENCED_NAME = ?
-              AND {_tracked_owner("d.OWNER")}
-            """,
+            queries.DEPENDENCY_USED_BY_QUERY,
             (type_, name),
         ).fetchall()
         return sorted({f"{row['t']}.{row['n']}" for row in rows})
@@ -173,21 +154,7 @@ class DependencyStore:
         """
         type_, name = split_node(node)
         rows = self.connection.execute(
-            f"""
-            WITH RECURSIVE imp(t, n, depth) AS (
-                SELECT ?, ?, 0
-                UNION
-                SELECT d.TYPE, d.NAME, imp.depth + 1
-                FROM USER_DEPENDENCIES d
-                JOIN imp ON d.REFERENCED_TYPE = imp.t AND d.REFERENCED_NAME = imp.n
-                WHERE imp.depth < ?
-                  AND {_tracked_owner("d.OWNER")}
-            )
-            SELECT t, n, MIN(depth) AS d
-            FROM imp
-            WHERE NOT (t = ? AND n = ?)
-            GROUP BY t, n
-            """,
+            queries.DEPENDENCY_IMPACT_QUERY,
             (type_, name, max_depth, type_, name),
         ).fetchall()
         result = [(f"{row['t']}.{row['n']}", row["d"]) for row in rows]
@@ -206,30 +173,10 @@ class DependencyStore:
         ``exclude`` (full ``TYPE.NAME``, case-insensitive) are dropped even
         though nothing references them. Ordered by node.
         """
-        sql = """
-            SELECT o.OBJECT_TYPE AS t, o.OBJECT_NAME AS n
-            FROM USER_OBJECTS o
-            WHERE 1 = 1
-              AND NOT EXISTS (
-                  SELECT 1 FROM USER_DEPENDENCIES d
-                  WHERE d.REFERENCED_OWNER = o.OWNER
-                    AND d.REFERENCED_TYPE = o.OBJECT_TYPE
-                    AND d.REFERENCED_NAME = o.OBJECT_NAME
-              )
-              AND NOT EXISTS (
-                  SELECT 1 FROM APEX_USED_DB_OBJECTS a
-                  WHERE a.USED_DB_OBJECT_OWNER = o.OWNER
-                    AND a.USED_DB_OBJECT_NAME = o.OBJECT_NAME
-                    AND (
-                        a.USED_DB_OBJECT_TYPE = o.OBJECT_TYPE
-                        OR a.USED_DB_OBJECT_TYPE IS NULL
-                        OR a.USED_DB_OBJECT_TYPE = ''
-                    )
-              )
-        """
+        sql = queries.UNUSED_OBJECTS_QUERY
         params: list[Any] = []
         if type is not None:
-            sql += " AND o.OBJECT_TYPE = ?"
+            sql += queries.UNUSED_OBJECTS_TYPE_FILTER_CLAUSE
             params.append(type.upper())
         rows = self.connection.execute(sql, params).fetchall()
         nodes = sorted({f"{row['t']}.{row['n']}" for row in rows})
@@ -248,30 +195,21 @@ class DependencyStore:
         ``{tbl, kind, cols, ref_tbl, ref_cols}``. Ordered by table, kind, name.
         """
         columns_by_constraint: dict[tuple[Any, Any], list[str]] = {}
-        for row in self.connection.execute(
-            "SELECT OWNER, CONSTRAINT_NAME, COLUMN_NAME FROM USER_CONS_COLUMNS "
-            "ORDER BY OWNER, CONSTRAINT_NAME, POSITION"
-        ).fetchall():
+        for row in self.connection.execute(queries.CONSTRAINT_COLUMNS_QUERY).fetchall():
             key = (row["OWNER"], row["CONSTRAINT_NAME"])
             columns_by_constraint.setdefault(key, []).append(row["COLUMN_NAME"])
 
         table_by_constraint: dict[tuple[Any, Any], Any] = {
             (row["OWNER"], row["CONSTRAINT_NAME"]): row["TABLE_NAME"]
-            for row in self.connection.execute(
-                "SELECT OWNER, CONSTRAINT_NAME, TABLE_NAME FROM USER_CONSTRAINTS"
-            ).fetchall()
+            for row in self.connection.execute(queries.CONSTRAINT_TABLES_QUERY).fetchall()
         }
 
-        sql = (
-            "SELECT OWNER, CONSTRAINT_NAME, CONSTRAINT_TYPE, TABLE_NAME, "
-            "R_OWNER, R_CONSTRAINT_NAME FROM USER_CONSTRAINTS "
-            "WHERE CONSTRAINT_TYPE IN ('P', 'U', 'R')"
-        )
+        sql = queries.CONSTRAINTS_QUERY
         params: list[Any] = []
         if table is not None:
-            sql += " AND TABLE_NAME = ?"
+            sql += queries.CONSTRAINTS_TABLE_FILTER_CLAUSE
             params.append(table)
-        sql += " ORDER BY TABLE_NAME, CONSTRAINT_TYPE, CONSTRAINT_NAME"
+        sql += queries.CONSTRAINTS_ORDER_CLAUSE
 
         result: list[dict[str, Any]] = []
         for row in self.connection.execute(sql, params).fetchall():
@@ -305,8 +243,8 @@ class DependencyStore:
         old ``columns.yaml`` lineage from raw ``USER_IDENTIFIERS`` /
         ``USER_STATEMENTS`` at query time, then keeps rows sourced from ``node``.
         """
-        identifiers = self.connection.execute("SELECT * FROM USER_IDENTIFIERS").fetchall()
-        statements = self.connection.execute("SELECT * FROM USER_STATEMENTS").fetchall()
+        identifiers = self.connection.execute(queries.USER_IDENTIFIERS_ALL_QUERY).fetchall()
+        statements = self.connection.execute(queries.USER_STATEMENTS_ALL_QUERY).fetchall()
         if not identifiers and not statements:
             return []
         _, name = split_node(node)
@@ -323,6 +261,15 @@ class DependencyStore:
         """Distinct APEX components recorded against selected page ids."""
         return apex_pages.apex_page_components(self.connection, app_id, explicit_ids, ranges)
 
+    def apex_page_db_objects(
+        self,
+        app_id: int,
+        explicit_ids: tuple[int, ...],
+        ranges: tuple[tuple[int, int | None], ...],
+    ) -> list[dict[str, Any]]:
+        """Distinct DB objects recorded against selected APEX page ids."""
+        return apex_pages.apex_page_db_objects(self.connection, app_id, explicit_ids, ranges)
+
     def apex_callers(self, node: str) -> list[dict[str, Any]]:
         """APEX app/page/component properties that depend on ``node``.
 
@@ -338,32 +285,7 @@ class DependencyStore:
         for column in self.affected_columns(node):
             targets.setdefault(("VIEW", column["view_name"]), []).append(column)
 
-        rows = self.connection.execute(
-            """
-            SELECT o.WORKSPACE,
-                   o.APPLICATION_ID,
-                   o.APPLICATION_NAME,
-                   o.USED_DB_OBJECT_OWNER,
-                   o.USED_DB_OBJECT_TYPE,
-                   o.USED_DB_OBJECT_NAME,
-                   p.PAGE_ID,
-                   p.COMPONENT_ID,
-                   p.COMPONENT_NAME,
-                   p.COMPONENT_TYPE,
-                   p.PROPERTY_NAME,
-                   p.PROPERTY_VALUE
-            FROM APEX_USED_DB_OBJECTS o
-            LEFT JOIN APEX_USED_DB_OBJECT_COMP_PROPS p
-              ON p.APPLICATION_ID = o.APPLICATION_ID
-             AND p.USED_DB_OBJECT_ID = o.USED_DB_OBJECT_ID
-            ORDER BY o.APPLICATION_ID,
-                     COALESCE(p.PAGE_ID, -1),
-                     COALESCE(p.COMPONENT_ID, -1),
-                     COALESCE(p.PROPERTY_ID, -1),
-                     o.USED_DB_OBJECT_TYPE,
-                     o.USED_DB_OBJECT_NAME
-            """
-        ).fetchall()
+        rows = self.connection.execute(queries.APEX_CALLERS_QUERY).fetchall()
 
         result: list[dict[str, Any]] = []
         seen: set[tuple[Any, ...]] = set()
@@ -422,12 +344,7 @@ class DependencyStore:
         """
         edges = {node: sorted(set(refs)) for node, refs in self._uses_edges().items()}
         alias: dict[str, list[str]] = {}
-        for row in self.connection.execute(
-            """
-            SELECT o.OBJECT_TYPE AS t, o.OBJECT_NAME AS n
-            FROM USER_OBJECTS o
-            """
-        ).fetchall():
+        for row in self.connection.execute(queries.DEPENDENCY_ALIAS_OBJECTS_QUERY).fetchall():
             node = f"{row['t']}.{row['n']}"
             alias[node] = edges.get(node, [])
         for node, refs in edges.items():
@@ -436,15 +353,7 @@ class DependencyStore:
 
     def _uses_edges(self) -> dict[str, list[str]]:
         """Forward internal uses-map (``{node: [referenced…]}``) for lineage."""
-        rows = self.connection.execute(
-            f"""
-            SELECT DISTINCT d.TYPE AS t, d.NAME AS n,
-                   d.REFERENCED_TYPE AS rt, d.REFERENCED_NAME AS rn
-            FROM USER_DEPENDENCIES d
-            WHERE d.REFERENCED_NAME IS NOT NULL
-              AND {_tracked_owner("d.REFERENCED_OWNER")}
-            """
-        ).fetchall()
+        rows = self.connection.execute(queries.USES_EDGES_QUERY).fetchall()
         edges: dict[str, list[str]] = {}
         for row in rows:
             edges.setdefault(f"{row['t']}.{row['n']}", []).append(f"{row['rt']}.{row['rn']}")

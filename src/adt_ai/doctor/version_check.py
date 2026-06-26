@@ -46,9 +46,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         self._prefetch_latest_versions(
             [
                 ("adt-ai", adt_ai_value),
-                ("java", java_value),
                 ("oracledb", oracledb_value),
-                ("instant-client", instant_client_value),
                 ("sqlcl", sqlcl_value),
             ],
             online=online,
@@ -72,7 +70,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
                 self._display_status(  # type: ignore[attr-defined]
                     checks,
                     "Java",
-                    online_status=self._online_update_status("java", java_value, online=online),
+                    online_status=None,
                 ),
             )
             yield format_status_line(
@@ -92,9 +90,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
                 self._display_status(  # type: ignore[attr-defined]
                     checks,
                     "Instant Client",
-                    online_status=self._online_update_status(
-                        "instant-client", instant_client_value, online=online
-                    ),
+                    online_status=None,
                 ),
             )
             yield format_status_line(

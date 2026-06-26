@@ -334,6 +334,286 @@ def _apex_version_tuple(apex_version: str | None) -> tuple[int, ...]:
     return tuple(parts)
 
 
+# ------------------------------------------------------------- SQLite mirror reads
+
+CONSTRAINT_COLUMNS = (
+    "OWNER, CONSTRAINT_NAME, CONSTRAINT_TYPE, TABLE_NAME, "
+    "R_OWNER, R_CONSTRAINT_NAME"
+)
+
+FK_CONSTRAINT_BY_NAME_QUERY = f"""
+SELECT {CONSTRAINT_COLUMNS}
+FROM USER_CONSTRAINTS
+WHERE UPPER(CONSTRAINT_NAME) = UPPER(?)
+ORDER BY OWNER, TABLE_NAME, CONSTRAINT_NAME
+LIMIT 1
+""".strip()
+
+FK_CONSTRAINT_BY_KEY_QUERY = f"""
+SELECT {CONSTRAINT_COLUMNS}
+FROM USER_CONSTRAINTS
+WHERE OWNER = ?
+  AND CONSTRAINT_NAME = ?
+""".strip()
+
+FK_TABLE_FOREIGN_KEYS_QUERY = f"""
+SELECT {CONSTRAINT_COLUMNS}
+FROM USER_CONSTRAINTS
+WHERE OWNER = ?
+  AND TABLE_NAME = ?
+  AND CONSTRAINT_TYPE = 'R'
+ORDER BY CONSTRAINT_NAME
+""".strip()
+
+FK_TABLE_KEY_CONSTRAINTS_QUERY = f"""
+SELECT {CONSTRAINT_COLUMNS}
+FROM USER_CONSTRAINTS
+WHERE OWNER = ?
+  AND TABLE_NAME = ?
+  AND CONSTRAINT_TYPE IN ('P', 'U')
+ORDER BY CONSTRAINT_TYPE, CONSTRAINT_NAME
+""".strip()
+
+FK_REFERENCING_FOREIGN_KEYS_QUERY = f"""
+SELECT {CONSTRAINT_COLUMNS}
+FROM USER_CONSTRAINTS
+WHERE R_OWNER = ?
+  AND R_CONSTRAINT_NAME = ?
+  AND CONSTRAINT_TYPE = 'R'
+ORDER BY TABLE_NAME, CONSTRAINT_NAME
+""".strip()
+
+FK_CONSTRAINT_COLUMN_NAMES_QUERY = """
+SELECT COLUMN_NAME
+FROM USER_CONS_COLUMNS
+WHERE OWNER = ?
+  AND CONSTRAINT_NAME = ?
+ORDER BY POSITION
+""".strip()
+
+APEX_PAGE_COMPONENTS_QUERY_TEMPLATE = """
+SELECT MIN(PAGE_ID) AS page_id,
+       COMPONENT_TYPE AS component_type,
+       COMPONENT_NAME AS component_name
+FROM APEX_USED_DB_OBJECT_COMP_PROPS
+WHERE APPLICATION_ID = ?
+  AND PAGE_ID IS NOT NULL
+  AND COMPONENT_TYPE IS NOT NULL
+  AND TRIM(COMPONENT_TYPE) <> ''
+  AND COMPONENT_NAME IS NOT NULL
+  AND TRIM(COMPONENT_NAME) <> ''
+  AND ({page_filter})
+GROUP BY COMPONENT_TYPE, COMPONENT_NAME
+ORDER BY MIN(PAGE_ID), UPPER(COMPONENT_TYPE), UPPER(COMPONENT_NAME)
+""".strip()
+
+
+def apex_page_components_query(page_filter: str) -> str:
+    return APEX_PAGE_COMPONENTS_QUERY_TEMPLATE.format(page_filter=page_filter)
+
+
+APEX_PAGE_DB_OBJECTS_QUERY_TEMPLATE = """
+SELECT MIN(p.PAGE_ID) AS page_id,
+       COALESCE(o.USED_DB_OBJECT_OWNER, '') AS object_owner,
+       COALESCE(o.USED_DB_OBJECT_TYPE, '') AS object_type,
+       p.USED_DB_OBJECT_NAME AS object_name
+FROM APEX_USED_DB_OBJECT_COMP_PROPS p
+LEFT JOIN APEX_USED_DB_OBJECTS o
+  ON o.APPLICATION_ID = p.APPLICATION_ID
+ AND o.USED_DB_OBJECT_ID = p.USED_DB_OBJECT_ID
+WHERE p.APPLICATION_ID = ?
+  AND p.PAGE_ID IS NOT NULL
+  AND p.USED_DB_OBJECT_NAME IS NOT NULL
+  AND TRIM(p.USED_DB_OBJECT_NAME) <> ''
+  AND ({page_filter})
+GROUP BY object_owner, object_type, p.USED_DB_OBJECT_NAME
+ORDER BY MIN(p.PAGE_ID), UPPER(object_owner), UPPER(object_type), UPPER(p.USED_DB_OBJECT_NAME)
+""".strip()
+
+
+def apex_page_db_objects_query(page_filter: str) -> str:
+    return APEX_PAGE_DB_OBJECTS_QUERY_TEMPLATE.format(page_filter=page_filter)
+
+
+def tracked_owner_predicate(owner_sql: str) -> str:
+    return (
+        "(EXISTS (SELECT 1 FROM USER_OBJECTS tracked_object_owner "
+        f"WHERE tracked_object_owner.OWNER = {owner_sql}) "
+        "OR EXISTS (SELECT 1 FROM USER_DEPENDENCIES tracked_dependency_owner "
+        f"WHERE tracked_dependency_owner.OWNER = {owner_sql}))"
+    )
+
+
+DEPENDENCY_USES_QUERY = f"""
+SELECT DISTINCT d.REFERENCED_TYPE AS t, d.REFERENCED_NAME AS n
+FROM USER_DEPENDENCIES d
+WHERE d.TYPE = ? AND d.NAME = ?
+  AND d.REFERENCED_NAME IS NOT NULL
+  AND {tracked_owner_predicate("d.REFERENCED_OWNER")}
+""".strip()
+
+DEPENDENCY_USED_BY_QUERY = f"""
+SELECT DISTINCT d.TYPE AS t, d.NAME AS n
+FROM USER_DEPENDENCIES d
+WHERE d.REFERENCED_TYPE = ? AND d.REFERENCED_NAME = ?
+  AND {tracked_owner_predicate("d.OWNER")}
+""".strip()
+
+DEPENDENCY_IMPACT_QUERY = f"""
+WITH RECURSIVE imp(t, n, depth) AS (
+    SELECT ?, ?, 0
+    UNION
+    SELECT d.TYPE, d.NAME, imp.depth + 1
+    FROM USER_DEPENDENCIES d
+    JOIN imp ON d.REFERENCED_TYPE = imp.t AND d.REFERENCED_NAME = imp.n
+    WHERE imp.depth < ?
+      AND {tracked_owner_predicate("d.OWNER")}
+)
+SELECT t, n, MIN(depth) AS d
+FROM imp
+WHERE NOT (t = ? AND n = ?)
+GROUP BY t, n
+""".strip()
+
+UNUSED_OBJECTS_QUERY = """
+SELECT o.OBJECT_TYPE AS t, o.OBJECT_NAME AS n
+FROM USER_OBJECTS o
+WHERE 1 = 1
+  AND NOT EXISTS (
+      SELECT 1 FROM USER_DEPENDENCIES d
+      WHERE d.REFERENCED_OWNER = o.OWNER
+        AND d.REFERENCED_TYPE = o.OBJECT_TYPE
+        AND d.REFERENCED_NAME = o.OBJECT_NAME
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM APEX_USED_DB_OBJECTS a
+      WHERE a.USED_DB_OBJECT_OWNER = o.OWNER
+        AND a.USED_DB_OBJECT_NAME = o.OBJECT_NAME
+        AND (
+            a.USED_DB_OBJECT_TYPE = o.OBJECT_TYPE
+            OR a.USED_DB_OBJECT_TYPE IS NULL
+            OR a.USED_DB_OBJECT_TYPE = ''
+        )
+  )
+""".strip()
+UNUSED_OBJECTS_TYPE_FILTER_CLAUSE = " AND o.OBJECT_TYPE = ?"
+
+CONSTRAINT_COLUMNS_QUERY = """
+SELECT OWNER, CONSTRAINT_NAME, COLUMN_NAME
+FROM USER_CONS_COLUMNS
+ORDER BY OWNER, CONSTRAINT_NAME, POSITION
+""".strip()
+
+CONSTRAINT_TABLES_QUERY = """
+SELECT OWNER, CONSTRAINT_NAME, TABLE_NAME
+FROM USER_CONSTRAINTS
+""".strip()
+
+CONSTRAINTS_QUERY = """
+SELECT OWNER, CONSTRAINT_NAME, CONSTRAINT_TYPE, TABLE_NAME, R_OWNER, R_CONSTRAINT_NAME
+FROM USER_CONSTRAINTS
+WHERE CONSTRAINT_TYPE IN ('P', 'U', 'R')
+""".strip()
+CONSTRAINTS_TABLE_FILTER_CLAUSE = " AND TABLE_NAME = ?"
+CONSTRAINTS_ORDER_CLAUSE = " ORDER BY TABLE_NAME, CONSTRAINT_TYPE, CONSTRAINT_NAME"
+
+USER_IDENTIFIERS_ALL_QUERY = "SELECT * FROM USER_IDENTIFIERS"
+USER_STATEMENTS_ALL_QUERY = "SELECT * FROM USER_STATEMENTS"
+
+APEX_CALLERS_QUERY = """
+SELECT o.WORKSPACE,
+       o.APPLICATION_ID,
+       o.APPLICATION_NAME,
+       o.USED_DB_OBJECT_OWNER,
+       o.USED_DB_OBJECT_TYPE,
+       o.USED_DB_OBJECT_NAME,
+       p.PAGE_ID,
+       p.COMPONENT_ID,
+       p.COMPONENT_NAME,
+       p.COMPONENT_TYPE,
+       p.PROPERTY_NAME,
+       p.PROPERTY_VALUE
+FROM APEX_USED_DB_OBJECTS o
+LEFT JOIN APEX_USED_DB_OBJECT_COMP_PROPS p
+  ON p.APPLICATION_ID = o.APPLICATION_ID
+ AND p.USED_DB_OBJECT_ID = o.USED_DB_OBJECT_ID
+ORDER BY o.APPLICATION_ID,
+         COALESCE(p.PAGE_ID, -1),
+         COALESCE(p.COMPONENT_ID, -1),
+         COALESCE(p.PROPERTY_ID, -1),
+         o.USED_DB_OBJECT_TYPE,
+         o.USED_DB_OBJECT_NAME
+""".strip()
+
+DEPENDENCY_ALIAS_OBJECTS_QUERY = """
+SELECT o.OBJECT_TYPE AS t, o.OBJECT_NAME AS n
+FROM USER_OBJECTS o
+""".strip()
+
+USES_EDGES_QUERY = f"""
+SELECT DISTINCT d.TYPE AS t, d.NAME AS n,
+       d.REFERENCED_TYPE AS rt, d.REFERENCED_NAME AS rn
+FROM USER_DEPENDENCIES d
+WHERE d.REFERENCED_NAME IS NOT NULL
+  AND {tracked_owner_predicate("d.REFERENCED_OWNER")}
+""".strip()
+
+USER_OBJECTS_BY_OWNER_QUERY = "SELECT * FROM USER_OBJECTS WHERE OWNER = ?"
+
+
+def delete_owner_rows_query(table: str) -> str:
+    return f"DELETE FROM {table} WHERE OWNER = ?"
+
+
+def delete_app_rows_query(table: str) -> str:
+    return f"DELETE FROM {table} WHERE APPLICATION_ID = ?"
+
+
+def select_app_rows_query(table: str) -> str:
+    return f"SELECT * FROM {table} WHERE APPLICATION_ID = ?"
+
+
+def like_clause(column: str, count: int) -> str:
+    return " OR ".join(f"{column} LIKE ?" for _ in range(count))
+
+
+def delete_like_query(table: str, column: str, count: int) -> str:
+    return f"DELETE FROM {table} WHERE OWNER = ? AND ({like_clause(column, count)})"
+
+
+def delete_named_dependency_scope_query(count: int) -> str:
+    dependency_clause = (
+        f"(OWNER = ? AND ({like_clause('NAME', count)})) "
+        f"OR (REFERENCED_OWNER = ? AND ({like_clause('REFERENCED_NAME', count)}))"
+    )
+    return f"DELETE FROM USER_DEPENDENCIES WHERE {dependency_clause}"
+
+
+def matching_table_constraints_query(count: int) -> str:
+    return f"""
+SELECT CONSTRAINT_NAME
+FROM USER_CONSTRAINTS
+WHERE OWNER = ? AND ({like_clause('TABLE_NAME', count)})
+""".strip()
+
+TABLE_CONSTRAINTS_QUERY = """
+SELECT CONSTRAINT_NAME
+FROM USER_CONSTRAINTS
+WHERE OWNER = ? AND TABLE_NAME = ?
+""".strip()
+
+
+def referenced_constraints_query(count: int) -> str:
+    placeholders = ",".join("?" for _ in range(count))
+    return f"""
+SELECT CONSTRAINT_NAME
+FROM USER_CONSTRAINTS
+WHERE OWNER = ?
+  AND R_OWNER = ?
+  AND R_CONSTRAINT_NAME IN ({placeholders})
+""".strip()
+
+
 # ------------------------------------------------------------------- PL/Scope
 
 # Session prerequisite — turn full PL/Scope on so a subsequent recompile of
