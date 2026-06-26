@@ -6,6 +6,8 @@ import sqlite3
 from collections.abc import Mapping
 from typing import Any
 
+from adt_ai.dependencies import queries
+
 
 def foreign_key_tree(
     connection: sqlite3.Connection,
@@ -51,14 +53,7 @@ def _constraint_by_name(
     constraint_name: str,
 ) -> dict[str, Any] | None:
     return connection.execute(
-        """
-        SELECT OWNER, CONSTRAINT_NAME, CONSTRAINT_TYPE, TABLE_NAME,
-               R_OWNER, R_CONSTRAINT_NAME
-        FROM USER_CONSTRAINTS
-        WHERE UPPER(CONSTRAINT_NAME) = UPPER(?)
-        ORDER BY OWNER, TABLE_NAME, CONSTRAINT_NAME
-        LIMIT 1
-        """,
+        queries.FK_CONSTRAINT_BY_NAME_QUERY,
         (constraint_name,),
     ).fetchone()
 
@@ -69,13 +64,7 @@ def _constraint_by_key(
     constraint_name: str,
 ) -> dict[str, Any] | None:
     return connection.execute(
-        """
-        SELECT OWNER, CONSTRAINT_NAME, CONSTRAINT_TYPE, TABLE_NAME,
-               R_OWNER, R_CONSTRAINT_NAME
-        FROM USER_CONSTRAINTS
-        WHERE OWNER = ?
-          AND CONSTRAINT_NAME = ?
-        """,
+        queries.FK_CONSTRAINT_BY_KEY_QUERY,
         (owner, constraint_name),
     ).fetchone()
 
@@ -86,15 +75,7 @@ def _table_foreign_keys(
     table_name: str,
 ) -> list[dict[str, Any]]:
     return connection.execute(
-        """
-        SELECT OWNER, CONSTRAINT_NAME, CONSTRAINT_TYPE, TABLE_NAME,
-               R_OWNER, R_CONSTRAINT_NAME
-        FROM USER_CONSTRAINTS
-        WHERE OWNER = ?
-          AND TABLE_NAME = ?
-          AND CONSTRAINT_TYPE = 'R'
-        ORDER BY CONSTRAINT_NAME
-        """,
+        queries.FK_TABLE_FOREIGN_KEYS_QUERY,
         (owner, table_name),
     ).fetchall()
 
@@ -105,15 +86,7 @@ def _table_key_constraints(
     table_name: str,
 ) -> list[dict[str, Any]]:
     return connection.execute(
-        """
-        SELECT OWNER, CONSTRAINT_NAME, CONSTRAINT_TYPE, TABLE_NAME,
-               R_OWNER, R_CONSTRAINT_NAME
-        FROM USER_CONSTRAINTS
-        WHERE OWNER = ?
-          AND TABLE_NAME = ?
-          AND CONSTRAINT_TYPE IN ('P', 'U')
-        ORDER BY CONSTRAINT_TYPE, CONSTRAINT_NAME
-        """,
+        queries.FK_TABLE_KEY_CONSTRAINTS_QUERY,
         (owner, table_name),
     ).fetchall()
 
@@ -124,15 +97,7 @@ def _referencing_foreign_keys(
     constraint_name: str,
 ) -> list[dict[str, Any]]:
     return connection.execute(
-        """
-        SELECT OWNER, CONSTRAINT_NAME, CONSTRAINT_TYPE, TABLE_NAME,
-               R_OWNER, R_CONSTRAINT_NAME
-        FROM USER_CONSTRAINTS
-        WHERE R_OWNER = ?
-          AND R_CONSTRAINT_NAME = ?
-          AND CONSTRAINT_TYPE = 'R'
-        ORDER BY TABLE_NAME, CONSTRAINT_NAME
-        """,
+        queries.FK_REFERENCING_FOREIGN_KEYS_QUERY,
         (owner, constraint_name),
     ).fetchall()
 
@@ -143,13 +108,7 @@ def _constraint_column_names(
     constraint_name: str,
 ) -> str:
     rows = connection.execute(
-        """
-        SELECT COLUMN_NAME
-        FROM USER_CONS_COLUMNS
-        WHERE OWNER = ?
-          AND CONSTRAINT_NAME = ?
-        ORDER BY POSITION
-        """,
+        queries.FK_CONSTRAINT_COLUMN_NAMES_QUERY,
         (owner, constraint_name),
     ).fetchall()
     return ", ".join(row["COLUMN_NAME"] for row in rows)

@@ -109,6 +109,7 @@ def print_adt_table(
     rows: list[dict[str, object]],
     min_widths: Mapping[str, int] | None = None,
     columns: Sequence[str] | None = None,
+    leading_blank: bool = True,
 ) -> None:
     # ``columns`` makes a requested section render even with zero rows: the
     # header and separator still print so the user sees the feature ran (an
@@ -118,7 +119,8 @@ def print_adt_table(
     min_widths = min_widths or {}
     columns = list(rows[0].keys()) if rows else list(columns)
     layout = _compute_adt_layout(rows, columns, min_widths)
-    print()
+    if leading_blank:
+        print()
     print(layout.header_line())
     print(layout.separator_line())
     for row in rows:

@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from adt_ai.dependencies import queries
 from adt_ai.dependencies.schema import APEX_TABLES, USER_TABLES
 from adt_ai.dependencies.write import delete_where, insert_rows, row_key, stamped_row
 
@@ -51,7 +52,7 @@ def refresh_schema_incremental(
         counts = {table: 0 for table in USER_TABLES}
         with connection:
             for table in USER_TABLES:
-                connection.execute(f"DELETE FROM {table} WHERE OWNER = ?", (owner,))
+                connection.execute(queries.delete_owner_rows_query(table), (owner,))
             counts["USER_OBJECTS"] = insert_rows(connection, "USER_OBJECTS", fresh_objects)
             for table in USER_TABLES:
                 if table == "USER_OBJECTS":
@@ -61,7 +62,7 @@ def refresh_schema_incremental(
                 )
         return counts
 
-    existing = connection.execute("SELECT * FROM USER_OBJECTS WHERE OWNER = ?", (owner,)).fetchall()
+    existing = connection.execute(queries.USER_OBJECTS_BY_OWNER_QUERY, (owner,)).fetchall()
     existing_by_key = {row_key(row, _USER_OBJECT_KEY): dict(row) for row in existing}
 
     changed = {
@@ -166,7 +167,7 @@ def schema_changed_objects(
     if force:
         return [(object_type, object_name) for object_type, object_name in fresh_by_key]
 
-    existing = connection.execute("SELECT * FROM USER_OBJECTS WHERE OWNER = ?", (owner,)).fetchall()
+    existing = connection.execute(queries.USER_OBJECTS_BY_OWNER_QUERY, (owner,)).fetchall()
     existing_by_key = {row_key(row, _USER_OBJECT_KEY): dict(row) for row in existing}
     return [
         (object_type, object_name)
@@ -197,12 +198,8 @@ def _delete_named_schema_scope(
     patterns: list[str],
 ) -> None:
     _delete_like(connection, "USER_OBJECTS", "OBJECT_NAME", owner, patterns)
-    dependency_clause = (
-        f"(OWNER = ? AND ({_like_clause('NAME', patterns)})) "
-        f"OR (REFERENCED_OWNER = ? AND ({_like_clause('REFERENCED_NAME', patterns)}))"
-    )
     connection.execute(
-        f"DELETE FROM USER_DEPENDENCIES WHERE {dependency_clause}",
+        queries.delete_named_dependency_scope_query(len(patterns)),
         (owner, *patterns, owner, *patterns),
     )
     _delete_like(connection, "USER_IDENTIFIERS", "OBJECT_NAME", owner, patterns)
@@ -218,13 +215,9 @@ def _delete_like(
     patterns: list[str],
 ) -> None:
     connection.execute(
-        f"DELETE FROM {table} WHERE OWNER = ? AND ({_like_clause(column, patterns)})",
+        queries.delete_like_query(table, column, len(patterns)),
         (owner, *patterns),
     )
-
-
-def _like_clause(column: str, patterns: list[str]) -> str:
-    return " OR ".join(f"{column} LIKE ?" for _ in patterns)
 
 
 def _delete_matching_table_constraint_scope(
@@ -232,13 +225,8 @@ def _delete_matching_table_constraint_scope(
     owner: str,
     patterns: list[str],
 ) -> None:
-    table_clause = _like_clause("TABLE_NAME", patterns)
     rows = connection.execute(
-        f"""
-        SELECT CONSTRAINT_NAME
-        FROM USER_CONSTRAINTS
-        WHERE OWNER = ? AND ({table_clause})
-        """,
+        queries.matching_table_constraints_query(len(patterns)),
         (owner, *patterns),
     ).fetchall()
     _delete_constraint_scope(
@@ -254,11 +242,7 @@ def _delete_table_constraint_scope(
     table_name: str,
 ) -> None:
     rows = connection.execute(
-        """
-        SELECT CONSTRAINT_NAME
-        FROM USER_CONSTRAINTS
-        WHERE OWNER = ? AND TABLE_NAME = ?
-        """,
+        queries.TABLE_CONSTRAINTS_QUERY,
         (owner, table_name),
     ).fetchall()
     _delete_constraint_scope(
@@ -275,15 +259,8 @@ def _delete_constraint_scope(
 ) -> None:
     if not constraint_names:
         return
-    placeholders = ",".join("?" for _ in constraint_names)
     referenced = connection.execute(
-        f"""
-        SELECT CONSTRAINT_NAME
-        FROM USER_CONSTRAINTS
-        WHERE OWNER = ?
-          AND R_OWNER = ?
-          AND R_CONSTRAINT_NAME IN ({placeholders})
-        """,
+        queries.referenced_constraints_query(len(constraint_names)),
         (owner, owner, *constraint_names),
     ).fetchall()
     all_names = constraint_names | {row["CONSTRAINT_NAME"] for row in referenced}
@@ -344,13 +321,13 @@ def refresh_app_incremental(
                 for row in provided.get(table, ())
             ]
             if force:
-                connection.execute(f"DELETE FROM {table} WHERE APPLICATION_ID = ?", (app_id,))
+                connection.execute(queries.delete_app_rows_query(table), (app_id,))
                 counts[table] = insert_rows(connection, table, fresh_rows)
                 continue
 
             fresh_by_key = {row_key(row, pk): row for row in fresh_rows}
             existing = connection.execute(
-                f"SELECT * FROM {table} WHERE APPLICATION_ID = ?", (app_id,)
+                queries.select_app_rows_query(table), (app_id,)
             ).fetchall()
             existing_by_key = {row_key(row, pk): dict(row) for row in existing}
             changed = {
