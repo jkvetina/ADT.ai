@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from adt_ai.export_apex.inventory import ApexApplication
-from adt_ai.row_values import row_value
+from adt_ai.shared.row_values import row_value
 
 
 def _print_application_export_header(application: ApexApplication) -> None:

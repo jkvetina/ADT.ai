@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+from adt_ai.shared import text_files
+
 GITIGNORE_ENTRY = "config/discovery/"
 
 
@@ -39,10 +41,10 @@ def append_sections(path: Path, sections: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     body = "\n".join(sections)
     if path.exists() and path.read_text(encoding="utf-8").strip():
-        with path.open("a", encoding="utf-8") as handle:
+        with text_files.open_text(path, "a") as handle:
             handle.write("\n" + body)
     else:
-        path.write_text(body, encoding="utf-8")
+        text_files.write_text(path, body)
 
 
 def ensure_discovery_ignored(root: Path) -> None:
@@ -58,4 +60,4 @@ def ensure_discovery_ignored(root: Path) -> None:
     prefix = existing
     if prefix and not prefix.endswith("\n"):
         prefix += "\n"
-    gitignore.write_text(prefix + GITIGNORE_ENTRY + "\n", encoding="utf-8")
+    text_files.write_text(gitignore, prefix + GITIGNORE_ENTRY + "\n")

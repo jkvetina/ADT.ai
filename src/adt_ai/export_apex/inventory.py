@@ -4,9 +4,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from adt_ai.db import QueryGateway
 from adt_ai.export_apex import queries
-from adt_ai.row_values import row_value
+from adt_ai.shared.db import QueryGateway
+from adt_ai.shared.row_values import row_value
 
 
 @dataclass(frozen=True)

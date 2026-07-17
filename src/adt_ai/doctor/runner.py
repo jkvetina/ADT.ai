@@ -33,6 +33,11 @@ __all__ = [
     "ADT_AI_GITHUB_LATEST_RELEASE_URL",
 ]
 
+# Doctor stays project-config-free by design — it must diagnose broken setups
+# before any config exists — so its network timeouts are constants, not keys.
+_FETCH_TIMEOUT_SECONDS = 30
+_DOWNLOAD_TIMEOUT_SECONDS = 120
+
 
 def _run_command(
     command: Sequence[str],
@@ -53,7 +58,7 @@ def _run_command(
 def _fetch_text(url: str) -> str:
     request = urllib.request.Request(url, headers={"User-Agent": "ADT.ai doctor"})
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=_FETCH_TIMEOUT_SECONDS) as response:
             return response.read().decode("utf-8", errors="replace")
     except urllib.error.URLError as error:
         if _is_certificate_error(error):
@@ -64,7 +69,7 @@ def _fetch_text(url: str) -> str:
 def _download_file(url: str, target: Path) -> None:
     request = urllib.request.Request(url, headers={"User-Agent": "ADT.ai doctor"})
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
+        with urllib.request.urlopen(request, timeout=_DOWNLOAD_TIMEOUT_SECONDS) as response:
             target.write_bytes(response.read())
     except urllib.error.URLError as error:
         if _is_certificate_error(error):

@@ -5,6 +5,7 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from adt_ai.flow.model import FlowApp, FlowEdge, FlowPage
+from adt_ai.shared import text_files
 
 EXTENSIONS = {"mermaid": "mmd", "dot": "dot", "json": "json"}
 GRAPH_FLAGS = ("PAGE", "CROSS_APP")
@@ -151,7 +152,7 @@ def write_dump(
 ) -> Path:
     path = dump_path(app.app_id, fmt, root=root, out=out)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render(fmt, app, pages, edges))
+    text_files.write_text(path, render(fmt, app, pages, edges))
     return path
 
 

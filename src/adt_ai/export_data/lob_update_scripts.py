@@ -6,8 +6,9 @@ from typing import Any
 
 from adt_ai.export_data import queries
 from adt_ai.export_data.inventory import DataColumn
-from adt_ai.row_values import row_value
-from adt_ai.sql_identifiers import safe_identifier
+from adt_ai.shared import text_files
+from adt_ai.shared.row_values import row_value
+from adt_ai.shared.sql_identifiers import safe_identifier
 
 _BASE64_CHUNK_SIZE = 30000
 _TEXT_DATA_TYPES = {"CLOB", "JSON", "XMLTYPE"}
@@ -25,7 +26,8 @@ def write_lob_update_script(
     if not key_columns:
         return None
     script_path = folder / f"{row_key}.{column.name.lower()}.sql"
-    script_path.write_text(
+    text_files.write_text(
+        script_path,
         lob_update_sql(
             table_name  = table_name,
             column      = column,
@@ -33,7 +35,6 @@ def write_lob_update_script(
             row         = row,
             key_columns = key_columns,
         ),
-        encoding="utf-8",
     )
     return f"{folder.name}/{script_path.name}"
 

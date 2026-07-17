@@ -23,6 +23,7 @@ class ExportDbReporter:
         objects: list[DatabaseObject],
         names: list[str] | None = None,
         recent_days: int | None = None,
+        authors: list[str] | None = None,
     ) -> None:
         pass
 
@@ -157,8 +158,11 @@ class ConsoleExportDbReporter(ExportDbReporter):
         objects: list[DatabaseObject],
         names: list[str] | None = None,
         recent_days: int | None = None,
+        authors: list[str] | None = None,
     ) -> None:
-        print_adt_header(_overview_header(names=names, recent_days=recent_days))
+        print_adt_header(
+            _overview_header(names=names, recent_days=recent_days, authors=authors)
+        )
         counts = Counter(database_object.object_type for database_object in objects)
         rows = [
             {"object_type": object_type, "count": counts[object_type]}
@@ -202,6 +206,7 @@ class ConsoleExportDbReporter(ExportDbReporter):
 def _overview_header(
     names: list[str] | None,
     recent_days: int | None,
+    authors: list[str] | None = None,
 ) -> str:
     if recent_days is None:
         show_header = "OVERVIEW"
@@ -212,4 +217,6 @@ def _overview_header(
     show_filter = f" {show_filter} ".replace(" % ", " ").strip()
     if show_filter:
         show_header = f"{show_header}, FILTER"
+    if authors:
+        show_header = f"{show_header}, CHANGED BY {' '.join(authors)}"
     return f"OBJECTS {show_header}: {show_filter}".rstrip()

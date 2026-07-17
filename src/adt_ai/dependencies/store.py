@@ -12,13 +12,32 @@ from adt_ai.dependencies.db import connect
 from adt_ai.dependencies.foreign_key_tree import foreign_key_tree as _foreign_key_tree
 from adt_ai.dependencies.schema import (
     APEX_TABLES,
+    DROP_SCHEMA,
+    LEGACY_TABLES,
     SCHEMA,
+    SCHEMA_VERSION,
     USER_TABLES,
 )
 from adt_ai.dependencies.write import insert_rows as _insert_rows
 
 DEFAULT_MAX_DEPTH = 20
 
+
+def _meta_table_exists(connection: Any) -> bool:
+    row = connection.execute(queries.META_TABLE_EXISTS_QUERY).fetchone()
+    return row is not None
+
+
+def _owner_params(owners: Iterable[str] | None) -> list[str]:
+    """Normalize the query-mode ``-schema`` owner filter to deduped uppercase
+    params. Empty/whitespace entries (and ``None``) collapse to ``[]``, so an
+    empty owner filter behaves exactly like an absent one."""
+    params: list[str] = []
+    for owner in owners or ():
+        owner = str(owner).strip().upper()
+        if owner and owner not in params:
+            params.append(owner)
+    return params
 
 
 def build_db(db_path: str | Path) -> DependencyStore:
@@ -33,14 +52,35 @@ class DependencyStore:
 
     def __init__(self, connection: Any) -> None:
         self.connection = connection
+        self.schema_was_wiped: bool = False
 
     @classmethod
-    def open(cls, db_path: str | Path) -> DependencyStore:
-        """Open (creating the schema if absent) without wiping existing rows."""
+    def open(cls, db_path: str | Path, *, rebuild: bool = False) -> DependencyStore:
+        """Open, creating the schema when absent.
+
+        Pass ``rebuild=True`` (refresh path only) to wipe and recreate all
+        tables when the stored schema version doesn't match SCHEMA_VERSION.
+        Query-mode callers leave this False so a version mismatch never
+        silently destroys data mid-query.
+        """
         connection = connect(db_path)
+        version_sql = (
+            queries.META_SCHEMA_VERSION_QUERY
+            if _meta_table_exists(connection) else
+            queries.META_SCHEMA_VERSION_NULL_QUERY
+        )
+        stored = connection.execute(version_sql).fetchone()
+        wiped = rebuild and (stored is None or stored["value"] != SCHEMA_VERSION)
+        if wiped:
+            connection.executescript(DROP_SCHEMA)
         connection.executescript(SCHEMA)
+        for _legacy in LEGACY_TABLES:
+            connection.execute(f"DROP TABLE IF EXISTS [{_legacy}]")
+        connection.execute(queries.META_UPSERT_SCHEMA_VERSION, (SCHEMA_VERSION,))
         connection.commit()
-        return cls(connection)
+        instance = cls(connection)
+        instance.schema_was_wiped = wiped
+        return instance
 
     # writers
 
@@ -125,65 +165,130 @@ class DependencyStore:
         """Update one app's ``APEX_*`` rows without wiping unchanged rows."""
         return refresh.refresh_app_incremental(self.connection, app_id, tables, force=force)
 
+    def record_refresh(self, scope_type: str, scope_name: str, timestamp: str) -> None:
+        """Stamp one refreshed scope's completion time into ``_meta``.
+
+        ``scope_type`` is ``"schema"`` or ``"app"``; the key is
+        ``last_refresh:<type>:<name>`` so re-refreshing a scope replaces its
+        stamp rather than duplicating it.
+        """
+        key = f"{queries.META_LAST_REFRESH_PREFIX}{scope_type}:{scope_name}"
+        with self.connection:
+            self.connection.execute(queries.META_UPSERT_QUERY, (key, timestamp))
+
+    def last_refreshes(self) -> list[dict[str, str]]:
+        """Per-scope last-refresh stamps, schemas first then apps (offline).
+
+        Reads the ``last_refresh:*`` rows from ``_meta`` and splits each key back
+        into ``{type, scope, last_refresh}``. Backs the ``-age`` query mode, so
+        an agent can check staleness without the file-mtime heuristic.
+        """
+        rows = self.connection.execute(queries.META_LAST_REFRESH_QUERY).fetchall()
+        parsed: list[dict[str, str]] = []
+        for row in rows:
+            _, scope_type, scope_name = row["key"].split(":", 2)
+            parsed.append(
+                {"type": scope_type, "scope": scope_name, "last_refresh": row["value"]}
+            )
+        schemas = sorted(
+            (item for item in parsed if item["type"] == "schema"),
+            key=lambda item: item["scope"],
+        )
+        apps = sorted(
+            (item for item in parsed if item["type"] == "app"),
+            key=lambda item: int(item["scope"]) if item["scope"].isdigit() else item["scope"],
+        )
+        others = [item for item in parsed if item["type"] not in ("schema", "app")]
+        return schemas + apps + others
+
     # queries
 
-    def uses(self, node: str) -> list[str]:
-        """Direct internal objects ``node`` depends on (``TYPE.NAME`` strings)."""
-        type_, name = split_node(node)
-        rows = self.connection.execute(
-            queries.DEPENDENCY_USES_QUERY,
-            (type_, name),
-        ).fetchall()
-        return sorted({f"{row['t']}.{row['n']}" for row in rows})
+    def _resolve_types(self, type_: str, name: str, owner_params: list[str]) -> list[str]:
+        """Return object types to query against.
 
-    def used_by(self, node: str) -> list[str]:
-        """Direct internal objects that depend on ``node``."""
-        type_, name = split_node(node)
+        When ``type_`` is non-empty (caller passed ``TYPE.NAME``), it is returned
+        as-is. When it is empty (bare name), the distinct ``OBJECT_TYPE`` values
+        from ``USER_OBJECTS`` are looked up so the caller's query can match real
+        Oracle type strings instead of searching for an empty string that never
+        exists. Falls back to ``[""]`` when the name is not found, which lets the
+        downstream query return an empty result set rather than erroring.
+        """
+        if type_:
+            return [type_]
         rows = self.connection.execute(
-            queries.DEPENDENCY_USED_BY_QUERY,
-            (type_, name),
+            queries.resolve_object_types_query(len(owner_params)),
+            (name, *owner_params),
         ).fetchall()
-        return sorted({f"{row['t']}.{row['n']}" for row in rows})
+        resolved = [row["OBJECT_TYPE"] for row in rows]
+        return resolved if resolved else [type_]
 
-    def impact(self, node: str, max_depth: int = DEFAULT_MAX_DEPTH) -> list[tuple[str, int]]:
+    def uses(self, node: str, owners: Iterable[str] | None = None) -> list[str]:
+        """Direct internal objects ``node`` depends on (``TYPE.NAME`` strings).
+
+        ``owners`` (the query-mode ``-schema`` filter) narrows the dependent
+        side (``d.OWNER``) to disambiguate which owner's ``node`` is queried.
+        Bare names (no ``TYPE.`` prefix) are resolved from ``USER_OBJECTS``.
+        """
+        type_, name = split_node(node)
+        owner_params = _owner_params(owners)
+        result: set[str] = set()
+        for t in self._resolve_types(type_, name, owner_params):
+            rows = self.connection.execute(
+                queries.dependency_uses_query(len(owner_params)),
+                (t, name, *owner_params),
+            ).fetchall()
+            result.update(f"{row['t']}.{row['n']}" for row in rows)
+        return sorted(result)
+
+    def used_by(self, node: str, owners: Iterable[str] | None = None) -> list[str]:
+        """Direct internal objects that depend on ``node``.
+
+        ``owners`` narrows the referenced side (``d.REFERENCED_OWNER``) — the
+        owner of the queried object — to disambiguate same-named objects.
+        Bare names (no ``TYPE.`` prefix) are resolved from ``USER_OBJECTS``.
+        """
+        type_, name = split_node(node)
+        owner_params = _owner_params(owners)
+        result: set[str] = set()
+        for t in self._resolve_types(type_, name, owner_params):
+            rows = self.connection.execute(
+                queries.dependency_used_by_query(len(owner_params)),
+                (t, name, *owner_params),
+            ).fetchall()
+            result.update(f"{row['t']}.{row['n']}" for row in rows)
+        return sorted(result)
+
+    def impact(
+        self,
+        node: str,
+        max_depth: int = DEFAULT_MAX_DEPTH,
+        owners: Iterable[str] | None = None,
+    ) -> list[tuple[str, int]]:
         """Transitive reverse closure: every object broken by changing ``node``.
 
         Walks ``USER_DEPENDENCIES`` backward (``REFERENCED_* → dependent``) with a
         depth cap; ``UNION`` plus the cap make cycles terminate. ``MIN(depth)``
         per node, self excluded, ordered by depth then node.
+
+        ``owners`` constrains only the seed (the first hop off ``node``), so it
+        picks which owner's object roots the walk without truncating its reach.
+        Bare names (no ``TYPE.`` prefix) are resolved from ``USER_OBJECTS``.
         """
         type_, name = split_node(node)
-        rows = self.connection.execute(
-            queries.DEPENDENCY_IMPACT_QUERY,
-            (type_, name, max_depth, type_, name),
-        ).fetchall()
-        result = [(f"{row['t']}.{row['n']}", row["d"]) for row in rows]
+        owner_params = _owner_params(owners)
+        depths: dict[str, int] = {}
+        for t in self._resolve_types(type_, name, owner_params):
+            rows = self.connection.execute(
+                queries.dependency_impact_query(len(owner_params)),
+                (t, name, max_depth, *owner_params, t, name),
+            ).fetchall()
+            for row in rows:
+                key = f"{row['t']}.{row['n']}"
+                if key not in depths or row["d"] < depths[key]:
+                    depths[key] = row["d"]
+        result = list(depths.items())
         result.sort(key=lambda item: (item[1], item[0]))
         return result
-
-    def unused(
-        self,
-        type: str | None = None,
-        exclude: Iterable[str] | None = None,
-    ) -> list[str]:
-        """Internal objects nothing depends on (no inbound ``USER_DEPENDENCIES``).
-
-        Filtered to ``OBJECT_TYPE = type`` when given (case-insensitive);
-        ``COLUMN`` returns nothing (no column-level objects). Entry points in
-        ``exclude`` (full ``TYPE.NAME``, case-insensitive) are dropped even
-        though nothing references them. Ordered by node.
-        """
-        sql = queries.UNUSED_OBJECTS_QUERY
-        params: list[Any] = []
-        if type is not None:
-            sql += queries.UNUSED_OBJECTS_TYPE_FILTER_CLAUSE
-            params.append(type.upper())
-        rows = self.connection.execute(sql, params).fetchall()
-        nodes = sorted({f"{row['t']}.{row['n']}" for row in rows})
-        excluded = {item.upper() for item in (exclude or ())}
-        if excluded:
-            nodes = [node for node in nodes if node not in excluded]
-        return nodes
 
     def constraints(self, table: str | None = None) -> list[dict[str, Any]]:
         """Reconstruct the flattened constraint shape from the raw mirrors.
@@ -315,7 +420,6 @@ class DependencyStore:
                         continue
                 item = {
                     "application_id": row["APPLICATION_ID"],
-                    "application_name": row["APPLICATION_NAME"],
                     "workspace": row["WORKSPACE"],
                     "page_id": row["PAGE_ID"],
                     "component_id": row["COMPONENT_ID"],
@@ -332,24 +436,6 @@ class DependencyStore:
                     result.append(item)
                     seen.add(key)
         return result
-
-    def dependency_alias(self) -> dict[str, list[str]]:
-        """Internal-only uses map for ``config/db_dependencies.yaml``.
-
-        ``{node: [internal referenced node…]}`` keyed by every internal object in
-        ``USER_OBJECTS`` (so objects with no dependencies still appear and can be
-        deploy-ordered) unioned with any internal dependent seen in
-        ``USER_DEPENDENCIES``. Edges are owner-classified internal-only and
-        de-duplicated/sorted for consumers that need deployment order.
-        """
-        edges = {node: sorted(set(refs)) for node, refs in self._uses_edges().items()}
-        alias: dict[str, list[str]] = {}
-        for row in self.connection.execute(queries.DEPENDENCY_ALIAS_OBJECTS_QUERY).fetchall():
-            node = f"{row['t']}.{row['n']}"
-            alias[node] = edges.get(node, [])
-        for node, refs in edges.items():
-            alias.setdefault(node, refs)
-        return alias
 
     def _uses_edges(self) -> dict[str, list[str]]:
         """Forward internal uses-map (``{node: [referenced…]}``) for lineage."""

@@ -5,11 +5,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from adt_ai.db import QueryGateway
 from adt_ai.export_apex import queries
 from adt_ai.export_apex.files import ApexFileResolver
 from adt_ai.export_apex.inventory import ApexApplication
-from adt_ai.row_values import row_value
+from adt_ai.shared.db import QueryGateway
+from adt_ai.shared.row_values import row_value
 
 
 def _export_options(config: Mapping[str, object]) -> dict[str, object]:

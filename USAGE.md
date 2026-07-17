@@ -1,6 +1,6 @@
 # ADT.ai Usage
 
-This is the public usage index for ADT.ai `0.6.4`.
+This is the public usage index for ADT.ai `0.7.0`.
 
 ## Commands
 
@@ -8,6 +8,7 @@ This is the public usage index for ADT.ai `0.6.4`.
 | ------- | --------- | ------- |
 | `export_db` | [USAGE/export_db.md](USAGE/export_db.md) | Export database objects to files. |
 | `doctor` | [USAGE/doctor.md](USAGE/doctor.md) | Check local setup and bootstrap project config. |
+| `dependencies` | [USAGE/dependencies.md](USAGE/dependencies.md) | Query or refresh the dependency mirror. |
 | `export_apex` | [USAGE/export_apex.md](USAGE/export_apex.md) | Reveal and export APEX workspaces and applications. |
 | `export_data` | [USAGE/export_data.md](USAGE/export_data.md) | Export table data as CSV plus generated MERGE SQL. |
 | `recompile` | [USAGE/recompile.md](USAGE/recompile.md) | Recompile invalid database objects. |
@@ -15,7 +16,6 @@ This is the public usage index for ADT.ai `0.6.4`.
 | `search_repo` | [USAGE/search_repo.md](USAGE/search_repo.md) | Search cached Git commit history. |
 | `discovery` | [USAGE/discovery.md](USAGE/discovery.md) | Run read-only SELECT discovery queries. |
 | `flow` | [USAGE/flow.md](USAGE/flow.md) | Map APEX page navigation into a queryable flow store. |
-| `dependencies` | [USAGE/dependencies.md](USAGE/dependencies.md) | Query or refresh the dependency mirror. |
 
 ## Install
 

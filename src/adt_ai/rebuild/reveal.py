@@ -5,7 +5,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from adt_ai.git_files import run_git
+from adt_ai.shared.git_files import default_branch_ref, fetch_origin, git_user_email, run_git
 
 REVEAL_DEFAULT_LIMIT = 20
 
@@ -37,10 +37,10 @@ def reveal_branches(
     fetch: bool = True,
 ) -> RevealResult:
     if fetch:
-        _fetch_origin(root)
+        fetch_origin(root)
     infos = _branch_infos(root)
     if mine:
-        email = _current_user_email(root).lower()
+        email = git_user_email(root).lower()
         infos = [b for b in infos if email and b.author_email.lower() == email]
     if since:
         # `-since` in reveal mode is a date filter on the branch's tip commit:
@@ -110,17 +110,6 @@ def _branch_infos(root: Path) -> list[BranchInfo]:
         )
     return infos
 
-def _fetch_origin(root: Path) -> None:
-    # Best-effort refresh so the remote-tracking refs are current; `--prune`
-    # drops branches deleted on the server. Network/offline failures are
-    # non-fatal — fall back to whatever refs are already cached locally.
-    subprocess.run(
-        ["git", "fetch", "--quiet", "--prune", "origin"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-    )
-
 def switch_to_branch(root: Path, name: str) -> None:
     # Check out `name` in the working tree at `root`. `git checkout` DWIMs a
     # local tracking branch from `origin/<name>` when no local branch exists, so
@@ -136,42 +125,6 @@ def switch_to_branch(root: Path, name: str) -> None:
     if result.returncode != 0:
         message = (result.stderr or result.stdout).strip()
         raise RuntimeError(message or f"git checkout {name} failed")
-
-def _current_user_email(root: Path) -> str:
-    result = subprocess.run(
-        ["git", "config", "user.email"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout.strip() if result.returncode == 0 else ""
-
-def _default_branch(root: Path) -> str:
-    """The remote's default branch ref (e.g. `origin/master`), or "" if unknown.
-
-    Prefers the `origin/HEAD` symbolic ref set by clone; falls back to probing
-    the conventional `origin/main` / `origin/master` names. Used to exclude
-    commits a feature branch merely inherited at creation from the base branch.
-    """
-    result = subprocess.run(
-        ["git", "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-    )
-    ref = result.stdout.strip()
-    if ref.startswith("refs/remotes/origin/"):
-        return ref[len("refs/remotes/"):]
-    for candidate in ("origin/main", "origin/master"):
-        probe = subprocess.run(
-            ["git", "rev-parse", "--verify", "--quiet", candidate],
-            cwd=root,
-            capture_output=True,
-            text=True,
-        )
-        if probe.returncode == 0:
-            return candidate
-    return ""
 
 def branch_commits(
     root: Path,
@@ -194,13 +147,12 @@ def branch_commits(
     """
     args = ["log", "--format=%cd\t%s", "--date=format:%Y-%m-%d %H:%M"]
     if mine:
-        email = _current_user_email(root)
+        email = git_user_email(root)
         if email:
             args.append(f"--author={email}")
     if limit:
         args.append(f"--max-count={limit}")
-    base = _default_branch(root)
-    default_short = base[len("origin/"):] if base.startswith("origin/") else base
+    base, default_short = default_branch_ref(root)
     if base and name != default_short:
         args.append(f"{base}..{name}")
     else:

@@ -12,6 +12,12 @@ connected schema).
 
 from __future__ import annotations
 
+# Bump when any table definition changes — open() auto-wipes and recreates on mismatch.
+SCHEMA_VERSION = "3"
+
+# Tables removed from the schema that must be dropped on every open() (no version bump needed).
+LEGACY_TABLES: tuple[str, ...] = ("ALL_USERS",)
+
 # Each table as ((column, sqlite_type)…, primary-key-columns).
 _TABLE_DEFS: dict[str, tuple[tuple[tuple[str, str], ...], tuple[str, ...]]] = {
     "USER_OBJECTS": (
@@ -83,7 +89,6 @@ _TABLE_DEFS: dict[str, tuple[tuple[tuple[str, str], ...], tuple[str, ...]]] = {
         (
             ("WORKSPACE", "TEXT"),
             ("APPLICATION_ID", "INTEGER NOT NULL"),
-            ("APPLICATION_NAME", "TEXT"),
             ("USED_DB_OBJECT_ID", "INTEGER NOT NULL"),
             ("USED_DB_OBJECT_OWNER", "TEXT"),
             ("USED_DB_OBJECT_NAME", "TEXT"),
@@ -196,8 +201,27 @@ def _index_ddl(name: str, table: str, columns: tuple[str, ...]) -> str:
     return f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({quoted_columns});"
 
 
+_META_DDL = (
+    "CREATE TABLE IF NOT EXISTS _meta (\n"
+    '    "key" TEXT PRIMARY KEY,\n'
+    '    "value" TEXT NOT NULL\n'
+    ");"
+)
+
+DROP_SCHEMA: str = "\n".join(
+    [
+        *(f"DROP TABLE IF EXISTS {name};" for name in reversed(list(_TABLE_DEFS))),
+        "DROP TABLE IF EXISTS _meta;",
+        *(
+            f"DROP INDEX IF EXISTS {name};"
+            for name in _INDEX_DEFS
+        ),
+    ]
+)
+
 SCHEMA: str = "\n".join(
     [
+        _META_DDL,
         *(_ddl(table, defs, pk) for table, (defs, pk) in _TABLE_DEFS.items()),
         *(_index_ddl(name, table, columns) for name, (table, columns) in _INDEX_DEFS.items()),
     ]

@@ -17,7 +17,7 @@ from adt_ai.doctor._base import (
     format_status_line,
 )
 from adt_ai.doctor.version_fetch import DoctorLatestVersionMixin
-from adt_ai.env_check import CheckResult
+from adt_ai.shared.env_check import CheckResult
 
 
 class DoctorVersionMixin(DoctorLatestVersionMixin):
@@ -38,11 +38,11 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
 
         yield "CURRENT VERSIONS:"
         # Fire every online version check concurrently before streaming the rows.
-        # A default `doctor` run otherwise made 5 sequential HTTP calls (each a 30s
-        # timeout), so wall-clock was their sum (~150s worst case); concurrent
-        # fetches bound it to the slowest single request. The cheap local rows below
-        # still stream as they are produced; each online row blocks only on its own
-        # in-flight fetch.
+        # A default `doctor` run otherwise made 3 sequential HTTP calls — ADT.ai,
+        # oracledb, and SQLcl (each a 30s timeout), so wall-clock was their sum
+        # (~90s worst case); concurrent fetches bound it to the slowest single
+        # request. The cheap local rows below still stream as they are produced;
+        # each online row blocks only on its own in-flight fetch.
         self._prefetch_latest_versions(
             [
                 ("adt-ai", adt_ai_value),
@@ -147,7 +147,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         ]
 
     def _check_results(self) -> list[CheckResult]:
-        from adt_ai.env_check import EnvironmentChecker
+        from adt_ai.shared.env_check import EnvironmentChecker
         checker = EnvironmentChecker(
             command_runner      = lambda command: self.command_runner(  # type: ignore[attr-defined]
                 command,

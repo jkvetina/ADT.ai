@@ -3,12 +3,13 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Mapping
 from multiprocessing.pool import ThreadPool
-from pathlib import Path
 from typing import Any, Protocol
 
-import yaml
+from adt_ai.shared.progress import DottedProgressBar
 
-from adt_ai.progress import DottedProgressBar
+# Assumed action duration when no timing history exists yet: keeps the progress
+# bar crawling instead of jumping to 99% on the first-ever run of an action.
+FALLBACK_TARGET_SECONDS = 999.0
 
 
 class ApexProgressReporter(Protocol):
@@ -52,7 +53,7 @@ class ConsoleApexProgressReporter:
         target_seconds: float,
         started_at: float,
     ) -> float:
-        target = target_seconds if target_seconds > 0 else 999.0
+        target = target_seconds if target_seconds > 0 else FALLBACK_TARGET_SECONDS
         elapsed = time.monotonic() - started_at
         visible_progress = min(max(progress, elapsed), target)
         percent = min(int((visible_progress / target * 100) + 0.5), 99)
@@ -75,23 +76,6 @@ class ConsoleApexProgressReporter:
 
     def _line_text(self, header: str, percent: int, seconds: int) -> str:
         return self._progress.line_text(header, percent, seconds)
-
-def _load_timers(path: Path) -> dict[Any, Any]:
-    if not path.is_file():
-        return {}
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return data if isinstance(data, dict) else {}
-
-def _store_timers(path: Path, timers: Mapping[Any, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.safe_dump(
-            dict(timers),
-            default_flow_style=False,
-            sort_keys=True,
-        ),
-        encoding="utf-8",
-    )
 
 def _timer_value(timers: Mapping[Any, Any], app_id: int, action: str) -> float:
     app_timers = timers.get(app_id) or timers.get(str(app_id)) or {}

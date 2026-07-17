@@ -18,7 +18,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from adt_ai.db import QueryGateway
 from adt_ai.discovery.render import DEFAULT_ROW_LIMIT, query_label, render_result, render_section
 from adt_ai.discovery.report import (
     append_sections,
@@ -27,6 +26,7 @@ from adt_ai.discovery.report import (
     report_path,
 )
 from adt_ai.discovery.validator import DiscoveryValidationError, validate_select_only
+from adt_ai.shared.db import QueryGateway
 
 # A distinctive sentinel — not a bare ``/*`` — so a hand-written ``/* … */``
 # block comment in a ``-file`` is never mistaken for a written-back result block

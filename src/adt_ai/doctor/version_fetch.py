@@ -17,6 +17,7 @@ from adt_ai.doctor._base import (
     SqlclRelease,
     unescape,
 )
+from adt_ai.shared import text_files
 
 
 class DoctorLatestVersionMixin:
@@ -125,9 +126,9 @@ class DoctorLatestVersionMixin:
             return
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
+            text_files.write_text(
+                path,
                 json.dumps({"version": version, "fetched_at": time.time()}),
-                encoding="utf-8",
             )
         except OSError:
             pass

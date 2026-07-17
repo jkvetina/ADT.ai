@@ -1,7 +1,7 @@
 ---
 title: adt
 created: 2026-06-10
-updated: 2026-06-22
+updated: 2026-07-11 18:19
 tags: [SKILL, DEVOPS]
 ---
 # adt
