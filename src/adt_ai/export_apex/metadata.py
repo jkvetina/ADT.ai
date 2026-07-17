@@ -1,20 +1,18 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from adt_ai.export_apex.inventory import ApexApplication
-from adt_ai.row_values import row_value
+from adt_ai.shared.row_values import row_value
+from adt_ai.shared.yaml_io import load_yaml_mapping, store_yaml_mapping
 
 
 def _store_application_metadata(path: Path, applications: list[ApexApplication]) -> None:
     if not applications:
         return
-    payload = _load_yaml_mapping(path)
+    payload = load_yaml_mapping(path)
     for application in applications:
         payload[application.app_id] = {
             "owner": application.owner,
@@ -27,12 +25,12 @@ def _store_application_metadata(path: Path, applications: list[ApexApplication])
             "pages": application.pages,
             "updated_at": application.updated_at,
         }
-    _store_yaml_mapping(path, payload)
+    store_yaml_mapping(path, payload)
 
 def _store_workspace_developers(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
-    payload = _load_yaml_mapping(path)
+    payload = load_yaml_mapping(path)
     for row in rows:
         workspace = str(row_value(row, "WORKSPACE") or "")
         user_name = str(row_value(row, "USER_NAME") or "")
@@ -44,7 +42,7 @@ def _store_workspace_developers(path: Path, rows: list[dict[str, Any]]) -> None:
             workspace_developers = {}
             payload[workspace] = workspace_developers
         workspace_developers[user_name] = user_mail
-    _store_yaml_mapping(path, payload)
+    store_yaml_mapping(path, payload)
 
 def _workspace_developers_from_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
     developers: dict[str, dict[str, str]] = {}
@@ -56,23 +54,6 @@ def _workspace_developers_from_rows(rows: list[dict[str, Any]]) -> dict[str, dic
             continue
         developers.setdefault(workspace, {})[user_name] = user_mail
     return developers
-
-def _load_yaml_mapping(path: Path) -> dict[Any, Any]:
-    if not path.is_file():
-        return {}
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return data if isinstance(data, dict) else {}
-
-def _store_yaml_mapping(path: Path, payload: Mapping[Any, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.safe_dump(
-            dict(payload),
-            default_flow_style=False,
-            sort_keys=True,
-        ),
-        encoding="utf-8",
-    )
 
 def _merge_app_groups(path: Path, new_text: str) -> str:
     """Merge the workspace-shared ``app_groups.yaml`` instead of overwriting it.

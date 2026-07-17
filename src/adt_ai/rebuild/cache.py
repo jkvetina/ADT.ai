@@ -6,23 +6,24 @@ from pathlib import Path
 
 import yaml
 
-from adt_ai.commit_cache import (
+from adt_ai.rebuild.models import RebuildError, RebuildReporter, RebuildRequest
+from adt_ai.shared import text_files
+from adt_ai.shared.commit_cache import (
     cache_path as history_cache_path,
 )
-from adt_ai.commit_cache import (
+from adt_ai.shared.commit_cache import (
     current_branch as history_current_branch,
 )
-from adt_ai.commit_cache import (
+from adt_ai.shared.commit_cache import (
     load_history_cache,
 )
-from adt_ai.commit_discovery import (
+from adt_ai.shared.commit_discovery import (
     FIELD_SEPARATOR,
     CommitRecord,
     _classify_file,
     _detected_patch,
 )
-from adt_ai.git_files import changed_files, run_git
-from adt_ai.rebuild.models import RebuildError, RebuildReporter, RebuildRequest
+from adt_ai.shared.git_files import changed_files, run_git
 
 
 def _resolve_branches(request: RebuildRequest) -> list[str]:
@@ -97,6 +98,12 @@ def _build_records(
                 unique_order.append(commit_hash)
 
     total = len(unique_order)
+    # One `git rev-list --count` per branch, shared by the header display below
+    # and the absolute-numbering offsets in the assembly loop — computing it at
+    # each use point doubled the subprocess cost per branch.
+    branch_counts = {
+        branch: _branch_commit_count(request.root, branch) for branch in branches
+    }
     # Display total is the FULL branch history (unlimited). With a commit_limit
     # the window holds only the newest N, so len(unique_order) == limit, not the
     # real branch size — recover the unlimited count for the header. In --update
@@ -106,19 +113,13 @@ def _build_records(
     # run, now the default) — show the plain total, like a non-update full run,
     # instead of a confusing "N + N".
     if request.update_only and resumed_any:
-        display_total = max(
-            (_branch_commit_count(request.root, branch) for branch in branches),
-            default=total,
-        )
+        display_total = max(branch_counts.values(), default=total)
         missing_commits = total
     elif request.update_only or request.commit_limit is None:
         display_total = total
         missing_commits = None
     else:
-        display_total = max(
-            (_branch_commit_count(request.root, branch) for branch in branches),
-            default=total,
-        )
+        display_total = max(branch_counts.values(), default=total)
         missing_commits = None
     header_limit = None if request.update_only else request.commit_limit
     reporter.on_count(display_total, len(branches), header_limit, missing_commits)
@@ -143,7 +144,7 @@ def _build_records(
     # full history and the oldest commit is 1 (matches old ADT).
     branch_records: dict[str, dict[int, CommitRecord]] = {}
     for branch, lines in branch_lines.items():
-        offset = _branch_commit_count(request.root, branch) - len(lines)
+        offset = branch_counts[branch] - len(lines)
         # In --update mode the previously cached records are kept verbatim and
         # the new commits append onto them with continuing absolute numbers.
         numbered: dict[int, CommitRecord] = dict(existing_records[branch])
@@ -206,10 +207,12 @@ def _write_caches(
             }
             for number, record in sorted(numbered.items())
         }
-        cache_path.write_text(
-            yaml.safe_dump(payload, sort_keys=False),
-            encoding="utf-8",
-        )
+        text = yaml.safe_dump(payload, sort_keys=False)
+        # `-update` with nothing new reproduces the file byte-for-byte; skip the
+        # write so the mtime doesn't churn (these caches live under Dropbox and
+        # every touch re-syncs them).
+        if not (cache_path.exists() and cache_path.read_text(encoding="utf-8") == text):
+            text_files.write_text(cache_path, text)
         paths[branch] = cache_path
     return paths
 

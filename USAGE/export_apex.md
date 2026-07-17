@@ -9,6 +9,8 @@ adtai export_apex -reveal
 
 The initial `export_apex` slice discovers applications only. In `-reveal` mode, it lists the workspace inventory once at the top, then lists applications for every schema configured in the selected connection environment unless `-schema` narrows the scan. Reveal keeps one APEX connection open and switches APEX workspace/security context for each schema's configured workspace before querying that schema's APEX applications. For normal exports, it uses the APEX schema default from the connection file. Workspace, application group, and application id scope still come from each connection schema's `apex:` section unless overridden on the command line.
 
+When you export by application id (`-app <id>`, without `-schema`/`-reveal`), `export_apex` first reads the cached `config/apex_apps.yaml` (written by earlier exports). If an app's recorded `owner` schema differs from the default APEX schema, it connects straight to that owner schema and skips both the wasted default-schema connection and the live owner-discovery round-trip. Multiple `-app` ids that map to different owners each connect to their own owner schema. Apps not yet recorded in the file, a missing file, or `-schema`/`-reveal` fall back to connecting to the default schema and discovering the owner live.
+
 Limit the reveal to one workspace, group, and application list:
 
 ```bash

@@ -62,13 +62,13 @@ When `-stage` matches more than one version for the same file, the newest matchi
 | `-files [N]`, `--files [N]` | No | auto with file selectors | Print changed-file rows. `-file`, `-type`, or `-name` prints the first 20 matching files per commit automatically; bare `-files` also prints the first 20; `-files 50` prints the first 50; `-files 0` prints none. Rows use `D`, `A`, or `M` as delete/add/modify markers. |
 | `-summary`, `--summary` | No | none | Commit-summary terms; all provided words must match. |
 | `-file`, `--file` | No | none | Changed-file path terms; all provided words must match. |
-| `-type`, `--type` | No | none | Object type text derived from `<schema>/database/<object_type>/...` (or the legacy `database/<schema>/<object_type>/...`); repeatable. |
-| `-name`, `--name` | No | none | Object name text derived from the filename stem; repeatable. |
+| `-type`, `--type` | Yes | none | Object type text derived from `<schema>/database/<object_type>/...` (or the legacy `database/<schema>/<object_type>/...`). Accepts multiple arguments: `-type PACKAGE VIEW`, `-type PACKAGE,VIEW`, and a repeated `-type PACKAGE -type VIEW` are equivalent. |
+| `-name`, `--name` | Yes | none | Object name text derived from the filename stem. Accepts multiple arguments, like `-type`. |
 | `-by`, `--by` | No | none | Author email/name substring; repeatable. |
 | `-my`, `--my` | No | off | Keep commits whose author email equals `git config user.email`. |
 | `-commit`, `-commits`, `--commit`, `--commits` | No | none | Commit number/hash refs; supports `N+` for commit number N and newer. Multiple refs inside this flag are OR-matched. |
 | `-hash`, `--hash` | No | none | Commit hash prefixes. Multiple hashes are OR-matched. If combined with `-commit`, both filters must match. |
-| `-recent`, `--recent` | No | none | Keep commits newer than today minus DAYS. |
+| `-recent [DAYS]`, `--recent [DAYS]` | No | none | Keep commits newer than today minus DAYS. Bare `-recent` means 1 day. |
 | `-since`, `--since` | No | none | Oldest commit date, `YYYY-MM-DD`, or number of days back. |
 | `-until`, `--until` | No | none | Newest commit date, `YYYY-MM-DD`, or number of days back. |
 | `-restore`, `--restore` | No | off | Write matched historical file versions. |

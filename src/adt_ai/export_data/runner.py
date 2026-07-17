@@ -7,14 +7,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from adt_ai.db import QueryGateway
 from adt_ai.export_data import queries
 from adt_ai.export_data.inventory import DataColumn, DataDiscovery, DataTable
 from adt_ai.export_data.lob_update_scripts import (
     include_update_scripts,
     write_lob_update_script,
 )
-from adt_ai.row_values import row_value
+from adt_ai.shared import text_files
+from adt_ai.shared.config import DEFAULT_PATH_OBJECTS, is_enabled
+from adt_ai.shared.db import QueryGateway
+from adt_ai.shared.row_values import row_value
 
 _SIDE_CAR_DATA_TYPES = {
     "BLOB"   : "bin",
@@ -129,7 +131,7 @@ class ExportDataRunner:
             writer = csv.writer(
                 handle,
                 delimiter      = str(request.config.get("csv_delimiter") or ";"),
-                lineterminator = "\n",
+                lineterminator = text_files.configured_newline(),
                 quoting        = csv.QUOTE_NONNUMERIC,
             )
             writer.writerow(csv_columns)
@@ -155,9 +157,9 @@ class ExportDataRunner:
                 where_filter    = where_filter,
             )
             if merge_sql:
-                path.with_suffix(".sql").write_text(
+                text_files.write_text(
+                    path.with_suffix(".sql"),
                     merge_sql + include_update_scripts(update_scripts),
-                    encoding="utf-8",
                 )
         return path, row_count
 
@@ -212,7 +214,11 @@ def _write_sidecar_values(
         if isinstance(payload, bytes):
             file_path.write_bytes(payload)
         else:
-            file_path.write_text(payload, encoding="utf-8")
+            # Raw LOB payload — byte-faithful: newline="" blocks the platform
+            # translation so the sidecar mirrors the stored value exactly,
+            # independent of the file_crlf setting.
+            with file_path.open("w", encoding="utf-8", newline="") as handle:
+                handle.write(payload)
         update_script = write_lob_update_script(
             folder      = folder,
             table_name  = table_name,
@@ -286,7 +292,7 @@ def _data_folder(root: Path, config: dict[str, Any], schema: str = "") -> Path:
     layout = (config.get("object_types") or {}).get("DATA", ["data", ".sql"])
     folder = str(layout[0]) if isinstance(layout, list | tuple) and layout else "data"
     folder = folder.strip("/")
-    template = str(config.get("path_objects") or "database/<schema>/<object_type>")
+    template = str(config.get("path_objects") or DEFAULT_PATH_OBJECTS)
     rendered = template.replace("<schema>", (schema or "").lower())
     if "<object_type>" in rendered:
         rendered = rendered.replace("<object_type>", folder)
@@ -389,11 +395,11 @@ def _merge_sql_from_csv(
     lower_primary = [column.lower() for column in primary_columns]
     update_columns = [column for column in lower_columns if column not in lower_primary]
     merge_config = _merge_config(config, table_name)
-    skip_delete = "" if _is_enabled(merge_config.get("delete"), default=False) else "--"
-    skip_insert = "" if _is_enabled(merge_config.get("insert"), default=True) else "--"
+    skip_delete = "" if is_enabled(merge_config.get("delete"), default=False) else "--"
+    skip_insert = "" if is_enabled(merge_config.get("insert"), default=True) else "--"
     skip_update = (
         ""
-        if _is_enabled(merge_config.get("update"), default=True) and update_columns
+        if is_enabled(merge_config.get("update"), default=True) and update_columns
         else "--"
     )
     primary_join = "\n    " + "\n    AND ".join(
@@ -423,6 +429,7 @@ def _csv_select_batches(path: Path, config: dict[str, Any]) -> tuple[list[str], 
     columns: list[str] = []
     batches: list[list[str]] = []
     delimiter = str(config.get("csv_delimiter") or ";")
+    batch_size = int(config.get("merge_batch_size") or 10000)
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(
             handle,
@@ -433,7 +440,7 @@ def _csv_select_batches(path: Path, config: dict[str, Any]) -> tuple[list[str], 
         for index, row in enumerate(reader):
             if not columns:
                 columns = list(row)
-            batch_index = index // 10000
+            batch_index = index // batch_size
             if batch_index == len(batches):
                 batches.append([])
             batches[batch_index].append(queries.row_select(row, columns))
@@ -460,14 +467,6 @@ def _table_config(config: dict[str, Any], table_name: str) -> dict[str, Any]:
         if str(key).upper() == table_key and isinstance(value, dict):
             return value
     return {}
-
-
-def _is_enabled(value: Any, default: bool = False) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().upper() in {"1", "TRUE", "Y", "YES", "ON"}
 
 
 def _commented_where_filter(where_filter: str, skip_delete: str) -> str:

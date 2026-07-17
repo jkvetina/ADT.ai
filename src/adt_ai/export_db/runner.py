@@ -6,12 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from adt_ai.db import QueryGateway
 from adt_ai.export_db.config import (
+    _audit_config,
     _cached_gateway_factory,
     _configured_object_types,
     _has_runtime_filter,
-    _is_enabled,
     _requested_object_type_matches,
     _split_patterns,
     _with_default_layout,
@@ -34,6 +33,10 @@ from adt_ai.export_db.files import (
     ObjectWritePlan,
     ObjectWriteRequest,
 )
+from adt_ai.export_db.groups import (
+    GroupRules,
+    detect_groups_from_tree,
+)
 from adt_ai.export_db.inventory import (
     DatabaseObject,
     ObjectDiscovery,
@@ -54,7 +57,9 @@ from adt_ai.export_db.render import (
     print_adt_pipes,
     print_adt_table,
 )
-from adt_ai.row_values import row_value
+from adt_ai.shared.config import is_enabled
+from adt_ai.shared.db import QueryGateway
+from adt_ai.shared.row_values import row_value
 
 GatewayFactory = Callable[[str], QueryGateway]
 
@@ -73,6 +78,10 @@ class ExportDbRequest:
     clean        : bool = False
     dry_run      : bool = False
     reporter     : ExportDbReporter | None = None
+    group_rules  : GroupRules | None = None
+    changed_by   : str | None = None
+    my_changes   : bool = False
+    authors      : list[str] | None = None
 
 class ExportDbRunner:
     def __init__(
@@ -89,6 +98,8 @@ class ExportDbRunner:
             root   = request.root,
             config = _with_default_layout(request.config),
         )
+        resolver.group_rules = self._resolve_group_rules(request, resolver)
+        resolver.check_subtree_uniqueness(request.schemas)
         writer = ObjectFileWriter(resolver, compare_existing=False)
         object_contents = self._contents(
             request,
@@ -132,6 +143,17 @@ class ExportDbRunner:
             plans.append(writer.write_one(ObjectWriteRequest(database_object, content)))
         return plans
 
+    def _resolve_group_rules(
+        self,
+        request: ExportDbRequest,
+        resolver: ObjectFileResolver,
+    ) -> GroupRules:
+        # Seed with explicit/persisted rules, then always learn from how files were
+        # arranged into <type>/<group>/ subfolders by the move action (or by hand).
+        seed = request.group_rules or GroupRules.empty()
+        type_roots = resolver.iter_type_roots(request.schemas)
+        return seed.merged(detect_groups_from_tree(type_roots))
+
     def _contents(
         self,
         request: ExportDbRequest,
@@ -151,12 +173,21 @@ class ExportDbRunner:
                 recent_days  = request.recent_days,
                 prefer_exact_names = True,
             )
+            if request.authors is not None:
+                audit = _audit_config(request.config)
+                author_names = discovery.authors_objects(audit, request.authors)
+                database_objects = [
+                    database_object
+                    for database_object in database_objects
+                    if database_object.name.upper() in author_names
+                ]
             if not has_exact_name_filter(request.names):
                 reporter.overview(
                     schema,
                     database_objects,
                     names       = request.names,
                     recent_days = request.recent_days,
+                    authors     = request.authors,
                 )
             if not _has_runtime_filter(request):
                 missing_objects = resolver.missing_objects(database_objects, schema=schema)
@@ -164,7 +195,7 @@ class ExportDbRunner:
                     schema,
                     missing_objects,
                 )
-                if _is_enabled(request.config.get("auto_delete")) and not request.dry_run:
+                if is_enabled(request.config.get("auto_delete")) and not request.dry_run:
                     resolver.delete_missing_objects(missing_objects)
             if request.clean and not request.dry_run:
                 resolver.delete_configured_object_files(schema)
@@ -181,7 +212,7 @@ class ExportDbRunner:
                 )
             reporter.start_export(schema, len(database_objects))
             reports_objects = reporter.reports_objects
-            add_if_not_exists = _is_enabled(request.config.get("add_if_not_exists", True))
+            add_if_not_exists = is_enabled(request.config.get("add_if_not_exists", True))
             for index, database_object in enumerate(database_objects):
                 if reports_objects:
                     reporter.export_object(database_object)
@@ -202,6 +233,7 @@ class ExportDbRunner:
                     content = _append_job_arguments(
                         content,
                         discovery.job_arguments(database_object),
+                        database_object.name,
                     )
                 content = _append_comments(
                     content,

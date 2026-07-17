@@ -80,11 +80,65 @@ adtai export_db -recent 7
 adtai export_db -type JOB
 ```
 
+Export only objects last changed by a specific author, or by you, in a shared schema worked through proxy users. Both filters resolve authorship against the project's configured `audit:` source (a DDL-log table or view), so they need no DBA-level audit-trail access:
+
+```bash
+# objects last changed by the SCOTT proxy user
+adtai export_db -by SCOTT
+
+# objects last changed by you (db schema read from config/me.yaml)
+adtai export_db -my
+```
+
+`-by`/`-my` require an `audit:` block in `config.yaml` naming the log source and its columns:
+
+```yaml
+audit:
+  source: APP_DDL_LOG     # a table or view of DDL changes
+  object_name: object_name
+  changed_by: changed_by
+```
+
+`-my` additionally reads your identity from the gitignored `config/me.yaml`:
+
+```yaml
+db_schema: JAN
+apex_account: JAN.KVETINA
+email: jan@example.com
+```
+
 Run without per-object output, useful when an LLM or agent drives the export and object names would flood its console:
 
 ```bash
 adtai export_db -silent
 ```
+
+## Object groups
+
+`-groups` is a **move action**, not an export modifier. When you pass it, `export_db` does **not** connect or export anything — it scans the object files you have already exported under `database/<object_type>/` and reorganizes the matching ones into per-group subfolders (`<object_type>/<group>/PREFIX_...`) so a large object-type folder stays navigable. Group folder names are always uppercased.
+
+There are three forms:
+
+1. **Auto-detect — bare `-groups`.** Clusters the flat (ungrouped) files in each object-type folder by their leading prefix. A cluster of at least `groups_min` files (config key, default `5`) becomes a group named after the detected prefix — first by the two-word prefix (`INV_BILLING`), then falling back to the one-word prefix (`INV`) for leftovers.
+2. **Single prefix — `-groups INV_BILLING`.** Routes only the files whose name starts with that prefix; everything else stays where it is.
+3. **Prefix list — `-groups INV_BILLING ORD, AP`.** Takes a space- and/or comma-separated list of prefixes and routes only those.
+
+```bash
+# Auto-detect groups using the default minimum cluster size (groups_min)
+adtai export_db -groups
+
+# Move only the INV_BILLING objects into an INV_BILLING/ subfolder
+adtai export_db -groups INV_BILLING
+
+# Move several prefix groups at once (space and/or comma separated)
+adtai export_db -groups INV_BILLING ORD, AP
+```
+
+The action always **previews then confirms**: it prints every planned move as `source -> dest` plus any unmatched files, then asks you to proceed before moving anything. Answer `y` to apply, anything else to abort. Pass `-dry-run` to preview only — it never prompts and never moves.
+
+Before moving, `export_db` enforces **per-object-type filename uniqueness**: if applying the plan would put the same object name in more than one place under a `<object_type>/` subtree (the root plus every `<group>/` subfolder), it reports the collisions and aborts without moving rather than overwriting or duplicating a file.
+
+Hand-arranged subfolders still work on every plain `export_db` run: move some exported files into a `<object_type>/<group>/` subfolder by hand and the folder name becomes the group; on the next export ADT.ai learns the shared prefix of those files and routes new matching objects into the same subfolder automatically.
 
 ## Arguments
 
@@ -94,9 +148,12 @@ adtai export_db -silent
 | `-config-dir`, `--config-dir` | Yes | none | Folder containing project config YAML. ADT.ai always loads repo defaults first, then overlays these project configs. |
 | `-env`, `--env` | No | connection default | Connection environment to use, for example `DEV`. |
 | `-schema`, `--schema` | Yes | environment default schema | Schema to export. Pass multiple times, use comma lists, or use `%` patterns such as `CORE%`. |
-| `-type`, `--type` | Yes | configured object types | Object type pattern or patterns to export. Supports old ADT SQL-like `%` and `_` wildcards plus comma lists, for example `PACKAGE%,VIEW`. |
+| `-type`, `--type` | Yes | configured object types | Object type pattern or patterns to export. Supports old ADT SQL-like `%` and `_` wildcards plus comma lists, for example `PACKAGE%,VIEW`. Oracle type names, resolved exactly as on `recompile`: a bare `PACKAGE` exports specifications only, `PACKAGE BODY` (quoted or not) bodies only, `PACKAGE SPEC` the specification, and `MVIEW`/`MATERIALIZED` both mean `MATERIALIZED VIEW`. See [recompile → Object types](recompile.md#object-types). |
 | `-name`, `--name` | Yes | all names | Object name pattern or patterns to export. Supports old ADT SQL-like `%` and `_` wildcards plus comma lists, for example `APP_%,TMP_%`. |
-| `-recent`, `--recent` | No | all objects | Export objects changed in the last number of days. Do not combine with `-type JOB`. |
+| `-recent [DAYS]`, `--recent [DAYS]` | No | all objects | Export objects changed in the last number of days; bare `-recent` means 1 day, as on `export_apex`. Do not combine with `-type JOB`. |
+| `-by`, `--by` | No | all authors | Export only objects last changed by `AUTHOR` (a db user/schema), resolved by joining the export set against the project's configured `audit:` source. Lets a shared schema worked by several developers via proxy users still resolve authorship. Requires an `audit:` block (`source`/`object_name`/`changed_by`) in `config.yaml`. |
+| `-my`, `--my` | No | off | Export only objects last changed by the current user, taking the db schema from the gitignored `config/me.yaml` (`db_schema`). Same audit resolution as `-by`; requires both the `audit:` block and `config/me.yaml`. |
+| `-groups`, `--groups` | No (move action) | off | Move action: reorganize already-exported files into `<object_type>/<group>/` subfolders. Never connects or exports. Bare `-groups` auto-detects groups by prefix (cluster ≥ `groups_min`, default `5`); `-groups PREFIX ...` takes a space- and/or comma-separated prefix list and moves only those. Group folder names are uppercased. Previews then prompts for confirmation; with `-dry-run` it previews only. Aborts on per-object-type filename collisions. |
 | `-dry-run`, `--dry-run` | No | off | Build the export plan without writing files. |
 | `-delete`, `--delete` | No | off | Delete existing object files before export, excluding `DATA`. |
 | `-silent`, `--silent` | No | off | Suppress per-object names and per-object progress callbacks while keeping the standard banner, connection block, overview, export header, and final timer. Use it when calling `export_db` from an LLM or agent to avoid flooding the console. |

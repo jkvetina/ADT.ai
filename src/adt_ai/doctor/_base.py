@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from html import unescape
 from pathlib import Path
 
+from adt_ai.shared.env_check import _first_line, _instant_client_version
+
 CommandRunner = Callable[[Sequence[str], Path | None, Mapping[str, str]], str]
 ExecutableResolver = Callable[[str], str | None]
 OraclePageFetcher = Callable[[str], str]
@@ -110,24 +112,6 @@ class DoctorResult:
 class SqlclRelease:
     version     : str
     download_url: str
-
-
-def _first_line(text: str) -> str:
-    lines = text.splitlines()
-    return lines[0] if lines else ""
-
-
-def _instant_client_version(env: Mapping[str, str]) -> str:
-    oracle_home = env.get("ORACLE_HOME")
-    if not oracle_home:
-        return ""
-    readme = Path(oracle_home) / "BASIC_README"
-    if not readme.exists():
-        return ""
-    for line in readme.read_text(encoding="utf-8", errors="ignore").splitlines():
-        if "Client Shared Library" in line and " - " in line:
-            return line.split(" - ", 1)[1].strip()
-    return ""
 
 
 def _normalize_git_version(value: str) -> str:

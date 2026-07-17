@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from adt_ai.db import QueryGateway
 from adt_ai.export_apex import queries
 from adt_ai.export_apex.files import ApexFileResolver
 from adt_ai.export_apex.filters import (
@@ -17,13 +16,11 @@ from adt_ai.export_apex.filters import (
 )
 from adt_ai.export_apex.inventory import ApexApplication
 from adt_ai.export_apex.metadata import (
-    _load_yaml_mapping,
     _merge_app_groups,
     _parse_app_group_blocks,
     _render_app_group_blocks,
     _store_application_metadata,
     _store_workspace_developers,
-    _store_yaml_mapping,
     _workspace_developers_from_rows,
 )
 from adt_ai.export_apex.partial import (
@@ -52,10 +49,9 @@ from adt_ai.export_apex.postprocess import (
     _target_path,
 )
 from adt_ai.export_apex.progress import (
+    FALLBACK_TARGET_SECONDS,
     ApexProgressReporter,
     ConsoleApexProgressReporter,
-    _load_timers,
-    _store_timers,
     _timer_value,
     _update_timer,
 )
@@ -86,7 +82,10 @@ from adt_ai.export_apex.rest import (
     _schema_definition,
     _split_rest_modules,
 )
-from adt_ai.row_values import row_value
+from adt_ai.shared import text_files
+from adt_ai.shared.db import QueryGateway
+from adt_ai.shared.row_values import row_value
+from adt_ai.shared.yaml_io import load_yaml_mapping, store_yaml_mapping
 
 GatewayFactory = Callable[[str], QueryGateway]
 
@@ -128,7 +127,7 @@ class ApexExportRunner:
         base_resolver = ApexFileResolver.from_config(request.root, dict(request.config))
         reporter = request.reporter or ConsoleApexProgressReporter()
         timers_file = request.timers_file or request.root / "config" / "apex_timers.yaml"
-        timers = _load_timers(timers_file)
+        timers = load_yaml_mapping(timers_file)
         developers_path = request.root / "config" / "apex_developers.yaml"
         if not request.recent_report_only:
             _store_application_metadata(
@@ -144,7 +143,7 @@ class ApexExportRunner:
             gateway = self.gateway_factory(schema)
             developer_rows = gateway.fetch_all(self.WORKSPACE_DEVELOPERS_QUERY)
             developers = merge_workspace_developers(
-                workspace_developers_from_mapping(_load_yaml_mapping(developers_path)),
+                workspace_developers_from_mapping(load_yaml_mapping(developers_path)),
                 _workspace_developers_from_rows(developer_rows),
             )
             if not request.recent_report_only:
@@ -159,7 +158,7 @@ class ApexExportRunner:
                             application,
                             developers,
                             request.recent_days,
-                            recent_author_label(application, developers, request),
+                            recent_author_label(request),
                             recent_components,
                         )
                     continue
@@ -188,7 +187,7 @@ class ApexExportRunner:
                         application,
                         developers,
                         request.recent_days,
-                        recent_author_label(application, developers, request),
+                        recent_author_label(request),
                         recent_components,
                     )
                 if any(request.actions.values()):
@@ -324,11 +323,11 @@ class ApexExportRunner:
     ) -> None:
         elapsed = reporter.run(
             ACTION_HEADERS[action],
-            _timer_value(timers, application.app_id, action) or 999.0,
+            _timer_value(timers, application.app_id, action) or FALLBACK_TARGET_SECONDS,
             operation,
         )
         _update_timer(timers, application.app_id, action, elapsed)
-        _store_timers(timers_file, timers)
+        store_yaml_mapping(timers_file, timers)
 
     def _run_partial_action(
         self,
@@ -346,7 +345,7 @@ class ApexExportRunner:
 
         reporter.run(
             ACTION_HEADERS[action],
-            _timer_value(timers, application.app_id, action) or 999.0,
+            _timer_value(timers, application.app_id, action) or FALLBACK_TARGET_SECONDS,
             wrapped_operation,
         )
         return result or CollectionWriteResult([])
@@ -395,7 +394,7 @@ class ApexExportRunner:
             )
             if action == "readable" and target == resolver.workspace_root() / "app_groups.yaml":
                 content = _merge_app_groups(target, content)
-            target.write_text(content, encoding="utf-8")
+            text_files.write_text(target, content)
         return CollectionWriteResult(rows)
 
     def _write_static_files(
@@ -467,7 +466,7 @@ class ApexExportRunner:
         comments_root = resolver.app_root(application) / "comments"
         comments_root.mkdir(parents=True, exist_ok=True)
         for page_id, payload in comments.items():
-            _store_yaml_mapping(comments_root / f"p{page_id:05d}.yaml", payload)
+            store_yaml_mapping(comments_root / f"p{page_id:05d}.yaml", payload)
         return {
             page_id: str(payload.get("page", {}).get("page_name") or "")
             for page_id, payload in comments.items()
@@ -539,11 +538,11 @@ class ApexExportRunner:
                 continue
             target = resolver.rest_export(name)
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(_plsql_block(module), encoding="utf-8")
+            text_files.write_text(target, _plsql_block(module))
         if modules:
             target = resolver.rest_export("__enable_schema")
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(_plsql_block(_schema_definition(first)), encoding="utf-8")
+            text_files.write_text(target, _plsql_block(_schema_definition(first)))
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

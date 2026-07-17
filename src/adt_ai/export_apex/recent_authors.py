@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from adt_ai.export_apex.inventory import ApexApplication
-from adt_ai.row_values import row_value
+from adt_ai.shared.row_values import row_value
 
 
 def workspace_developers_from_mapping(
@@ -35,18 +35,10 @@ def merge_workspace_developers(
     return merged
 
 
-def recent_author_label(
-    application: ApexApplication,
-    developers: Mapping[str, Mapping[str, str]],
-    request: Any,
-) -> str:
+def recent_author_label(request: Any) -> str:
     if request.my_changes:
         return "ME"
-    changed_by = request.changed_by or ""
-    if not changed_by:
-        return ""
-    workspace_developers = developers.get(application.workspace, {})
-    return changed_by if changed_by in workspace_developers else changed_by
+    return request.changed_by or ""
 
 
 def recent_authors(

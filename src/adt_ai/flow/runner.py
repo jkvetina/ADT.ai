@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from adt_ai.db import QueryGateway
 from adt_ai.flow.model import FlowApp, FlowEdge, FlowPage
 from adt_ai.flow.queries import APP_METADATA_QUERY, APP_PAGES_QUERY, NAV_EDGES_QUERY
 from adt_ai.flow.store import ApexFlowStore
+from adt_ai.shared.db import QueryGateway
 
 GatewayFactory = Callable[[str], QueryGateway]
 

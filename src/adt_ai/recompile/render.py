@@ -147,6 +147,99 @@ def print_job_tables(jobs) -> None:
         )
 
 
+class _TrailingRowFormatter:
+    """Builds the ``TYPE | NAME`` row for one rewritten object.
+
+    Same shape export_db uses for the objects it acts on
+    (``export_db/render.py::export_object``): the type cell prints only when it
+    changes, so a run of one type reads as a group. Stateful by design — it has to
+    remember the previous type. The streamed reporter and the batch fallback each
+    drive one of these, so the two renders cannot drift.
+    """
+
+    TYPE_WIDTH = 20
+    NAME_WIDTH = 54
+
+    def __init__(self) -> None:
+        self._last_type = ""
+
+    def row(self, item) -> str:
+        object_type = item.object_type if item.object_type != self._last_type else ""
+        self._last_type = item.object_type
+        return f"{object_type:>{self.TYPE_WIDTH}} | {item.object_name:<{self.NAME_WIDTH}}"
+
+
+def _print_trailing_updated_header(total: int) -> None:
+    print_adt_header("UPDATED OBJECTS:", f"({total})")
+
+
+def print_trailing_updated_objects(trailing, trailing_actions, silent: bool = False) -> None:
+    """Batch fallback listing the rewritten objects, for non-streamed callers.
+
+    Shares :class:`_TrailingRowFormatter` and the header with the streamed reporter,
+    so the two renders are byte-identical. The header counts the objects the sweep
+    took on (``trailing``), matching what the streamed reporter knows when it opens
+    the section; the rows are the objects actually rewritten.
+    """
+    _print_trailing_updated_header(len(trailing))
+    if not silent:
+        print()
+        formatter = _TrailingRowFormatter()
+        for action in trailing_actions:
+            print(formatter.row(action))
+        print()
+    _print_trailing_failures(trailing_actions)
+
+
+def _print_trailing_failures(trailing_actions) -> None:
+    # a failed rewrite lists its error below the list, keyed by object name and
+    # styled like the COMPILE ERRORS / mview action message lists.
+    failed_actions = [action for action in trailing_actions if not action.ok and action.error]
+    for action in failed_actions:
+        print(f"  {action.object_name}) {action.error}")
+    if failed_actions:
+        print()
+
+
+class _ConsoleTrailingReporter(RecompileReporter):
+    """Streams the object list during a ``-trailing`` run.
+
+    Each object's row prints *before* that object's rewrite runs, so the visible pause
+    attaches to the object being worked on rather than to the header above it.
+
+    Under ``-silent`` the section header still prints and the per-object rows do not,
+    matching export_db and the console contract (drop per-row detail, keep chrome).
+
+    ``streamed`` lets the CLI skip its fallback render when the runner drove the
+    reporter; a dry run never drives it, so the dry-run table still prints.
+    """
+
+    def __init__(self, silent: bool = False) -> None:
+        self._silent = silent
+        self._formatter = _TrailingRowFormatter()
+        self.streamed = False
+
+    def begin_trailing(self, candidates) -> None:
+        self.streamed = True
+        self._formatter = _TrailingRowFormatter()
+        _print_trailing_updated_header(len(candidates))
+        if self._silent:
+            return
+        print()
+        _commit_stdout()
+
+    def trailing_object(self, candidate) -> None:
+        if self._silent:
+            return
+        print(self._formatter.row(candidate), flush=True)
+
+    def end_trailing(self, trailing_actions) -> None:
+        if not self._silent:
+            print()
+        _commit_stdout()
+        _print_trailing_failures(trailing_actions)
+
+
 def _synonym_owner(synonym) -> str:
     return synonym.owner or "UNKNOWN"
 

@@ -60,6 +60,7 @@ def refresh_schema_incremental(
                 counts[table] = insert_rows(
                     connection, table, provided.get(table, ()), stamp={"OWNER": owner}
                 )
+            connection.execute(queries.DELETE_STALE_EXTERNAL_DEPS_QUERY, (owner,))
         return counts
 
     existing = connection.execute(queries.USER_OBJECTS_BY_OWNER_QUERY, (owner,)).fetchall()
@@ -123,6 +124,7 @@ def refresh_schema_incremental(
             counts[table] = insert_rows(
                 connection, table, changed_rows, stamp={"OWNER": owner}
             )
+        connection.execute(queries.DELETE_STALE_EXTERNAL_DEPS_QUERY, (owner,))
     return counts
 
 

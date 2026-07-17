@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import fnmatch
+import sys
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 from adt_ai.export_db.config import _configured_object_types, _split_patterns
 from adt_ai.export_db.inventory import DatabaseObject
+from adt_ai.shared.sql_like import matches_sql_like
 
 if TYPE_CHECKING:
     from adt_ai.export_db.runner import ExportDbRequest
@@ -132,13 +133,24 @@ def _column_comment_width(
         return None
     return max((len(column_name) // 4) * 4 + 5 for column_name in column_names)
 
-def _append_job_arguments(content: str, rows: list[dict[str, Any]]) -> str:
+def _append_job_arguments(
+    content: str, rows: list[dict[str, Any]], object_name: str = ""
+) -> str:
     argument_lines = _render_job_arguments(rows)
     if not argument_lines:
         return content
     marker = "    --\n    DBMS_SCHEDULER.SET_ATTRIBUTE"
     replacement = f"    --\n{argument_lines}\n    --\n    DBMS_SCHEDULER.SET_ATTRIBUTE"
     if marker not in content:
+        # The job HAS arguments but the DDL didn't render the expected
+        # SET_ATTRIBUTE block to anchor them — dropping them silently would
+        # export a job that deploys without its arguments.
+        label = f" for job {object_name}" if object_name else ""
+        print(
+            f"Warning: job arguments{label} not exported: "
+            "no DBMS_SCHEDULER.SET_ATTRIBUTE block found in the DDL",
+            file=sys.stderr,
+        )
         return content
     return content.replace(marker, replacement, 1)
 
@@ -298,12 +310,6 @@ def _grant_object_matches(
     if name.startswith("BIN$"):
         return False
     prefixes = _split_patterns(prefix) or ["%"]
-    if not any(
-        fnmatch.fnmatchcase(name, pattern.upper().replace("%", "*"))
-        for pattern in prefixes
-    ):
+    if not any(matches_sql_like(name, pattern) for pattern in prefixes):
         return False
-    return not any(
-        fnmatch.fnmatchcase(name, pattern.upper().replace("%", "*"))
-        for pattern in (ignore or [])
-    )
+    return not any(matches_sql_like(name, pattern) for pattern in (ignore or []))

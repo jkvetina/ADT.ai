@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "adt-ai"
-version = "0.6.4"
+version = "0.7.0"
 description = "Modern Python rewrite of ADT focused on YAML-configured Oracle/APEX deployment tooling."
 readme = "README.md"
 license = {text = "MIT"}
@@ -43,12 +43,16 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# cli_constants is a deliberate re-export hub for the CLI layer: it imports the
-# public symbols and re-exports them through a dynamic __all__ built from
-# globals(), which ruff cannot resolve statically. Every re-export therefore
-# reads as an unused import even though the cli_* command modules import these
-# names from here. Suppress F401/I001 for this generated public aggregator.
-"src/adt_ai/cli_constants.py" = ["F401", "I001"]
+# These are deliberate re-export hubs for the CLI layer: they import the public
+# symbols and re-export them through a dynamic __all__ built from globals(),
+# which ruff cannot resolve statically. Every re-export therefore reads as an
+# unused import even though the sibling command modules import these names from
+# here. Suppress F401/I001 for these generated public aggregators.
+#
+# Keep these keys in step with the files: they are paths, so a move silently
+# orphans the ignore and `ruff --fix` then deletes the whole re-export block.
+"src/adt_ai/cli/constants.py" = ["F401", "I001"]
+"src/adt_ai/cli/__init__.py"  = ["F401", "I001"]
 # Public build strips private history commands, leaving this generated
 # aggregator with imports that are intentionally not normalized by ruff.
-"src/adt_ai/cli_commands_history.py" = ["F401", "I001"]
+"src/adt_ai/cli/commands_history.py" = ["F401", "I001"]

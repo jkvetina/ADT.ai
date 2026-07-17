@@ -5,8 +5,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from adt_ai.db import QueryGateway
 from adt_ai.export_db import queries
+from adt_ai.shared.db import QueryGateway
+from adt_ai.shared.sql_like import matches_sql_like
 
 
 @dataclass(frozen=True)
@@ -192,6 +193,22 @@ class ObjectDiscovery:
     def directories(self, schema: str) -> list[dict[str, Any]]:
         return self.gateway.fetch_all(self.DIRECTORIES_QUERY)
 
+    def authors_objects(self, audit: Any, authors: Iterable[str]) -> set[str]:
+        """Return the uppercased object names attributed to ``authors`` in the audit source."""
+        query = queries.audit_authors_query(
+            audit.source,
+            audit.object_name_column,
+            audit.changed_by_column,
+        )
+        rows = self.gateway.fetch_all(
+            query,
+            {"authors": _query_pattern_list(_normalize_list(authors), default="")},
+        )
+        return {
+            str(row.get("OBJECT_NAME") or row.get("object_name") or "").upper()
+            for row in rows
+        }
+
     def prepare_comments(
         self,
         schema: str,
@@ -362,30 +379,7 @@ def _matches_any_of(values: Iterable[str], patterns: Iterable[str]) -> bool:
 
 
 def _matches_like(value: str, pattern: str) -> bool:
-    return fnmatch.fnmatchcase(value.upper(), _sql_like_to_fnmatch(pattern.upper()))
-
-
-def _sql_like_to_fnmatch(pattern: str) -> str:
-    converted = []
-    escaped = False
-    for character in pattern:
-        if escaped:
-            converted.append(f"[{character}]" if character in "*?[]" else character)
-            escaped = False
-            continue
-        if character == "\\":
-            escaped = True
-        elif character == "%":
-            converted.append("*")
-        elif character == "_":
-            converted.append("?")
-        elif character in "*?[]":
-            converted.append(f"[{character}]")
-        else:
-            converted.append(character)
-    if escaped:
-        converted.append("\\")
-    return "".join(converted)
+    return matches_sql_like(value, pattern)
 
 
 def _includes_object_type(object_type: str, object_types: Iterable[str] | None) -> bool:

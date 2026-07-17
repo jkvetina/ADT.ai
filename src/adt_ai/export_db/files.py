@@ -4,7 +4,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from adt_ai.export_db.groups import GroupRules, group_for, object_name_from_file
 from adt_ai.export_db.inventory import DatabaseObject
+from adt_ai.shared import text_files
+from adt_ai.shared.config import DEFAULT_PATH_OBJECTS
 
 
 class ObjectFileError(Exception):
@@ -39,8 +42,10 @@ class ObjectFileResolver:
         path_objects: str | Path,
         object_types: dict[str, ObjectTypeLayout],
         schema_folders: dict[str, str] | None = None,
+        group_rules: GroupRules | None = None,
     ) -> None:
         self.root = Path(root)
+        self.group_rules = group_rules
         # path_objects is a path template; it may contain <schema> and
         # <object_type> placeholders. When <object_type> is omitted the
         # per-type folder is appended automatically (legacy 'database/' layout).
@@ -54,19 +59,25 @@ class ObjectFileResolver:
         self._existing_case_paths_by_folder: dict[Path, dict[str, Path]] = {}
 
     @classmethod
-    def from_config(cls, root: Path, config: dict[str, Any]) -> ObjectFileResolver:
+    def from_config(
+        cls,
+        root: Path,
+        config: dict[str, Any],
+        group_rules: GroupRules | None = None,
+    ) -> ObjectFileResolver:
         raw_types = config.get("object_types", {})
         if not isinstance(raw_types, dict):
             raise ObjectFileError("object_types must be a mapping")
 
         return cls(
             root          = root,
-            path_objects  = config.get("path_objects", "database/<schema>/<object_type>"),
+            path_objects  = config.get("path_objects", DEFAULT_PATH_OBJECTS),
             schema_folders = _parse_schema_folders(config.get("schema_folders", {})),
             object_types={
                 object_type: _parse_layout(object_type, raw_layout)
                 for object_type, raw_layout in raw_types.items()
             },
+            group_rules = group_rules,
         )
 
     def path_for(self, database_object: DatabaseObject) -> Path:
@@ -82,7 +93,15 @@ class ObjectFileResolver:
             else database_object.name.lower()
         )
         filename = f"{object_name}{layout.extension}"
-        return self._existing_case_path(folder, filename) or folder / filename
+        # Honour an already-exported file wherever it sits (including a group
+        # subfolder a user arranged by hand) before routing a brand-new object.
+        existing = self._existing_case_path(folder, filename)
+        if existing is not None:
+            return existing
+        group = group_for(object_type, database_object.name, self.group_rules)
+        if group:
+            return folder / group / filename
+        return folder / filename
 
     def fix_path_for(self, database_object: DatabaseObject) -> Path:
         path = self.path_for(database_object)
@@ -135,7 +154,7 @@ class ObjectFileResolver:
                         DatabaseObject(
                             schema or (schemas[0] if schemas else ""),
                             object_type,
-                            _object_name_from_file(file_path, layout),
+                            object_name_from_file(file_path, layout.extension),
                         )
                     )
         return sorted(missing, key=lambda item: (item.object_type, item.name))
@@ -170,6 +189,67 @@ class ObjectFileResolver:
                     file_path.unlink()
                     deleted.append(file_path)
         return deleted
+
+    def iter_type_roots(
+        self, schemas: list[str]
+    ) -> list[tuple[str, Path, str]]:
+        """List `(object_type, folder, extension)` per exportable object type.
+
+        Used by group detection to scan existing files. DATA and GRANT are skipped
+        since they do not participate in prefix grouping.
+        """
+        roots: list[tuple[str, Path, str]] = []
+        seen: set[tuple[str, Path]] = set()
+        for object_type, layout in self.object_types.items():
+            if object_type in {"DATA", "GRANT"}:
+                continue
+            for folder in self._search_roots_for(object_type, layout, schemas):
+                key = (object_type, folder)
+                if key in seen:
+                    continue
+                seen.add(key)
+                roots.append((object_type, folder, layout.extension))
+        return roots
+
+    def check_subtree_uniqueness(self, schemas: list[str]) -> None:
+        """Raise ObjectFileError if any filename appears more than once in a type subtree."""
+        for object_type, layout in self.object_types.items():
+            if object_type in {"DATA", "GRANT"}:
+                continue
+            seen: dict[str, list[Path]] = {}
+            for search_root in self._search_roots_for(object_type, layout, schemas):
+                if not search_root.exists():
+                    continue
+                for file_path in search_root.rglob(f"*{layout.extension}"):
+                    if file_path.name.endswith(f".fix{layout.extension}"):
+                        continue
+                    seen.setdefault(file_path.name.lower(), []).append(file_path)
+            collisions = {name: paths for name, paths in seen.items() if len(paths) > 1}
+            if collisions:
+                lines = [f"Duplicate filenames found in {object_type} subtree:"]
+                for _name, paths in sorted(collisions.items()):
+                    for path in sorted(paths):
+                        lines.append(f"  {path}")
+                raise ObjectFileError("\n".join(lines))
+
+    def flat_object_names(self, schemas: list[str]) -> dict[str, list[str]]:
+        """Object names of files sitting directly in each type folder (not grouped)."""
+        names_by_type: dict[str, list[str]] = {}
+        for object_type, layout in self.object_types.items():
+            if object_type in {"DATA", "GRANT"}:
+                continue
+            for folder in self._search_roots_for(object_type, layout, schemas):
+                if not folder.is_dir():
+                    continue
+                for file_path in sorted(folder.glob(f"*{layout.extension}")):
+                    if not file_path.is_file():
+                        continue
+                    if file_path.name.endswith(f".fix{layout.extension}"):
+                        continue
+                    names_by_type.setdefault(object_type, []).append(
+                        object_name_from_file(file_path, layout.extension)
+                    )
+        return names_by_type
 
     def _folder_for(self, database_object: DatabaseObject, layout: ObjectTypeLayout) -> Path:
         rendered = self.path_objects.replace(
@@ -251,7 +331,7 @@ class ObjectFileWriter:
         if plan.action == "unchanged":
             return plan
         plan.path.parent.mkdir(parents=True, exist_ok=True)
-        plan.path.write_text(request.content, encoding="utf-8")
+        text_files.write_text(plan.path, request.content)
         return plan
 
     def _plan_one(
@@ -312,10 +392,3 @@ def _existing_case_paths(folder: Path) -> dict[str, Path]:
         if existing.is_file():
             paths.setdefault(existing.name.lower(), existing)
     return paths
-
-
-def _object_name_from_file(file_path: Path, layout: ObjectTypeLayout) -> str:
-    name = file_path.name
-    if name.endswith(layout.extension):
-        name = name[: -len(layout.extension)]
-    return name.upper()

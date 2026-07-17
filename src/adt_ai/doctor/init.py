@@ -7,6 +7,7 @@ from adt_ai.doctor._base import (
     DoctorResult,
     _init_group_lines,
 )
+from adt_ai.shared import text_files
 
 
 class DoctorInitMixin:
@@ -32,7 +33,7 @@ class DoctorInitMixin:
                 skipped.append(relative_path)
                 continue
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            text_files.write_text(path, content)
             created.append(relative_path)
 
         self._extend(lines, _init_group_lines("CREATED", root, created))  # type: ignore[attr-defined]

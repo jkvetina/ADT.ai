@@ -15,11 +15,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 
-from adt_ai.db import QueryGateway
 from adt_ai.dependencies.queries import PLSCOPE_SESSION_STATEMENT
-from adt_ai.oracle_session import is_ddl_lock_timeout
 from adt_ai.recompile.inventory import RecompileDiscovery, RecompileObject
 from adt_ai.recompile.queries import build_compile_statement
+from adt_ai.shared.db import QueryGateway
+from adt_ai.shared.oracle_session import is_ddl_lock_timeout
 
 
 def ensure_plscope(

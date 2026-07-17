@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from adt_ai.db import QueryGateway
 from adt_ai.recompile import queries
+from adt_ai.shared.db import QueryGateway
 
 
 def _str_or_none(value: Any) -> str | None:
@@ -102,6 +102,28 @@ class SchedulerJobRun:
 
 
 @dataclass(frozen=True)
+class TrailingObject:
+    object_type: str
+    object_name: str
+    # how many of the object's stored source lines carry trailing whitespace.
+    trailing_lines: int
+
+
+@dataclass(frozen=True)
+class TrailingView:
+    """One in-scope view and its stored defining text (#122).
+
+    Carries the text because, unlike the user_source path, the trailing-whitespace
+    test cannot run in SQL against a LONG — so the text comes back with the row and
+    the check happens in Python. Clean views arrive here too and are filtered out
+    downstream.
+    """
+
+    object_name: str
+    view_text: str
+
+
+@dataclass(frozen=True)
 class SynonymInfo:
     synonym_name: str
     # the target object's type, taken from the received privilege (g.type); NULL
@@ -130,6 +152,12 @@ class RecompileDiscovery:
     DISABLED_OBJECTS_QUERY = queries.DISABLED_OBJECTS_QUERY
     SCHEDULER_JOBS_QUERY = queries.SCHEDULER_JOBS_QUERY
     OBJECTS_MISSING_PLSCOPE_QUERY = queries.OBJECTS_MISSING_PLSCOPE_QUERY
+    TRAILING_OBJECTS_QUERY = queries.TRAILING_OBJECTS_QUERY
+    TRAILING_VIEWS_QUERY = queries.TRAILING_VIEWS_QUERY
+    OBJECT_SOURCE_QUERY = queries.OBJECT_SOURCE_QUERY
+    VIEW_TEXT_QUERY = queries.VIEW_TEXT_QUERY
+    VIEW_COLUMNS_QUERY = queries.VIEW_COLUMNS_QUERY
+    TRIGGER_STATUS_QUERY = queries.TRIGGER_STATUS_QUERY
 
     def __init__(self, gateway: QueryGateway) -> None:
         self.gateway = gateway
@@ -342,18 +370,19 @@ class RecompileDiscovery:
         self,
         *,
         object_name: str = "%",
+        object_type: str = "%",
         prefix: str = "",
         ignore: str = "",
     ) -> list[DisabledObject]:
-        # Like the MV and synonym reports, the disabled-object report binds only
-        # name/prefix/ignore: the flag opts constraints, indexes, and triggers in
-        # explicitly.
-        binds = {
-            "object_name"    : object_name,
-            "objects_prefix" : prefix,
-            "objects_ignore" : ignore,
-        }
-        rows = self.gateway.fetch_all(self.DISABLED_OBJECTS_QUERY, binds)
+        # Alone among the report-only flags, -disabled spans three object types
+        # (CONSTRAINT / INDEX / TRIGGER), so it takes the full standard scope: -type
+        # picks which of the three to report, -name filters within them.
+        rows = self.gateway.fetch_all(
+            self.DISABLED_OBJECTS_QUERY,
+            self._scope_binds(
+                object_name=object_name, object_type=object_type, prefix=prefix, ignore=ignore
+            ),
+        )
         return [
             DisabledObject(
                 str(row["OWNER"]),
@@ -363,6 +392,98 @@ class RecompileDiscovery:
             )
             for row in rows
         ]
+
+    def trailing_objects(
+        self,
+        *,
+        object_name: str = "%",
+        object_type: str = "%",
+        prefix: str = "",
+        ignore: str = "",
+    ) -> list[TrailingObject]:
+        # Unlike the other focused reports, -trailing acts on the same compilable
+        # objects as the recompile loop itself, so it takes the standard 4-key scope
+        # (-type/-name) instead of a flag-local name pattern.
+        rows = self.gateway.fetch_all(
+            self.TRAILING_OBJECTS_QUERY,
+            self._scope_binds(
+                object_name=object_name, object_type=object_type, prefix=prefix, ignore=ignore
+            ),
+        )
+        return [
+            TrailingObject(
+                str(row["OBJECT_TYPE"]),
+                str(row["OBJECT_NAME"]),
+                int(row["TRAILING_LINES"] or 0),
+            )
+            for row in rows
+        ]
+
+    def trailing_views(
+        self,
+        *,
+        object_name: str = "%",
+        object_type: str = "%",
+        prefix: str = "",
+        ignore: str = "",
+    ) -> list[TrailingView]:
+        """In-scope views with their stored defining text (#122).
+
+        Returns every in-scope view, clean or not — user_views.text is a LONG, so
+        SQL cannot do the trailing-whitespace test the user_source query does. The
+        caller decides what actually needs rewriting via build_trailing_view_ddl.
+        """
+        rows = self.gateway.fetch_all(
+            self.TRAILING_VIEWS_QUERY,
+            self._scope_binds(
+                object_name=object_name, object_type=object_type, prefix=prefix, ignore=ignore
+            ),
+        )
+        return [
+            TrailingView(str(row["OBJECT_NAME"]), str(row["VIEW_TEXT"] or ""))
+            for row in rows
+        ]
+
+    def view_text(self, object_name: str) -> str:
+        """One view's stored defining text, re-read at rewrite time.
+
+        The authoritative read. ``trailing_views`` fetched a copy during detection,
+        but the database is live: this is the text that actually gets rewritten, so
+        a change made in between is respected rather than reverted.
+        """
+        rows = self.gateway.fetch_all(
+            self.VIEW_TEXT_QUERY,
+            {"object_name": object_name},
+        )
+        if not rows:
+            return ""
+        return str(rows[0]["VIEW_TEXT"] or "")
+
+    def view_columns(self, object_name: str) -> list[str]:
+        """One view's column names in declaration order."""
+        rows = self.gateway.fetch_all(
+            self.VIEW_COLUMNS_QUERY,
+            {"object_name": object_name},
+        )
+        return [str(row["COLUMN_NAME"]) for row in rows]
+
+    def object_source(self, object_type: str, object_name: str) -> list[str]:
+        """One object's stored source lines, in order, terminators included."""
+        rows = self.gateway.fetch_all(
+            self.OBJECT_SOURCE_QUERY,
+            {"object_type": object_type, "object_name": object_name},
+        )
+        return [str(row["TEXT"] or "") for row in rows]
+
+    def trigger_status(self, object_name: str) -> str | None:
+        """A trigger's ENABLED/DISABLED state, or None when the catalog has no row."""
+        rows = self.gateway.fetch_all(
+            self.TRIGGER_STATUS_QUERY,
+            {"object_name": object_name},
+        )
+        if not rows:
+            return None
+        return _str_or_none(rows[0].get("STATUS"))
 
     def scheduler_jobs(
         self,

@@ -1,8 +1,8 @@
 ---
 created: 2026-06-10
-updated: 2026-06-22
+updated: 2026-07-16 18:05
 name: adt
-version: 1.0.0
+version: 1.1.0
 tags: [oracle, apex, deployment, cli, database]
 description: "ADT.ai usage guide for Oracle/APEX work: export database objects, APEX apps and data, run read-only SQL discovery, search Git history, query the dependency graph, and recompile invalid objects. Use for any ADT.ai command help."
 ---
@@ -49,6 +49,13 @@ Jobs export separately — `JOB` objects have no reliable `last_ddl_time`, so **
 
 ```bash
 adtai export_db -silent -type JOB
+```
+
+Filter by author in a shared schema worked through proxy users — `-by <NAME>` for a specific db user/schema, `-my` for yourself (db schema read from the gitignored `config/me.yaml`). Both resolve authorship against the project's configured `audit:` source (a DDL-log table/view), so they need no DBA audit-trail access; without an `audit:` block in `config.yaml` they exit `2`:
+
+```bash
+adtai export_db -silent -by SCOTT
+adtai export_db -silent -my
 ```
 
 Clean export (delete existing object files first, excluding `DATA`):
@@ -143,21 +150,43 @@ adtai discovery -env DEV -schema APP -sql "SELECT * FROM app_settings" -limit 50
 
 ## dependencies — query the object graph
 
-Answers "what uses this?" / "what would I break?" against a committed graph (`dependencies/index.yaml` + `edges.yaml`). Day-to-day queries are offline; only `-refresh` touches the database.
+Answers "what uses this?" / "what would I break?" against a single gitignored SQLite mirror of the raw Oracle data dictionary at `config/dependencies.db` (multi-schema `USER_*` tables stamped with `OWNER`, plus the APEX dictionary keyed by application id). Every query mode recomputes its answer from the raw mirrors at query time — day-to-day queries are offline; only `-refresh` touches the database.
 
-Build or rebuild the index from the database:
+There is no separate rebuild step — re-running `-refresh` incrementally updates the mirror: `-schema` detects added/changed/dropped objects by `LAST_DDL_TIME` and removes stale relations to/from dropped objects; object names or SQL wildcards after `-refresh` force a deep refresh for matching objects and dependency rows in both directions; `-force` wipes only the requested schema/app scope before reloading it:
 
 ```bash
 adtai dependencies -refresh -env DEV -schema APP
+adtai dependencies -refresh CORE CORE% -env DEV -schema APP
+adtai dependencies -refresh -force -env DEV -schema APP
 ```
 
-Query the graph:
+`-refresh -app` updates the APEX dictionary mirror for one or more application ids (repeat the flag or space-separate ids under one `-app`) and ranges — `MIN-MAX` (closed) or `MIN+` (open) — resolved against the apps discovered across the configured schemas:
 
 ```bash
-adtai dependencies -uses "PACKAGE BODY.CORE"
-adtai dependencies -used-by "TABLE.CORE_LOGS"
+adtai dependencies -refresh -env DEV -app 100 200 300
+adtai dependencies -refresh -env DEV -app 120-130
+adtai dependencies -refresh -env DEV -app 300+
+```
+
+Query the mirror (`-from OBJ` = objects OBJ depends on; `-to OBJ` = objects that depend on OBJ; `-impact OBJ` = transitive reverse impact, appending APEX page/component/property callers when the APEX mirror is present; `-tree CONSTRAINT_NAME` = foreign-key cascade paths around a named constraint):
+
+```bash
+adtai dependencies -from "PACKAGE BODY.CORE"
+adtai dependencies -to "TABLE.CORE_LOGS"
 adtai dependencies -impact "TABLE.CORE_LOGS"
-adtai dependencies -unused
+adtai dependencies -tree "ORDER_ITEMS_ORDER_FK"
+```
+
+On a multi-schema mirror an object name (e.g. `PACKAGE.CORE`) can be ambiguous across owners. Add `-schema OWNER[,OWNER ...]` to any query mode as an offline, case-insensitive owner filter that disambiguates by the owner column the mode matches on — `-from` filters the dependent `OWNER`, `-to` filters `REFERENCED_OWNER`, `-impact` constrains only the seed's `REFERENCED_OWNER` (the transitive walk is unchanged). It is parsed locally (no DB connection); omitting it matches every tracked owner. `-app`/`-force` stay refresh-only.
+
+```bash
+adtai dependencies -from "PACKAGE.CORE" -schema APP
+```
+
+`-age` reports when each schema and APEX app scope was last refreshed, offline. Check it before trusting a query — a stale mirror answers confidently and wrongly, and this is the supported staleness check rather than reading the file's mtime:
+
+```bash
+adtai dependencies -age
 ```
 
 `-format yaml` or `-format md` moves the chrome to stderr so stdout stays pipeable.
@@ -177,6 +206,42 @@ Force-recompile all with native code + optimization, scoped by type/name:
 ```bash
 adtai recompile -env DEV -force -native -level 3 -type PACKAGE% -name XX%
 ```
+
+`-type`, `-name`, and `-schema` are shared filters, and every mode below is scoped by them — no mode carries a name pattern of its own, so `-mviews DEP%` is a parser error and `-mviews -name DEP%` is the way. `-type`/`-name` take multiple patterns (`-type PACKAGE VIEW`, `-type PACKAGE,VIEW`, or a repeated flag). `-type` speaks Oracle's vocabulary: bare `PACKAGE` means specifications, `PACKAGE BODY` bodies, `MVIEW`/`MATERIALIZED` both mean `MATERIALIZED VIEW`. `-schema` is repeatable and pattern-aware (`-schema APP,CORE%`); each schema is an independent pass.
+
+### Modes
+
+Each flag below **replaces** the ordinary invalid-object recompile rather than adding to it, so the OBJECTS OVERVIEW does not print.
+
+Report-only — these connect, read, and print, and change nothing:
+
+```bash
+adtai recompile -env DEV -synonyms
+adtai recompile -env DEV -disabled -type TRIGGER
+adtai recompile -env DEV -jobs -name APP%
+```
+
+- `-synonyms` maps each synonym to its target object, grouped by target owner, one privilege per row with `PRIV`/`GRNT`/`VALID`.
+- `-disabled` lists disabled constraints, invalid/function-disabled indexes, and disabled triggers. It is the one report spanning several object types, so `-type` picks which of `CONSTRAINT`/`INDEX`/`TRIGGER`; bare `-disabled` reports all three.
+- `-jobs` lists today's scheduler job runs, grouped by status.
+
+Materialized views — reports, then acts:
+
+```bash
+adtai recompile -env DEV -mviews
+adtai recompile -env DEV -mviews -name DEP% -force
+```
+
+`-mviews` compiles invalid MVs and refreshes stale ones using each view's **own** configured refresh method (a COMPLETE view is never flipped to FAST). With `-force`, every matching view is refreshed regardless of staleness.
+
+**`-trailing` writes to the database.** It strips trailing whitespace from stored source via `CREATE OR REPLACE` — the fix for `export_db` diffing an untouched object on every export, since `export_db` strips trailing whitespace from every line it writes and the database's stored source does not:
+
+```bash
+adtai recompile -env DEV -trailing
+adtai recompile -env DEV -trailing -type PACKAGE% -name APP%
+```
+
+There is **no preview and no dry run** — asking for `-trailing` is asking for the strip, and `-trailing -fix` is a parser error rather than the old spelling. The safety is structural rather than a confirmation prompt: an object with nothing to strip is never touched, and removing trailing whitespace cannot change behaviour. Scope with `-type`/`-name` to narrow the blast radius. Covers `PACKAGE`, `PACKAGE BODY`, `PROCEDURE`, `FUNCTION`, `TRIGGER`, and `VIEW`; wrapped objects, editioning views, and views carrying `WITH READ ONLY` / `WITH CHECK OPTION` are skipped, since none of those survive the rebuild. `CREATE OR REPLACE` invalidates dependents, so follow a sweep with a plain `adtai recompile`.
 
 ## search_repo — search Git history
 
