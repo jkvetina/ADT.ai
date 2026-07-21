@@ -10,6 +10,7 @@ import yaml
 from adt_ai.shared import crypto
 from adt_ai.shared.config import is_enabled
 from adt_ai.shared.dict_merge import deep_merge
+from adt_ai.shared.sqlcl_names import derive_sqlcl_name
 
 # Standard Oracle listener port, applied wherever a connection omits `port`
 # (driver DSNs, SQLcl connect strings, and the connection editor default).
@@ -42,6 +43,13 @@ class Connection:
     wallet_path     : str | None = None
     wallet_password : str | None = None
     client_lib_dir  : str | None = None
+    # Named SQLcl connection identity (ADT #148): the name generated SQLcl
+    # scripts connect with, the fingerprint recorded at last registration, and
+    # the YAML file registrations are written back to. All three stay ``None``
+    # on an ad-hoc Connection, which keeps the inline-connect behavior.
+    sqlcl_name      : str | None = None
+    sqlcl_sync      : str | None = None
+    sqlcl_source    : str | None = None
 
 
 @dataclass(frozen=True)
@@ -146,6 +154,32 @@ class ConnectionResult:
             ),
             wallet_password = wallet_password,
             client_lib_dir  = db.get("client_lib_dir") or db.get("lib_dir"),
+            sqlcl_name      = self._sqlcl_name(db, environment_name, schema_name),
+            sqlcl_sync      = db.get("sqlcl_sync"),
+            sqlcl_source    = str(self.files[0]) if self.files else None,
+        )
+
+    def _sqlcl_name(
+        self,
+        db: dict[str, Any],
+        environment_name: str,
+        schema_name: str,
+    ) -> str | None:
+        recorded = db.get("sqlcl")
+        if recorded:
+            return str(recorded)
+        if not self.files:
+            return None
+        environments = [
+            name for name, node in self.data.items() if isinstance(node, dict)
+        ]
+        schemas = self._environment(environment_name).get("schemas") or {}
+        return derive_sqlcl_name(
+            self.files[0],
+            environment_name,
+            schema_name,
+            multi_environment = len(environments) > 1,
+            multi_schema      = isinstance(schemas, dict) and len(schemas) > 1,
         )
 
     def _environment(self, name: str) -> dict[str, Any]:

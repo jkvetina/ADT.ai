@@ -85,7 +85,7 @@ When no explicit export format is selected, non-reveal `-recent` requests print 
 | `-split`, `--split` | No | off | Export split application source. |
 | `-readable`, `--readable` | No | off | Export readable YAML source. |
 | `-embedded`, `--embedded` | No | off | Export embedded code report. |
-| `-rest`, `--rest` | No | off | Export REST services. |
+| `-rest`, `--rest` | No | off | Export REST services. Runs through SQLcl using a named `ADT_…` connection (auto-registered, wallet included) — see [connection.md](connection.md#named-sqlcl-connections). |
 | `-files`, `--files` | No | off | Export application files. |
 | `-files_ws`, `--files_ws`, `--files-ws` | No | off | Export workspace files. |
 | `-debug`, `--debug` | No | off | Show input parameters and SQL queries with bind values. |

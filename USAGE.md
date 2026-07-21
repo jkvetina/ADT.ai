@@ -1,6 +1,6 @@
 # ADT.ai Usage
 
-This is the public usage index for ADT.ai `0.7.0`.
+This is the public usage index for ADT.ai `0.7.1`.
 
 ## Commands
 
@@ -16,6 +16,7 @@ This is the public usage index for ADT.ai `0.7.0`.
 | `search_repo` | [USAGE/search_repo.md](USAGE/search_repo.md) | Search cached Git commit history. |
 | `discovery` | [USAGE/discovery.md](USAGE/discovery.md) | Run read-only SELECT discovery queries. |
 | `flow` | [USAGE/flow.md](USAGE/flow.md) | Map APEX page navigation into a queryable flow store. |
+| `connection` | [USAGE/connection.md](USAGE/connection.md) | Create or edit a project's connection YAML file. |
 
 ## Install
 

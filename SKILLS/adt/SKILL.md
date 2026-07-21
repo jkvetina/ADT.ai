@@ -1,6 +1,6 @@
 ---
 created: 2026-06-10
-updated: 2026-07-16 18:05
+updated: 2026-07-20 18:51
 name: adt
 version: 1.1.0
 tags: [oracle, apex, deployment, cli, database]
@@ -104,6 +104,7 @@ adtai export_apex -app 100 -component LOV:%
 - Name the formats explicitly. Common set: `-full -split -files -rest -readable`. Skip `-embedded` unless asked — it slows the export.
 - `-recent N`, `-page`, and `-component TYPE:NAME%` filter split/readable/embedded component output. `-page` or `-component` without an explicit format defaults to `-split`. Filtered component exports print affected rows instead of dotted progress and do not update `apex_timers.yaml`. Full app SQL, REST services, app files, and workspace files stay broad. With `-reveal`, `-recent` filters the listed apps.
 - If apps don't appear, the connection's APEX schema likely doesn't match the owner — narrow or widen with `-schema`, or use `-owners` in reveal.
+- `-rest` runs through SQLcl with a named `ADT_…` connection: registered automatically on first use (password in SQLcl's secure store, wallet included), recorded as `sqlcl:`/`sqlcl_sync:` in the connection YAML, re-registered automatically after a credential change. Opt out with `sqlcl_named_connections: false` in `config.yaml`. Details: `USAGE/connection.md` §Named SQLcl connections.
 
 ## export_data — export table data
 

@@ -86,6 +86,7 @@ from adt_ai.shared.progress import DottedProgressBar
 
 PUBLIC_MODULES = (
     ("flow", "map APEX page navigation links (to/from, refresh)", ()),
+    ("connection", "edit the connection file (add env/schema, set password)", ()),
     ("dependencies", "query or refresh the dependency index", ()),
     ("discovery", "run read-only SELECT discovery queries", ()),
     ("doctor", "check local setup and run explicit updates", ()),

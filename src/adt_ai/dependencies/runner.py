@@ -27,6 +27,7 @@ from typing import Any
 from adt_ai.dependencies import plscope, queries, refresh
 from adt_ai.dependencies.store import DependencyStore
 from adt_ai.export_apex import queries as export_apex_queries
+from adt_ai.export_db.render import print_adt_header
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.progress import fixed_width_count_line, fixed_width_status_line
 
@@ -44,6 +45,8 @@ class DependencyIndexRequest:
     refresh_names: list[str] | None = None
     # Per-scope last-refresh stamp; defaults to "now" when the request omits it.
     refreshed_at: str | None = None
+    # app_id -> display label ("122" or "122/ALIAS"), for the per-app section header.
+    app_labels: dict[int, str] | None = None
 
 
 GatewayFactory = Callable[[str], QueryGateway]
@@ -168,6 +171,8 @@ class DependencyIndexRunner:
                         f"skipping APEX app {app}."
                     )
                     continue
+                label = (request.app_labels or {}).get(app, str(app))
+                print_adt_header(f"APP {label}, REFRESHING:")
                 gateway = self.gateway_factory(app_schema)
                 if id(gateway) not in prepared:
                     plscope.ensure_plscope(gateway, progress=progress.line)
