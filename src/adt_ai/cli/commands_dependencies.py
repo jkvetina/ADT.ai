@@ -307,18 +307,20 @@ def _refresh_dependency_index(
     scope_bits: list[str] = []
     if schemas:
         scope_bits.append(", ".join(schemas))
+    app_labels: dict[int, str] = {}
     if apps:
-        app_labels = _apex_app_labels(
+        labels = _apex_app_labels(
             selected_gateway_factory(app_schema) if app_schema else None,
             app_schema,
             apps,
         )
+        app_labels = dict(zip(apps, labels, strict=True))
         if schemas:
-            scope_bits.append(", ".join(f"APEX APP {label}" for label in app_labels))
-        elif len(app_labels) == 1:
-            print_adt_header(f"REFRESHING APEX APP: {app_labels[0]}")
+            scope_bits.append(", ".join(f"APEX APP {label}" for label in labels))
+        elif len(labels) == 1:
+            print_adt_header(f"REFRESHING APEX APP: {labels[0]}")
         else:
-            print_adt_header(f"REFRESHING APEX APPS: {', '.join(app_labels)}")
+            print_adt_header(f"REFRESHING APEX APPS: {', '.join(labels)}")
     if schemas:
         print_adt_header(f"REFRESHING DEPENDENCY DATABASE: {' | '.join(scope_bits)}")
     silent = getattr(args, "silent", False)
@@ -333,6 +335,7 @@ def _refresh_dependency_index(
             progress   = None if silent else FixedWidthProgressPrinter(),
             apex_versions = apex_versions,
             refresh_names = refresh_names,
+            app_labels = app_labels,
         )
     )
     print()

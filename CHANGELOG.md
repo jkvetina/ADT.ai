@@ -2,6 +2,14 @@
 
 All notable changes to the public ADT.ai release are recorded here, newest first.
 
+## 0.7.1 - 2026-07-21
+
+- **Added the `connection` module** for managing named SQLcl connections. Generated SQLcl scripts (including `export_apex -rest`) now connect through a named, credential-free SQLcl connection instead of embedding a username, password, or wallet path each time; a changed credential is detected and re-registered automatically. See `USAGE/connection.md`.
+- **Fixed:** `export_apex -rest` against an Oracle wallet (OCI) could produce no output — wallet paths now resolve correctly regardless of where the generated script runs from.
+- **Fixed:** `export_apex -rest` occasionally wrote a stray `Session altered.` line into generated REST files, corrupting the output.
+- **Fixed:** `export_apex -component` help text could crash on some Python versions due to an unescaped `%` character.
+- **Fixed:** `dependencies -app <range> -refresh` against several applications printed one flat combined listing instead of rendering results app by app, matching `export_apex`'s per-application section style.
+
 ## 0.7.0 - 2026-07-17
 
 - **Breaking — `recompile`:** the `-target` alias is removed; use `-env`. The report actions `-mviews`, `-synonyms`, `-disabled`, and `-jobs` no longer carry their own `[NAME]` pattern — they are bare flags scoped by the shared `-name` and `-type` filters, so `adtai recompile -mviews DEP%` becomes `adtai recompile -mviews -name DEP%`.

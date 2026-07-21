@@ -101,6 +101,14 @@ COMMAND_SUMMARIES = {
         "The to and from queries report incoming and outgoing page links for a chosen page.",
         "Each refresh writes Mermaid, Graphviz DOT, and JSON diagrams under config/flow.",
     ),
+    "connection": (
+        "Edits the resolved ADT.ai connection file to add environments, schemas, or passwords.",
+        "Use it instead of hand-editing connection YAML so comments and key order are preserved.",
+        "Add actions create a new environment or attach a schema, "
+        "optionally cloning an existing one.",
+        "Set-password mode prompts interactively so secrets never appear on the command line.",
+        "Changes preview by default and only write to disk when the apply switch is passed.",
+    ),
     "dependencies": (
         "Builds and queries the Oracle dependency index used by ADT.ai impact reports.",
         "Use it to see what an object uses, what depends on it, and what a change can break.",

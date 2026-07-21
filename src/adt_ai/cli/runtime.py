@@ -7,6 +7,7 @@ from collections.abc import Callable, Sequence
 from typing import TextIO
 
 from adt_ai import __version__
+from adt_ai.cli.commands_connection import _run_connection
 from adt_ai.cli.commands_dependencies import _dependencies_argument_error, _run_dependencies
 from adt_ai.cli.commands_exports import _run_export_apex, _run_export_data, _run_export_db
 from adt_ai.cli.commands_flow import _run_flow
@@ -214,6 +215,8 @@ def main(
             exit_code = _run_flow(args, gateway_factory=gateway_factory)
         elif args.command == "discovery":
             exit_code = _run_discovery(args, gateway_factory=gateway_factory)
+        elif args.command == "connection":
+            exit_code = _run_connection(args)
     except KeyboardInterrupt:
         exit_code = 130
         print("\nInterrupted by user.", file=sys.stderr)

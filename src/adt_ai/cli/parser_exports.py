@@ -163,7 +163,7 @@ def add_export_parsers(subparsers) -> None:
         "-component",
         action = "append",
         nargs  = "+",
-        help   = "component filters as TYPE:NAME_PATTERN, for example LOV:STATUS%",
+        help   = "component filters as TYPE:NAME_PATTERN, for example LOV:STATUS%%",
     )
     export_apex.add_argument(
         "--max-app-id",
