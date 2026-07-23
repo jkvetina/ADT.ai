@@ -72,6 +72,11 @@ class ApexFileResolver:
     def embedded_export(self, application: ApexApplication, relative_path: str) -> Path:
         return self.app_root(application) / "embedded_code" / _clean_relative(relative_path)
 
+    def checksum_export(self, application: ApexApplication) -> Path:
+        # One stable path per app, whatever name APEX gives the single checksum
+        # file, so a CI gate diffs the same file on every run.
+        return self.app_root(application) / "checksum.txt"
+
     def rest_export(self, module_name: str) -> Path:
         name = module_name.strip("/")
         if not name.endswith(".sql"):

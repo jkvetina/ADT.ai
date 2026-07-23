@@ -242,6 +242,29 @@ BEGIN
 END;
 """.strip()
 
+EXPORT_CHECKSUM_QUERY = """
+DECLARE
+    l_files apex_t_export_files;
+BEGIN
+    l_files := APEX_EXPORT.GET_APPLICATION (
+        p_application_id        => :app_id,
+        p_type                  => 'CHECKSUM-SH256'
+    );
+    APEX_COLLECTION.CREATE_COLLECTION (
+        p_collection_name       => 'ADT_APEX_EXPORT',
+        p_truncate_if_exists    => 'YES'
+    );
+    FOR i IN l_files.FIRST .. l_files.LAST LOOP
+        APEX_COLLECTION.ADD_MEMBER (
+            p_collection_name   => 'ADT_APEX_EXPORT',
+            p_c001              => l_files(i).name,
+            p_clob001           => l_files(i).contents
+        );
+    END LOOP;
+    COMMIT;
+END;
+""".strip()
+
 FETCH_FILES_QUERY = """
 SELECT
     c.seq_id,
@@ -260,6 +283,10 @@ SELECT
 FROM apex_appl_export_comps a
 WHERE a.application_id      = :app_id
     AND (a.last_updated_on  >= TRUNC(SYSDATE) + 1 - :recent OR :recent IS NULL)
+    AND (
+        :changed_since IS NULL
+        OR a.last_updated_on >= TO_DATE(:changed_since, 'YYYY-MM-DD HH24:MI:SS')
+    )
     AND (a.last_updated_by  = :author OR :author IS NULL)
 ORDER BY
     a.type_name,

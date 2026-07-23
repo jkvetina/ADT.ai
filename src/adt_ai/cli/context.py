@@ -26,6 +26,7 @@ from adt_ai.cli.context_apex import (
     _apex_scope,
     _app_in_selection,
     _flatten_arg_groups,
+    _flatten_compile_setting_groups,
     _has_job_recent_conflict,
     _parse_apex_app_selection,
     _parse_apex_export_filter_groups,
@@ -231,6 +232,55 @@ def _config_search_paths(
     return [repo_root / "config", *project_paths]
 
 def _load_startup_sql(
+    config_dirs: list[str] | None,
+    root: Path,
+    repo_root: Path,
+) -> str | None:
+    """Return the session-setup SQL every new connection runs.
+
+    Two pieces, in this order: the automatic ``DBMS_SESSION.SET_IDENTIFIER``
+    block driven by ``config/IDENTITY.yaml`` (``db_schema``) FIRST, then the
+    resolved ``STARTUP.sql`` content — the identifier runs before the startup
+    file is processed, so a personal ``STARTUP.sql`` can still override it.
+    Either piece may be absent; with neither, resolution stays ``None``.
+
+    Both connect paths consume this one composition: python-oracledb replays it
+    through ``apply_startup`` and SQLcl receives it verbatim.
+    """
+    from adt_ai.shared.identity import load_identity, session_identifier
+
+    startup = _load_startup_file(config_dirs, root, repo_root)
+    identifier = session_identifier(
+        load_identity(_config_search_paths(config_dirs, root, repo_root))
+    )
+    if identifier is None:
+        return startup
+    block = _identifier_block(identifier)
+    if startup is None:
+        return block
+    return f"{block}\n{startup}"
+
+
+def _identifier_block(identifier: str) -> str:
+    """A ``SET_IDENTIFIER`` block safe on both connect paths.
+
+    The ``SET FEEDBACK OFF``/``ON`` wrapper keeps SQLcl's ``PL/SQL procedure
+    successfully completed.`` feedback out of captured payloads (the ADT #149
+    leak class); on the python-oracledb path the wrapper is a client-only
+    directive and is skipped by ``apply_startup``.
+    """
+    escaped = identifier.replace("'", "''")
+    return (
+        "SET FEEDBACK OFF\n"
+        "BEGIN\n"
+        f"    DBMS_SESSION.SET_IDENTIFIER('{escaped}');\n"
+        "END;\n"
+        "/\n"
+        "SET FEEDBACK ON"
+    )
+
+
+def _load_startup_file(
     config_dirs: list[str] | None,
     root: Path,
     repo_root: Path,

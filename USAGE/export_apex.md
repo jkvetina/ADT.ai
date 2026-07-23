@@ -1,5 +1,7 @@
 # Export APEX Applications (adtai export_apex)
 
+`export_apex` discovers and exports Oracle APEX workspaces and applications into your project folder — the APEX counterpart to `export_db`. `-reveal` answers "what workspaces, groups, and apps live in this environment?"; the format flags (`-full`, `-split`, `-readable`, `-rest`, `-files`, `-files_ws`, `-embedded`, `-checksum`) then export an application as a single SQL file, split per-component files, readable YAML, REST module definitions, static application/workspace files, or the application checksum, so app changes are diffable in Git like any other code.
+
 Reveal APEX workspaces and applications from the current folder:
 
 ```bash
@@ -49,6 +51,21 @@ adtai export_apex -app 100 -readable -component LOV:%
 ```
 
 
+Export the application checksum — an ID-independent SHA-256 fingerprint of the whole app:
+
+```bash
+adtai export_apex -app 100 -checksum
+```
+
+`-checksum` writes one line to `checksum.txt` in the application folder, beside `f100.sql`. The fingerprint ignores internal component ids, so it changes when the application definition changes and stays stable across imports and environments. That makes it a cheap deploy gate: export the checksum and let Git answer "did anything actually change?" without diffing a full export.
+
+```bash
+adtai export_apex -app 100 -checksum
+git diff --exit-code apex/100_CORE23/checksum.txt || echo "application changed"
+```
+
+Because a fingerprint covers the whole application, `-page`, `-component`, and `-recent` never filter it out, and a `-checksum` run never advances a `-recent` watermark — the fingerprint reports *that* the app changed, never which components were exported.
+
 Export recent changes by one developer, or by the current git user:
 
 ```bash
@@ -57,7 +74,7 @@ adtai export_apex -recent 3 -by JANE.DEV
 adtai export_apex -recent 3 -my
 ```
 
-`-my` compares `git config user.name` and `git config user.email` with the workspace developers in `config/apex_developers.yaml` and the developers discovered from APEX. This covers APEX author names such as `JANK` as well as email-form authors.
+`-my` compares `git config user.name` and `git config user.email` with the workspace developers in `config/apex_developers.yaml` and the developers discovered from APEX. This covers short APEX account names (initials-style logins) as well as email-form authors.
 When no explicit export format is selected, non-reveal `-recent` requests print only the recent-change report and do not export files. When `-by` or `-my` covers multiple apps, the `APEX APPLICATIONS` list remains complete, but apps with no matching developer changes are skipped in the detailed `CHANGES SINCE` sections below it.
 
 ## Arguments
@@ -67,14 +84,14 @@ When no explicit export format is selected, non-reveal `-recent` requests print 
 | `-root`, `--root` | No | `.` | Project or output root folder. This can be any ordinary folder and does not need to be a Git repository. |
 | `-config-dir`, `--config-dir` | Yes | none | Folder containing project config YAML. ADT.ai always loads repo defaults first, then overlays these project configs. |
 | `-env`, `--env` | No | connection default | Connection environment to use, for example `DEV`. |
-| `-schema`, `--schema` | Yes | all configured schemas in `-reveal`; environment default APEX schema for exports | APEX owner schema. In `-reveal`, omitting it scans every schema configured for the environment. |
+| `-schema`, `--schema` | Yes | all configured schemas in `-reveal`; environment default APEX schema for exports | APEX owner schema(s). Pass multiple times, space-separate (`-schema DA GSN`), use comma lists, or use `%` patterns. In `-reveal`, omitting it scans every schema configured for the environment. |
 | `-ws`, `--ws` | No | connection `apex.workspace` | APEX workspace scope. |
 | `-group`, `--group` | No | connection `apex.group` | APEX application group scope. |
 | `-app`, `--app` | Yes | connection `apex.app` | Application ids to reveal or export. Each value may be a plain id, a closed range `MIN-MAX`, or an open range `MIN+` (no upper bound); combine freely, e.g. `-app 0-99 100-999 5000 9000+`. When any range is given, ADT.ai scans without an id filter and selects matching apps in Python. |
 | `-page`, `--page` | Yes | none | Page ids to include in split/readable/embedded component exports. Each value may be a plain id, a closed range `MIN-MAX`, or an open range `MIN+`; comma-separated values are accepted. Requires an explicit component-based export format. Page-filtered exports print affected components and do not update `apex_timers.yaml`. |
 | `-component`, `--component` | Yes | none | Shared component filters to include in split/readable/embedded component exports, written as `TYPE:NAME_PATTERN`. `%` and `*` are wildcards, for example `LOV:NAME%`, `LOV:%`, or `LIST:MENU%`. Requires an explicit component-based export format. Component-filtered exports print affected components and do not update `apex_timers.yaml`. |
 | `-max_app_id`, `--max_app_id`, `--max-app-id` | No | none | In reveal mode, list only applications with `application_id` below the value; also scopes workspace owner/application counts and per-owner application counts. |
-| `-recent`, `--recent` | No | off | Print components changed in the last DAYS days. With selected split/readable/embedded formats, also limits output to those components. Without an explicit export format, non-reveal `-recent` is report-only; with `-reveal`, it filters the application list to apps changed in that window without printing component details. |
+| `-recent [DAYS]`, `--recent [DAYS]` | No | off | Print components changed in the last DAYS days. Bare `-recent` uses the app's stored watermark instead of a day window — "changed since the last export of this app in this format", keyed per environment/app/format in `config/recent.yaml`; an app+format with no watermark yet falls back to a full pull that seeds it. With selected split/readable/embedded formats, also limits output to those components, and each exported format advances its own watermark key. Without an explicit export format, non-reveal `-recent` is report-only and never advances a watermark; with `-reveal`, it filters the application list to apps changed in that window without printing component details. |
 | `-by`, `--by` | No | none | Filter the recent component report and recent export set by exact APEX developer username. Developer-filtered exports do not update `apex_timers.yaml`. |
 | `-my`, `--my` | No | off | Filter the recent component report and recent export set to the current git user, resolving APEX author aliases from `config/apex_developers.yaml` and discovered workspace developers. Developer-filtered exports do not update `apex_timers.yaml`. |
 | `-release`, `--release` | No | none | Override `p_release` values in exported SQL files, matching old ADT upgrade-recovery behavior. |
@@ -85,6 +102,7 @@ When no explicit export format is selected, non-reveal `-recent` requests print 
 | `-split`, `--split` | No | off | Export split application source. |
 | `-readable`, `--readable` | No | off | Export readable YAML source. |
 | `-embedded`, `--embedded` | No | off | Export embedded code report. |
+| `-checksum`, `--checksum` | No | off | Export the ID-independent SHA-256 application checksum to `checksum.txt` in the app folder. Whole-app format: `-page`, `-component`, and `-recent` never filter it out, and it never advances a `-recent` watermark. |
 | `-rest`, `--rest` | No | off | Export REST services. Runs through SQLcl using a named `ADT_…` connection (auto-registered, wallet included) — see [connection.md](connection.md#named-sqlcl-connections). |
 | `-files`, `--files` | No | off | Export application files. |
 | `-files_ws`, `--files_ws`, `--files-ws` | No | off | Export workspace files. |

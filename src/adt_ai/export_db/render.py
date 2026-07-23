@@ -24,7 +24,11 @@ class ExportDbReporter:
         names: list[str] | None = None,
         recent_days: int | None = None,
         authors: list[str] | None = None,
+        changed_since: str | None = None,
     ) -> None:
+        pass
+
+    def recent_note(self, message: str) -> None:
         pass
 
     def deleted_objects(self, schema: str, objects: list[DatabaseObject]) -> None:
@@ -33,7 +37,11 @@ class ExportDbReporter:
     def start_export(self, schema: str, total: int) -> None:
         pass
 
-    def export_object(self, database_object: DatabaseObject) -> None:
+    def export_object(
+        self,
+        database_object: DatabaseObject,
+        duplicates: list[str] | None = None,
+    ) -> None:
         pass
 
     def finish_type(self, schema: str, object_type: str) -> None:
@@ -159,9 +167,15 @@ class ConsoleExportDbReporter(ExportDbReporter):
         names: list[str] | None = None,
         recent_days: int | None = None,
         authors: list[str] | None = None,
+        changed_since: str | None = None,
     ) -> None:
         print_adt_header(
-            _overview_header(names=names, recent_days=recent_days, authors=authors)
+            _overview_header(
+                names         = names,
+                recent_days   = recent_days,
+                authors       = authors,
+                changed_since = changed_since,
+            )
         )
         counts = Counter(database_object.object_type for database_object in objects)
         rows = [
@@ -169,6 +183,9 @@ class ConsoleExportDbReporter(ExportDbReporter):
             for object_type in sorted(counts)
         ]
         print_adt_table(rows)
+
+    def recent_note(self, message: str) -> None:
+        print_adt_header(message)
 
     def deleted_objects(self, schema: str, objects: list[DatabaseObject]) -> None:
         if not objects:
@@ -186,7 +203,11 @@ class ConsoleExportDbReporter(ExportDbReporter):
             return
         print()
 
-    def export_object(self, database_object: DatabaseObject) -> None:
+    def export_object(
+        self,
+        database_object: DatabaseObject,
+        duplicates: list[str] | None = None,
+    ) -> None:
         last_type = self._last_type_by_schema.get(database_object.schema, "")
         object_type = (
             database_object.object_type
@@ -196,7 +217,16 @@ class ConsoleExportDbReporter(ExportDbReporter):
         self._last_type_by_schema[database_object.schema] = database_object.object_type
         if self._silent:
             return
-        print(f"{object_type:>20} | {database_object.name:<54}")
+        if not duplicates:
+            print(f"{object_type:>20} | {database_object.name:<54}")
+            return
+        # One row per stale clone, so the object's every location is visible and
+        # the user can delete the wrong ones by hand. The name column is left
+        # unpadded here: an over-long, deliberately ragged row is how a [DUPE]
+        # stands out from the aligned object list around it.
+        for index, location in enumerate(duplicates):
+            label = object_type if index == 0 else ""
+            print(f"{label:>20} | {database_object.name} | {location} [DUPE]")
 
     def finish_type(self, schema: str, object_type: str) -> None:
         if self._silent:
@@ -207,12 +237,17 @@ def _overview_header(
     names: list[str] | None,
     recent_days: int | None,
     authors: list[str] | None = None,
+    changed_since: str | None = None,
 ) -> str:
-    if recent_days is None:
+    if changed_since is not None:
+        # Watermark mode: the cutoff is a real stored instant from the database
+        # clock, so it is shown verbatim rather than re-derived from a day count.
+        show_header = f"CHANGED SINCE {changed_since} (LAST EXPORT)"
+    elif recent_days is None:
         show_header = "OVERVIEW"
     else:
-        changed_since = datetime.date.today() - datetime.timedelta(days=recent_days - 1)
-        show_header = f"CHANGED SINCE {changed_since}"
+        window_start = datetime.date.today() - datetime.timedelta(days=recent_days - 1)
+        show_header = f"CHANGED SINCE {window_start}"
     show_filter = " ".join(names or ["%"])
     show_filter = f" {show_filter} ".replace(" % ", " ").strip()
     if show_filter:

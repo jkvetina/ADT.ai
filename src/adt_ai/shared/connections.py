@@ -326,6 +326,12 @@ def _split_schema_values(value: Any) -> list[str]:
     values = value if isinstance(value, list | tuple) else [value]
     schemas: list[str] = []
     for item in values:
+        if isinstance(item, list | tuple):
+            # Defensive against a -schema group list (action="append" + nargs="+")
+            # reaching here unflattened: recurse rather than str()-ing the inner
+            # list, which would yield "['DA', 'GSN']" and match no schema.
+            schemas.extend(_split_schema_values(item))
+            continue
         schemas.extend(
             part.strip()
             for part in str(item).split(",")

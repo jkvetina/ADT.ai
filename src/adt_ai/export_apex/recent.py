@@ -67,13 +67,19 @@ def _used_on_pages(value: object) -> list[object]:
         return list(value)
     return [value]
 
+# Formats that describe the whole application in one artefact. A component-level
+# cutoff (`-recent`, `-page`, `-component`) has nothing to select inside them, so
+# filtering one out would silently drop the format from a filtered run.
+WHOLE_APP_ACTIONS = frozenset({"full", "checksum"})
+
+
 @dataclass(frozen=True)
 class RecentComponentFilter:
     page_ids: frozenset[int] | None = None
     component_slugs: frozenset[str] = frozenset()
 
     def matches(self, action: str, relative: str) -> bool:
-        if action == "full" or self.page_ids is None:
+        if action in WHOLE_APP_ACTIONS or self.page_ids is None:
             return True
         page_id = _page_id_from_export_path(relative)
         if page_id is not None:

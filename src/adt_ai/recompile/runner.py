@@ -166,7 +166,18 @@ class RecompileRunner:
 
         overview = discovery.overview(**scope)
         locked = _collect_locked(discovery, scope)
-        todo = discovery.objects_to_recompile(**scope, force=request.force)
+        # Pass the compile modifiers so a modifier-combined -force narrows the sweep to
+        # objects whose settings drift from the requested target state (#146). The
+        # invalid-object re-check below stays a plain force=False read.
+        todo = discovery.objects_to_recompile(
+            **scope,
+            force          = request.force,
+            native         = request.native,
+            interpreted    = request.interpreted,
+            optimize_level = request.optimize_level,
+            scope          = request.scope,
+            warnings       = request.warnings,
+        )
         if not todo:
             return RecompileResult(
                 compiled = [],
@@ -228,6 +239,7 @@ class RecompileRunner:
             obj.object_type,
             obj.object_name,
             native         = request.native,
+            interpreted    = request.interpreted,
             optimize_level = request.optimize_level,
             scope          = request.scope,
             warnings       = request.warnings,

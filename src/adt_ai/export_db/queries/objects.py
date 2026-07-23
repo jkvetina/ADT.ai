@@ -45,6 +45,10 @@ JOIN requested_types typ
     ON object_type LIKE typ.object_like ESCAPE '\\'
 WHERE (:schema IS NOT NULL)
 AND (:recent_days IS NULL OR last_ddl_time >= SYSDATE - :recent_days)
+AND (
+    :changed_since IS NULL
+    OR last_ddl_time >= TO_DATE(:changed_since, 'YYYY-MM-DD HH24:MI:SS')
+)
 AND object_name NOT LIKE 'SYS\\_%' ESCAPE '\\'
 AND object_name NOT LIKE 'ISEQ$$_%'
 AND object_name NOT LIKE 'ST%='
@@ -58,6 +62,10 @@ SELECT object_type, object_name
 FROM user_objects
 WHERE (:schema IS NOT NULL)
 AND (:recent_days IS NULL OR last_ddl_time >= SYSDATE - :recent_days)
+AND (
+    :changed_since IS NULL
+    OR last_ddl_time >= TO_DATE(:changed_since, 'YYYY-MM-DD HH24:MI:SS')
+)
 AND object_name = :object_name
 AND object_name NOT LIKE 'SYS\\_%' ESCAPE '\\'
 AND object_name NOT LIKE 'ISEQ$$_%'
@@ -77,6 +85,10 @@ LEFT JOIN user_constraints c
     AND c.constraint_type IN ('P', 'U')
 WHERE (:schema IS NOT NULL)
 AND (:recent_days IS NULL OR t.last_analyzed >= TRUNC(SYSDATE) + 1 - :recent_days)
+AND (
+    :changed_since IS NULL
+    OR t.last_analyzed >= TO_DATE(:changed_since, 'YYYY-MM-DD HH24:MI:SS')
+)
 AND t.index_name NOT LIKE 'BIN$%'
 AND t.index_name NOT LIKE 'SYS%$$'
 AND t.generated = 'N'

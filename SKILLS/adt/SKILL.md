@@ -1,8 +1,8 @@
 ---
 created: 2026-06-10
-updated: 2026-07-20 18:51
+updated: 2026-07-23 10:30
 name: adt
-version: 1.1.0
+version: 1.2.0
 tags: [oracle, apex, deployment, cli, database]
 description: "ADT.ai usage guide for Oracle/APEX work: export database objects, APEX apps and data, run read-only SQL discovery, search Git history, query the dependency graph, and recompile invalid objects. Use for any ADT.ai command help."
 ---
@@ -33,6 +33,12 @@ Recent changes (last 7 days):
 adtai export_db -silent -recent 7
 ```
 
+Everything changed since your last export of each schema — bare `-recent` uses the per-schema watermark in the gitignored `config/recent.yaml` (a schema with no recorded export yet exports in full and seeds it; narrowed or dry runs never advance it):
+
+```bash
+adtai export_db -silent -recent
+```
+
 Specific object types:
 
 ```bash
@@ -51,7 +57,7 @@ Jobs export separately — `JOB` objects have no reliable `last_ddl_time`, so **
 adtai export_db -silent -type JOB
 ```
 
-Filter by author in a shared schema worked through proxy users — `-by <NAME>` for a specific db user/schema, `-my` for yourself (db schema read from the gitignored `config/me.yaml`). Both resolve authorship against the project's configured `audit:` source (a DDL-log table/view), so they need no DBA audit-trail access; without an `audit:` block in `config.yaml` they exit `2`:
+Filter by author in a shared schema worked through proxy users — `-by <NAME>` for a specific db user/schema, `-my` for yourself (db schema read from the gitignored `config/IDENTITY.yaml`). Both resolve authorship against the project's configured `audit:` source (a DDL-log table/view), so they need no DBA audit-trail access; without an `audit:` block in `config.yaml` they exit `2`:
 
 ```bash
 adtai export_db -silent -by SCOTT
@@ -100,9 +106,16 @@ adtai export_apex -app 100 -page 7
 adtai export_apex -app 100 -component LOV:%
 ```
 
+Fingerprint an application for a deploy gate:
+
+```bash
+adtai export_apex -app 100 -checksum
+```
+
 **Rules:**
 - Name the formats explicitly. Common set: `-full -split -files -rest -readable`. Skip `-embedded` unless asked — it slows the export.
-- `-recent N`, `-page`, and `-component TYPE:NAME%` filter split/readable/embedded component output. `-page` or `-component` without an explicit format defaults to `-split`. Filtered component exports print affected rows instead of dotted progress and do not update `apex_timers.yaml`. Full app SQL, REST services, app files, and workspace files stay broad. With `-reveal`, `-recent` filters the listed apps.
+- `-checksum` writes the ID-independent SHA-256 application fingerprint to `checksum.txt` in the app folder. It answers "did anything actually change?" without diffing a full export — `git diff --exit-code` on that file is the CI gate. Whole-app format: `-page`, `-component`, and `-recent` never filter it out, and it never advances a `-recent` watermark.
+- `-recent N`, `-page`, and `-component TYPE:NAME%` filter split/readable/embedded component output. Bare `-recent` means "changed since the last export of this app in this format" — a watermark keyed per environment/app/format in the gitignored `config/recent.yaml`; each exported format advances its own key, report-only `-recent` never does. `-page` or `-component` without an explicit format defaults to `-split`. Filtered component exports print affected rows instead of dotted progress and do not update `apex_timers.yaml`. Full app SQL, REST services, app files, and workspace files stay broad. With `-reveal`, `-recent` filters the listed apps.
 - If apps don't appear, the connection's APEX schema likely doesn't match the owner — narrow or widen with `-schema`, or use `-owners` in reveal.
 - `-rest` runs through SQLcl with a named `ADT_…` connection: registered automatically on first use (password in SQLcl's secure store, wallet included), recorded as `sqlcl:`/`sqlcl_sync:` in the connection YAML, re-registered automatically after a credential change. Opt out with `sqlcl_named_connections: false` in `config.yaml`. Details: `USAGE/connection.md` §Named SQLcl connections.
 
@@ -157,6 +170,7 @@ There is no separate rebuild step — re-running `-refresh` incrementally update
 
 ```bash
 adtai dependencies -refresh -env DEV -schema APP
+adtai dependencies -refresh -recent -env DEV -schema APP
 adtai dependencies -refresh CORE CORE% -env DEV -schema APP
 adtai dependencies -refresh -force -env DEV -schema APP
 ```
@@ -178,7 +192,7 @@ adtai dependencies -impact "TABLE.CORE_LOGS"
 adtai dependencies -tree "ORDER_ITEMS_ORDER_FK"
 ```
 
-On a multi-schema mirror an object name (e.g. `PACKAGE.CORE`) can be ambiguous across owners. Add `-schema OWNER[,OWNER ...]` to any query mode as an offline, case-insensitive owner filter that disambiguates by the owner column the mode matches on — `-from` filters the dependent `OWNER`, `-to` filters `REFERENCED_OWNER`, `-impact` constrains only the seed's `REFERENCED_OWNER` (the transitive walk is unchanged). It is parsed locally (no DB connection); omitting it matches every tracked owner. `-app`/`-force` stay refresh-only.
+On a multi-schema mirror an object name (e.g. `PACKAGE.CORE`) can be ambiguous across owners. Add `-schema OWNER [OWNER ...]` (space- or comma-separated, repeatable) to any query mode as an offline, case-insensitive owner filter that disambiguates by the owner column the mode matches on — `-from` filters the dependent `OWNER`, `-to` filters `REFERENCED_OWNER`, `-impact` constrains only the seed's `REFERENCED_OWNER` (the transitive walk is unchanged). It is parsed locally (no DB connection); omitting it matches every tracked owner. `-app`/`-force` stay refresh-only.
 
 ```bash
 adtai dependencies -from "PACKAGE.CORE" -schema APP
@@ -208,7 +222,13 @@ Force-recompile all with native code + optimization, scoped by type/name:
 adtai recompile -env DEV -force -native -level 3 -type PACKAGE% -name XX%
 ```
 
-`-type`, `-name`, and `-schema` are shared filters, and every mode below is scoped by them — no mode carries a name pattern of its own, so `-mviews DEP%` is a parser error and `-mviews -name DEP%` is the way. `-type`/`-name` take multiple patterns (`-type PACKAGE VIEW`, `-type PACKAGE,VIEW`, or a repeated flag). `-type` speaks Oracle's vocabulary: bare `PACKAGE` means specifications, `PACKAGE BODY` bodies, `MVIEW`/`MATERIALIZED` both mean `MATERIALIZED VIEW`. `-schema` is repeatable and pattern-aware (`-schema APP,CORE%`); each schema is an independent pass.
+Bare `-force` recompiles every matching object. Combined with a compile modifier (`-native`/`-interpreted`/`-level`/`-scope`/`-warnings`) it instead recompiles **only** the VALID PL/SQL objects whose current settings drift from the requested state (any one axis mismatch selects the object; non-PL/SQL types are skipped). A plain recompile with neither `-native` nor `-interpreted` leaves each object's code type untouched (`REUSE SETTINGS`), so it never flips a native object to interpreted. `-scope`/`-warnings` take `+` as an extra separator (`-warnings PERF+SEVERE`) alongside space/comma/repeated forms.
+
+```bash
+adtai recompile -env DEV -force -level 2    # only objects not already at optimize level 2
+```
+
+`-type`, `-name`, and `-schema` are shared filters, and every mode below is scoped by them — no mode carries a name pattern of its own, so `-mviews DEP%` is a parser error and `-mviews -name DEP%` is the way. `-type`/`-name` take multiple patterns (`-type PACKAGE VIEW`, `-type PACKAGE,VIEW`, or a repeated flag). `-type` speaks Oracle's vocabulary: bare `PACKAGE` means specifications, `PACKAGE BODY` bodies, `MVIEW`/`MATERIALIZED` both mean `MATERIALIZED VIEW`. `-schema` is repeatable, space- or comma-separated, and pattern-aware (`-schema APP CORE`, `-schema APP,CORE%`); each schema is an independent pass.
 
 ### Modes
 

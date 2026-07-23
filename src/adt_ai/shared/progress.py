@@ -114,6 +114,21 @@ class FixedWidthProgressPrinter:
         status: str = "FAILED",
         indent: str | None = None,
     ) -> None:
+        self.status(label, status, indent=indent)
+
+    def status(
+        self,
+        label: str,
+        status: str,
+        *,
+        indent: str | None = None,
+    ) -> None:
+        """Complete the active row with an arbitrary status word, not a count.
+
+        For blocking work with no natural count (a scan, a session setup
+        call) that would otherwise leave the row's label sitting alone with
+        no visible progress until the whole thing resolves.
+        """
         left = self._active_left or f"{self.indent if indent is None else indent}{label}"
         dots_len = self.line_width - len(left) - len(status) - 2
         dots = "." * max(1, dots_len)

@@ -1,18 +1,18 @@
-"""Compile, overview, and error SQL for the recompile module.
+"""Overview, selection, and error read SQL for the recompile module.
 
 The module's core SQL topic: the overview / objects_to_recompile /
-objects_errors_summary reads plus the compile and materialized-view statement
-builders, ported faithfully from old ADT ``lib/queries.py`` and
-``recompile.build_query``. The report and trailing-whitespace topics are the
-sibling modules :mod:`adt_ai.recompile.queries.reports` and
-:mod:`adt_ai.recompile.queries.trailing`; the package ``__init__`` re-exports all
-three, so callers keep importing everything from ``adt_ai.recompile.queries``.
+objects_errors_summary reads, ported faithfully from old ADT ``lib/queries.py``.
+The ALTER ... COMPILE / DBMS_MVIEW.REFRESH statement builders and the ``-force``
+drift-selection binds live in the sibling module
+:mod:`adt_ai.recompile.queries.statements`; the report and trailing-whitespace
+topics are :mod:`adt_ai.recompile.queries.reports` and
+:mod:`adt_ai.recompile.queries.trailing`. The package ``__init__`` re-exports
+every topic, so callers keep importing everything from ``adt_ai.recompile.queries``.
 """
 
 from __future__ import annotations
 
 from adt_ai.shared.object_types import PLSQL_OBJECT_TYPES
-from adt_ai.shared.sql_identifiers import safe_identifier, safe_object_type
 
 # get database objects overview
 OVERVIEW_QUERY = """
@@ -170,11 +170,47 @@ FROM (
         ON o.object_name        LIKE a.object_like ESCAPE '\\'
     LEFT JOIN objects_ignore g
         ON o.object_name        LIKE g.object_like ESCAPE '\\'
+    LEFT JOIN user_plsql_object_settings p
+        ON p.name               = o.object_name
+        AND p.type              = o.object_type
     WHERE 1 = 1
         AND g.object_like       IS NULL
         AND :force              = 'Y'
         AND o.object_type       IN ('PACKAGE', 'PACKAGE BODY', 'PROCEDURE', 'FUNCTION',
         'TRIGGER', 'VIEW', 'MATERIALIZED VIEW', 'SYNONYM', 'TYPE', 'TYPE BODY')
+        -- When -force is combined with a compile modifier (-scope/-level/-native/
+        -- -interpreted/-warnings), :drift_only = 'Y' narrows the force sweep to VALID
+        -- PL/SQL objects whose *current* settings drift from the requested target
+        -- state: any one mismatch (OR) selects the object, and non-PL/SQL types are
+        -- skipped entirely (they carry no settings to drift from). Bare -force
+        -- (:drift_only = 'N') keeps today's meaning — every matching object. Each
+        -- predicate is self-gated by its own :drift_* flag, so an inactive modifier
+        -- contributes nothing. The PL/Scope / warning LIKE checks mirror the
+        -- OBJECTS_MISSING_PLSCOPE_QUERY gap pattern against USER_PLSQL_OBJECT_SETTINGS.
+        AND (
+            :drift_only         = 'N'
+            OR (
+                o.status        = 'VALID'
+                AND o.object_type IN ('PACKAGE', 'PACKAGE BODY', 'PROCEDURE',
+                    'FUNCTION', 'TRIGGER')
+                AND (
+                    (:drift_code_type = 'Y'
+                        AND NVL(p.plsql_code_type, 'INTERPRETED') != :target_code_type)
+                    OR (:drift_level = 'Y'
+                        AND NVL(p.plsql_optimize_level, -1) != :target_level)
+                    OR (:drift_scope_identifiers = 'Y'
+                        AND NVL(p.plscope_settings, '-') NOT LIKE '%IDENTIFIERS:ALL%')
+                    OR (:drift_scope_statements = 'Y'
+                        AND NVL(p.plscope_settings, '-') NOT LIKE '%STATEMENTS:ALL%')
+                    OR (:drift_warn_severe = 'Y'
+                        AND NVL(p.plsql_warnings, '-') NOT LIKE '%ENABLE:SEVERE%')
+                    OR (:drift_warn_perf = 'Y'
+                        AND NVL(p.plsql_warnings, '-') NOT LIKE '%ENABLE:PERFORMANCE%')
+                    OR (:drift_warn_info = 'Y'
+                        AND NVL(p.plsql_warnings, '-') NOT LIKE '%ENABLE:INFORMATIONAL%')
+                )
+            )
+        )
         AND EXISTS (
             SELECT 1
             FROM object_types n_t
@@ -408,104 +444,3 @@ ORDER BY CASE o.object_type
     WHEN 'PACKAGE BODY'         THEN 5
     ELSE                             6 END, o.object_name
 """.strip()
-
-
-def build_compile_statement(
-    object_type: str,
-    object_name: str,
-    *,
-    native: bool = False,
-    optimize_level: int | None = None,
-    scope: list[str] | None = None,
-    warnings: list[str] | None = None,
-) -> str:
-    """Build the ALTER ... COMPILE statement for one object.
-
-    Faithful port of old ADT ``Recompile.build_query`` — including the
-    ``'PERFORMANE'`` spelling accepted for the PERFORMANCE warning.
-    """
-    safe_object_type(object_type, role="object type")
-    safe_identifier(object_name, role="object name")
-    type_body   = " BODY" if "BODY" in object_type else ""
-    type_family = object_type.replace(" BODY", "")
-    extras      = ""
-
-    # extra stuff for code objects
-    if object_type in PLSQL_OBJECT_TYPES:
-        extras += " PLSQL_CODE_TYPE = " + ("NATIVE" if native else "INTERPRETED")
-
-        # setup optimize level
-        if optimize_level is not None and 1 <= optimize_level <= 3:
-            extras += " PLSQL_OPTIMIZE_LEVEL = " + str(optimize_level)
-
-        # setup scope
-        if isinstance(scope, list):
-            scope_value = ""
-            scope_value += "IDENTIFIERS:ALL," if ("IDENTIFIERS" in scope or "ALL" in scope) else ""
-            scope_value += "STATEMENTS:ALL," if ("STATEMENTS" in scope or "ALL" in scope) else ""
-            extras += " PLSCOPE_SETTINGS = '" + scope_value.rstrip(",") + "'"
-
-        # setup warnings
-        if isinstance(warnings, list):
-            warnings_value = ""
-            warnings_value += "ENABLE:SEVERE," if ("SEVERE" in warnings) else ""
-            warnings_value += (
-                "ENABLE:PERFORMANCE," if ("PERF" in warnings or "PERFORMANE" in warnings) else ""
-            )
-            warnings_value += (
-                "ENABLE:INFORMATIONAL,"
-                if ("INFO" in warnings or "INFORMATIONAL" in warnings)
-                else ""
-            )
-            extras += " PLSQL_WARNINGS = '" + warnings_value.strip(",").replace(",", "','") + "'"
-
-        extras += " REUSE SETTINGS"
-
-    return f"ALTER {type_family} {object_name} COMPILE{type_body} {extras}"
-
-
-def _refresh_method_code(refresh_method: str | None) -> str:
-    """Map an MV's configured refresh_method to a DBMS_MVIEW.REFRESH method char.
-
-    COMPLETE → 'C', FAST → 'F'. FORCE, NEVER, anything unknown, and a missing
-    method all fall back to '?' (let Oracle decide). The point is to refresh a
-    view with the method already attached to it, never silently re-picking and
-    flipping a COMPLETE view to FAST.
-    """
-    method = (refresh_method or "").strip().upper()
-    if method == "COMPLETE":
-        return "C"
-    if method == "FAST":
-        return "F"
-    return "?"
-
-
-def mview_type_code(refresh_method: str | None, has_log: bool = False) -> str:
-    """Map an MV's configured refresh_method to the F/C TYPE shown in the report.
-
-    Unlike :func:`_refresh_method_code` (which feeds DBMS_MVIEW.REFRESH and leaves
-    FORCE as '?' so Oracle decides at runtime), the *display* always resolves to a
-    clean letter: COMPLETE → 'C', FAST → 'F'. FORCE resolves to what Oracle would
-    actually do — 'F' when a usable MV log exists, 'C' otherwise. NEVER → 'N', and a
-    missing method → '' (nothing to show).
-    """
-    method = (refresh_method or "").strip().upper()
-    if method == "COMPLETE":
-        return "C"
-    if method == "FAST":
-        return "F"
-    if method == "FORCE":
-        return "F" if has_log else "C"
-    return method[:1]
-
-
-def build_refresh_statement(object_name: str, refresh_method: str | None = None) -> str:
-    """Build the DBMS_MVIEW.REFRESH call that refreshes one materialized view.
-
-    Staleness is fixed by refreshing (not compiling), using the method the MV is
-    configured with (``refresh_method``) so the tool never changes a view's
-    refresh type. Unknown/missing methods fall back to '?' (Oracle decides).
-    """
-    safe_identifier(object_name, role="object name")
-    method = _refresh_method_code(refresh_method)
-    return f"BEGIN DBMS_MVIEW.REFRESH('{object_name}', '{method}'); END;"

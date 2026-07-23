@@ -4,7 +4,7 @@ import fnmatch
 import re
 from dataclasses import dataclass
 
-from adt_ai.export_apex.recent import _page_id_from_export_path, _slug
+from adt_ai.export_apex.recent import WHOLE_APP_ACTIONS, _page_id_from_export_path, _slug
 
 _COMPONENT_TYPE_ALIASES = {
     "authorization_scheme": "authorization_scheme",
@@ -48,7 +48,7 @@ class ApexExplicitFilter:
     component_filters: tuple[ApexComponentFilter, ...] = ()
 
     def matches(self, action: str, relative: str) -> bool:
-        if action == "full" or not (self.page_selection or self.component_filters):
+        if action in WHOLE_APP_ACTIONS or not (self.page_selection or self.component_filters):
             return True
         page_id = _page_id_from_export_path(relative)
         if page_id is not None:

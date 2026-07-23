@@ -11,8 +11,6 @@ from adt_ai.cli.constants import (
     ApexExportRequest,
     ApexExportRunner,
     ConsoleExportDbReporter,
-    ExportDataRequest,
-    ExportDataRunner,
     ExportDbRequest,
     ExportDbRunner,
     GatewayFactory,
@@ -44,10 +42,7 @@ from adt_ai.cli.export_apex_owners import (
     _resolve_apex_app_owners,
     _resolve_apex_metadata_owners,
 )
-from adt_ai.cli.export_reporters import (
-    ConsoleApexRevealReporter,
-    ConsoleExportDataReporter,
-)
+from adt_ai.cli.export_reporters import ConsoleApexRevealReporter
 from adt_ai.export_db.config import AuthorFilterError, resolve_author_filter
 from adt_ai.export_db.files import ObjectFileResolver
 from adt_ai.export_db.groups import (
@@ -71,7 +66,7 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
     connections = startup.connections
     environment = args.env or connections.default_environment
     schemas = (
-        connections.expand_schemas(args.schema, environment=environment)
+        connections.expand_schemas(_flatten_arg_groups(args.schema), environment=environment)
         if args.schema
         else connections.default_schemas(environment)
     )
@@ -145,7 +140,8 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
             schema_export = schema_export,
             object_types  = object_types,
             names         = object_names,
-            recent_days   = args.recent,
+            recent        = args.recent,
+            environment   = environment,
             clean         = args.delete,
             dry_run       = args.dry_run,
             reporter      = ConsoleExportDbReporter(silent=args.silent),
@@ -201,65 +197,6 @@ def _run_groups_move(
     )
 
 
-def _run_export_data(
-    args: argparse.Namespace, gateway_factory: GatewayFactory | None = None
-) -> int:
-    print_adt_header("APEX DEPLOYMENT TOOL: EXPORT_DATA")
-    startup = _load_startup_context(args)
-    root = startup.root
-    config = startup.config
-    connections = startup.connections
-    environment = args.env or connections.default_environment
-    schemas = (
-        connections.expand_schemas(args.schema, environment=environment)
-        if args.schema
-        else connections.default_schemas(environment)
-    )
-    schema_connections = {
-        schema: connections.resolve(environment=environment, schema=schema)
-        for schema in schemas
-    }
-    schema_export = {
-        schema: schema_connections[schema].export
-        for schema in schemas
-    }
-    if args.debug:
-        _print_startup_debug(startup)
-
-    gateway_cache: dict[str, QueryGateway] = {}
-
-    def default_gateway_factory(schema: str) -> QueryGateway:
-        return OracleGateway(
-            schema_connections[schema], startup_sql=startup.startup_sql, config=config
-        )
-
-    selected_gateway_factory = gateway_factory or default_gateway_factory
-
-    def export_data_gateway_factory(schema: str) -> QueryGateway:
-        if schema not in gateway_cache:
-            gateway = selected_gateway_factory(schema)
-            gateway_cache[schema] = DebugQueryGateway(gateway) if args.debug else gateway
-        return gateway_cache[schema]
-
-    for schema in schemas:
-        _print_connection_block(
-            export_data_gateway_factory(schema), schema_connections[schema], debug=args.debug
-        )
-
-    runner = ExportDataRunner(export_data_gateway_factory)
-    runner.run(
-        ExportDataRequest(
-            root          = root,
-            schemas       = schemas,
-            config        = config,
-            schema_export = schema_export,
-            names         = _flatten_arg_groups(args.name),
-            reporter      = ConsoleExportDataReporter(silent=args.silent),
-        )
-    )
-    return 0
-
-
 def _run_export_apex(
     args: argparse.Namespace, gateway_factory: GatewayFactory | None = None
 ) -> int:
@@ -281,7 +218,9 @@ def _run_export_apex(
     sql_app_ids = None if has_app_ranges else _flatten_arg_groups(args.app)
     schema_app_ids: dict[str, list[str]] = {}
     if args.schema:
-        schemas = connections.expand_schemas(args.schema, environment=environment)
+        schemas = connections.expand_schemas(
+            _flatten_arg_groups(args.schema), environment=environment
+        )
         connection_schema = schemas[0]
     elif args.reveal:
         schemas = connections.schema_names(environment)
@@ -474,7 +413,8 @@ def _run_export_apex(
                     actions      = actions,
                     config       = config,
                     release      = args.release,
-                    recent_days  = recent_days,
+                    recent       = recent_days,
+                    environment  = environment,
                     changed_by   = args.by or None,
                     my_changes   = args.my,
                     my_name      = my_name,

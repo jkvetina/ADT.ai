@@ -43,6 +43,8 @@ def _target_path(
     relative = _strip_app_prefix(file_name, application)
     if action == "full":
         return resolver.full_export(application)
+    if action == "checksum":
+        return resolver.checksum_export(application)
     if relative.startswith("workspace/"):
         return resolver.workspace_root() / Path(relative.removeprefix("workspace/"))
     if action == "split":
@@ -79,6 +81,10 @@ def _payload_for(
         lines = payload.splitlines(keepends=True)
         embedded_payload = "".join(lines[10:]) if len(lines) > 10 else payload
         output = _normalize_text_line_endings(embedded_payload)
+    elif action == "checksum":
+        # The fingerprint is the whole file: one clean line, so `git diff` reports
+        # application changes rather than whitespace churn.
+        output = f"{_normalize_text_line_endings(payload).strip()}\n"
     elif action == "full" and relative.endswith(".sql"):
         output = _enrich_sql(payload, enrichments)
     elif action == "split" and relative.endswith(".sql"):

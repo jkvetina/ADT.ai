@@ -127,6 +127,28 @@ def _flatten_arg_groups(groups: list[list[str]] | None) -> list[str] | None:
         if part.strip()
     ]
 
+def _flatten_compile_setting_groups(groups: list[list[str]] | None) -> list[str] | None:
+    """Flatten repeated/space groups of ``-scope`` or ``-warnings`` tokens.
+
+    Each token is split on both comma and ``+`` and upper-cased, so
+    ``-scope IDENTIFIERS STATEMENTS``, ``-scope IDENTIFIERS,STATEMENTS``,
+    ``-scope IDENTIFIERS+STATEMENTS``, and a repeated ``-scope`` all yield the same
+    list. Unlike ``-name``/``-type`` these are keyword tokens (case-insensitive
+    vocabulary), so ``+`` — invalid in an Oracle identifier — is a safe extra
+    separator and case is normalised.
+    """
+    if not groups:
+        return None
+    return [
+        part.strip().upper()
+        for group in groups
+        for item in group
+        for chunk in item.split(",")
+        for part in chunk.split("+")
+        if part.strip()
+    ]
+
+
 def _app_in_selection(app_id: int | str, selection: ApexAppSelection) -> bool:
     if str(app_id) in selection.explicit_ids:
         return True

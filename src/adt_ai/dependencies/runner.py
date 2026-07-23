@@ -30,6 +30,7 @@ from adt_ai.export_apex import queries as export_apex_queries
 from adt_ai.export_db.render import print_adt_header
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.progress import fixed_width_count_line, fixed_width_status_line
+from adt_ai.shared.recent_state import is_bare_recent
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,9 @@ class DependencyIndexRequest:
     progress: Any = None
     apex_versions: dict[str, str] | None = None
     refresh_names: list[str] | None = None
+    # `-recent` narrowing for `-refresh`: None (full refresh), an int day window,
+    # or BARE_RECENT (since each schema scope's own `_meta` last-refresh stamp).
+    recent: Any = None
     # Per-scope last-refresh stamp; defaults to "now" when the request omits it.
     refreshed_at: str | None = None
     # app_id -> display label ("122" or "122/ALIAS"), for the per-app section header.
@@ -61,6 +65,14 @@ class DependencyIndexRunner:
     def __init__(self, gateway_factory: GatewayFactory) -> None:
         self.gateway_factory = gateway_factory
 
+    @staticmethod
+    def _schema_last_refresh(store: DependencyStore, schema: str) -> str | None:
+        """The schema scope's own ``_meta`` stamp — bare ``-recent``'s cutoff."""
+        for row in store.last_refreshes():
+            if row["type"] == "schema" and row["scope"] == schema:
+                return row["last_refresh"]
+        return None
+
     def refresh(self, request: DependencyIndexRequest) -> None:
         progress = _progress_reporter(request.progress)
         apps = list(request.apps or [])
@@ -76,17 +88,46 @@ class DependencyIndexRunner:
         try:
             for schema in request.schemas:
                 gateway = self.gateway_factory(schema)
-                scoped_params = (
-                    {"object_name_filter": ",".join(refresh_names)}
-                    if refresh_names
-                    else None
-                )
+                # `-recent` narrows THIS schema's refresh to objects changed since
+                # its own `_meta` stamp (bare) or an N-day window, selected
+                # server-side and patched through the deep per-object path so the
+                # untouched mirror rows survive. A user-named deep refresh or
+                # `-force` wins over `-recent`; a bare `-recent` with no stamp yet
+                # falls back to the plain full refresh.
+                recent_params: dict[str, Any] | None = None
+                if request.recent is not None and not refresh_names and not request.force:
+                    stamp = (
+                        self._schema_last_refresh(store, schema)
+                        if is_bare_recent(request.recent)
+                        else None
+                    )
+                    if is_bare_recent(request.recent) and stamp is None:
+                        progress.line(
+                            f"  RECENT: no previous refresh recorded for {schema} "
+                            "— refreshing all objects"
+                        )
+                    else:
+                        recent_params = {
+                            "changed_since": stamp,
+                            "recent_days": None if stamp is not None else int(request.recent),
+                        }
+                recent_names: list[str] | None = None
+                scope_names = refresh_names
                 progress.begin("USER_OBJECTS")
-                object_query = (
-                    queries.USER_OBJECTS_SCOPED_QUERY
-                    if refresh_names
-                    else queries.USER_OBJECTS_QUERY
-                )
+                if recent_params is not None:
+                    object_query = queries.USER_OBJECTS_RECENT_QUERY
+                    scoped_params: dict[str, Any] | None = recent_params
+                else:
+                    object_query = (
+                        queries.USER_OBJECTS_SCOPED_QUERY
+                        if refresh_names
+                        else queries.USER_OBJECTS_QUERY
+                    )
+                    scoped_params = (
+                        {"object_name_filter": ",".join(refresh_names)}
+                        if refresh_names
+                        else None
+                    )
                 try:
                     object_rows = (
                         gateway.fetch_all(object_query, scoped_params)
@@ -96,7 +137,15 @@ class DependencyIndexRunner:
                 except Exception:
                     progress.fail("USER_OBJECTS")
                     raise
-                if refresh_names:
+                if recent_params is not None:
+                    recent_names = sorted({row["OBJECT_NAME"] for row in object_rows})
+                    scope_names = recent_names
+                    scoped_params = (
+                        {"object_name_filter": ",".join(recent_names)}
+                        if recent_names
+                        else None
+                    )
+                if scope_names:
                     changed_objects = [
                         (row["OBJECT_TYPE"], row["OBJECT_NAME"]) for row in object_rows
                     ]
@@ -105,10 +154,16 @@ class DependencyIndexRunner:
                         schema, object_rows, force=request.force
                     )
                 changed = set(changed_objects)
-                if request.force or refresh_names:
+                if request.force or scope_names:
                     progress.finish("USER_OBJECTS", len(object_rows))
                 else:
                     progress.finish("USER_OBJECTS", len(changed_objects), total=len(object_rows))
+                if recent_names is not None and not recent_names:
+                    # Nothing changed since the cutoff: skip the detail pulls
+                    # entirely, but still advance the stamp — the scope WAS
+                    # covered for everything since the previous refresh.
+                    store.record_refresh("schema", schema, refreshed_at)
+                    continue
                 if id(gateway) not in prepared:
                     plscope.ensure_plscope(
                         gateway,
@@ -119,7 +174,7 @@ class DependencyIndexRunner:
                 tables = {}
                 table_queries = (
                     queries.USER_TABLE_SCOPED_QUERIES
-                    if refresh_names
+                    if scope_names
                     else queries.USER_TABLE_QUERIES
                 )
                 for table, query in table_queries.items():
@@ -135,7 +190,7 @@ class DependencyIndexRunner:
                     except Exception:
                         progress.fail(table)
                         raise
-                    if request.force or refresh_names:
+                    if request.force or scope_names:
                         progress.finish(table, len(rows))
                     else:
                         progress.finish(
@@ -148,12 +203,12 @@ class DependencyIndexRunner:
                             total=len(rows),
                         )
                     tables[table] = rows
-                if refresh_names:
+                if scope_names:
                     store.refresh_schema_deep(
                         schema,
                         object_rows,
                         tables,
-                        object_names=refresh_names,
+                        object_names=scope_names,
                     )
                 else:
                     store.refresh_schema_incremental(
@@ -177,9 +232,19 @@ class DependencyIndexRunner:
                 if id(gateway) not in prepared:
                     plscope.ensure_plscope(gateway, progress=progress.line)
                     prepared.add(id(gateway))
-                gateway.execute(export_apex_queries.EXPORT_START_QUERY, {"app_id": app})
-                gateway.execute(queries.APEX_SCAN_STATEMENT, {"app_id": app})
-                gateway.execute(queries.DEPSCAN_CLEANUP_STATEMENT)
+                # The component scan below is a real, potentially slow DB call
+                # with no natural row count; without a visible row here the
+                # header prints and the console then sits silent until the
+                # scan resolves, minutes on an app with many pages.
+                progress.begin("SCANNING COMPONENTS")
+                try:
+                    gateway.execute(export_apex_queries.EXPORT_START_QUERY, {"app_id": app})
+                    gateway.execute(queries.APEX_SCAN_STATEMENT, {"app_id": app})
+                    gateway.execute(queries.DEPSCAN_CLEANUP_STATEMENT)
+                except Exception:
+                    progress.fail("SCANNING COMPONENTS")
+                    raise
+                progress.status("SCANNING COMPONENTS", "DONE")
                 tables = {}
                 for table, query in queries.apex_table_queries(apex_version).items():
                     progress.begin(table)
@@ -216,8 +281,21 @@ class _NoProgressReporter:
     def fail(self, label: str, *, status: str = "FAILED", indent: str = "  ") -> None:
         return None
 
+    def status(self, label: str, status: str, *, indent: str = "  ") -> None:
+        return None
+
 
 class _CallableProgressReporter:
+    """Test-only adapter: one complete formatted string per callback.
+
+    Not console-streaming safe — ``begin()`` cannot emit a bare label the way
+    ``FixedWidthProgressPrinter.begin()`` does, because a plain callable has
+    no notion of "the same terminal line, filled in later". Real CLI output
+    always goes through ``FixedWidthProgressPrinter`` (see
+    ``commands_dependencies.py``); this class exists only so tests can assert
+    on complete formatted rows via a plain callback like ``list.append``.
+    """
+
     def __init__(self, progress: Callable[[str], None]) -> None:
         self._progress = progress
 
@@ -238,6 +316,9 @@ class _CallableProgressReporter:
         self._progress(text)
 
     def fail(self, label: str, *, status: str = "FAILED", indent: str = "  ") -> None:
+        self._progress(fixed_width_status_line(label, status, indent=indent))
+
+    def status(self, label: str, status: str, *, indent: str = "  ") -> None:
         self._progress(fixed_width_status_line(label, status, indent=indent))
 
 

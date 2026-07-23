@@ -47,6 +47,7 @@ class ObjectDiscovery:
         prefix: str | None = None,
         ignore: Iterable[str] | None = None,
         recent_days: int | None = None,
+        changed_since: str | None = None,
         prefer_exact_names: bool = True,
     ) -> list[DatabaseObject]:
         filters = _ObjectFilters(
@@ -56,7 +57,9 @@ class ObjectDiscovery:
             ignore       = _normalize_list(ignore) or [],
         )
         exact_names = prefer_exact_names and has_exact_name_filter(filters.names)
-        rows = self._object_rows(schema, filters, recent_days, exact_names=exact_names)
+        rows = self._object_rows(
+            schema, filters, recent_days, changed_since, exact_names=exact_names
+        )
         objects = [
             DatabaseObject(
                 schema      = schema,
@@ -72,10 +75,13 @@ class ObjectDiscovery:
             )
         ]
         if _includes_object_type("INDEX", filters.object_types):
-            objects.extend(self._discover_indexes(schema, filters, recent_days))
-        if _includes_object_type("JOB", filters.object_types) and recent_days is None:
+            objects.extend(self._discover_indexes(schema, filters, recent_days, changed_since))
+        # JOB and MVIEW LOG have no reliable last_ddl_time, so any change-window
+        # mode skips them — watermark mode for exactly the reason -recent N does.
+        windowed = recent_days is not None or changed_since is not None
+        if _includes_object_type("JOB", filters.object_types) and not windowed:
             objects.extend(self._discover_jobs(schema, filters))
-        if _includes_object_type("MVIEW LOG", filters.object_types) and recent_days is None:
+        if _includes_object_type("MVIEW LOG", filters.object_types) and not windowed:
             objects.extend(self._discover_mview_logs(schema, filters))
         return objects
 
@@ -84,6 +90,7 @@ class ObjectDiscovery:
         schema: str,
         filters: _ObjectFilters,
         recent_days: int | None,
+        changed_since: str | None,
         exact_names: bool,
     ) -> list[dict[str, Any]]:
         if exact_names:
@@ -95,6 +102,7 @@ class ObjectDiscovery:
                         {
                             "schema": schema,
                             "recent_days": recent_days,
+                            "changed_since": changed_since,
                             "object_name": object_name,
                         },
                     )
@@ -108,6 +116,7 @@ class ObjectDiscovery:
             {
                 "schema": schema,
                 "recent_days": recent_days,
+                "changed_since": changed_since,
                 "object_type_filter": _query_pattern_list(object_types, default="%"),
             },
         )
@@ -152,12 +161,14 @@ class ObjectDiscovery:
         schema: str,
         filters: _ObjectFilters,
         recent_days: int | None,
+        changed_since: str | None = None,
     ) -> list[DatabaseObject]:
         rows = self.gateway.fetch_all(
             self.INDEXES_QUERY,
             {
                 "schema": schema,
                 "recent_days": recent_days,
+                "changed_since": changed_since,
             },
         )
         return [

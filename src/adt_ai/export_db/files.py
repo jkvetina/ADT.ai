@@ -57,6 +57,7 @@ class ObjectFileResolver:
             if str(folder).strip("/")
         }
         self._existing_case_paths_by_folder: dict[Path, dict[str, Path]] = {}
+        self._duplicate_paths_by_folder: dict[Path, dict[str, list[Path]]] = {}
 
     @classmethod
     def from_config(
@@ -211,26 +212,36 @@ class ObjectFileResolver:
                 roots.append((object_type, folder, layout.extension))
         return roots
 
-    def check_subtree_uniqueness(self, schemas: list[str]) -> None:
-        """Raise ObjectFileError if any filename appears more than once in a type subtree."""
-        for object_type, layout in self.object_types.items():
-            if object_type in {"DATA", "GRANT"}:
-                continue
-            seen: dict[str, list[Path]] = {}
-            for search_root in self._search_roots_for(object_type, layout, schemas):
-                if not search_root.exists():
-                    continue
-                for file_path in search_root.rglob(f"*{layout.extension}"):
-                    if file_path.name.endswith(f".fix{layout.extension}"):
-                        continue
-                    seen.setdefault(file_path.name.lower(), []).append(file_path)
-            collisions = {name: paths for name, paths in seen.items() if len(paths) > 1}
-            if collisions:
-                lines = [f"Duplicate filenames found in {object_type} subtree:"]
-                for _name, paths in sorted(collisions.items()):
-                    for path in sorted(paths):
-                        lines.append(f"  {path}")
-                raise ObjectFileError("\n".join(lines))
+    def duplicate_locations(self, database_object: DatabaseObject) -> list[Path]:
+        """Every existing file sharing this object's filename inside its type subtree.
+
+        Empty unless the same filename really does sit in more than one place —
+        the stale-clone case. ``_existing_case_path`` silently keeps the first
+        match and exports there, so the other copies drift; the export surfaces
+        them inline with a ``[DUPE]`` marker rather than aborting the run.
+        The scan is per schema subtree, so the same object name exported from
+        two schemas is not a collision.
+        """
+        object_type = database_object.object_type.upper()
+        if object_type in {"DATA", "GRANT"}:
+            return []
+        layout = self.object_types.get(object_type)
+        if layout is None:
+            return []
+        folder = self._folder_for(database_object, layout)
+        filename = f"{database_object.name.lower()}{layout.extension}"
+        return self._duplicate_paths(folder, layout.extension).get(filename, [])
+
+    def display_path(self, path: Path) -> str:
+        """Root-relative path with the leading ``database/`` segment dropped."""
+        try:
+            relative = Path(path).resolve().relative_to(Path(self.root).resolve())
+        except (OSError, ValueError):
+            return Path(path).as_posix()
+        parts = relative.parts
+        if parts and parts[0].lower() == "database":
+            parts = parts[1:]
+        return "/".join(parts)
 
     def flat_object_names(self, schemas: list[str]) -> dict[str, list[str]]:
         """Object names of files sitting directly in each type folder (not grouped)."""
@@ -292,6 +303,13 @@ class ObjectFileResolver:
             if file_path.name.endswith(candidate_layout.extension):
                 return False
         return True
+
+    def _duplicate_paths(self, folder: Path, extension: str) -> dict[str, list[Path]]:
+        cache = self._duplicate_paths_by_folder.get(folder)
+        if cache is None:
+            cache = _duplicate_case_paths(folder, extension)
+            self._duplicate_paths_by_folder[folder] = cache
+        return cache
 
     def _existing_case_path(self, folder: Path, filename: str) -> Path | None:
         cache = self._existing_case_paths_by_folder.get(folder)
@@ -379,6 +397,21 @@ def _parse_schema_folders(raw_folders: Any) -> dict[str, str]:
         for schema, folder in raw_folders.items()
         if str(folder).strip("/")
     }
+
+
+def _duplicate_case_paths(folder: Path, extension: str) -> dict[str, list[Path]]:
+    """Filenames present more than once under `folder`, case-insensitively.
+
+    Keyed by lowercased filename, so a clone that differs only in casing still
+    counts. `.fix` sidecars sit beside their object file by design and are not
+    duplicates.
+    """
+    found: dict[str, list[Path]] = {}
+    for path in sorted(folder.rglob(f"*{extension}")) if folder.exists() else []:
+        if not path.is_file() or path.name.endswith(f".fix{extension}"):
+            continue
+        found.setdefault(path.name.lower(), []).append(path)
+    return {name: paths for name, paths in found.items() if len(paths) > 1}
 
 
 def _existing_case_paths(folder: Path) -> dict[str, Path]:

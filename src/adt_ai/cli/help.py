@@ -13,6 +13,7 @@ ACTION_DESTS = {
     "all_formats",
     "archive",
     "calendar_offset",
+    "checksum",
     "continue_patch",
     "create",
     "delete",

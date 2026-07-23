@@ -28,6 +28,7 @@ from adt_ai.cli.context import (
     DebugQueryGateway,
     StartupContext,
     _flatten_arg_groups,
+    _flatten_compile_setting_groups,
     _is_database_connection_error,
     _load_startup_context,
     _print_connection_block,
@@ -68,7 +69,7 @@ def _run_recompile(
     # default schema — taking only the first is what made a configured
     # `schema_db: APP,CORE` export both and recompile one.
     schemas = (
-        connections.expand_schemas(args.schema, environment=environment)
+        connections.expand_schemas(_flatten_arg_groups(args.schema), environment=environment)
         if args.schema
         else connections.default_schemas(environment)
     )
@@ -123,6 +124,8 @@ def _run_recompile_for_schema(
     # there is a real wildcard over real underscores.
     object_types = normalize_object_type_patterns(_flatten_arg_groups(args.type) or ["%"])
 
+    # -scope/-warnings are repeatable multi-value keyword lists (space/comma/+/repeated
+    # forms all equivalent), flattened and upper-cased the way -name/-type already are.
     request = RecompileRequest(
         object_name    = ",".join(object_names),
         object_type    = ",".join(object_types),
@@ -130,9 +133,10 @@ def _run_recompile_for_schema(
         ignore         = ignore,
         force          = args.force,
         native         = args.native,
+        interpreted    = args.interpreted,
         optimize_level = args.level,
-        scope          = args.scope,
-        warnings       = args.warnings,
+        scope          = _flatten_compile_setting_groups(args.scope),
+        warnings       = _flatten_compile_setting_groups(args.warnings),
         mview          = args.mviews,
         synonyms       = args.synonyms,
         disabled       = args.disabled,

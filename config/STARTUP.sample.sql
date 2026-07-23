@@ -4,8 +4,11 @@
 -- Copy this file to config/STARTUP.sql and uncomment or add what you need;
 -- the copy is gitignored, so personal session setup never dirties the repo.
 -- Statements run once on every new database connection. Drop session setup
--- here (NLS settings, ALTER SESSION tuning, an identifier block, ...).
--- A project-level config/STARTUP.sql overrides the repo-level copy.
+-- here (NLS settings, ALTER SESSION tuning, ...). The session identifier is
+-- already set automatically from config/IDENTITY.yaml (db_schema) BEFORE this
+-- file runs, so add your own DBMS_SESSION.SET_IDENTIFIER block only to
+-- override it. A project-level config/STARTUP.sql overrides the repo-level
+-- copy.
 --
 -- Mixed SQL*Plus / SQL / PL/SQL is supported, the same way SQLcl reads it:
 --   * SQL*Plus directives (SET SERVEROUTPUT ON, SET DEFINE OFF, ...) are client
@@ -20,6 +23,6 @@
 -- ALTER SESSION SET NLS_DATE_FORMAT        = 'YYYY-MM-DD HH24:MI';
 --
 -- BEGIN
---     DBMS_SESSION.SET_IDENTIFIER('JAN');
+--     DBMS_APPLICATION_INFO.SET_CLIENT_INFO('ADT');
 -- END;
 -- /

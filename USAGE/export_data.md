@@ -1,5 +1,7 @@
 # Export Table Data (adtai export_data)
 
+`export_data` exports the *rows* of selected tables — reference data, settings, lookup lists — as CSV plus a generated MERGE script per table, so seed data lives in Git next to the DDL and can be replayed idempotently into any environment. LOB columns become sidecar files with self-contained SQL import scripts. It complements `export_db`, which exports object DDL but never data.
+
 Export named table data from the current folder:
 
 ```bash
@@ -32,7 +34,7 @@ tables:
 | `-root`, `--root` | No | `.` | Output root folder. This can be any ordinary folder and does not need to be a Git repository. |
 | `-config-dir`, `--config-dir` | Yes | none | Folder containing project config YAML. ADT.ai always loads repo defaults first, then overlays these project configs. |
 | `-env`, `--env` | No | connection default | Connection environment to use, for example `DEV`. |
-| `-schema`, `--schema` | Yes | environment default schema | Schema to export. |
+| `-schema`, `--schema` | Yes | environment default schema | Schema(s) to export data from, one pass each. Pass multiple times, space-separate (`-schema DA GSN`), use comma lists, or use `%` patterns such as `CORE%`. |
 | `-name`, `--name` | Yes | existing DATA files | Table name pattern or patterns to export. Supports old ADT SQL-like `%` patterns through database table discovery. |
 | `-silent`, `--silent` | No | off | Suppress per-table progress rows while keeping command chrome, export summary, and timer. |
 | `-debug`, `--debug` | No | off | Show input parameters, SQL queries with bind values, and full Python tracebacks for troubleshooting. |

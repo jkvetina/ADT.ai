@@ -42,6 +42,7 @@ class RecompileRequest:
     ignore: str = ""
     force: bool = False
     native: bool = False
+    interpreted: bool = False
     optimize_level: int | None = None
     scope: list[str] | None = None
     warnings: list[str] | None = None
