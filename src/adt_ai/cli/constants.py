@@ -130,7 +130,9 @@ FROM product_component_version p
 WHERE p.product LIKE 'Oracle Database%'
 """.strip()
 
-APEX_EXPORT_ACTIONS = ("full", "split", "readable", "embedded", "rest", "files", "files_ws")
+APEX_EXPORT_ACTIONS = (
+    "full", "split", "readable", "embedded", "checksum", "rest", "files", "files_ws",
+)
 
 DROPBOX_PATH_RE = re.compile(r"/Users/[^/]+/Library/CloudStorage/Dropbox/")
 

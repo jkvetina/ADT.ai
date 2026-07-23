@@ -1,5 +1,7 @@
 # Environment Check and Updates (adtai doctor)
 
+`doctor` verifies the local toolchain ADT.ai depends on — Python, Git, Java, SQLcl, `oracledb`, Instant Client — reports versions and available updates, and applies explicitly requested updates or project scaffolding. Run it after installing ADT.ai, after a toolchain upgrade, or whenever a command fails in a way that smells environmental.
+
 Run the setup check from any folder:
 
 ```bash

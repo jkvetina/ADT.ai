@@ -22,6 +22,7 @@ from adt_ai.cli.constants import (
     switch_to_branch,
 )
 from adt_ai.cli.context import _config_search_paths, _display, _flatten_arg_groups, _repo_root
+from adt_ai.shared.recent_state import is_bare_recent
 
 
 
@@ -184,7 +185,11 @@ def _run_search_repo(args: argparse.Namespace) -> int:
                 hash_refs     = _flatten_arg_groups(args.hash),
                 since         = _resolve_since(args.since, option="-since") if args.since else None,
                 until         = _resolve_since(args.until, option="-until") if args.until else None,
-                recent        = args.recent,
+                # search_repo reads git history, which has no export watermark:
+                # bare -recent keeps its documented 1-day meaning here. The
+                # sentinel exists so `-recent` has ONE parser shape across every
+                # module; only the modules with a watermark resolve it further.
+                recent        = 1 if is_bare_recent(args.recent) else args.recent,
                 my            = args.my,
                 restore       = args.restore,
                 stage         = args.stage,

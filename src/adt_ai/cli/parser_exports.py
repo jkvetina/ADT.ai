@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from adt_ai.cli.parser_common import add_connection_key_argument
+from adt_ai.shared.recent_state import BARE_RECENT
 
 
 def add_export_parsers(subparsers) -> None:
@@ -17,7 +18,14 @@ def add_export_parsers(subparsers) -> None:
         help="folder containing config YAML",
     )
     export_db.add_argument("--env", "-env", help="connection environment")
-    export_db.add_argument("--schema", "-schema", action="append", help="schema to export")
+    export_db.add_argument(
+        "--schema",
+        "-schema",
+        action = "append",
+        nargs  = "+",
+        help   = "schema(s) to export, repeatable, comma- or space-separated, "
+                 "supports %% wildcards",
+    )
     export_db.add_argument(
         "--type",
         "-type",
@@ -38,9 +46,10 @@ def add_export_parsers(subparsers) -> None:
         "--recent",
         "-recent",
         nargs = "?",
-        const = 1,
+        const = BARE_RECENT,
         type  = int,
-        help  = "export objects changed in the last DAYS days (bare -recent = 1)",
+        help  = "export objects changed in the last DAYS days "
+                "(bare -recent = since the last export of that schema)",
     )
     export_db.add_argument(
         "--dry-run",
@@ -89,7 +98,7 @@ def add_export_parsers(subparsers) -> None:
         "-my",
         action = "store_true",
         help   = "export only objects changed by the current user "
-                 "(db schema from config/me.yaml)",
+                 "(db schema from config/IDENTITY.yaml)",
     )
     add_connection_key_argument(export_db)
 
@@ -106,7 +115,14 @@ def add_export_parsers(subparsers) -> None:
         help="folder containing config YAML",
     )
     export_data.add_argument("--env", "-env", help="connection environment")
-    export_data.add_argument("--schema", "-schema", action="append", help="schema to export")
+    export_data.add_argument(
+        "--schema",
+        "-schema",
+        action = "append",
+        nargs  = "+",
+        help   = "schema(s) to export data from, repeatable, comma- or "
+                 "space-separated, supports %% wildcards",
+    )
     export_data.add_argument(
         "--name",
         "-name",
@@ -141,7 +157,14 @@ def add_export_parsers(subparsers) -> None:
         help="folder containing config YAML",
     )
     export_apex.add_argument("--env", "-env", help="connection environment")
-    export_apex.add_argument("--schema", "-schema", action="append", help="APEX owner schema")
+    export_apex.add_argument(
+        "--schema",
+        "-schema",
+        action = "append",
+        nargs  = "+",
+        help   = "APEX owner schema(s), repeatable, comma- or space-separated, "
+                 "supports %% wildcards",
+    )
     export_apex.add_argument("--ws", "-ws", help="APEX workspace")
     export_apex.add_argument("--group", "-group", help="APEX application group")
     export_apex.add_argument(
@@ -177,9 +200,10 @@ def add_export_parsers(subparsers) -> None:
         "--recent",
         "-recent",
         nargs = "?",
-        const = 1,
+        const = BARE_RECENT,
         type  = int,
-        help  = "show components changed in the last DAYS days",
+        help  = "show components changed in the last DAYS days "
+                "(bare -recent = since the last export of that app/format)",
     )
     export_apex.add_argument(
         "--by",
@@ -225,6 +249,12 @@ def add_export_parsers(subparsers) -> None:
     )
     export_apex.add_argument(
         "--embedded", "-embedded", action="store_true", help="export embedded code report"
+    )
+    export_apex.add_argument(
+        "--checksum",
+        "-checksum",
+        action = "store_true",
+        help   = "export the ID-independent SHA-256 application checksum",
     )
     export_apex.add_argument("--rest", "-rest", action="store_true", help="export REST services")
     export_apex.add_argument(

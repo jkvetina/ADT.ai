@@ -84,6 +84,12 @@ from adt_ai.export_apex.rest import (
 )
 from adt_ai.shared import text_files
 from adt_ai.shared.db import QueryGateway
+from adt_ai.shared.recent_state import (
+    RecentStore,
+    is_bare_recent,
+    may_advance,
+    read_db_now,
+)
 from adt_ai.shared.row_values import row_value
 from adt_ai.shared.yaml_io import load_yaml_mapping, store_yaml_mapping
 
@@ -95,10 +101,29 @@ ACTION_HEADERS = {
     "split": "  SPLIT COMPONENTS",
     "readable": "  READABLE COMPONENTS",
     "embedded": "  EMBEDDED CODE REPORT",
+    "checksum": "  APP CHECKSUM",
     "rest": "  REST SERVICES",
     "files": "  APPLICATION FILES",
     "files_ws": "  WORKSPACE FILES",
 }
+
+# Formats whose coverage a `-recent` watermark can describe. `rest`, `files`, and
+# `files_ws` export artefacts that carry no component `last_updated_on`, so a
+# component-level cutoff says nothing about whether they are current. `checksum`
+# is a single whole-app fingerprint: it reports *that* the app changed, never
+# which components were exported, so it must not stamp "everything is current".
+_WATERMARKED_FORMATS = ("full", "split", "readable", "embedded")
+
+
+def is_watermarking(request: ApexExportRequest) -> bool:
+    """Whether this run could stamp a watermark, and so needs a database clock read."""
+    if request.recent_report_only or request.narrowed:
+        return False
+    return any(
+        action in _WATERMARKED_FORMATS
+        for action, wanted in request.actions.items()
+        if wanted
+    )
 
 
 @dataclass(frozen=True)
@@ -112,6 +137,7 @@ class ApexExportRunner:
     EXPORT_SPLIT_QUERY    = queries.EXPORT_SPLIT_QUERY
     EXPORT_READABLE_QUERY = queries.EXPORT_READABLE_QUERY
     EXPORT_EMBEDDED_QUERY = queries.EXPORT_EMBEDDED_QUERY
+    EXPORT_CHECKSUM_QUERY = queries.EXPORT_CHECKSUM_QUERY
     FETCH_FILES_QUERY     = queries.FETCH_FILES_QUERY
     RECENT_COMPONENTS_QUERY = queries.RECENT_COMPONENTS_QUERY
     APEX_FILES_QUERY      = queries.APEX_FILES_QUERY
@@ -149,9 +175,17 @@ class ApexExportRunner:
             if not request.recent_report_only:
                 _store_workspace_developers(developers_path, developer_rows)
             for application in request.applications.get(schema, []):
+                cutoff = self._listing_cutoff(request, application)
+                # Database clock BEFORE the component listing: anything changed
+                # mid-export stays at or after it and is re-selected next run.
+                candidate = (
+                    read_db_now(gateway)
+                    if is_watermarking(request)
+                    else None
+                )
                 if request.recent_report_only:
                     recent_components = self._recent_components(
-                        gateway, application, request, developers
+                        gateway, application, request, developers, cutoff
                     )
                     if recent_components is not None:
                         self._print_recent_changes(
@@ -160,6 +194,7 @@ class ApexExportRunner:
                             request.recent_days,
                             recent_author_label(request),
                             recent_components,
+                            cutoff,
                         )
                     continue
                 component_filters = request.component_filters
@@ -167,7 +202,7 @@ class ApexExportRunner:
                 gateway.execute(self.EXPORT_START_QUERY, {"app_id": application.app_id})
                 enrichments = _enrichments(gateway, application)
                 recent_components = self._recent_components(
-                    gateway, application, request, developers
+                    gateway, application, request, developers, cutoff
                 )
                 recent_filter = _recent_component_filter(recent_components)
                 explicit_filter = ApexExplicitFilter(
@@ -189,6 +224,7 @@ class ApexExportRunner:
                         request.recent_days,
                         recent_author_label(request),
                         recent_components,
+                        cutoff,
                     )
                 if any(request.actions.values()):
                     _print_application_export_header(application)
@@ -245,6 +281,9 @@ class ApexExportRunner:
                             self._write_static_files(gateway, resolver, application, 0)
                         ),
                     )
+                # Reached only when every requested format wrote successfully, so
+                # an app that raised mid-export keeps its previous watermarks.
+                self._advance_watermarks(request, application, candidate)
 
     def _run_text_actions(
         self,
@@ -267,6 +306,7 @@ class ApexExportRunner:
             ("split", self.EXPORT_SPLIT_QUERY),
             ("readable", self.EXPORT_READABLE_QUERY),
             ("embedded", self.EXPORT_EMBEDDED_QUERY),
+            ("checksum", self.EXPORT_CHECKSUM_QUERY),
         ):
             if not request.actions.get(action):
                 continue
@@ -479,12 +519,16 @@ class ApexExportRunner:
         recent_days: int | None,
         author_label: str | None,
         rows: list[dict[str, Any]],
+        changed_since: str | None = None,
     ) -> None:
-        if recent_days is None:
+        if recent_days is None and changed_since is None:
             return
         if author_label and not rows:
             return
-        _print_recent_changes_header(application, _recent_since(recent_days), author_label or "")
+        # Watermark mode shows the stored instant verbatim; -recent N keeps the
+        # day-count arithmetic it has always used.
+        since = changed_since if changed_since is not None else _recent_since(recent_days)
+        _print_recent_changes_header(application, since, author_label or "")
         _print_recent_components(rows)
 
     def _recent_components(
@@ -493,32 +537,93 @@ class ApexExportRunner:
         application: ApexApplication,
         request: ApexExportRequest,
         developers: Mapping[str, Mapping[str, str]],
+        changed_since: str | None = None,
     ) -> list[dict[str, Any]] | None:
-        if not request.recent_days or request.recent_days <= 0:
+        if request.recent is None:
             return None
+        if changed_since is None and (not request.recent_days or request.recent_days <= 0):
+            # Bare -recent with no watermark for any requested format: nothing to
+            # narrow by, so the export covers the whole app (and may then seed).
+            return None
+        binds = {
+            "app_id": application.app_id,
+            "recent": request.recent_days,
+            "changed_since": changed_since,
+        }
         authors = recent_authors(application, developers, request)
         if not authors:
             return gateway.fetch_all(
                 self.RECENT_COMPONENTS_QUERY,
-                {
-                    "app_id": application.app_id,
-                    "recent": request.recent_days,
-                    "author": None,
-                },
+                {**binds, "author": None},
             )
         rows: list[dict[str, Any]] = []
         for author in authors:
             rows.extend(
                 gateway.fetch_all(
                     self.RECENT_COMPONENTS_QUERY,
-                    {
-                        "app_id": application.app_id,
-                        "recent": request.recent_days,
-                        "author": author,
-                    },
+                    {**binds, "author": author},
                 )
             )
         return dedupe_recent_rows(rows)
+
+    def _requested_formats(self, request: ApexExportRequest) -> list[str]:
+        return [action for action, wanted in request.actions.items() if wanted]
+
+    def _listing_cutoff(
+        self,
+        request: ApexExportRequest,
+        application: ApexApplication,
+    ) -> str | None:
+        """The oldest watermark across the formats this run will export.
+
+        One listing feeds every requested format, so it must reach back as far as
+        the least recently exported one. A format with no watermark yet makes the
+        listing unbounded — over-export is harmless, a missed component is not.
+        """
+        if not is_bare_recent(request.recent) or request.environment is None:
+            return None
+        formats = self._requested_formats(request) or _WATERMARKED_FORMATS
+        store = RecentStore.load(request.root)
+        stored = [
+            store.get("export_apex", [request.environment, application.app_id, action])
+            for action in formats
+        ]
+        if any(value is None for value in stored):
+            return None
+        return min(stored)  # type: ignore[type-var]
+
+    def _advance_watermarks(
+        self,
+        request: ApexExportRequest,
+        application: ApexApplication,
+        candidate: str | None,
+    ) -> None:
+        """Stamp each exported format's own key after the app's pass succeeded.
+
+        Each format is judged against **its own** stored watermark, never the
+        shared listing cutoff: the listing reached back to the oldest of them, so
+        every format was covered at least as far back as its own stamp.
+        """
+        if candidate is None or request.environment is None or request.recent_report_only:
+            return
+        store = RecentStore.load(request.root)
+        advanced = False
+        for action in self._requested_formats(request):
+            if action not in _WATERMARKED_FORMATS:
+                continue
+            scope = [request.environment, application.app_id, action]
+            if not may_advance(
+                recent   = request.recent,
+                stored   = store.get("export_apex", scope),
+                db_now   = candidate,
+                narrowed = request.narrowed,
+                dry_run  = False,
+            ):
+                continue
+            store.set("export_apex", scope, candidate)
+            advanced = True
+        if advanced:
+            store.save()
 
     def _write_rest_export(
         self,

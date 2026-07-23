@@ -4,6 +4,7 @@ from adt_ai.cli.startup import print_startup_failure as _print_startup_failure
 
 try:
     from adt_ai.cli import commands_dependencies as _commands_dependencies
+    from adt_ai.cli import commands_export_data as _commands_export_data
     from adt_ai.cli import commands_exports as _commands_exports
     from adt_ai.cli import commands_flow as _commands_flow
     from adt_ai.cli import commands_history as _commands_history
@@ -34,6 +35,7 @@ else:
         _commands_recompile,
         _commands_dependencies,
         _commands_flow,
+        _commands_export_data,
         _commands_exports,
         _runtime,
     )

@@ -59,6 +59,13 @@ from adt_ai.export_db.render import (
 )
 from adt_ai.shared.config import is_enabled
 from adt_ai.shared.db import QueryGateway
+from adt_ai.shared.recent_state import (
+    RecentStore,
+    is_bare_recent,
+    may_advance,
+    read_db_now,
+    recent_days,
+)
 from adt_ai.shared.row_values import row_value
 
 GatewayFactory = Callable[[str], QueryGateway]
@@ -74,7 +81,9 @@ class ExportDbRequest:
     names        : list[str] | None = None
     prefix       : str | None = None
     ignore       : list[str] | None = None
-    recent_days  : int | None = None
+    # None (full export), an int day window, or BARE_RECENT (since last export).
+    recent       : int | object | None = None
+    environment  : str | None = None
     clean        : bool = False
     dry_run      : bool = False
     reporter     : ExportDbReporter | None = None
@@ -82,6 +91,29 @@ class ExportDbRequest:
     changed_by   : str | None = None
     my_changes   : bool = False
     authors      : list[str] | None = None
+
+    @property
+    def recent_days(self) -> int | None:
+        """The N-day window, or ``None`` for a full export and for watermark mode."""
+        return recent_days(self.recent)
+
+
+def is_narrowed(request: ExportDbRequest) -> bool:
+    """Whether the run selected a subset of the schema rather than covering it.
+
+    A narrowed run must never advance a watermark: a `-name`/`-type`/`-by`/`-my`
+    export touches a slice, so stamping it would silently mark everything it did
+    not look at as current and hide those objects from every later bare `-recent`.
+    """
+    return any(
+        (
+            request.names is not None,
+            request.object_types is not None,
+            request.authors is not None,
+            request.my_changes,
+            request.changed_by is not None,
+        )
+    )
 
 class ExportDbRunner:
     def __init__(
@@ -99,7 +131,6 @@ class ExportDbRunner:
             config = _with_default_layout(request.config),
         )
         resolver.group_rules = self._resolve_group_rules(request, resolver)
-        resolver.check_subtree_uniqueness(request.schemas)
         writer = ObjectFileWriter(resolver, compare_existing=False)
         object_contents = self._contents(
             request,
@@ -161,9 +192,26 @@ class ExportDbRunner:
         gateway_factory: GatewayFactory,
     ) -> Iterable[tuple[DatabaseObject, str, str | None]]:
         reporter = request.reporter or ExportDbReporter()
+        narrowed = is_narrowed(request)
         for schema in request.schemas:
-            discovery = ObjectDiscovery(gateway_factory(schema))
+            gateway = gateway_factory(schema)
+            discovery = ObjectDiscovery(gateway)
             schema_export = (request.schema_export or {}).get(schema, {})
+            # Read the database clock BEFORE the listing so an object changed
+            # mid-run stays at or after the candidate and is re-selected next
+            # time, and resolve this schema's own cutoff from its own watermark.
+            candidate = (
+                read_db_now(gateway)
+                if not request.dry_run and not narrowed
+                else None
+            )
+            stored = self._stored_watermark(request, schema)
+            changed_since = stored if is_bare_recent(request.recent) else None
+            if is_bare_recent(request.recent) and stored is None:
+                reporter.recent_note(
+                    f"RECENT: no previous export recorded for "
+                    f"{request.environment or '?'}/{schema} — exporting all objects"
+                )
             database_objects = discovery.discover(
                 schema       = schema,
                 object_types = request.object_types or _configured_object_types(request.config),
@@ -171,6 +219,7 @@ class ExportDbRunner:
                 prefix       = request.prefix or schema_export.get("prefix"),
                 ignore       = request.ignore or _split_patterns(schema_export.get("ignore")),
                 recent_days  = request.recent_days,
+                changed_since = changed_since,
                 prefer_exact_names = True,
             )
             if request.authors is not None:
@@ -185,9 +234,10 @@ class ExportDbRunner:
                 reporter.overview(
                     schema,
                     database_objects,
-                    names       = request.names,
-                    recent_days = request.recent_days,
-                    authors     = request.authors,
+                    names         = request.names,
+                    recent_days   = request.recent_days,
+                    authors       = request.authors,
+                    changed_since = changed_since,
                 )
             if not _has_runtime_filter(request):
                 missing_objects = resolver.missing_objects(database_objects, schema=schema)
@@ -215,7 +265,17 @@ class ExportDbRunner:
             add_if_not_exists = is_enabled(request.config.get("add_if_not_exists", True))
             for index, database_object in enumerate(database_objects):
                 if reports_objects:
-                    reporter.export_object(database_object)
+                    # A filename sitting in more than one place under the type
+                    # subtree is reported on the object's own row rather than
+                    # aborting the export: the run still finishes, and the user
+                    # sees which objects carry stale clones to clean up by hand.
+                    reporter.export_object(
+                        database_object,
+                        duplicates = [
+                            resolver.display_path(location)
+                            for location in resolver.duplicate_locations(database_object)
+                        ],
+                    )
                 raw_ddl = discovery.ddl(database_object)
                 content = normalize_ddl(
                     raw_ddl,
@@ -261,6 +321,38 @@ class ExportDbRunner:
                     )
                 ):
                     reporter.finish_type(schema, database_object.object_type)
+            # Reached only when every object of this schema was written, so a
+            # schema that raised mid-export keeps its old watermark while the
+            # schemas that finished keep theirs (per-schema isolation).
+            self._advance_watermark(request, schema, candidate, stored, narrowed=narrowed)
+
+    def _stored_watermark(self, request: ExportDbRequest, schema: str) -> str | None:
+        if request.environment is None:
+            return None
+        return RecentStore.load(request.root).get("export_db", [request.environment, schema])
+
+    def _advance_watermark(
+        self,
+        request: ExportDbRequest,
+        schema: str,
+        candidate: str | None,
+        stored: str | None,
+        narrowed: bool,
+    ) -> None:
+        """Stamp this schema's pass, saving immediately so later failures cannot undo it."""
+        if candidate is None or request.environment is None:
+            return
+        if not may_advance(
+            recent   = request.recent,
+            stored   = stored,
+            db_now   = candidate,
+            narrowed = narrowed,
+            dry_run  = request.dry_run,
+        ):
+            return
+        store = RecentStore.load(request.root)
+        store.set("export_db", [request.environment, schema], candidate)
+        store.save()
 
     def _grant_contents(
         self,

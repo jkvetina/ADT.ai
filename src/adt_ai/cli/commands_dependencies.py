@@ -36,8 +36,9 @@ from adt_ai.cli.dependencies_reporters import (
     _print_foreign_key_tree,
 )
 from adt_ai.cli.export_apex_owners import _resolve_apex_metadata_owners
+from adt_ai.cli.export_reporters import ConsoleApexRevealReporter
 from adt_ai.dependencies.store import DEFAULT_MAX_DEPTH
-from adt_ai.export_apex.inventory import ApexDiscovery
+from adt_ai.export_apex.inventory import ApexApplication, ApexDiscovery
 from adt_ai.shared.progress import FixedWidthProgressPrinter
 
 _NO_DEPENDENCY_INDEX_MESSAGE = (
@@ -58,6 +59,7 @@ def _dependencies_argument_error(args: argparse.Namespace) -> str | None:
         for flag, present in (
             ("-app", bool(args.app)),
             ("-force", bool(getattr(args, "force", False))),
+            ("-recent", getattr(args, "recent", None) is not None),
         )
         if present
     ]
@@ -162,7 +164,7 @@ def _run_dependencies(
     # -schema in a query mode is an offline owner disambiguator: parse it
     # locally and narrow the matched owner column. Empty/absent → all tracked
     # owners (unchanged). -tree and impact's column/apex lineage are not filtered.
-    query_schemas = _resolve_query_schemas(args.schema)
+    query_schemas = _resolve_query_schemas(_flatten_arg_groups(args.schema))
 
     with DependencyStore.open(db_path) as store:
         if args.age:
@@ -228,7 +230,9 @@ def _refresh_dependency_index(
     # (every default schema); -app alone refreshes only the APEX axis.
     refresh_names = _resolve_refresh_names(args.refresh)
     if args.schema:
-        schemas = connections.expand_schemas(args.schema, environment=environment)
+        schemas = connections.expand_schemas(
+            _flatten_arg_groups(args.schema), environment=environment
+        )
     elif args.app and not refresh_names:
         schemas = []
     else:
@@ -309,18 +313,19 @@ def _refresh_dependency_index(
         scope_bits.append(", ".join(schemas))
     app_labels: dict[int, str] = {}
     if apps:
-        labels = _apex_app_labels(
+        discovered_apps = _discover_apex_applications(
             selected_gateway_factory(app_schema) if app_schema else None,
             app_schema,
             apps,
         )
+        labels = _apex_app_labels(apps, discovered_apps)
         app_labels = dict(zip(apps, labels, strict=True))
         if schemas:
             scope_bits.append(", ".join(f"APEX APP {label}" for label in labels))
-        elif len(labels) == 1:
-            print_adt_header(f"REFRESHING APEX APP: {labels[0]}")
         else:
-            print_adt_header(f"REFRESHING APEX APPS: {', '.join(labels)}")
+            # Same shape export_apex prints before its own per-app export loop:
+            # one APEX APPLICATIONS: table instead of a flat comma-joined banner.
+            ConsoleApexRevealReporter().applications(app_schema or "", discovered_apps)
     if schemas:
         print_adt_header(f"REFRESHING DEPENDENCY DATABASE: {' | '.join(scope_bits)}")
     silent = getattr(args, "silent", False)
@@ -332,6 +337,7 @@ def _refresh_dependency_index(
             apps       = apps,
             app_schema = app_schema,
             force      = getattr(args, "force", False),
+            recent     = getattr(args, "recent", None),
             progress   = None if silent else FixedWidthProgressPrinter(),
             apex_versions = apex_versions,
             refresh_names = refresh_names,
@@ -342,18 +348,30 @@ def _refresh_dependency_index(
     return 0
 
 
-def _apex_app_labels(
+def _discover_apex_applications(
     gateway: QueryGateway | None,
     owner: str | None,
     apps: list[int],
-) -> list[str]:
-    labels = {app: str(app) for app in apps}
+) -> list[ApexApplication]:
+    """Full discovered rows for ``apps``, in ``apps`` order; ``[]`` when offline."""
     if gateway is None or owner is None:
-        return [labels[app] for app in apps]
+        return []
     discovered = ApexDiscovery(gateway).applications(owner=owner, app_ids=apps)
-    for application in discovered:
-        alias = application.app_alias or application.app_name or str(application.app_id)
-        labels[application.app_id] = f"{application.app_id}/{alias.upper()}"
+    by_id = {application.app_id: application for application in discovered}
+    return [by_id[app] for app in apps if app in by_id]
+
+
+def _apex_app_labels(apps: list[int], applications: list[ApexApplication]) -> list[str]:
+    """``id/ALIAS`` display labels, falling back to a bare id when undiscovered."""
+    by_id = {application.app_id: application for application in applications}
+    labels: dict[int, str] = {}
+    for app in apps:
+        application = by_id.get(app)
+        if application is None:
+            labels[app] = str(app)
+        else:
+            alias = application.app_alias or application.app_name or str(app)
+            labels[app] = f"{app}/{alias.upper()}"
     return [labels[app] for app in apps]
 
 __all__ = [name for name in globals() if not name.startswith("__")]

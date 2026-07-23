@@ -1,5 +1,7 @@
 # Rebuild Commit Cache (adtai rebuild)
 
+`rebuild` maintains the local Git commit cache that the history-reading commands consume instead of scanning Git live — one YAML file per branch of commit metadata. It also lists and switches branches (`-reveal`, `-switch`). Run it when the cache should catch up with new commits; scans are incremental by default.
+
 Update the commit cache for the current branch. This is incremental by default:
 
 ```bash
@@ -105,7 +107,7 @@ APEX DEPLOYMENT TOOL: REBUILD
 BRANCH SWITCHED:
 ----------------
 
-  feat/SASDSG-4995_da_hy_risk_review_install_threshold
+  feat/PROJ-4995_da_hy_risk_review_install_threshold
 
 
 COMMITS:

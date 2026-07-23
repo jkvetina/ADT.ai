@@ -2,13 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
-import yaml
 
 from adt_ai.shared.config import DEFAULT_PATH_OBJECTS
 from adt_ai.shared.db import QueryGateway
+from adt_ai.shared.identity import load_identity, session_identifier
 from adt_ai.shared.sql_like import matches_sql_like
 
 if TYPE_CHECKING:
@@ -72,7 +70,10 @@ def _has_runtime_filter(request: ExportDbRequest) -> bool:
         (
             request.object_types is not None,
             request.names is not None,
-            request.recent_days is not None,
+            # `recent`, not `recent_days`: bare -recent narrows the selection to a
+            # watermark cutoff and yields no day count, so testing the day count
+            # would let a watermark run delete files for objects it never listed.
+            request.recent is not None,
             request.authors is not None,
         )
     )
@@ -105,9 +106,10 @@ def resolve_author_filter(
 ) -> tuple[str | None, bool, list[str] | None]:
     """Resolve ``-by``/``-my`` into ``(changed_by, my_changes, authors)``.
 
-    ``-my`` reads the current developer's db schema from config/me.yaml. Either flag
-    needs the project's ``audit:`` source configured. Returns ``authors=None`` when
-    no author filter was requested; raises ``AuthorFilterError`` on a bad request.
+    ``-my`` reads the current developer's db schema from the gitignored
+    config/IDENTITY.yaml. Either flag needs the project's ``audit:`` source
+    configured. Returns ``authors=None`` when no author filter was requested;
+    raises ``AuthorFilterError`` on a bad request.
     """
     changed_by = by or None
     my_changes = bool(my)
@@ -120,30 +122,15 @@ def resolve_author_filter(
         )
     authors: list[str] = []
     if my_changes:
-        identity = _load_me_identity(config_search_paths)
-        db_schema = (
-            identity.get("db_schema")
-            or identity.get("db")
-            or identity.get("schema")
-        )
+        db_schema = session_identifier(load_identity(config_search_paths))
         if not db_schema:
             raise AuthorFilterError(
-                "export_db: -my needs config/me.yaml with a db_schema entry."
+                "export_db: -my needs config/IDENTITY.yaml with a db_schema entry."
             )
-        authors.append(str(db_schema))
+        authors.append(db_schema)
     if changed_by is not None:
         authors.append(changed_by)
     return changed_by, my_changes, authors
-
-def _load_me_identity(config_search_paths: Iterable[str]) -> dict[str, Any]:
-    """Return the gitignored config/me.yaml identity, else an empty mapping."""
-    for directory in config_search_paths:
-        path = Path(directory) / "me.yaml"
-        if path.is_file():
-            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-            if isinstance(data, dict):
-                return data
-    return {}
 
 def _split_patterns(value: Any) -> list[str] | None:
     if value is None:

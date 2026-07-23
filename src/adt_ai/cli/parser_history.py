@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from adt_ai.cli.constants import REVEAL_DEFAULT_LIMIT
+from adt_ai.shared.recent_state import BARE_RECENT
 
 
 def add_history_parsers(subparsers) -> None:
@@ -83,7 +84,12 @@ def add_history_parsers(subparsers) -> None:
         "--recent",
         "-recent",
         nargs = "?",
-        const = 1,
+        # Shares export_db/export_apex/dependencies' sentinel so `-recent` keeps
+        # ONE parser shape across every module (the shared-argument-semantics
+        # contract compares `repr(const)`). search_repo reads git history, which
+        # has no export watermark, so it maps the sentinel back to 1 day at the
+        # edge — same shape, its own meaning.
+        const = BARE_RECENT,
         type  = int,
         help  = "only commits from recent DAYS (bare -recent = 1)",
     )

@@ -210,11 +210,29 @@ class RecompileDiscovery:
         prefix: str = "",
         ignore: str = "",
         force: bool = False,
+        native: bool = False,
+        interpreted: bool = False,
+        optimize_level: int | None = None,
+        scope: list[str] | None = None,
+        warnings: list[str] | None = None,
     ) -> list[RecompileObject]:
         binds = self._scope_binds(
             object_name=object_name, object_type=object_type, prefix=prefix, ignore=ignore
         )
         binds["force"] = "Y" if force else ""
+        # The :drift_* binds narrow a modifier-combined -force sweep to objects whose
+        # settings drift from the requested target state; bare -force leaves them
+        # neutral (drift_only='N'). Always merged so every bind the query names is set.
+        binds.update(
+            queries.compile_drift_binds(
+                force          = force,
+                native         = native,
+                interpreted    = interpreted,
+                optimize_level = optimize_level,
+                scope          = scope,
+                warnings       = warnings,
+            )
+        )
         rows = self.gateway.fetch_all(self.OBJECTS_TO_RECOMPILE_QUERY, binds)
         return [RecompileObject(str(row["OBJECT_TYPE"]), str(row["OBJECT_NAME"])) for row in rows]
 

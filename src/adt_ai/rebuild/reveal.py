@@ -67,7 +67,7 @@ def reveal_branches(
 
 def _contains_glob(pattern: str) -> str:
     # Treat the user's wildcard as a case-insensitive "contains" match: a branch
-    # like `feat/SASDSG-4995_...` should match `feat*4995` even though text
+    # like `feat/PROJ-4995_...` should match `feat*4995` even though text
     # trails the digits. Anchor only where the user anchored — wrap each end with
     # `*` unless they already supplied one.
     needle = pattern.lower()

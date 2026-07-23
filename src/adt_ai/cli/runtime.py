@@ -9,7 +9,8 @@ from typing import TextIO
 from adt_ai import __version__
 from adt_ai.cli.commands_connection import _run_connection
 from adt_ai.cli.commands_dependencies import _dependencies_argument_error, _run_dependencies
-from adt_ai.cli.commands_exports import _run_export_apex, _run_export_data, _run_export_db
+from adt_ai.cli.commands_export_data import _run_export_data
+from adt_ai.cli.commands_exports import _run_export_apex, _run_export_db
 from adt_ai.cli.commands_flow import _run_flow
 from adt_ai.cli.commands_history import _run_rebuild, _run_search_repo
 from adt_ai.cli.commands_recompile import _run_discovery, _run_doctor, _run_recompile

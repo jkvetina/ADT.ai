@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from adt_ai.cli.constants import DEFAULT_ROW_LIMIT
 from adt_ai.cli.parser_common import add_connection_key_argument
+from adt_ai.shared.recent_state import BARE_RECENT
 
 
 def add_database_parsers(subparsers) -> None:
@@ -44,14 +45,16 @@ def add_database_parsers(subparsers) -> None:
         "--schema",
         "-schema",
         action = "append",
-        help   = "schema(s) to recompile, repeatable and comma-separated, supports "
-                 "%% wildcards",
+        nargs  = "+",
+        help   = "schema(s) to recompile, repeatable, comma- or space-separated, "
+                 "supports %% wildcards",
     )
     recompile.add_argument(
         "--force",
         "-force",
         action = "store_true",
-        help   = "recompile all matching objects, not just invalid ones",
+        help   = "recompile all matching objects, not just invalid ones; combined with "
+                 "a compile modifier, only objects whose settings drift from it",
     )
     recompile.add_argument(
         "--level",
@@ -69,19 +72,24 @@ def add_database_parsers(subparsers) -> None:
         "--interpreted",
         "-interpreted",
         action = "store_true",
-        help   = "compile PL/SQL to interpreted code (default)",
+        help   = "compile PL/SQL to interpreted code (-native wins if both given; "
+                 "with neither, the code type is left untouched)",
     )
     recompile.add_argument(
         "--scope",
         "-scope",
-        nargs = "*",
-        help  = "PL/Scope settings (IDENTIFIERS, STATEMENTS, ALL)",
+        action = "append",
+        nargs  = "+",
+        help   = "PL/Scope settings (IDENTIFIERS, STATEMENTS, ALL); separate with "
+                 "space, comma, +, or a repeated flag",
     )
     recompile.add_argument(
         "--warnings",
         "-warnings",
-        nargs = "*",
-        help  = "PL/SQL warnings (SEVERE, PERF, INFO)",
+        action = "append",
+        nargs  = "+",
+        help   = "PL/SQL warnings (SEVERE, PERF, INFO); separate with space, comma, "
+                 "+, or a repeated flag",
     )
     # Every ACTION is a bare flag scoped by the shared -name/-type filters. None of
     # them carries its own name pattern: that was pure duplication of -name, and a
@@ -187,6 +195,17 @@ def add_database_parsers(subparsers) -> None:
         help="rebuild the index from the database, optionally scoped to object names",
     )
     dependencies.add_argument(
+        "--recent",
+        "-recent",
+        nargs="?",
+        const=BARE_RECENT,
+        type=int,
+        help=(
+            "with -refresh, only reload objects changed in the last DAYS days "
+            "(bare -recent = since that scope's last refresh)"
+        ),
+    )
+    dependencies.add_argument(
         "--force",
         "-force",
         action="store_true",
@@ -210,9 +229,10 @@ def add_database_parsers(subparsers) -> None:
         "--schema",
         "-schema",
         action="append",
+        nargs="+",
         help=(
-            "owner schema(s): refresh scope with -refresh, else an "
-            "offline owner filter for the query"
+            "owner schema(s) — repeatable, comma- or space-separated: refresh "
+            "scope with -refresh, else an offline owner filter for the query"
         ),
     )
     dependencies.add_argument(

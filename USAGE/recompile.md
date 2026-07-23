@@ -1,5 +1,7 @@
 # Recompile Objects (adtai recompile)
 
+`recompile` recompiles invalid PL/SQL objects, views, synonyms, and materialized views in a target environment, in dependency-safe passes, and reports what stayed broken and why. Beyond plain invalid-object repair it can force a full recompile to a named compiler state (`-force` with `-native`/`-interpreted`, `-level`, `-scope`, `-warnings`) and run maintenance actions such as refreshing materialized views or rebuilding synonyms. Use it after deployments or schema changes that leave objects invalid.
+
 Recompile invalid database objects in the current project's environment:
 
 ```bash
@@ -12,6 +14,22 @@ Force-recompile everything with native code and optimize level 3:
 ```bash
 adtai recompile -env DEV -force -native -level 3
 ```
+
+### Force recompile and drift narrowing
+
+Bare `-force` recompiles **every** matching object, not just the invalid ones — the plain "recompile the world" sweep.
+
+Combined with one or more compile modifiers (`-native`, `-interpreted`, `-level`, `-scope`, `-warnings`), `-force` instead recompiles only the objects whose **current** settings drift from the state you asked for. The tool reads each PL/SQL object's stored compiler settings (`PLSQL_CODE_TYPE`, `PLSQL_OPTIMIZE_LEVEL`, `PLSCOPE_SETTINGS`, `PLSQL_WARNINGS`) and selects an object when it differs on **any** requested axis; the recompile then applies the full requested state, not just the mismatched setting.
+
+```bash
+adtai recompile -env DEV -force -level 2          # only objects not already at optimize level 2
+adtai recompile -env DEV -force -native           # only objects not already NATIVE
+adtai recompile -env DEV -force -scope ALL -level 2 -interpreted -warnings PERF+SEVERE
+```
+
+The last example selects any object drifting on **any** of the four axes (code type, level, PL/Scope, warnings). Only VALID PL/SQL objects are considered — invalid objects are already recompiled by the ordinary pass — and non-PL/SQL types (`VIEW`, `SYNONYM`, `MATERIALIZED VIEW`, `TYPE`) carry no settings to drift from, so a modifier-gated `-force` skips them entirely. `-scope`/`-warnings` accept space, comma, `+`, or a repeated flag as separators, so `-warnings PERF+SEVERE`, `-warnings PERF,SEVERE`, `-warnings PERF SEVERE`, and `-warnings PERF -warnings SEVERE` are equivalent.
+
+A plain recompile with neither `-native` nor `-interpreted` leaves each object's code type untouched (`REUSE SETTINGS` preserves it) — it never rewrites a natively-compiled object to interpreted.
 
 Scope the recompile by object type and name:
 
@@ -32,6 +50,7 @@ adtai recompile -env DEV -name APP% -name CORE%
 Recompile several schemas in one run — each is an independent pass against its own connection, so a failure in one still leaves the others recompiled:
 
 ```bash
+adtai recompile -env DEV -schema CORE APP
 adtai recompile -env DEV -schema CORE -schema APP
 ```
 
@@ -42,7 +61,7 @@ adtai recompile -env DEV -schema APP,CORE%
 adtai recompile -env DEV -schema %
 ```
 
-Overlapping patterns are deduplicated, so a schema matched twice is recompiled once. Unlike `-name`/`-type`, a **space-separated** list is not a `-schema` form (`-schema APP CORE` is an error) — this matches `export_db`, where `-schema` is repeatable but not multi-valued. With no `-schema` at all, every default schema configured for the environment is recompiled.
+Overlapping patterns are deduplicated, so a schema matched twice is recompiled once. A **space-separated** list (`-schema APP CORE`) is a `-schema` form too — the same four forms `-name`/`-type` accept, matching `export_db` (widened in `#154`). With no `-schema` at all, every default schema configured for the environment is recompiled.
 
 ### Object types
 
@@ -199,13 +218,13 @@ Whenever a normal recompile run leaves invalid objects, ADT.ai prints a single I
 | `-env`, `--env` | No | connection default environment | Connection environment to recompile in. |
 | `-type`, `--type` | Yes | `%` | Object type pattern(s) to recompile, supports multiple arguments and `%` wildcards. Oracle type names, so a bare `PACKAGE` means specifications only; `PACKAGE BODY`, `PACKAGE_BODY`, `PACKAGE SPEC`, and `MVIEW`/`MATERIALIZED` are accepted spellings, quoted or not. See [Object types](#object-types). |
 | `-name`, `--name` | Yes | `%` | Object name pattern(s) to recompile, supports multiple arguments and `%` wildcards. |
-| `-schema`, `--schema` | Yes | environment default DB schemas | Schema(s) to recompile, one pass each. Pass multiple times, use comma lists, or use `%` patterns such as `CORE%`. |
-| `-force`, `--force` | No | off | Recompile all matching objects, not just invalid ones. |
+| `-schema`, `--schema` | Yes | environment default DB schemas | Schema(s) to recompile, one pass each. Pass multiple times, space-separate (`-schema DA GSN`), use comma lists, or use `%` patterns such as `CORE%`. |
+| `-force`, `--force` | No | off | Recompile all matching objects, not just invalid ones. Combined with a compile modifier (`-native`/`-interpreted`/`-level`/`-scope`/`-warnings`) it narrows to only the objects whose settings drift from the requested state — see [Force recompile and drift narrowing](#force-recompile-and-drift-narrowing). |
 | `-level`, `--level` | No | none | PL/SQL optimize level (1-3). |
 | `-native`, `--native` | No | off | Compile PL/SQL to native code. |
-| `-interpreted`, `--interpreted` | No | on | Compile PL/SQL to interpreted code (default; `-native` takes precedence). |
-| `-scope`, `--scope` | No | none | PL/Scope settings (`IDENTIFIERS`, `STATEMENTS`, `ALL`). |
-| `-warnings`, `--warnings` | No | none | PL/SQL warnings (`SEVERE`, `PERF`, `INFO`). |
+| `-interpreted`, `--interpreted` | No | off | Compile PL/SQL to interpreted code (`-native` takes precedence). A plain recompile with neither flag leaves the code type untouched (`REUSE SETTINGS`). |
+| `-scope`, `--scope` | No | none | PL/Scope settings (`IDENTIFIERS`, `STATEMENTS`, `ALL`); space-, comma-, `+`-, or repeated-flag-separated. |
+| `-warnings`, `--warnings` | No | none | PL/SQL warnings (`SEVERE`, `PERF`, `INFO`); space-, comma-, `+`-, or repeated-flag-separated. |
 | `-mviews`, `--mviews` | No | off | Report materialized views (scoped by `-name`), then `COMPILE` invalid ones and `REFRESH` stale ones. With `-force`, `REFRESH` every matching view. |
 | `-synonyms`, `--synonyms` | No | off | Report-only: print `SYNONYMS TO SCHEMA: <OWNER>` tables mapping each synonym (scoped by `-name`) to its target object, one privilege per row, `GRNT`, and `VALID`. Skips the object recompile and overview entirely; takes no action. |
 | `-disabled`, `--disabled` | No | off | Report-only: print disabled constraints, invalid/function-disabled indexes, and disabled triggers in dedicated type tables (scoped by `-name`, and by `-type` to one of `CONSTRAINT`/`INDEX`/`TRIGGER`). Skips the object recompile and overview entirely. |
