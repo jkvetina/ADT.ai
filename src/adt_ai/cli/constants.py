@@ -160,6 +160,10 @@ class _StdoutTracker:
         self._pending_newlines = ""
         self._committed_trailing_newlines = 0
         self.had_output = False
+        # Set by run_schema_sections() once every schema segment of a
+        # multi-schema command has printed its own TIMER footer, so the
+        # runtime's shared teardown does not print a second, grand-total one.
+        self.final_timer_emitted = False
 
     @property
     def trailing_newlines(self) -> int:

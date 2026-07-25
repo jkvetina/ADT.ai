@@ -13,6 +13,8 @@ The initial `export_apex` slice discovers applications only. In `-reveal` mode, 
 
 When you export by application id (`-app <id>`, without `-schema`/`-reveal`), `export_apex` first reads the cached `config/apex_apps.yaml` (written by earlier exports). If an app's recorded `owner` schema differs from the default APEX schema, it connects straight to that owner schema and skips both the wasted default-schema connection and the live owner-discovery round-trip. Multiple `-app` ids that map to different owners each connect to their own owner schema. Apps not yet recorded in the file, a missing file, or `-schema`/`-reveal` fall back to connecting to the default schema and discovering the owner live.
 
+A multi-schema export (`-schema DA GSN -full`, outside `-reveal`) executes schema by schema: connect to DA, discover and export its applications, print its own `TIMER`, then connect to GSN and repeat — exactly as if you had run the command once per schema, with the banner printed only once. If `-app <id>` names an app whose owner is not among the requested schemas, the owner lookup runs once, inside the last requested schema's own segment, and the owner schema it finds becomes its own appended segment (connection block, `APEX APPLICATIONS:` table, export, timer) rather than being folded into an already-printed segment. `-reveal` is unaffected — it stays a single connection with one shared inventory screen. See `USAGE.md` §Console Output Contract for the full multi-schema shape.
+
 Limit the reveal to one workspace, group, and application list:
 
 ```bash

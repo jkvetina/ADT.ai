@@ -2,6 +2,11 @@
 
 All notable changes to the public ADT.ai release are recorded here, newest first.
 
+## 0.7.3 - 2026-07-25
+
+- **A multi-schema run now reads schema by schema instead of one merged pile.** `export_db`, `export_data`, `export_apex`, `recompile`, and `dependencies -refresh` print one complete section per schema — the connection block, that schema's entire work, then its own `TIMER` for that segment — before moving to the next. Passing several schemas therefore reads exactly like running the command once per schema, rather than every connection block up front followed by interleaved work and a single grand-total timer. A single-schema run is unchanged.
+- **`dependencies -refresh` console output is quieter.** The scope header is now `REFRESHING: <scope>` — the banner above it already names the command — and the internal note about the local dependency database being rebuilt from scratch is gone. Nothing about the refresh itself changed.
+
 ## 0.7.2 - 2026-07-23
 
 - **Breaking — a bare `-recent` now means "since my last successful export", not "one day".** `export_db` and `export_apex` keep a per-scope watermark in generated runtime metadata (`config/recent.yaml`), so a repeated run exports only what changed since the previous covering run instead of re-exporting a fixed one-day window. `-recent N` keeps its N-day meaning everywhere. The cutoff is read from the database clock before the object listing, so an object changed mid-run is re-selected next time rather than lost, and the watermark advances only on a successful, unnarrowed, non-dry-run pass — filtered, report-only, dry-run, and failed runs leave it untouched. With no watermark yet the run is a full export that seeds it. `dependencies -refresh` gains `-recent`, scoped by its own per-scope refresh stamps.

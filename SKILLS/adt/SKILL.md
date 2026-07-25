@@ -1,8 +1,8 @@
 ---
 created: 2026-06-10
-updated: 2026-07-23 10:30
+updated: 2026-07-24 19:00
 name: adt
-version: 1.2.0
+version: 1.2.1
 tags: [oracle, apex, deployment, cli, database]
 description: "ADT.ai usage guide for Oracle/APEX work: export database objects, APEX apps and data, run read-only SQL discovery, search Git history, query the dependency graph, and recompile invalid objects. Use for any ADT.ai command help."
 ---
@@ -12,7 +12,7 @@ ADT.ai is a Python CLI that exports, inspects, and deploys Oracle Database objec
 
 The command is `adtai` (aliases: `adt`, `python -m adt_ai`). Full argument tables for every command live in per-command files under the repo's `USAGE/`; this skill is the operating cheat-sheet for the common commands, including the full `doctor` module. Lower-frequency commands such as `flow` are not expanded here — see its page under `USAGE/`. The repo-only `adt-setup` skill remains a deeper one-time setup checklist, not a daily runtime skill.
 
-Run commands from the project root (the folder holding `config/` and the export output). Every command prints a standard banner, dashed section headers, and a final `TIMER: Ns` footer.
+Run commands from the project root (the folder holding `config/` and the export output). Every command prints a standard banner, dashed section headers, and a final `TIMER: Ns` footer. `export_db`, `export_data`, `export_apex`, `recompile`, and `dependencies -refresh` accept a multi-schema `-schema A B` list; a multi-schema run prints the banner once, then executes schema by schema — connect, that schema's full output, its own `TIMER` — before moving to the next, so a `-schema A B` run reads as two single-schema runs back to back, not one interleaved pile.
 
 ## Conventions in this skill
 

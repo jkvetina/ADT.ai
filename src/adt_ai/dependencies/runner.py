@@ -82,8 +82,6 @@ class DependencyIndexRunner:
 
         db_path = request.root / "config" / "dependencies.db"
         store = DependencyStore.open(db_path, rebuild=True)
-        if store.schema_was_wiped:
-            print("  SCHEMA UPDATED — dependency database wiped and rebuilt from scratch.")
         prepared: set[int] = set()
         try:
             for schema in request.schemas:

@@ -52,7 +52,6 @@ class DependencyStore:
 
     def __init__(self, connection: Any) -> None:
         self.connection = connection
-        self.schema_was_wiped: bool = False
 
     @classmethod
     def open(cls, db_path: str | Path, *, rebuild: bool = False) -> DependencyStore:
@@ -78,9 +77,7 @@ class DependencyStore:
             connection.execute(f"DROP TABLE IF EXISTS [{_legacy}]")
         connection.execute(queries.META_UPSERT_SCHEMA_VERSION, (SCHEMA_VERSION,))
         connection.commit()
-        instance = cls(connection)
-        instance.schema_was_wiped = wiped
-        return instance
+        return cls(connection)
 
     # writers
 
