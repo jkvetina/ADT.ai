@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 from adt_ai.cli.constants import (
@@ -37,6 +38,7 @@ from adt_ai.cli.dependencies_reporters import (
 )
 from adt_ai.cli.export_apex_owners import _resolve_apex_metadata_owners
 from adt_ai.cli.export_reporters import ConsoleApexRevealReporter
+from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.dependencies.store import DEFAULT_MAX_DEPTH
 from adt_ai.export_apex.inventory import ApexApplication, ApexDiscovery
 from adt_ai.shared.progress import FixedWidthProgressPrinter
@@ -214,6 +216,7 @@ def _refresh_dependency_index(
     root: Path,
     gateway_factory: GatewayFactory | None,
 ) -> int:
+    handler_started_at = time.monotonic()
     repo_root = _repo_root()
     config_search_paths = _config_search_paths(args.config_dir, root, repo_root)
     config = ConfigLoader(config_search_paths).load().data
@@ -296,56 +299,66 @@ def _refresh_dependency_index(
         if app_schema is None:
             app_schema = default_schema
 
-    connect_schemas = list(schemas)
-    if app_schema and app_schema not in connect_schemas:
-        connect_schemas.append(app_schema)
+    silent = getattr(args, "silent", False)
+    runner = DependencyIndexRunner(selected_gateway_factory)
+    # -format yaml/md keeps stdout pure data even for -refresh chrome, matching
+    # the runtime's own _command_timer_stdout routing for this command.
+    timer_stdout = sys.stderr if getattr(args, "format", "table") != "table" else None
 
-    apex_versions: dict[str, str] = {}
-    for schema in connect_schemas:
+    # Segments: one per -schema axis schema, plus (when the app axis targets a
+    # schema not already in that list) one final app-only segment. When
+    # app_schema coincides with a schema axis schema, the app axis is folded
+    # into that schema's own segment instead of getting a separate one.
+    segments = list(schemas)
+    if app_schema and apps and app_schema not in segments:
+        segments.append(app_schema)
+
+    def run_one(schema: str) -> int:
         versions = _print_connection_block(
             selected_gateway_factory(schema), connection_for(schema), debug=debug
         )
-        if versions.get("APEX"):
-            apex_versions[schema] = versions["APEX"]
+        segment_apex_versions = {schema: versions["APEX"]} if versions.get("APEX") else {}
 
-    scope_bits: list[str] = []
-    if schemas:
-        scope_bits.append(", ".join(schemas))
-    app_labels: dict[int, str] = {}
-    if apps:
-        discovered_apps = _discover_apex_applications(
-            selected_gateway_factory(app_schema) if app_schema else None,
-            app_schema,
-            apps,
+        is_schema_segment = schema in schemas
+        is_app_segment = schema == app_schema and bool(apps)
+        segment_app_labels: dict[int, str] = {}
+
+        if is_app_segment:
+            discovered_apps = _discover_apex_applications(
+                selected_gateway_factory(app_schema), app_schema, apps
+            )
+            labels = _apex_app_labels(apps, discovered_apps)
+            segment_app_labels = dict(zip(apps, labels, strict=True))
+            if is_schema_segment:
+                scope_bits = [schema, ", ".join(f"APEX APP {label}" for label in labels)]
+                print_adt_header(f"REFRESHING: {' | '.join(scope_bits)}")
+            else:
+                # Same shape export_apex prints before its own per-app export loop:
+                # one APEX APPLICATIONS: table instead of a flat comma-joined banner.
+                ConsoleApexRevealReporter().applications(schema, discovered_apps)
+        elif is_schema_segment:
+            print_adt_header(f"REFRESHING: {schema}")
+
+        runner.refresh(
+            DependencyIndexRequest(
+                root       = root,
+                schemas    = [schema] if is_schema_segment else [],
+                config     = config,
+                apps       = apps if is_app_segment else [],
+                app_schema = schema if is_app_segment else None,
+                force      = getattr(args, "force", False),
+                recent     = getattr(args, "recent", None),
+                progress   = None if silent else FixedWidthProgressPrinter(),
+                apex_versions = segment_apex_versions,
+                refresh_names = refresh_names,
+                app_labels = segment_app_labels if is_app_segment else None,
+            )
         )
-        labels = _apex_app_labels(apps, discovered_apps)
-        app_labels = dict(zip(apps, labels, strict=True))
-        if schemas:
-            scope_bits.append(", ".join(f"APEX APP {label}" for label in labels))
-        else:
-            # Same shape export_apex prints before its own per-app export loop:
-            # one APEX APPLICATIONS: table instead of a flat comma-joined banner.
-            ConsoleApexRevealReporter().applications(app_schema or "", discovered_apps)
-    if schemas:
-        print_adt_header(f"REFRESHING DEPENDENCY DATABASE: {' | '.join(scope_bits)}")
-    silent = getattr(args, "silent", False)
-    DependencyIndexRunner(selected_gateway_factory).refresh(
-        DependencyIndexRequest(
-            root       = root,
-            schemas    = schemas,
-            config     = config,
-            apps       = apps,
-            app_schema = app_schema,
-            force      = getattr(args, "force", False),
-            recent     = getattr(args, "recent", None),
-            progress   = None if silent else FixedWidthProgressPrinter(),
-            apex_versions = apex_versions,
-            refresh_names = refresh_names,
-            app_labels = app_labels,
-        )
+        return 0
+
+    return run_schema_sections(
+        segments, run_one, first_started_at=handler_started_at, timer_stdout=timer_stdout
     )
-    print()
-    return 0
 
 
 def _discover_apex_applications(

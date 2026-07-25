@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 
 from adt_ai.cli.constants import (
     ExportDataRequest,
@@ -18,11 +19,13 @@ from adt_ai.cli.context import (
     _print_startup_debug,
 )
 from adt_ai.cli.export_reporters import ConsoleExportDataReporter
+from adt_ai.cli.schema_sections import run_schema_sections
 
 
 def _run_export_data(
     args: argparse.Namespace, gateway_factory: GatewayFactory | None = None
 ) -> int:
+    handler_started_at = time.monotonic()
     print_adt_header("APEX DEPLOYMENT TOOL: EXPORT_DATA")
     startup = _load_startup_context(args)
     root = startup.root
@@ -60,20 +63,22 @@ def _run_export_data(
             gateway_cache[schema] = DebugQueryGateway(gateway) if args.debug else gateway
         return gateway_cache[schema]
 
-    for schema in schemas:
+    runner = ExportDataRunner(export_data_gateway_factory)
+
+    def run_one(schema: str) -> int:
         _print_connection_block(
             export_data_gateway_factory(schema), schema_connections[schema], debug=args.debug
         )
-
-    runner = ExportDataRunner(export_data_gateway_factory)
-    runner.run(
-        ExportDataRequest(
-            root          = root,
-            schemas       = schemas,
-            config        = config,
-            schema_export = schema_export,
-            names         = _flatten_arg_groups(args.name),
-            reporter      = ConsoleExportDataReporter(silent=args.silent),
+        runner.run(
+            ExportDataRequest(
+                root          = root,
+                schemas       = [schema],
+                config        = config,
+                schema_export = {schema: schema_export[schema]},
+                names         = _flatten_arg_groups(args.name),
+                reporter      = ConsoleExportDataReporter(silent=args.silent),
+            )
         )
-    )
-    return 0
+        return 0
+
+    return run_schema_sections(schemas, run_one, first_started_at=handler_started_at)

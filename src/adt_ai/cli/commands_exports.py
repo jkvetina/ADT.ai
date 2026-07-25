@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from collections.abc import Mapping
 
 from adt_ai.cli.constants import (
@@ -43,6 +44,7 @@ from adt_ai.cli.export_apex_owners import (
     _resolve_apex_metadata_owners,
 )
 from adt_ai.cli.export_reporters import ConsoleApexRevealReporter
+from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.export_db.config import AuthorFilterError, resolve_author_filter
 from adt_ai.export_db.files import ObjectFileResolver
 from adt_ai.export_db.groups import (
@@ -59,6 +61,7 @@ from adt_ai.shared.object_types import normalize_object_type_patterns
 
 
 def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | None = None) -> int:
+    handler_started_at = time.monotonic()
     print_adt_header("APEX DEPLOYMENT TOOL: EXPORT_DB")
     startup = _load_startup_context(args)
     root = startup.root
@@ -116,11 +119,6 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
             gateway_cache[schema] = DebugQueryGateway(gateway) if args.debug else gateway
         return gateway_cache[schema]
 
-    for schema in schemas:
-        _print_connection_block(
-            cached_gateway_factory(schema), schema_connections[schema], debug=args.debug
-        )
-
     group_rules = resolve_group_inputs(startup.config_search_paths)
 
     try:
@@ -132,26 +130,33 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
         return 2
 
     runner = ExportDbRunner(cached_gateway_factory)
-    runner.run(
-        ExportDbRequest(
-            root          = root,
-            schemas       = schemas,
-            config        = config,
-            schema_export = schema_export,
-            object_types  = object_types,
-            names         = object_names,
-            recent        = args.recent,
-            environment   = environment,
-            clean         = args.delete,
-            dry_run       = args.dry_run,
-            reporter      = ConsoleExportDbReporter(silent=args.silent),
-            group_rules   = group_rules,
-            changed_by    = changed_by,
-            my_changes    = my_changes,
-            authors       = authors,
+
+    def run_one(schema: str) -> int:
+        _print_connection_block(
+            cached_gateway_factory(schema), schema_connections[schema], debug=args.debug
         )
-    )
-    return 0
+        runner.run(
+            ExportDbRequest(
+                root          = root,
+                schemas       = [schema],
+                config        = config,
+                schema_export = {schema: schema_export[schema]},
+                object_types  = object_types,
+                names         = object_names,
+                recent        = args.recent,
+                environment   = environment,
+                clean         = args.delete,
+                dry_run       = args.dry_run,
+                reporter      = ConsoleExportDbReporter(silent=args.silent),
+                group_rules   = group_rules,
+                changed_by    = changed_by,
+                my_changes    = my_changes,
+                authors       = authors,
+            )
+        )
+        return 0
+
+    return run_schema_sections(schemas, run_one, first_started_at=handler_started_at)
 
 
 def _confirm_groups_move() -> bool:
@@ -200,6 +205,7 @@ def _run_groups_move(
 def _run_export_apex(
     args: argparse.Namespace, gateway_factory: GatewayFactory | None = None
 ) -> int:
+    handler_started_at = time.monotonic()
     print_adt_header("APEX DEPLOYMENT TOOL: EXPORT_APEX")
     startup = _load_startup_context(args)
     root = startup.root
@@ -293,36 +299,32 @@ def _run_export_apex(
     applications_by_schema: dict[str, list[ApexApplication]] = {}
 
     if args.reveal:
+        # -reveal is a single cross-schema inventory screen, not a per-schema
+        # export — one connection, one shared teardown footer, untouched by
+        # the per-schema segmenting below.
         _print_connection_block(
             export_apex_gateway_factory(connection_schema),
             schema_connections[connection_schema],
             debug=args.debug,
         )
-    for schema in schemas:
-        if not args.reveal:
-            _print_connection_block(
-                export_apex_gateway_factory(schema), schema_connections[schema], debug=args.debug
+        for schema in schemas:
+            discovery = ApexDiscovery(export_apex_gateway_factory(schema))
+            scope = schema_scope[schema]
+            applications = discovery.applications(
+                owner     = schema,
+                workspace = scope["workspace"],
+                group     = scope["group"],
+                app_ids   = scope["app_ids"],
+                recent_days = recent_days,
+                max_app_id = args.max_app_id,
             )
-        discovery = ApexDiscovery(export_apex_gateway_factory(schema))
-        scope = schema_scope[schema]
-        applications = discovery.applications(
-            owner     = schema,
-            workspace = scope["workspace"],
-            group     = scope["group"],
-            app_ids   = scope["app_ids"],
-            recent_days = recent_days if args.reveal else None,
-            max_app_id = args.max_app_id,
-        )
-        if has_app_ranges:
-            applications = [
-                application
-                for application in applications
-                if _app_in_selection(application.app_id, app_selection)
-            ]
-        applications_by_schema[schema] = applications
-        if not args.reveal:
-            reporter.applications(schema, applications)
-    if args.reveal:
+            if has_app_ranges:
+                applications = [
+                    application
+                    for application in applications
+                    if _app_in_selection(application.app_id, app_selection)
+                ]
+            applications_by_schema[schema] = applications
         discovery = ApexDiscovery(export_apex_gateway_factory(connection_schema))
         workspace = schema_scope[connection_schema]["workspace"]
         is_filtered = bool(args.app) or bool(args.schema)
@@ -348,68 +350,89 @@ def _run_export_apex(
         )
         for schema in schemas:
             reporter.applications(schema, applications_by_schema[schema])
-    if not args.reveal and not has_app_ranges:
-        requested_app_ids = _flatten_arg_groups(args.app)
-        if requested_app_ids:
-            found_ids = {
-                str(application.app_id)
-                for apps in applications_by_schema.values()
-                for application in apps
-            }
-            missing_app_ids = [
-                app_id for app_id in requested_app_ids if str(app_id) not in found_ids
+        return 0
+
+    # -- export mode: each schema is its own console segment (connection block
+    # -> discovery -> export -> TIMER), driven by the shared per-schema-section
+    # helper. `schemas` is mutated in place by the missing-app owner routing
+    # below, and the helper's lazy iteration picks up whatever gets appended.
+    initial_schema_count = len(schemas)
+    processed = 0
+
+    def run_one(schema: str) -> int:
+        nonlocal processed
+        processed += 1
+        _print_connection_block(
+            export_apex_gateway_factory(schema), schema_connections[schema], debug=args.debug
+        )
+        discovery = ApexDiscovery(export_apex_gateway_factory(schema))
+        scope = schema_scope[schema]
+        applications = discovery.applications(
+            owner     = schema,
+            workspace = scope["workspace"],
+            group     = scope["group"],
+            app_ids   = scope["app_ids"],
+            recent_days = None,
+            max_app_id = args.max_app_id,
+        )
+        if has_app_ranges:
+            applications = [
+                application
+                for application in applications
+                if _app_in_selection(application.app_id, app_selection)
             ]
-            if missing_app_ids:
-                owner_discovery = ApexDiscovery(export_apex_gateway_factory(connection_schema))
-                owner_to_app_ids, not_configured, not_found = _resolve_apex_app_owners(
-                    owner_discovery,
-                    missing_app_ids,
-                    connections.schema_names(environment),
-                )
-                for owner_schema, owner_app_ids in owner_to_app_ids.items():
-                    connection = schema_connections.get(owner_schema)
-                    if connection is None:
-                        connection = connections.resolve(
-                            environment=environment, schema=owner_schema, kind="apex"
-                        )
-                        schema_connections[owner_schema] = connection
-                        _print_connection_block(
-                            export_apex_gateway_factory(owner_schema),
-                            connection,
-                            debug=args.debug,
+        applications_by_schema[schema] = applications
+        reporter.applications(schema, applications)
+
+        # Missing-app owner routing runs once, inside the last originally
+        # requested schema's segment, after its own export/before its timer.
+        # A newly-routed owner schema is appended to `schemas` and gets its
+        # own full segment (connection block, discovery, export, timer) the
+        # next time the helper's loop reaches it — it is never spliced into
+        # an already-completed segment.
+        if processed == initial_schema_count and not has_app_ranges:
+            requested_app_ids = _flatten_arg_groups(args.app)
+            if requested_app_ids:
+                found_ids = {
+                    str(application.app_id)
+                    for apps in applications_by_schema.values()
+                    for application in apps
+                }
+                missing_app_ids = [
+                    app_id for app_id in requested_app_ids if str(app_id) not in found_ids
+                ]
+                if missing_app_ids:
+                    owner_discovery = ApexDiscovery(export_apex_gateway_factory(schema))
+                    owner_to_app_ids, not_configured, not_found = _resolve_apex_app_owners(
+                        owner_discovery,
+                        missing_app_ids,
+                        connections.schema_names(environment),
+                    )
+                    for owner_schema, owner_app_ids in owner_to_app_ids.items():
+                        connection = schema_connections.get(owner_schema)
+                        if connection is None:
+                            connection = connections.resolve(
+                                environment=environment, schema=owner_schema, kind="apex"
+                            )
+                            schema_connections[owner_schema] = connection
+                        schema_scope[owner_schema] = _apex_scope(
+                            connection.apex,
+                            workspace = args.ws,
+                            group     = args.group,
+                            app_ids   = owner_app_ids,
                         )
                         schemas.append(owner_schema)
-                        applications_by_schema.setdefault(owner_schema, [])
-                    scope = _apex_scope(
-                        connection.apex,
-                        workspace = args.ws,
-                        group     = args.group,
-                        app_ids   = owner_app_ids,
-                    )
-                    schema_scope[owner_schema] = scope
-                    discovery = ApexDiscovery(export_apex_gateway_factory(owner_schema))
-                    found = discovery.applications(
-                        owner      = owner_schema,
-                        workspace  = scope["workspace"],
-                        group      = scope["group"],
-                        app_ids    = scope["app_ids"],
-                        max_app_id = args.max_app_id,
-                    )
-                    existing = {app.app_id for app in applications_by_schema[owner_schema]}
-                    new_apps = [app for app in found if app.app_id not in existing]
-                    applications_by_schema[owner_schema].extend(new_apps)
-                    if new_apps:
-                        reporter.applications(owner_schema, new_apps)
-                for app_id, owner in not_configured:
-                    print_apex_owner_not_configured(app_id, owner, environment)
-                for app_id in not_found:
-                    print_apex_app_not_found(app_id)
-    if not args.reveal and (any(actions.values()) or recent_report_only):
-        ApexExportRunner(export_apex_gateway_factory).run(
+                    for app_id, owner in not_configured:
+                        print_apex_owner_not_configured(app_id, owner, environment)
+                    for app_id in not_found:
+                        print_apex_app_not_found(app_id)
+
+        if any(actions.values()) or recent_report_only:
+            ApexExportRunner(export_apex_gateway_factory).run(
                 ApexExportRequest(
                     root         = root,
-                    schemas      = schemas,
-                    applications = applications_by_schema,
+                    schemas      = [schema],
+                    applications = {schema: applications_by_schema[schema]},
                     actions      = actions,
                     config       = config,
                     release      = args.release,
@@ -425,7 +448,9 @@ def _run_export_apex(
                     deep=False,
                 )
             )
-    return 0
+        return 0
+
+    return run_schema_sections(schemas, run_one, first_started_at=handler_started_at)
 
 
 def _print_missing_apex_format_guidance() -> None:

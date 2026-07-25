@@ -27,6 +27,7 @@ from adt_ai.cli.constants import (
 )
 from adt_ai.cli.context import (
     _is_user_database_error,
+    _notify_completion,
     _print_completion_timer,
     _print_config_error,
     _print_database_error,
@@ -235,17 +236,24 @@ def main(
         else:
             _print_unexpected_error(error)
     finally:
-        footer_stdout = (
-            tracked_stderr
-            if exit_code != 0 and tracked_stderr.had_output
-            else timer_stdout
-        )
-        _print_completion_timer(
-            started_at,
-            stdout=footer_stdout,
-            completion_args=args,
-            exit_code=exit_code,
-        )
+        # A completed multi-schema run (run_schema_sections) already printed
+        # its own per-segment TIMER footers and set this latch on loop
+        # completion only — a mid-loop failure leaves it unset, so the shared
+        # footer below still covers that case exactly as before.
+        if getattr(tracked_stdout, "final_timer_emitted", False):
+            _notify_completion(args, exit_code)
+        else:
+            footer_stdout = (
+                tracked_stderr
+                if exit_code != 0 and tracked_stderr.had_output
+                else timer_stdout
+            )
+            _print_completion_timer(
+                started_at,
+                stdout=footer_stdout,
+                completion_args=args,
+                exit_code=exit_code,
+            )
         tracked_stdout.finalize()
         if tracked_stderr is not tracked_stdout:
             tracked_stderr.finalize()

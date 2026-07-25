@@ -61,7 +61,7 @@ adtai recompile -env DEV -schema APP,CORE%
 adtai recompile -env DEV -schema %
 ```
 
-Overlapping patterns are deduplicated, so a schema matched twice is recompiled once. A **space-separated** list (`-schema APP CORE`) is a `-schema` form too — the same four forms `-name`/`-type` accept, matching `export_db` (widened in `#154`). With no `-schema` at all, every default schema configured for the environment is recompiled.
+Overlapping patterns are deduplicated, so a schema matched twice is recompiled once. A **space-separated** list (`-schema APP CORE`) is a `-schema` form too — the same four forms `-name`/`-type` accept, matching `export_db` (widened in `#154`). With no `-schema` at all, every default schema configured for the environment is recompiled. Each schema is its own console segment: connect, run its independent pass, print its own `TIMER`, then move to the next schema — the banner prints only once. See `USAGE.md` §Console Output Contract for the full shape.
 
 ### Object types
 

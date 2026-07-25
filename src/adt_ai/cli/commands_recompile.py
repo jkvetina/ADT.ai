@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -39,6 +40,7 @@ from adt_ai.cli.recompile_reporters import (
     _print_invalid_object_errors,
     _print_recompile_overview_table,
 )
+from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.recompile.render import (
     _MVIEW_COLUMNS,
     _ConsoleMViewReporter,
@@ -58,6 +60,7 @@ def _run_recompile(
     args: argparse.Namespace,
     gateway_factory: GatewayFactory | None = None,
 ) -> int:
+    handler_started_at = time.monotonic()
     print_adt_header("APEX DEPLOYMENT TOOL: RECOMPILE")
     startup = _load_startup_context(args)
     connections = startup.connections
@@ -77,16 +80,14 @@ def _run_recompile(
     if args.debug:
         _print_startup_debug(startup)
 
-    # Each schema is an independent pass against its own connection. They all run even
+    # Each schema is an independent pass against its own connection, run as its own
+    # console segment (connection block -> full pass -> TIMER). They all run even
     # when one fails, so a broken schema cannot mask the state of the rest; the first
     # failure sets the exit code.
-    exit_code = 0
-    for schema in schemas:
-        schema_exit_code = _run_recompile_for_schema(
-            args, startup, environment, schema, gateway_factory
-        )
-        exit_code = exit_code or schema_exit_code
-    return exit_code
+    def run_one(schema: str) -> int:
+        return _run_recompile_for_schema(args, startup, environment, schema, gateway_factory)
+
+    return run_schema_sections(schemas, run_one, first_started_at=handler_started_at)
 
 
 def _run_recompile_for_schema(

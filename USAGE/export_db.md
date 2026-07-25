@@ -59,6 +59,8 @@ Schema values can also be comma-separated or use old ADT `%` patterns:
 adtai export_db -schema APP,CORE%
 ```
 
+A multi-schema run executes schema by schema — connect to CORE, export everything for it, print its own `TIMER`, then connect to APP and repeat — exactly as if you had run the command once per schema, with the `APEX DEPLOYMENT TOOL: EXPORT_DB` banner printed only once. See `USAGE.md` §Console Output Contract for the full shape.
+
 Export only objects matching old ADT-style name patterns:
 
 ```bash
