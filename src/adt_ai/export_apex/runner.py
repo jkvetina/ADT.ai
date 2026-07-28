@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 # ruff: noqa: F401 - compatibility facade re-exports moved runner helpers.
+import shutil
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.export_apex import queries
+from adt_ai.export_apex.deep import deep_component_filters, deep_db_object_rows
 from adt_ai.export_apex.files import ApexFileResolver
 from adt_ai.export_apex.filters import (
     ApexComponentFilter,
@@ -83,7 +85,9 @@ from adt_ai.export_apex.rest import (
     _split_rest_modules,
 )
 from adt_ai.shared import text_files
+from adt_ai.shared.apex_version import readable_yaml_removed, supports_apexlang
 from adt_ai.shared.db import QueryGateway
+from adt_ai.shared.progress import FixedWidthProgressPrinter
 from adt_ai.shared.recent_state import (
     RecentStore,
     is_bare_recent,
@@ -101,11 +105,16 @@ ACTION_HEADERS = {
     "split": "  SPLIT COMPONENTS",
     "readable": "  READABLE COMPONENTS",
     "embedded": "  EMBEDDED CODE REPORT",
+    "apexlang": "  APEXLANG EXPORT",
     "checksum": "  APP CHECKSUM",
     "rest": "  REST SERVICES",
     "files": "  APPLICATION FILES",
     "files_ws": "  WORKSPACE FILES",
 }
+
+# The APEX release that introduced `APEX_EXPORT.c_type_apexlang` and folded
+# READABLE_YAML into it as a deprecated alias.
+APEXLANG_MIN_APEX_RELEASE = "26.1"
 
 # Formats whose coverage a `-recent` watermark can describe. `rest`, `files`, and
 # `files_ws` export artefacts that carry no component `last_updated_on`, so a
@@ -113,6 +122,32 @@ ACTION_HEADERS = {
 # is a single whole-app fingerprint: it reports *that* the app changed, never
 # which components were exported, so it must not stamp "everything is current".
 _WATERMARKED_FORMATS = ("full", "split", "readable", "embedded")
+
+
+def _skipped_by_apex_release(action: str, apex_version: str | None) -> bool:
+    """Whether this instance's APEX release rules the format out.
+
+    Two one-way gates, both reading the release the connection block already
+    probed. An unknown release gates nothing in either direction.
+    """
+    if action == "apexlang":
+        return not supports_apexlang(apex_version)
+    if action == "readable":
+        return readable_yaml_removed(apex_version)
+    return False
+
+
+def _print_apexlang_skip_row(apex_version: str | None) -> None:
+    """Complete an APEXLANG row with a skip status instead of running it.
+
+    A pre-26.1 instance has no `APEXLANG` export type, so an `-all` run has to
+    say why the format produced nothing rather than fail the whole export.
+    """
+    label = ACTION_HEADERS["apexlang"].strip()
+    found = apex_version or "unknown"
+    printer = FixedWidthProgressPrinter()
+    printer.begin(label)
+    printer.status(label, f"SKIPPED | needs APEX {APEXLANG_MIN_APEX_RELEASE}, found {found}")
 
 
 def is_watermarking(request: ApexExportRequest) -> bool:
@@ -137,6 +172,7 @@ class ApexExportRunner:
     EXPORT_SPLIT_QUERY    = queries.EXPORT_SPLIT_QUERY
     EXPORT_READABLE_QUERY = queries.EXPORT_READABLE_QUERY
     EXPORT_EMBEDDED_QUERY = queries.EXPORT_EMBEDDED_QUERY
+    EXPORT_APEXLANG_QUERY = queries.EXPORT_APEXLANG_QUERY
     EXPORT_CHECKSUM_QUERY = queries.EXPORT_CHECKSUM_QUERY
     FETCH_FILES_QUERY     = queries.FETCH_FILES_QUERY
     RECENT_COMPONENTS_QUERY = queries.RECENT_COMPONENTS_QUERY
@@ -199,6 +235,18 @@ class ApexExportRunner:
                     continue
                 component_filters = request.component_filters
                 deep_rows: list[dict[str, Any]] = []
+                if request.deep:
+                    component_filters = deep_component_filters(
+                        request.root,
+                        application.app_id,
+                        request.page_selection,
+                        request.component_filters,
+                    )
+                    deep_rows = deep_db_object_rows(
+                        request.root,
+                        application.app_id,
+                        request.page_selection,
+                    )
                 gateway.execute(self.EXPORT_START_QUERY, {"app_id": application.app_id})
                 enrichments = _enrichments(gateway, application)
                 recent_components = self._recent_components(
@@ -306,9 +354,17 @@ class ApexExportRunner:
             ("split", self.EXPORT_SPLIT_QUERY),
             ("readable", self.EXPORT_READABLE_QUERY),
             ("embedded", self.EXPORT_EMBEDDED_QUERY),
+            ("apexlang", self.EXPORT_APEXLANG_QUERY),
             ("checksum", self.EXPORT_CHECKSUM_QUERY),
         ):
             if not request.actions.get(action):
+                continue
+            if _skipped_by_apex_release(action, request.apex_version):
+                # Only the pre-26.1 `apexlang` miss is announced: the user asked
+                # for a format this instance cannot make. The 26.1 `readable`
+                # skip is deliberately silent (Jan, 2026-07-27).
+                if action == "apexlang":
+                    _print_apexlang_skip_row(request.apex_version)
                 continue
 
             def operation(sql: str = sql, action: str = action) -> list[dict[str, Any]]:
@@ -406,6 +462,12 @@ class ApexExportRunner:
         page_names: dict[int, str] | None = None,
     ) -> CollectionWriteResult:
         rows = []
+        if action == "apexlang":
+            # An APEXlang folder is only meaningful as a complete snapshot of the
+            # app: a component deleted in APEX must not survive as a stale `.apx`
+            # here. Nothing else lives under `apexlang/`, so recreating just that
+            # subtree leaves every sibling export folder untouched.
+            shutil.rmtree(resolver.apexlang_root(application), ignore_errors=True)
         for row in gateway.fetch_all(self.FETCH_FILES_QUERY):
             file_name = str(row_value(row, "FILE_NAME") or "")
             payload = str(row_value(row, "CLOB_CONTENT") or "")

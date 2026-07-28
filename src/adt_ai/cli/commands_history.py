@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+# The month-grid renderer lives in the calendar package; aliased here so the
+# `_print_calendar_grid` call site and its tests keep their existing name.
+from adt_ai.calendar.render import render_calendar_grid as _print_calendar_grid
 from adt_ai.cli.constants import (
     _current_branch,
     branch_commits,
     BranchInfo,
+    CalendarError,
+    CalendarRequest,
+    CalendarRunner,
     ConfigLoader,
     DottedProgressBar,
     print_adt_header,
@@ -224,8 +231,63 @@ def _run_search_repo(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_calendar(args: argparse.Namespace) -> int:
+    print_adt_header("APEX DEPLOYMENT TOOL: CALENDAR")
+    root = Path(args.root).resolve()
+    try:
+        config = ConfigLoader(
+            _config_search_paths(getattr(args, "config_dir", None), root, _repo_root())
+        ).load().data
+    except Exception as exc:
+        # The calendar works without a config (no jira_prefix, default cache
+        # path), but a broken config must not be indistinguishable from none.
+        print(f"Warning: could not read config ({exc}); using defaults", file=sys.stderr)
+        config = {}
+    jira_prefix = config.get("jira_prefix") or None
+    cache_file_template = config.get("repo_commits_file") or "./config/commits/#BRANCH#.yaml"
+    try:
+        result = CalendarRunner().run(
+            CalendarRequest(
+                root                = root,
+                branch              = args.branch,
+                month               = _resolve_calendar_month(args.month) if args.month else None,
+                offset              = args.calendar_offset or 0,
+                authors             = args.by or [],
+                jira_prefix         = jira_prefix,
+                list_mode           = args.list,
+                cache_file_template = cache_file_template,
+            )
+        )
+    except (CalendarError, ValueError) as exc:
+        print(f"Error: {exc}")
+        print()
+        return 1
+
+    overview = f"MONTHLY OVERVIEW: {result.month}"
+    if jira_prefix:
+        overview += f" ({jira_prefix})"
+    print_adt_header(overview)
+    if not result.authors:
+        print("No commits found.")
+        return 0
+    for author in result.authors:
+        print(f"  {author.author:<49} {author.commit_count}")
+
+    for author in result.authors:
+        print()
+        print_adt_header(
+            f"{author.commit_count} COMMITS BY {author.author} "
+            f"({author.ticket_count} tickets, {author.pr_count} PRs)"
+        )
+        _print_calendar_grid(result.month, author.days)
+    return 0
 
 
+def _resolve_calendar_month(value: str) -> str:
+    if not re.fullmatch(r"\d{4}-\d{2}", value):
+        raise ValueError(f"-month: '{value}' must be YYYY-MM")
+    datetime.strptime(f"{value}-01", "%Y-%m-%d")
+    return value
 
 
 def _search_repo_file_limit(args: argparse.Namespace) -> int:

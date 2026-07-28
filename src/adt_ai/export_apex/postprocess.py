@@ -45,6 +45,11 @@ def _target_path(
         return resolver.full_export(application)
     if action == "checksum":
         return resolver.checksum_export(application)
+    if action == "apexlang":
+        # Before the `workspace/` diversion below: an APEXlang tree carries its
+        # own `workspace-components/` folder and must stay whole under
+        # `apexlang/`, never be split across the shared workspace root.
+        return resolver.apexlang_export(application, relative)
     if relative.startswith("workspace/"):
         return resolver.workspace_root() / Path(relative.removeprefix("workspace/"))
     if action == "split":
@@ -101,7 +106,17 @@ def _override_apex_release(payload: str, release: str | None) -> str:
 def _normalize_text_line_endings(payload: str) -> str:
     return payload.replace("\r\n", "\n").replace("\r", "\n")
 
+APEXLANG_STATIC_FILES_PREFIX = "shared-components/static-files/"
+
+
 def _skip_collection_file(action: str, relative: str) -> bool:
+    if action == "apexlang":
+        # The PL/SQL block already drops static-file payloads; the writer refuses
+        # them too so `-files` stays the single static-file channel even if a
+        # future APEX build returns one as a CLOB. The sibling
+        # `shared-components/static-files.apx` metadata is not under this prefix
+        # and stays in.
+        return relative.startswith(APEXLANG_STATIC_FILES_PREFIX)
     if action != "split":
         return False
     return (

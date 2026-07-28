@@ -118,7 +118,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         # SQLCL_HOME env var (which may be unset). This is also the exact path the
         # SQLcl upgrade replaces, so the displayed location and the upgrade target
         # are always the same.
-        return [
+        lines = [
             "ENVIRONMENT:",
             format_status_line(
                 "ADT_ENV",
@@ -145,6 +145,26 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
                 None if sqlcl_executable else "WARN",
             ),
         ]
+        hydrated = self._hydrated_line()
+        if hydrated:
+            lines.append(hydrated)
+        return lines
+
+    def _hydrated_line(self) -> str | None:
+        """Name the variables this run filled in from the shell startup file.
+
+        Names only — ``ADT_KEY`` is a password and its value never prints here
+        or anywhere else. Absent when nothing was hydrated, which is the normal
+        case in a real terminal.
+        """
+        from adt_ai.shared.env_bootstrap import last_result
+        result = last_result()
+        if not result.applied:
+            return None
+        return format_status_line(
+            "HYDRATED",
+            f"{', '.join(result.applied)} from {result.display_source()}",
+        )
 
     def _check_results(self) -> list[CheckResult]:
         from adt_ai.shared.env_check import EnvironmentChecker

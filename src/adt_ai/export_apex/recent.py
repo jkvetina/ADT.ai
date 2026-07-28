@@ -70,7 +70,10 @@ def _used_on_pages(value: object) -> list[object]:
 # Formats that describe the whole application in one artefact. A component-level
 # cutoff (`-recent`, `-page`, `-component`) has nothing to select inside them, so
 # filtering one out would silently drop the format from a filtered run.
-WHOLE_APP_ACTIONS = frozenset({"full", "checksum"})
+# Formats that describe the entire application, so a `-recent`, `-page`, or
+# `-component` narrowing must never drop their files. `apexlang` is one in v1:
+# per-page APEXlang output is card `#48`, deliberately out of scope here.
+WHOLE_APP_ACTIONS = frozenset({"full", "checksum", "apexlang"})
 
 
 @dataclass(frozen=True)

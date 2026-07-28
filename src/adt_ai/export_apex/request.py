@@ -30,6 +30,10 @@ class ApexExportRequest:
     page_selection: ApexPageSelection | None = None
     component_filters: tuple[ApexComponentFilter, ...] = ()
     deep        : bool = False
+    # The instance's APEX release, as probed by the connection block. Drives the
+    # 26.1 format gates (`apexlang` needs it, `readable` is gone by then);
+    # ``None`` means the probe missed and nothing is gated.
+    apex_version: str | None = None
     reporter    : ApexProgressReporter | None = None
     timers_file : Path | None = None
 

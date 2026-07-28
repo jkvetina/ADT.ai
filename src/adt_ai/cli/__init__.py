@@ -9,6 +9,7 @@ try:
     from adt_ai.cli import commands_flow as _commands_flow
     from adt_ai.cli import commands_history as _commands_history
     from adt_ai.cli import commands_recompile as _commands_recompile
+    from adt_ai.cli import commands_validate as _commands_validate
     from adt_ai.cli import constants as _constants
     from adt_ai.cli import context as _context
     from adt_ai.cli import context_connection as _context_connection
@@ -37,19 +38,23 @@ else:
         _commands_flow,
         _commands_export_data,
         _commands_exports,
+        _commands_validate,
         _runtime,
     )
     _PATCH_MODULES = _EXPORT_MODULES[2:]
     _PATCH_MODULES = (*_PATCH_MODULES, _context_connection, _context_errors)
     _PATCHABLE_NAMES = (
+        "CalendarRunner",
         "DoctorRunner",
         "DROPBOX_PATH_RE",
         "RecompileRunner",
         "SearchRepoRunner",
+        "ValidateRunner",
         "_oracle_client_version",
         "_repo_root",
         "_running_in_worktree",
         "date",
+        "run_sqlcl_script",
     )
 
     for _module in _EXPORT_MODULES:

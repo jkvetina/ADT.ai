@@ -11,6 +11,7 @@ OPTION_HELP_WIDTH = 80
 
 ACTION_DESTS = {
     "all_formats",
+    "apexlang",
     "archive",
     "calendar_offset",
     "checksum",
@@ -62,6 +63,7 @@ ACTION_DESTS = {
 FILTER_DESTS = {
     "app",
     "branch",
+    "input",
     "by",
     "commit",
     "commit_refs",
@@ -101,6 +103,15 @@ COMMAND_SUMMARIES = {
         "Refresh mode rescrapes one application from the database and rewrites its edges.",
         "The to and from queries report incoming and outgoing page links for a chosen page.",
         "Each refresh writes Mermaid, Graphviz DOT, and JSON diagrams under config/flow.",
+    ),
+    "calendar": (
+        "Shows your Git activity across all branches as a calendar or compact list.",
+        "It reads commit metadata from the shared rebuild commit cache, topping it up for "
+        "the default branch and every jira_prefix-named branch, so repeat runs stay fast.",
+        "The calendar mode turns that activity into a month grid for quick gaps and bursts.",
+        "The list mode keeps the same data in a scan-friendly chronological report.",
+        "A config jira_prefix limits activity to prefixed commits, whole prefix-named branches, "
+        "and pull requests, which are always surfaced.",
     ),
     "connection": (
         "Edits the resolved ADT.ai connection file to add environments, schemas, or passwords.",
@@ -161,7 +172,7 @@ COMMAND_SUMMARIES = {
         "view, and index formatting.",
     ),
     "rebuild": (
-        "Refreshes the cached Git commit index that powers repository search workflows.",
+        "Refreshes the cached Git commit index behind repository search and calendar.",
         "Use it after new commits, branch switches, or repository fetches so ADT.ai "
         "sees current history.",
         "Incremental mode updates only missing commit data for normal day-to-day use.",
@@ -179,6 +190,17 @@ COMMAND_SUMMARIES = {
         "and interpreted mode.",
         "Reporting shows remaining errors so failed recompiles can be handled without "
         "hunting through SQL clients.",
+    ),
+    "validate": (
+        "Runs the APEXlang compiler over exported apexlang/ folders and reports its errors.",
+        "Use it after export_apex -apexlang, and as a gate before importing edited APEXlang "
+        "source back into APEX.",
+        "The command never connects: the compiler runs inside SQLcl, so no environment, "
+        "schema, or credentials are needed.",
+        "Targets come from -input paths, -app ids resolved offline through "
+        "config/apex_apps.yaml, or every exported folder when neither is given.",
+        "The exit code is the deliverable: zero when every folder validates clean, "
+        "non-zero on any compiler error, so CI and agents can branch on it.",
     ),
     "search_repo": (
         "Searches cached Git history for commits, files, database objects, authors, and dates.",

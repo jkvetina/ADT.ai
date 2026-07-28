@@ -5,6 +5,34 @@ from adt_ai.shared.recent_state import BARE_RECENT
 
 
 def add_history_parsers(subparsers) -> None:
+    calendar = subparsers.add_parser(
+        "calendar",
+        description="show your Git activity across all branches as a calendar",
+        help="show your Git activity across all branches as a calendar",
+    )
+    calendar.add_argument("--root", "-root", default=".", help="project root folder")
+    calendar.add_argument(
+        "--branch",
+        "-branch",
+        help="restrict the report to a single branch instead of every branch",
+    )
+    calendar.add_argument("--month", "-month", help="month to show, YYYY-MM")
+    calendar.add_argument(
+        "--calendar",
+        "-calendar",
+        dest  = "calendar_offset",
+        nargs = "?",
+        const = 0,
+        type  = int,
+        help  = "show the calendar for current month or OFFSET months back",
+    )
+    calendar.add_argument(
+        "--by",
+        "-by",
+        action = "append",
+        help   = "author email/name text; default is your own git user.email",
+    )
+    calendar.add_argument("--list", "-list", action="store_true", help="show day rows")
     search_repo = subparsers.add_parser(
         "search_repo",
         description="search cached Git commit history",

@@ -72,6 +72,16 @@ class ApexFileResolver:
     def embedded_export(self, application: ApexApplication, relative_path: str) -> Path:
         return self.app_root(application) / "embedded_code" / _clean_relative(relative_path)
 
+    def apexlang_root(self, application: ApexApplication) -> Path:
+        return self.app_root(application) / "apexlang"
+
+    def apexlang_export(self, application: ApexApplication, relative_path: str) -> Path:
+        # APEXlang member names are already the folder tree APEX wants
+        # (`application.apx`, `pages/…`, `.apex/apexlang.json`), so the layout is
+        # copied verbatim under one `apexlang/` root beside `readable/` and
+        # `embedded_code/`.
+        return self.apexlang_root(application) / _clean_relative(relative_path)
+
     def checksum_export(self, application: ApexApplication) -> Path:
         # One stable path per app, whatever name APEX gives the single checksum
         # file, so a CI gate diffs the same file on every run.
