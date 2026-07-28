@@ -45,6 +45,7 @@ from adt_ai.cli.export_apex_owners import (
 )
 from adt_ai.cli.export_reporters import ConsoleApexRevealReporter
 from adt_ai.cli.schema_sections import run_schema_sections
+from adt_ai.export_apex.deep import ApexDeepFilterError
 from adt_ai.export_db.config import AuthorFilterError, resolve_author_filter
 from adt_ai.export_db.files import ObjectFileResolver
 from adt_ai.export_db.groups import (
@@ -217,6 +218,8 @@ def _run_export_apex(
         page_selection, component_filters = _parse_apex_export_filter_groups(
             args.page, args.component
         )
+        if args.deep and page_selection is None:
+            raise ValueError("-deep requires -page")
     except ValueError as exc:
         print(f"export_apex: {exc}", file=sys.stderr)
         return 2
@@ -362,7 +365,7 @@ def _run_export_apex(
     def run_one(schema: str) -> int:
         nonlocal processed
         processed += 1
-        _print_connection_block(
+        versions = _print_connection_block(
             export_apex_gateway_factory(schema), schema_connections[schema], debug=args.debug
         )
         discovery = ApexDiscovery(export_apex_gateway_factory(schema))
@@ -428,26 +431,33 @@ def _run_export_apex(
                         print_apex_app_not_found(app_id)
 
         if any(actions.values()) or recent_report_only:
-            ApexExportRunner(export_apex_gateway_factory).run(
-                ApexExportRequest(
-                    root         = root,
-                    schemas      = [schema],
-                    applications = {schema: applications_by_schema[schema]},
-                    actions      = actions,
-                    config       = config,
-                    release      = args.release,
-                    recent       = recent_days,
-                    environment  = environment,
-                    changed_by   = args.by or None,
-                    my_changes   = args.my,
-                    my_name      = my_name,
-                    my_email     = my_email,
-                    recent_report_only=recent_report_only,
-                    page_selection=page_selection,
-                    component_filters=component_filters,
-                    deep=False,
+            try:
+                ApexExportRunner(export_apex_gateway_factory).run(
+                    ApexExportRequest(
+                        root         = root,
+                        schemas      = [schema],
+                        applications = {schema: applications_by_schema[schema]},
+                        actions      = actions,
+                        config       = config,
+                        release      = args.release,
+                        recent       = recent_days,
+                        environment  = environment,
+                        changed_by   = args.by or None,
+                        my_changes   = args.my,
+                        my_name      = my_name,
+                        my_email     = my_email,
+                        recent_report_only=recent_report_only,
+                        page_selection=page_selection,
+                        component_filters=component_filters,
+                        deep=args.deep,
+                        # Already probed by the connection block above — the 26.1
+                        # format gates read it rather than asking the DB again.
+                        apex_version=versions.get("APEX"),
+                    )
                 )
-            )
+            except ApexDeepFilterError as exc:
+                print(f"export_apex: {exc}", file=sys.stderr)
+                return 2
         return 0
 
     return run_schema_sections(schemas, run_one, first_started_at=handler_started_at)

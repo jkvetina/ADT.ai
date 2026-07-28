@@ -1,16 +1,16 @@
 ---
 created: 2026-06-10
-updated: 2026-07-24 19:00
+updated: 2026-07-27 23:05
 name: adt
-version: 1.2.1
+version: 1.4.0
 tags: [oracle, apex, deployment, cli, database]
-description: "ADT.ai usage guide for Oracle/APEX work: export database objects, APEX apps and data, run read-only SQL discovery, search Git history, query the dependency graph, and recompile invalid objects. Use for any ADT.ai command help."
+description: "ADT.ai usage guide for Oracle/APEX work: export database objects, APEX apps and data, validate APEXlang source, run read-only SQL discovery, search Git history, query the dependency graph, and recompile invalid objects. Use for any ADT.ai command help."
 ---
 # ADT.ai
 
 ADT.ai is a Python CLI that exports, inspects, and deploys Oracle Database objects and APEX applications. It reads from config files, Git, and the database; it never stores its own metadata in the database. Exports work against any ordinary folder — a Git repository is useful but not required.
 
-The command is `adtai` (aliases: `adt`, `python -m adt_ai`). Full argument tables for every command live in per-command files under the repo's `USAGE/`; this skill is the operating cheat-sheet for the common commands, including the full `doctor` module. Lower-frequency commands such as `flow` are not expanded here — see its page under `USAGE/`. The repo-only `adt-setup` skill remains a deeper one-time setup checklist, not a daily runtime skill.
+The command is `adtai` (aliases: `adt`, `python -m adt_ai`). Full argument tables for every command live in per-command files under the repo's `USAGE/`; this skill is the operating cheat-sheet for the common commands, including the full `doctor` module. Lower-frequency commands (`connection`, `calendar`, `flow`) are not expanded here — see their pages under `USAGE/`. The repo-only `adt-setup` skill remains a deeper one-time setup checklist, not a daily runtime skill.
 
 Run commands from the project root (the folder holding `config/` and the export output). Every command prints a standard banner, dashed section headers, and a final `TIMER: Ns` footer. `export_db`, `export_data`, `export_apex`, `recompile`, and `dependencies -refresh` accept a multi-schema `-schema A B` list; a multi-schema run prints the banner once, then executes schema by schema — connect, that schema's full output, its own `TIMER` — before moving to the next, so a `-schema A B` run reads as two single-schema runs back to back, not one interleaved pile.
 
@@ -103,6 +103,7 @@ Export only selected pages/shared components from component-based formats:
 ```bash
 adtai export_apex -app 100 -split -readable -page 1-50 55,56 -component LOV:NAME% LIST:MENU%
 adtai export_apex -app 100 -page 7
+adtai export_apex -app 100 -page 7 -deep
 adtai export_apex -app 100 -component LOV:%
 ```
 
@@ -112,12 +113,53 @@ Fingerprint an application for a deploy gate:
 adtai export_apex -app 100 -checksum
 ```
 
+Export APEXlang `.apx` source (APEX 26.1+):
+
+```bash
+adtai export_apex -app 100 -apexlang
+adtai export_apex -app 100 -apx
+```
+
 **Rules:**
 - Name the formats explicitly. Common set: `-full -split -files -rest -readable`. Skip `-embedded` unless asked — it slows the export.
+- `-apexlang` (alias `-apx`) writes the APEXlang folder tree to `apexlang/` in the app folder: `application.apx`, `pages/`, `shared-components/`, `workspace-components/`, `deployments/`, `.apex/`. Members land verbatim, and the folder is recreated per export so deleted components leave no stale `.apx`. Whole-app format: `-page`, `-component`, and `-recent` never filter it and it never advances a watermark. Static-file payloads are skipped on purpose — `-files` stays the single static-file channel, so `apexlang/` is a source and review surface, not a directly importable artifact.
+- APEX 26.1 is the version line for both directions: `-apexlang` needs 26.1+ and prints a skip note (never a failure) below it, while `-readable` no longer exists at 26.1+ and is skipped silently there. Use `-readable` pre-26.1, `-apexlang` from 26.1 on.
+- Check an APEXlang export with `adtai validate` (below) — it is the compiler check that makes `.apx` safe to edit.
 - `-checksum` writes the ID-independent SHA-256 application fingerprint to `checksum.txt` in the app folder. It answers "did anything actually change?" without diffing a full export — `git diff --exit-code` on that file is the CI gate. Whole-app format: `-page`, `-component`, and `-recent` never filter it out, and it never advances a `-recent` watermark.
-- `-recent N`, `-page`, and `-component TYPE:NAME%` filter split/readable/embedded component output. Bare `-recent` means "changed since the last export of this app in this format" — a watermark keyed per environment/app/format in the gitignored `config/recent.yaml`; each exported format advances its own key, report-only `-recent` never does. `-page` or `-component` without an explicit format defaults to `-split`. Filtered component exports print affected rows instead of dotted progress and do not update `apex_timers.yaml`. Full app SQL, REST services, app files, and workspace files stay broad. With `-reveal`, `-recent` filters the listed apps.
+- `-recent N`, `-page`, and `-component TYPE:NAME%` filter split/readable/embedded component output. Bare `-recent` means "changed since the last export of this app in this format" — a watermark keyed per environment/app/format in the gitignored `config/recent.yaml`; each exported format advances its own key, report-only `-recent` never does. `-page` or `-component` without an explicit format defaults to `-split`. Add `-deep` only with `-page` when the export should include components recorded for those pages in `config/dependencies.db`, such as LOVs, lists, and authorization schemes. Filtered component exports print affected rows instead of dotted progress and do not update `apex_timers.yaml`. Full app SQL, REST services, app files, and workspace files stay broad. With `-reveal`, `-recent` filters the listed apps.
 - If apps don't appear, the connection's APEX schema likely doesn't match the owner — narrow or widen with `-schema`, or use `-owners` in reveal.
 - `-rest` runs through SQLcl with a named `ADT_…` connection: registered automatically on first use (password in SQLcl's secure store, wallet included), recorded as `sqlcl:`/`sqlcl_sync:` in the connection YAML, re-registered automatically after a credential change. Opt out with `sqlcl_named_connections: false` in `config.yaml`. Details: `USAGE/connection.md` §Named SQLcl connections.
+
+## validate — check exported APEXlang source
+
+Runs the APEXlang compiler over exported `apexlang/` folders and reports its errors. **Never connects** — the compiler ships inside SQLcl, so there is no `-env`, no `-schema`, no credentials, and it works in CI or from any checkout. Needs SQLcl 26.1+.
+
+Validate everything exported in the project:
+
+```bash
+adtai validate
+```
+
+Validate specific applications, or an explicit path:
+
+```bash
+adtai validate -app 100
+adtai validate -app 100 108
+adtai validate -input ~/exports/f100/apexlang
+adtai validate -input ~/exports/f100.zip
+```
+
+**Rules:**
+- **The exit code is the deliverable.** `0` only when every requested folder validated clean, so it chains as a gate: `adtai export_apex -app 100 -apexlang && adtai validate -app 100`.
+- Non-zero covers more than compiler errors, on purpose: `EMPTY` (folder holds no `.apx`), `NOT_FOUND` (SQLcl cannot find the path), an `-app` with no export on disk, a bare run that discovers nothing, and `UNRECOGNISED` (output this version cannot parse, reproduced verbatim). SQLcl exits `0` whatever the compiler says, so a run that checked nothing must never report clean.
+- `-app` is repeatable and resolves offline through `config/apex_apps.yaml` — no database round-trip. An app with no export gives a `NOTES:` row naming the expected path, not a traceback.
+- With neither `-input` nor `-app`, every `apexlang/` folder under the APEX root is validated — the natural follow-up to an `-all` export.
+- One `ERRORS:` section per folder, one stanza per message: `file:line:col`, then the type and the verbatim compiler message indented beneath. Wrapped at 80 columns, never truncated — the message names the missing file, so cutting it would drop the answer. `-silent` keeps the banner, message sections, and timer; `-debug` shows the generated SQLcl script.
+- Warnings never fail the run (the compiler still says successful) but are never hidden either: the row reads `OK (n warnings)` and a `WARNINGS:` section lists them. `FILE_IGNORED` matters most — it means that file was not checked at all.
+- **Static-file payloads are staged in, so export a `files/` slice alongside `-apexlang`.** The APEXlang export skips the `shared-components/static-files/` payloads by design and `static-files.apx` references each one, so `validate` builds a staging tree under the gitignored `config/temp/apexlang/<app>/` that **hardlinks** the metadata and the `files/` payloads together — one inode per file, no bytes duplicated, nothing in git. Without a `files/` export you get one `REFERENCE_NOT_FOUND` per payload plus a `NOTES:` row naming `export_apex -files`. `-input` is never staged, so it shows the raw committed tree.
+- **A zero-byte payload is a trap.** The compiler checks that a referenced path exists, not what is in it, so a tree of empty placeholders validates clean and then imports an app with broken images. Staging never touches a stand-in; if a `static-files/` folder is all-zero, it is not a valid export.
+- The compiler validates against the metadata of the APEX version that exported the app, so an old SQLcl against a 26.1 export is not a trustworthy pass.
+- Importing `.apx` back into APEX is not part of this command — `apex import` replaces the Builder application wholesale.
 
 ## export_data — export table data
 

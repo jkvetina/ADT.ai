@@ -265,6 +265,43 @@ BEGIN
 END;
 """.strip()
 
+# APEXLANG (APEX 26.1+) is a whole-app folder tree, not a component slice: member
+# names already arrive relative (`application.apx`, `pages/pNNNNN-<alias>.apx`)
+# with no `f<id>/` root prefix, and `p_split` does not change that. Static-file
+# payloads come back as `contents_blob` members under
+# `shared-components/static-files/` — including text ones such as `app.css`
+# (verified live on APEX 26.1.0, apps 800 and 808, 2026-07-27). They are dropped
+# here so `-files` stays the single static-file channel and the collection
+# round-trip stays CLOB-only; `shared-components/static-files.apx`, the text
+# metadata that references them, is a CLOB member and stays in.
+EXPORT_APEXLANG_QUERY = """
+DECLARE
+    l_files apex_t_export_files;
+BEGIN
+    l_files := APEX_EXPORT.GET_APPLICATION (
+        p_application_id        => :app_id,
+        p_split                 => TRUE,
+        p_type                  => 'APEXLANG'
+    );
+    APEX_COLLECTION.CREATE_COLLECTION (
+        p_collection_name       => 'ADT_APEX_EXPORT',
+        p_truncate_if_exists    => 'YES'
+    );
+    FOR i IN l_files.FIRST .. l_files.LAST LOOP
+        IF (l_files(i).name LIKE 'shared-components/static-files/%'
+            OR l_files(i).contents_blob IS NOT NULL) THEN
+            CONTINUE;
+        END IF;
+        APEX_COLLECTION.ADD_MEMBER (
+            p_collection_name   => 'ADT_APEX_EXPORT',
+            p_c001              => l_files(i).name,
+            p_clob001           => l_files(i).contents
+        );
+    END LOOP;
+    COMMIT;
+END;
+""".strip()
+
 FETCH_FILES_QUERY = """
 SELECT
     c.seq_id,

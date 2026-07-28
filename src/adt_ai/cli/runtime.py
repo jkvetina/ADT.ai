@@ -12,8 +12,9 @@ from adt_ai.cli.commands_dependencies import _dependencies_argument_error, _run_
 from adt_ai.cli.commands_export_data import _run_export_data
 from adt_ai.cli.commands_exports import _run_export_apex, _run_export_db
 from adt_ai.cli.commands_flow import _run_flow
-from adt_ai.cli.commands_history import _run_rebuild, _run_search_repo
+from adt_ai.cli.commands_history import _run_calendar, _run_rebuild, _run_search_repo
 from adt_ai.cli.commands_recompile import _run_discovery, _run_doctor, _run_recompile
+from adt_ai.cli.commands_validate import _run_validate
 from adt_ai.cli.constants import (
     PUBLIC_COMMANDS,
     PUBLIC_MODULES,
@@ -41,6 +42,7 @@ from adt_ai.cli.parser import (
     _removed_compatibility_args,
     build_parser,
 )
+from adt_ai.shared.env_bootstrap import hydrate_environment
 
 
 def _run_static_screen(
@@ -137,6 +139,10 @@ def main(
     argv: Sequence[str] | None = None,
     gateway_factory: GatewayFactory | None = None,
 ) -> int:
+    # One hook for every module: an AI tool's shell never ran ~/.zshrc, so the
+    # ADT/Oracle variables are missing until we read them ourselves.
+    hydrate_environment()
+
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     debug_requested = "-debug" in raw_argv or "--debug" in raw_argv
     if not raw_argv or raw_argv in (["-h"], ["--help"]):
@@ -197,7 +203,9 @@ def main(
     timer_stdout = _command_timer_stdout(args, tracked_stdout)
     exit_code = 0
     try:
-        if args.command == "export_db":
+        if args.command == "calendar":
+            exit_code = _run_calendar(args)
+        elif args.command == "export_db":
             exit_code = _run_export_db(args, gateway_factory=gateway_factory)
         elif args.command == "export_data":
             exit_code = _run_export_data(args, gateway_factory=gateway_factory)
@@ -219,6 +227,8 @@ def main(
             exit_code = _run_discovery(args, gateway_factory=gateway_factory)
         elif args.command == "connection":
             exit_code = _run_connection(args)
+        elif args.command == "validate":
+            exit_code = _run_validate(args)
     except KeyboardInterrupt:
         exit_code = 130
         print("\nInterrupted by user.", file=sys.stderr)

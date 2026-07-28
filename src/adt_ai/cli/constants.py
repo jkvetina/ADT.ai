@@ -16,6 +16,7 @@ from typing import TextIO
 import yaml
 
 from adt_ai import __version__
+from adt_ai.calendar.runner import CalendarError, CalendarRequest, CalendarRunner
 from adt_ai.dependencies.queries import PLSCOPE_SESSION_STATEMENT
 from adt_ai.dependencies.runner import DependencyIndexRequest, DependencyIndexRunner
 from adt_ai.dependencies.store import DependencyStore
@@ -83,9 +84,11 @@ from adt_ai.shared.connections import ConnectionError as ConnectionConfigError
 from adt_ai.shared.connections import ConnectionLoader, ConnectionResult
 from adt_ai.shared.db import OracleGateway, QueryGateway
 from adt_ai.shared.progress import DottedProgressBar
+from adt_ai.validate.runner import ValidateRequest, ValidateRunner
 
 PUBLIC_MODULES = (
     ("flow", "map APEX page navigation links (to/from, refresh)", ()),
+    ("calendar", "show your Git activity across all branches as a calendar", ()),
     ("connection", "edit the connection file (add env/schema, set password)", ()),
     ("dependencies", "query or refresh the dependency index", ()),
     ("discovery", "run read-only SELECT discovery queries", ()),
@@ -96,6 +99,7 @@ PUBLIC_MODULES = (
     ("rebuild", "rebuild the git commit cache", ()),
     ("recompile", "recompile invalid database objects", ()),
     ("search_repo", "search cached Git commit history", ()),
+    ("validate", "validate APEXlang application source", ()),
 )
 
 PUBLIC_COMMANDS = tuple(
@@ -131,7 +135,8 @@ WHERE p.product LIKE 'Oracle Database%'
 """.strip()
 
 APEX_EXPORT_ACTIONS = (
-    "full", "split", "readable", "embedded", "checksum", "rest", "files", "files_ws",
+    "full", "split", "readable", "embedded", "apexlang", "checksum", "rest",
+    "files", "files_ws",
 )
 
 DROPBOX_PATH_RE = re.compile(r"/Users/[^/]+/Library/CloudStorage/Dropbox/")

@@ -17,6 +17,8 @@ cannot silently drift.
 
 from __future__ import annotations
 
+from adt_ai.shared.apex_version import apex_version_tuple
+
 # ------------------------------------------------------------------- USER_* axis
 
 USER_OBJECTS_QUERY = """
@@ -349,21 +351,9 @@ def _uses_apex_24_2_used_objects_query(apex_version: str | None) -> bool:
     return bool(parsed) and (24, 2) <= parsed < (26, 1)
 
 
-def _apex_version_tuple(apex_version: str | None) -> tuple[int, ...]:
-    if not apex_version:
-        return ()
-    parts: list[int] = []
-    for raw in str(apex_version).split(".")[:2]:
-        digits = ""
-        for char in raw:
-            if char.isdigit():
-                digits += char
-            elif digits:
-                break
-        if not digits:
-            break
-        parts.append(int(digits))
-    return tuple(parts)
+# Kept as a module-local alias: the parser itself now lives in shared/ so
+# export_apex's 26.1 gates and these dependency gates cannot drift apart.
+_apex_version_tuple = apex_version_tuple
 
 
 # ------------------------------------------------------------------- PL/Scope

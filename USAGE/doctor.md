@@ -14,6 +14,8 @@ Old ADT had a self-update path that could run `git pull` from inside the tool an
 
 The status output always starts with current component versions (`ADT.ai`, Python, Git, Java, `oracledb`, Instant Client, SQLcl), then an `ENVIRONMENT:` section with relevant runtime variables such as `ARCH`, `JAVA_TOOL_OPTIONS`, `LANG`, `NLS_LANG`, `ORACLE_HOME`, resolved `SQLCL` launcher, `ADT_ENV`, and `ADT_KEY`. `ADT_KEY` is never printed directly: non-empty values render as `<redacted>`, and missing values render as `<empty>`. Update subprocesses force English/UTF-8-safe settings so SQLcl, Oracle messages, and Python/pip output are not affected by local language overrides.
 
+When ADT.ai had to fill in its own environment — the usual case under an AI tool, whose shell never sourced your startup file — the `ENVIRONMENT:` section ends with a `HYDRATED` row naming what was filled in and where it came from, for example `ADT_ENV, ADT_KEY, ORACLE_HOME, PATH from ~/.zshrc`. Only variable names appear; `ADT_KEY` still renders as `<redacted>` on its own row. In a normal terminal nothing needs hydrating and the row is absent. See [USAGE.md](../USAGE.md) §Environment Variables for the full behavior.
+
 Use local checks only when you do not want Doctor to call remote metadata pages:
 
 ```bash

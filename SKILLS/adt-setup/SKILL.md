@@ -63,9 +63,21 @@ export ADT_ENV="DEV"
 export ADT_SCHEMA="CORE"
 ```
 
-`ADT_KEY` is deliberately omitted: it is **not** an ADT.ai setting and protects nothing. The name is reported for ADT compatibility and future encrypted-password parity — current ADT.ai does not decrypt connection or wallet passwords from it, so do not set it expecting password protection. `doctor` never prints the value — it renders as `<redacted>` when already set and `<empty>` when missing.
+`ADT_KEY` is the decryption key for encrypted connection passwords. `connection -set-pwd -encrypt` (and `-set-wallet-pwd`) write OLD-ADT-compatible encrypted values marked `pwd!: Y` / `wallet_pwd!: Y`, and runtime connection loading decrypts them with `-key` or `ADT_KEY`. Without it, a connection file holding encrypted passwords cannot open. `doctor` never prints the value — it renders as `<redacted>` when set and `<empty>` when missing.
+
+```bash
+export ADT_KEY="your-key"
+```
 
 On Windows use `setx NAME "value"` for each of these (takes effect in new shells).
+
+### When an AI tool runs ADT.ai
+
+Claude Code, Codex, and similar agents spawn a non-login, non-interactive shell, which never sources `~/.zshrc` — so none of the variables above reach ADT.ai, and you see encrypted connections failing to open, thick mode unavailable, and SQLcl reported as `not found`.
+
+You do not have to do anything about it. On every run, if `ADT_ENV` or `ORACLE_HOME` is unset, ADT.ai reads your shell startup file itself and fills in the ADT/Oracle variables, appending `$ORACLE_HOME` and `$ORACLE_HOME/sqlcl/bin` to `PATH`. A variable you set explicitly is never overwritten. `adtai doctor` shows a `HYDRATED` row naming what it filled in and from which file; no row means nothing was needed. This is macOS/Linux only — on Windows, set the variables yourself. Full behavior: `USAGE.md` §Environment Variables.
+
+So if a command fails under an agent with a missing-credential or missing-client error, run `adtai doctor -offline` first and read the `HYDRATED` row: it tells you whether your startup file was found and what came out of it.
 
 ## Connections and wallets
 

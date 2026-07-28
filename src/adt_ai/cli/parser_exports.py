@@ -182,6 +182,12 @@ def add_export_parsers(subparsers) -> None:
         help   = "page id(s), or ranges MIN-MAX / MIN+, to export from split/readable output",
     )
     export_apex.add_argument(
+        "--deep",
+        "-deep",
+        action = "store_true",
+        help   = "with -page, also export page components from config/dependencies.db",
+    )
+    export_apex.add_argument(
         "--component",
         "-component",
         action = "append",
@@ -250,6 +256,17 @@ def add_export_parsers(subparsers) -> None:
     export_apex.add_argument(
         "--embedded", "-embedded", action="store_true", help="export embedded code report"
     )
+    # `allow_abbrev` is off, so the `-apx` short form has to be declared here;
+    # both spellings share the one `apexlang` dest — one action, never two.
+    export_apex.add_argument(
+        "--apexlang",
+        "-apexlang",
+        "--apx",
+        "-apx",
+        action = "store_true",
+        dest   = "apexlang",
+        help   = "export APEXlang (.apx) source, whole app (APEX 26.1+)",
+    )
     export_apex.add_argument(
         "--checksum",
         "-checksum",
@@ -275,3 +292,45 @@ def add_export_parsers(subparsers) -> None:
         help   = "show input parameters and SQL queries with bind values",
     )
     add_connection_key_argument(export_apex)
+
+    validate = subparsers.add_parser(
+        "validate",
+        description="validate APEXlang application source",
+        help="validate APEXlang application source",
+    )
+    validate.add_argument("--root", "-root", default=".", help="output root folder")
+    validate.add_argument(
+        "--config-dir",
+        "-config-dir",
+        action="append",
+        help="folder containing config YAML",
+    )
+    validate.add_argument(
+        "--input",
+        "-input",
+        action = "append",
+        nargs  = "+",
+        help   = "APEXlang folder(s) or zip(s) to validate, repeatable, comma- or "
+                 "space-separated; default is every exported apexlang/ folder",
+    )
+    validate.add_argument(
+        "--app",
+        "-app",
+        action = "append",
+        nargs  = "+",
+        help   = "application id(s) whose exported apexlang/ folder to validate",
+    )
+    validate.add_argument(
+        "--silent",
+        "-silent",
+        action = "store_true",
+        help   = "suppress per-folder progress; keep chrome, error tables, and timer",
+    )
+    validate.add_argument(
+        "--debug",
+        "-debug",
+        action = "store_true",
+        help   = "show input parameters and the generated SQLcl script",
+    )
+    # No -env/-schema/-key: `apex validate` compiles inside SQLcl and answers on a
+    # bare `sql -S /nolog` session, so the command never connects (card #163).
