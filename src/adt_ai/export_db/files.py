@@ -41,7 +41,6 @@ class ObjectFileResolver:
         root: Path,
         path_objects: str | Path,
         object_types: dict[str, ObjectTypeLayout],
-        schema_folders: dict[str, str] | None = None,
         group_rules: GroupRules | None = None,
     ) -> None:
         self.root = Path(root)
@@ -51,11 +50,6 @@ class ObjectFileResolver:
         # per-type folder is appended automatically (legacy 'database/' layout).
         self.path_objects = str(path_objects)
         self.object_types = {key.upper(): value for key, value in object_types.items()}
-        self.schema_folders = {
-            str(schema): str(folder).strip("/")
-            for schema, folder in (schema_folders or {}).items()
-            if str(folder).strip("/")
-        }
         self._existing_case_paths_by_folder: dict[Path, dict[str, Path]] = {}
         self._duplicate_paths_by_folder: dict[Path, dict[str, list[Path]]] = {}
 
@@ -73,7 +67,6 @@ class ObjectFileResolver:
         return cls(
             root          = root,
             path_objects  = config.get("path_objects", DEFAULT_PATH_OBJECTS),
-            schema_folders = _parse_schema_folders(config.get("schema_folders", {})),
             object_types={
                 object_type: _parse_layout(object_type, raw_layout)
                 for object_type, raw_layout in raw_types.items()
@@ -263,16 +256,11 @@ class ObjectFileResolver:
         return names_by_type
 
     def _folder_for(self, database_object: DatabaseObject, layout: ObjectTypeLayout) -> Path:
-        rendered = self.path_objects.replace(
-            "<schema>", self._schema_folder(database_object.schema).lower()
-        )
+        rendered = self.path_objects.replace("<schema>", database_object.schema.lower())
         if "<object_type>" in rendered:
             rendered = rendered.replace("<object_type>", layout.folder)
             return self.root / Path(rendered.strip("/"))
         return self.root / Path(rendered.strip("/")) / layout.folder
-
-    def _schema_folder(self, schema: str) -> str:
-        return self.schema_folders.get(schema, schema)
 
     def _search_roots_for(
         self,
@@ -387,16 +375,6 @@ def _parse_layout(object_type: str, raw_layout: Any) -> ObjectTypeLayout:
         raise ObjectFileError(f"Invalid file layout for object type: {object_type}")
 
     return ObjectTypeLayout(folder=folder.strip("/"), extension=extension)
-
-
-def _parse_schema_folders(raw_folders: Any) -> dict[str, str]:
-    if not isinstance(raw_folders, dict):
-        return {}
-    return {
-        str(schema): str(folder).strip("/")
-        for schema, folder in raw_folders.items()
-        if str(folder).strip("/")
-    }
 
 
 def _duplicate_case_paths(folder: Path, extension: str) -> dict[str, list[Path]]:

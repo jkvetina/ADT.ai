@@ -1,19 +1,17 @@
 from __future__ import annotations
 
-import datetime
 import re
 from dataclasses import dataclass
 from typing import Any
 
 from adt_ai.export_apex.inventory import ApexApplication
+from adt_ai.shared.dates import recent_since
+from adt_ai.shared.progress import print_adt_header
 from adt_ai.shared.row_values import row_value
 
 
 def _print_application_export_header(application: ApexApplication) -> None:
-    message = f"APP {application.app_id}/{application.app_alias}, EXPORTING:"
-    print()
-    print(message)
-    print("-" * len(message))
+    print_adt_header(f"APP {application.app_id}/{application.app_alias}, EXPORTING:")
 
 def _print_recent_changes_header(
     application: ApexApplication,
@@ -21,16 +19,13 @@ def _print_recent_changes_header(
     author: str,
 ) -> None:
     suffix = f" BY {author}" if author else ""
-    message = (
+    print_adt_header(
         f"APP {application.app_id}/{application.app_alias}, "
         f"CHANGES SINCE {changed_since}{suffix}:"
     )
-    print()
-    print(message)
-    print("-" * len(message))
 
 def _recent_since(recent_days: int) -> str:
-    return str(datetime.date.today() - datetime.timedelta(days=recent_days - 1))
+    return str(recent_since(recent_days))
 
 def _print_recent_components(rows: list[dict[str, Any]]) -> None:
     grouped: dict[str, dict[object, dict[str, object]]] = {}

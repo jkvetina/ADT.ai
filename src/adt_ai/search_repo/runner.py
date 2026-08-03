@@ -58,6 +58,7 @@ class SearchRepoRecord:
 class SearchRepoResult:
     records: list[SearchRepoRecord]
     restored_files: list[Path] = field(default_factory=list)
+    failed_restores: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -83,8 +84,15 @@ class SearchRepoRunner:
         records.sort(key=lambda record: record.number, reverse=True)
         if request.commit_limit is not None:
             records = records[:request.commit_limit]
-        restored_files = self._restore(request, records, root) if request.restore else []
-        return SearchRepoResult(records=records, restored_files=restored_files)
+        restored_files: list[Path] = []
+        failed_restores: list[str] = []
+        if request.restore:
+            restored_files, failed_restores = self._restore(request, records, root)
+        return SearchRepoResult(
+            records         = records,
+            restored_files  = restored_files,
+            failed_restores = failed_restores,
+        )
 
     def _commits(self, request: SearchRepoRequest, root: Path) -> list[_Commit]:
         branch = request.branch or current_branch(root)
@@ -165,13 +173,17 @@ class SearchRepoRunner:
         request: SearchRepoRequest,
         records: list[SearchRepoRecord],
         root: Path,
-    ) -> list[Path]:
+    ) -> tuple[list[Path], list[str]]:
         restored: list[Path] = []
+        failed: list[str] = []
         for record in records:
             for file_path in record.files:
                 try:
                     payload = run_git_bytes(root, ["show", f"{record.id}:{file_path}"])
                 except subprocess.CalledProcessError:
+                    # A stale cache entry (rebased/rewritten history) — record
+                    # it so a partial restore never looks like a full one.
+                    failed.append(file_path)
                     continue
                 target = root / file_path
                 if not request.stage:
@@ -181,7 +193,7 @@ class SearchRepoRunner:
                 restored.append(target)
                 if request.stage:
                     run_git(root, ["add", file_path])
-        return restored
+        return restored, failed
 
 
 def _matches_refs(

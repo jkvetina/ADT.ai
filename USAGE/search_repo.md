@@ -54,8 +54,8 @@ When `-stage` matches more than one version for the same file, the newest matchi
 
 ## Arguments
 
-| Argument | Required | Default | Notes |
-| -------- | -------- | ------- | ----- |
+| Argument | Repeatable | Default | Notes |
+| -------- | ---------- | ------- | ----- |
 | `-root`, `--root` | No | `.` | Git repository root to search. |
 | `-branch`, `--branch` | No | current branch | Branch cache file to search under `config/commits/<branch>.yaml`. |
 | `-limit`, `--limit` | No | `20` | Max commits to print, newest first. `0` prints all matching commits. |
@@ -64,7 +64,7 @@ When `-stage` matches more than one version for the same file, the newest matchi
 | `-file`, `--file` | No | none | Changed-file path terms; all provided words must match. |
 | `-type`, `--type` | Yes | none | Object type text derived from `<schema>/database/<object_type>/...` (or the legacy `database/<schema>/<object_type>/...`). Accepts multiple arguments: `-type PACKAGE VIEW`, `-type PACKAGE,VIEW`, and a repeated `-type PACKAGE -type VIEW` are equivalent. |
 | `-name`, `--name` | Yes | none | Object name text derived from the filename stem. Accepts multiple arguments, like `-type`. |
-| `-by`, `--by` | No | none | Author email/name substring; repeatable. |
+| `-by`, `--by` | Yes | none | Author email/name substring; repeatable. |
 | `-my`, `--my` | No | off | Keep commits whose author email equals `git config user.email`. |
 | `-commit`, `-commits`, `--commit`, `--commits` | No | none | Commit number/hash refs; supports `N+` for commit number N and newer. Multiple refs inside this flag are OR-matched. |
 | `-hash`, `--hash` | No | none | Commit hash prefixes. Multiple hashes are OR-matched. If combined with `-commit`, both filters must match. |

@@ -14,7 +14,6 @@ from adt_ai.cli.constants import (
     ApexOwnerResolutionError,
     FlowEdge,
     GatewayFactory,
-    OracleGateway,
     QueryGateway,
     print_adt_header,
     print_adt_table,
@@ -30,6 +29,7 @@ from adt_ai.cli.context import (
     _parse_apex_app_selection,
     _print_connection_block,
 )
+from adt_ai.cli.gateways import build_gateway
 
 _NO_FLOW_DB_MESSAGE = (
     "No APEX flow database found. Run 'adt flow -app N -refresh' to build it."
@@ -122,12 +122,7 @@ def _refresh_flow(
         return connection_cache[schema_name]
 
     def default_gateway_factory(schema_name: str) -> QueryGateway:
-        return OracleGateway(
-            connection_for(schema_name),
-            project_root=root,
-            startup_sql=startup.startup_sql,
-            config=startup.config,
-        )
+        return build_gateway(startup, connection_for(schema_name), project_root=root)
 
     selected_gateway_factory = gateway_factory or default_gateway_factory
 

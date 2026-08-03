@@ -40,18 +40,8 @@ class DoctorUpgradeMixin:
             stashed = False
             repo_root: Path | None = None
             try:
-                repo_root = Path(
-                    self.command_runner(  # type: ignore[attr-defined]
-                        ["git", "rev-parse", "--show-toplevel"],
-                        self.package_root,  # type: ignore[attr-defined]
-                        self._command_env(),  # type: ignore[attr-defined]
-                    ).strip()
-                )
-                head_before = self.command_runner(  # type: ignore[attr-defined]
-                    ["git", "rev-parse", "HEAD"],
-                    repo_root,
-                    self._command_env(),  # type: ignore[attr-defined]
-                ).strip()
+                repo_root = self._git_repo_root()  # type: ignore[attr-defined]
+                head_before = self._git_head(repo_root)  # type: ignore[attr-defined]
                 # The user may have local edits in the ADT.ai checkout. Stash them
                 # (tracked + untracked) so `git pull` fast-forwards cleanly, then
                 # re-apply them on top of the update.
@@ -78,11 +68,7 @@ class DoctorUpgradeMixin:
                     )
                     stashed = True
                 self.command_runner(["git", "pull"], repo_root, self._command_env())  # type: ignore[attr-defined]
-                head_after = self.command_runner(  # type: ignore[attr-defined]
-                    ["git", "rev-parse", "HEAD"],
-                    repo_root,
-                    self._command_env(),  # type: ignore[attr-defined]
-                ).strip()
+                head_after = self._git_head(repo_root)  # type: ignore[attr-defined]
                 if stashed:
                     self.command_runner(["git", "stash", "pop"], repo_root, self._command_env())  # type: ignore[attr-defined]
                     stashed = False

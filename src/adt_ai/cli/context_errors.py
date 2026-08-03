@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 
-from adt_ai.cli.constants import DROPBOX_PATH_RE
+from adt_ai.cli.constants import DROPBOX_PATH_RE, print_adt_header
 
 
 def _is_user_database_error(error: Exception) -> bool:
@@ -43,9 +43,7 @@ def _print_database_error(error: Exception) -> None:
     sql = getattr(error, "adt_sql", None)
     is_connection = sql is None and _is_database_connection_error(error)
     header = "DATABASE CONNECTION FAILED" if is_connection else "DATABASE QUERY FAILED"
-    print(file=sys.stderr)
-    print(header, file=sys.stderr)
-    print("-" * len(header), file=sys.stderr)
+    print_adt_header(header, file=sys.stderr)
     if sql is not None:
         print("Query:", file=sys.stderr)
         print(_display(sql), file=sys.stderr)
@@ -61,9 +59,7 @@ def _print_database_error(error: Exception) -> None:
     print(file=sys.stderr)
 
 def _print_config_error(error: Exception) -> None:
-    print(file=sys.stderr)
-    print("CONFIGURATION NOT FOUND", file=sys.stderr)
-    print("-----------------------", file=sys.stderr)
+    print_adt_header("CONFIGURATION NOT FOUND", file=sys.stderr)
     print(_display(error), file=sys.stderr)
     print(file=sys.stderr)
     print(
@@ -78,10 +74,7 @@ def _print_unexpected_error(error: Exception) -> None:
     # Catch-all for any failure that is not a recognised config/database error.
     # The command banner has already printed (it is the first handler statement),
     # so this only adds a friendly framing instead of leaking a raw traceback.
-    header = "UNEXPECTED ERROR"
-    print(file=sys.stderr)
-    print(header, file=sys.stderr)
-    print("-" * len(header), file=sys.stderr)
+    print_adt_header("UNEXPECTED ERROR", file=sys.stderr)
     print(f"{type(error).__name__}: {_display(error)}", file=sys.stderr)
     print(file=sys.stderr)
     print("Use -debug to show the Python traceback.", file=sys.stderr)

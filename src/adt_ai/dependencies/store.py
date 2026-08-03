@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.dependencies import apex_pages, queries, refresh, scope
+from adt_ai.dependencies import edges as _edges
 from adt_ai.dependencies.classify import split_node
 from adt_ai.dependencies.db import connect
 from adt_ai.dependencies.foreign_key_tree import foreign_key_tree as _foreign_key_tree
@@ -351,7 +352,7 @@ class DependencyStore:
             return []
         _, name = split_node(node)
         refs = scope.parse(identifiers, statements)
-        document = scope.columns_doc(refs, self._uses_edges())
+        document = scope.columns_doc(refs, self.uses_edges())
         return [row for row in scope.column_rows(document) if row["src_table"] == name]
 
     def apex_page_components(
@@ -434,13 +435,13 @@ class DependencyStore:
                     seen.add(key)
         return result
 
-    def _uses_edges(self) -> dict[str, list[str]]:
+    def uses_edges(self) -> dict[str, list[str]]:
         """Forward internal uses-map (``{node: [referenced…]}``) for lineage."""
-        rows = self.connection.execute(queries.USES_EDGES_QUERY).fetchall()
-        edges: dict[str, list[str]] = {}
-        for row in rows:
-            edges.setdefault(f"{row['t']}.{row['n']}", []).append(f"{row['rt']}.{row['rn']}")
-        return edges
+        return _edges.uses_edges(self.connection)
+
+    def foreign_key_edges(self) -> dict[str, list[str]]:
+        """Forward FK map (``{TABLE.child: [TABLE.parent…]}``) — see `edges`."""
+        return _edges.foreign_key_edges(self.connection)
 
     # --------------------------------------------------------------- lifecycle
 

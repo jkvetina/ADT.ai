@@ -408,22 +408,6 @@ def _dedup_paths(paths: list[Path]) -> list[Path]:
             unique.append(path)
     return unique
 
-def _with_schema_folders(
-    config: dict[str, object],
-    schema_export: dict[str, dict[str, object]],
-) -> dict[str, object]:
-    schema_folders = {
-        schema: subfolder
-        for schema, export in schema_export.items()
-        if (subfolder := export.get("subfolder"))
-    }
-    if not schema_folders:
-        return config
-    existing = config.get("schema_folders", {})
-    merged = dict(existing) if isinstance(existing, dict) else {}
-    merged.update(schema_folders)
-    return {**config, "schema_folders": merged}
-
 def _path_list(*values: object | None) -> list[Path]:
     paths: list[Path] = []
     for value in values:

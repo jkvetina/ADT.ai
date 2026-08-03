@@ -7,12 +7,10 @@ from pathlib import Path
 
 from adt_ai.cli.constants import (
     ConfigLoader,
-    ConnectionLoader,
     DependencyIndexRequest,
     DependencyIndexRunner,
     DependencyStore,
     GatewayFactory,
-    OracleGateway,
     QueryGateway,
     print_adt_header,
 )
@@ -21,13 +19,11 @@ from adt_ai.cli.context import (
     DebugQueryGateway,
     _app_in_selection,
     _config_search_paths,
-    _connection_file_candidates,
-    _connection_search_paths,
     _flatten_arg_groups,
+    _load_startup_context,
     _parse_apex_app_selection,
     _print_connection_block,
     _repo_root,
-    _wallet_roots,
 )
 from adt_ai.cli.dependencies_reporters import (
     _print_dependencies_hint,
@@ -38,6 +34,7 @@ from adt_ai.cli.dependencies_reporters import (
 )
 from adt_ai.cli.export_apex_owners import _resolve_apex_metadata_owners
 from adt_ai.cli.export_reporters import ConsoleApexRevealReporter
+from adt_ai.cli.gateways import build_gateway
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.dependencies.store import DEFAULT_MAX_DEPTH
 from adt_ai.export_apex.inventory import ApexApplication, ApexDiscovery
@@ -217,16 +214,13 @@ def _refresh_dependency_index(
     gateway_factory: GatewayFactory | None,
 ) -> int:
     handler_started_at = time.monotonic()
-    repo_root = _repo_root()
-    config_search_paths = _config_search_paths(args.config_dir, root, repo_root)
-    config = ConfigLoader(config_search_paths).load().data
-    connection_search_paths = _connection_search_paths(config, args.config_dir, root, repo_root)
-    connection_files = _connection_file_candidates(config, args.config_dir, root, repo_root)
-    connections = ConnectionLoader(
-        connection_search_paths,
-        wallet_roots = _wallet_roots(config, root, repo_root, connection_search_paths),
-        key          = getattr(args, "key", None),
-    ).load(candidates=connection_files)
+    # One shared context, like every other connecting command. Assembling config,
+    # connections and session SQL by hand here is what made this the one command
+    # that connected with no STARTUP.sql at all (ADT #177): a hand-rolled context
+    # only holds the pieces whoever wrote it happened to remember.
+    startup = _load_startup_context(args)
+    config = startup.config
+    connections = startup.connections
     environment = args.env or connections.default_environment
     # Two independent refresh axes (both only with -refresh): -schema drives the
     # USER_* mirror, -app the APEX_* mirror. Bare -refresh keeps the old default
@@ -254,7 +248,7 @@ def _refresh_dependency_index(
     gateway_cache: dict[str, QueryGateway] = {}
 
     def default_gateway_factory(schema: str) -> QueryGateway:
-        return OracleGateway(connection_for(schema), config=config)
+        return build_gateway(startup, connection_for(schema))
 
     base_gateway_factory = gateway_factory or default_gateway_factory
 

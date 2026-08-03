@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,6 +54,11 @@ class GroupRules:
             key = str(raw_key).strip()
             group = str(raw_group).strip()
             if not key or not group:
+                print(
+                    f"Warning: groups.yaml: ignoring entry {raw_key!r}: {raw_group!r} "
+                    "— empty key or group value",
+                    file=sys.stderr,
+                )
                 continue
             if "/" in key:
                 object_type, _, prefix = key.partition("/")

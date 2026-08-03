@@ -144,6 +144,22 @@ class DoctorLatestVersionMixin:
         except Exception:
             return False
 
+    def _git_repo_root(self) -> Path:
+        return Path(
+            self.command_runner(  # type: ignore[attr-defined]
+                ["git", "rev-parse", "--show-toplevel"],
+                self.package_root,  # type: ignore[attr-defined]
+                self._command_env(),  # type: ignore[attr-defined]
+            ).strip()
+        )
+
+    def _git_head(self, repo_root: Path) -> str:
+        return self.command_runner(  # type: ignore[attr-defined]
+            ["git", "rev-parse", "HEAD"],
+            repo_root,
+            self._command_env(),  # type: ignore[attr-defined]
+        ).strip()
+
     def _latest_sqlcl_release(self) -> SqlclRelease:
         page = self.oracle_page_fetcher(SQLCL_DOWNLOAD_PAGE)  # type: ignore[attr-defined]
         version_match = re.search(
@@ -195,18 +211,8 @@ class DoctorLatestVersionMixin:
         if not self._is_git_repo():
             return ""
         try:
-            repo_root = Path(
-                self.command_runner(  # type: ignore[attr-defined]
-                    ["git", "rev-parse", "--show-toplevel"],
-                    self.package_root,  # type: ignore[attr-defined]
-                    self._command_env(),  # type: ignore[attr-defined]
-                ).strip()
-            )
-            local_head = self.command_runner(  # type: ignore[attr-defined]
-                ["git", "rev-parse", "HEAD"],
-                repo_root,
-                self._command_env(),  # type: ignore[attr-defined]
-            ).strip()
+            repo_root = self._git_repo_root()
+            local_head = self._git_head(repo_root)
             remote_head_line = self.command_runner(  # type: ignore[attr-defined]
                 ["git", "ls-remote", "origin", "HEAD"],
                 repo_root,

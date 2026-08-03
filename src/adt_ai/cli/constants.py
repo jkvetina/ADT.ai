@@ -1,12 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import fnmatch
-import importlib
-import re
-import subprocess
 import sys
-import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -66,7 +61,6 @@ from adt_ai.rebuild.runner import (
 )
 from adt_ai.recompile.inventory import (
     CompileError,
-    LockedObject,
     MaterializedView,
     ObjectOverview,
     SynonymInfo,
@@ -83,7 +77,12 @@ from adt_ai.shared.config import ConfigError, ConfigLoader
 from adt_ai.shared.connections import ConnectionError as ConnectionConfigError
 from adt_ai.shared.connections import ConnectionLoader, ConnectionResult
 from adt_ai.shared.db import OracleGateway, QueryGateway
-from adt_ai.shared.progress import DottedProgressBar
+from adt_ai.shared.progress import DROPBOX_PATH_RE, DottedProgressBar
+from adt_ai.shared.queries import (
+    APEX_VERSION_QUERY,
+    DATABASE_VERSION_OLD_QUERY,
+    DATABASE_VERSION_QUERY,
+)
 from adt_ai.validate.runner import ValidateRequest, ValidateRunner
 
 PUBLIC_MODULES = (
@@ -115,31 +114,10 @@ REMOVED_COMPATIBILITY_FLAGS = {
     ),
 }
 
-APEX_VERSION_QUERY = """
-SELECT
-    a.version_no AS version
-FROM apex_release a
-""".strip()
-
-DATABASE_VERSION_QUERY = """
-SELECT
-    p.version_full || ' | ' ||
-    REGEXP_REPLACE(SYS_CONTEXT('USERENV', 'DB_NAME'), '^[^_]+_', '') AS version
-FROM product_component_version p
-""".strip()
-
-DATABASE_VERSION_OLD_QUERY = """
-SELECT p.version
-FROM product_component_version p
-WHERE p.product LIKE 'Oracle Database%'
-""".strip()
-
 APEX_EXPORT_ACTIONS = (
     "full", "split", "readable", "embedded", "apexlang", "checksum", "rest",
     "files", "files_ws",
 )
-
-DROPBOX_PATH_RE = re.compile(r"/Users/[^/]+/Library/CloudStorage/Dropbox/")
 
 
 class AdtArgumentError(Exception):

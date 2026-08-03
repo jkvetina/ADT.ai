@@ -1,5 +1,15 @@
 from __future__ import annotations
 
+import re
+
+DROPBOX_PATH_RE = re.compile(r"/Users/[^/]+/Library/CloudStorage/Dropbox/")
+
+
+def print_adt_header(message: str, append: str = "", file=None) -> None:
+    print(file=file)
+    print(f"{message}{(' ' + append).rstrip()}", file=file)
+    print("-" * len(message), file=file)
+
 
 class DottedProgressBar:
     def __init__(self, line_width: int = 78) -> None:

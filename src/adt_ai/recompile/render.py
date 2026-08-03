@@ -75,21 +75,6 @@ def _mview_row_values(mview) -> list[object]:
     return [cells[column] for column in _MVIEW_COLUMNS]
 
 
-def _locked_row_cells(lock) -> dict[str, object]:
-    """One locked-object row as an ordered column→cell mapping."""
-    return {
-        "OBJECT_TYPE": lock.object_type,
-        "OBJECT_NAME": lock.object_name,
-        "SID":         lock.session_id if lock.session_id is not None else "",
-        "SERIAL":      lock.serial if lock.serial is not None else "",
-        "ORACLE_USER": lock.oracle_user or "",
-        "OS_USER":     lock.os_user or "",
-        "MACHINE":     lock.machine or "",
-        "PROGRAM":     lock.program or "",
-        "LOCK_MODE":   lock.lock_mode or "",
-    }
-
-
 def _disabled_row_cells(item) -> dict[str, object]:
     """One disabled-object row as an ordered column→cell mapping."""
     return {
@@ -319,11 +304,6 @@ class _ConsoleMViewReporter(RecompileReporter):
     def __init__(self) -> None:
         self.streamed = False
         self._layout = None
-
-    def locked(self, locked) -> None:
-        if locked:
-            print_adt_header("LOCKED OBJECTS")
-            print_adt_table([_locked_row_cells(lock) for lock in locked])
 
     def begin_mviews(self, mviews) -> None:
         self.streamed = True

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -10,10 +11,19 @@ from adt_ai.shared import text_files
 
 
 def load_yaml_mapping(path: Path) -> dict[Any, Any]:
-    """Read a YAML mapping file; missing, empty, or non-mapping files yield {}."""
+    """Read a YAML mapping file; missing, empty, non-mapping, or corrupt files yield {}.
+
+    The callers sit behind gitignored caches (recent watermarks, apex timers,
+    apps metadata). A corrupt cache costs one warning and a rebuild on the next
+    refresh — never the whole command run.
+    """
     if not path.is_file():
         return {}
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as error:
+        print(f"Warning: ignoring unreadable YAML file {path}: {error}", file=sys.stderr)
+        return {}
     return data if isinstance(data, dict) else {}
 
 

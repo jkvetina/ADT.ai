@@ -166,7 +166,13 @@ def _instant_client_version(env: Mapping[str, str]) -> str:
     readme = Path(oracle_home) / "BASIC_README"
     if not readme.exists():
         return ""
-    for line in readme.read_text(encoding="utf-8", errors="ignore").splitlines():
+    try:
+        text = readme.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        # A directory or unreadable file degrades to "not found" — the doctor
+        # pass must keep reporting the other rows.
+        return ""
+    for line in text.splitlines():
         if "Client Shared Library" in line and " - " in line:
             return line.split(" - ", 1)[1].strip()
     return ""

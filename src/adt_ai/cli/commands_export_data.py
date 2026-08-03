@@ -7,7 +7,6 @@ from adt_ai.cli.constants import (
     ExportDataRequest,
     ExportDataRunner,
     GatewayFactory,
-    OracleGateway,
     QueryGateway,
     print_adt_header,
 )
@@ -19,6 +18,7 @@ from adt_ai.cli.context import (
     _print_startup_debug,
 )
 from adt_ai.cli.export_reporters import ConsoleExportDataReporter
+from adt_ai.cli.gateways import build_gateway
 from adt_ai.cli.schema_sections import run_schema_sections
 
 
@@ -51,9 +51,7 @@ def _run_export_data(
     gateway_cache: dict[str, QueryGateway] = {}
 
     def default_gateway_factory(schema: str) -> QueryGateway:
-        return OracleGateway(
-            schema_connections[schema], startup_sql=startup.startup_sql, config=config
-        )
+        return build_gateway(startup, schema_connections[schema])
 
     selected_gateway_factory = gateway_factory or default_gateway_factory
 

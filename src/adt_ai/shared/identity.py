@@ -12,6 +12,7 @@ changed by ``db_schema``, and every new database connection sets
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
@@ -22,11 +23,19 @@ IDENTITY_FILENAME = "IDENTITY.yaml"
 
 
 def load_identity(search_paths: Iterable[str | Path]) -> dict[str, Any]:
-    """Return the first ``IDENTITY.yaml`` found on ``search_paths``, else ``{}``."""
+    """Return the first readable ``IDENTITY.yaml`` on ``search_paths``, else ``{}``.
+
+    The file is hand-edited and best-effort by design: a syntax error costs a
+    warning and the identity features, never the command run.
+    """
     for directory in search_paths:
         path = Path(directory) / IDENTITY_FILENAME
         if path.is_file():
-            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            try:
+                data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            except yaml.YAMLError as error:
+                print(f"Warning: ignoring unreadable {path}: {error}", file=sys.stderr)
+                continue
             if isinstance(data, dict):
                 return data
     return {}

@@ -250,7 +250,14 @@ class ConnectionLoader:
             )
 
         # First match wins: load only the first existing candidate, no layering.
-        loaded = yaml.safe_load(chosen.read_text(encoding="utf-8")) or {}
+        try:
+            loaded = yaml.safe_load(chosen.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as error:
+            # Route a hand-edit syntax error through the friendly connection
+            # banner instead of the generic UNEXPECTED ERROR catch-all.
+            raise ConnectionError(
+                f"Connection file is not valid YAML: {chosen}\n{error}"
+            ) from error
         if not isinstance(loaded, dict):
             raise ConnectionError(f"Connection file must contain a YAML mapping: {chosen}")
         return ConnectionResult(

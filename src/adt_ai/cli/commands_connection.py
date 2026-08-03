@@ -82,7 +82,6 @@ def _connection_request(
         app         = args.app,
         prefix      = args.prefix,
         ignore      = args.ignore,
-        subfolder   = args.subfolder,
         like        = args.like,
         default     = args.default,
         apply       = apply,

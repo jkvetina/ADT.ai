@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,7 +22,7 @@ from adt_ai.shared.commit_discovery import (
     _classify_file,
     _detected_patch,
 )
-from adt_ai.shared.git_files import changed_files, run_git
+from adt_ai.shared.git_files import changed_files, git_is_ancestor, git_ref_exists, run_git
 
 
 def _resolve_branches(request: RebuildRequest) -> list[str]:
@@ -46,15 +45,9 @@ def _require_branches_exist(root: Path, branches: list[str]) -> None:
     )
 
 def _branch_exists(root: Path, branch: str) -> bool:
-    # `--verify --quiet` resolves any commit-ish git log accepts (local branch,
-    # origin/<name>, tag, SHA) and stays silent + returns non-zero when it can't.
-    result = subprocess.run(
-        ["git", "rev-parse", "--verify", "--quiet", f"{branch}^{{commit}}"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-    )
-    return result.returncode == 0
+    # `^{commit}` resolves any commit-ish git log accepts (local branch,
+    # origin/<name>, tag, SHA); the shared adapter owns the subprocess.
+    return git_ref_exists(root, f"{branch}^{{commit}}")
 
 def _current_branch(root: Path) -> str:
     return history_current_branch(root)
@@ -244,13 +237,7 @@ def _load_cache(
     return load_history_cache(root, branch, cache_file_template)
 
 def _commit_in_history(root: Path, branch: str, commit: str) -> bool:
-    result = subprocess.run(
-        ["git", "merge-base", "--is-ancestor", commit, branch],
-        cwd=root,
-        capture_output=True,
-        text=True,
-    )
-    return result.returncode == 0
+    return git_is_ancestor(root, commit, branch)
 
 def _branch_commit_count(root: Path, branch: str) -> int:
     # Total commits reachable from the branch tip, independent of any window
@@ -277,7 +264,9 @@ def _commit_lines(
     # With a resume point, only fetch commits after the cached tip (exclusive).
     args.append(f"{since}..{branch}" if since else branch)
     result: list[tuple[str, str, str, str]] = []
-    for line in run_git(root, args).splitlines():
+    # Split on "\n" only: `str.splitlines()` also breaks on `\r`/`\x0c`/U+2028,
+    # so a commit subject with an embedded control char would be truncated.
+    for line in run_git(root, args).split("\n"):
         if not line.strip():
             continue
         parts = line.split(FIELD_SEPARATOR, 3)

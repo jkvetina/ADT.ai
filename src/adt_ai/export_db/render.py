@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import datetime
-import re
 import sys
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from adt_ai.export_db.inventory import DatabaseObject
-
-DROPBOX_PATH_RE = re.compile(r"/Users/[^/]+/Library/CloudStorage/Dropbox/")
+from adt_ai.shared.dates import recent_since
+from adt_ai.shared.progress import DROPBOX_PATH_RE, print_adt_header
 
 
 class ExportDbReporter:
@@ -46,11 +44,6 @@ class ExportDbReporter:
 
     def finish_type(self, schema: str, object_type: str) -> None:
         pass
-
-def print_adt_header(message: str, append: str = "", file=None) -> None:
-    print(file=file)
-    print(f"{message}{(' ' + append).rstrip()}", file=file)
-    print("-" * len(message), file=file)
 
 def _adt_cell(value: object, width: int, numeric: bool) -> str:
     # coalesce only None to "" — a legitimate falsy value such as the int 0
@@ -246,7 +239,7 @@ def _overview_header(
     elif recent_days is None:
         show_header = "OVERVIEW"
     else:
-        window_start = datetime.date.today() - datetime.timedelta(days=recent_days - 1)
+        window_start = recent_since(recent_days)
         show_header = f"CHANGED SINCE {window_start}"
     show_filter = " ".join(names or ["%"])
     show_filter = f" {show_filter} ".replace(" % ", " ").strip()

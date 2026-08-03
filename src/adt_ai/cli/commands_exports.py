@@ -15,7 +15,6 @@ from adt_ai.cli.constants import (
     ExportDbRequest,
     ExportDbRunner,
     GatewayFactory,
-    OracleGateway,
     QueryGateway,
     print_adt_header,
 )
@@ -32,7 +31,6 @@ from adt_ai.cli.context import (
     _parse_apex_export_filter_groups,
     _print_connection_block,
     _print_startup_debug,
-    _with_schema_folders,
 )
 from adt_ai.cli.export_apex_messages import (
     print_apex_app_not_found,
@@ -44,6 +42,7 @@ from adt_ai.cli.export_apex_owners import (
     _resolve_apex_metadata_owners,
 )
 from adt_ai.cli.export_reporters import ConsoleApexRevealReporter
+from adt_ai.cli.gateways import build_gateway
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.export_apex.deep import ApexDeepFilterError
 from adt_ai.export_db.config import AuthorFilterError, resolve_author_filter
@@ -82,7 +81,6 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
         schema: schema_connections[schema].export
         for schema in schemas
     }
-    config = _with_schema_folders(config, schema_export)
     if args.groups is not None:
         # -groups is a MOVE action: reorganize already-exported files into
         # <object_type>/<group>/ subfolders. It never connects or exports.
@@ -108,9 +106,7 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
     gateway_cache: dict[str, QueryGateway] = {}
 
     def default_gateway_factory(schema: str) -> QueryGateway:
-        return OracleGateway(
-            schema_connections[schema], startup_sql=startup.startup_sql, config=config
-        )
+        return build_gateway(startup, schema_connections[schema])
 
     selected_gateway_factory = gateway_factory or default_gateway_factory
 
@@ -282,11 +278,10 @@ def _run_export_apex(
     gateway_cache: dict[str, QueryGateway] = {}
 
     def default_gateway_factory(schema: str) -> QueryGateway:
-        return OracleGateway(
+        return build_gateway(
+            startup,
             schema_connections[connection_schema if args.reveal else schema],
             project_root=root,
-            startup_sql=startup.startup_sql,
-            config=config,
         )
 
     selected_gateway_factory = gateway_factory or default_gateway_factory

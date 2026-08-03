@@ -5,6 +5,7 @@ from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+from adt_ai.flow import queries
 from adt_ai.flow.model import FlowApp, FlowEdge, FlowPage
 
 # Persistent store: the .db IS the source of truth (populated from live Oracle on
@@ -76,11 +77,6 @@ LINK_SOURCE_TYPES: tuple[tuple[str, str], ...] = (
 
 RESOLVABLE_FLAGS = ("PAGE", "CROSS_APP")
 
-_EDGE_COLUMNS = (
-    "app_id, workspace, src_type, src_page, component_id, component, raw_target, "
-    "target_app, target_app_id, target_page, flag, working_copy_id"
-)
-
 
 def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
@@ -94,9 +90,7 @@ def _migrate_schema(connection: sqlite3.Connection) -> None:
     # component_id was originally INTEGER; Oracle internal sequence IDs can exceed
     # SQLite's signed 64-bit max. flow.db is a rebuild-on-demand cache so we just
     # drop and recreate when we detect the old column type.
-    row = connection.execute(
-        "SELECT type FROM pragma_table_info('apex_nav_edge') WHERE name = 'component_id'"
-    ).fetchone()
+    row = connection.execute(queries.STORE_COMPONENT_ID_TYPE_QUERY).fetchone()
     if row and row[0].upper() == "INTEGER":
         connection.executescript(
             "DROP TABLE IF EXISTS apex_nav_edge;"
@@ -110,10 +104,7 @@ def _migrate_schema(connection: sqlite3.Connection) -> None:
 
 
 def _seed_link_source_types(connection: sqlite3.Connection) -> None:
-    connection.executemany(
-        "INSERT OR IGNORE INTO apex_link_source_type (src_type, description) VALUES (?, ?)",
-        LINK_SOURCE_TYPES,
-    )
+    connection.executemany(queries.STORE_SEED_LINK_SOURCE_TYPE, LINK_SOURCE_TYPES)
 
 
 def _row_to_edge(row: sqlite3.Row) -> FlowEdge:
@@ -165,20 +156,17 @@ class ApexFlowStore:
         stamp = loaded_at or _now()
         con = self._con
         try:
-            con.execute("DELETE FROM apex_app WHERE app_id = ?", (app.app_id,))
+            con.execute(queries.STORE_DELETE_APP, (app.app_id,))
             con.execute(
-                "INSERT INTO apex_app (app_id, workspace, app_name, app_alias, loaded_at)"
-                " VALUES (?, ?, ?, ?, ?)",
+                queries.STORE_INSERT_APP,
                 (app.app_id, app.workspace, app.app_name, app.app_alias, stamp),
             )
             con.executemany(
-                "INSERT INTO apex_page (app_id, page_id, page_name, page_alias)"
-                " VALUES (?, ?, ?, ?)",
+                queries.STORE_INSERT_PAGE,
                 [(p.app_id, p.page_id, p.page_name, p.page_alias) for p in pages],
             )
             con.executemany(
-                f"INSERT INTO apex_nav_edge ({_EDGE_COLUMNS}, loaded_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                queries.STORE_INSERT_EDGE,
                 [self._edge_row(edge, stamp) for edge in edges],
             )
             con.commit()
@@ -195,25 +183,20 @@ class ApexFlowStore:
         )
 
     def remove_app(self, app_id: int) -> bool:
-        cursor = self._con.execute("DELETE FROM apex_app WHERE app_id = ?", (app_id,))
+        cursor = self._con.execute(queries.STORE_DELETE_APP, (app_id,))
         self._con.commit()
         return cursor.rowcount > 0
 
     def all_app_ids(self) -> list[int]:
-        rows = self._con.execute("SELECT app_id FROM apex_app ORDER BY app_id")
+        rows = self._con.execute(queries.STORE_APP_IDS_QUERY)
         return [row[0] for row in rows]
 
     def has_app(self, app_id: int) -> bool:
-        row = self._con.execute(
-            "SELECT 1 FROM apex_app WHERE app_id = ?", (app_id,)
-        ).fetchone()
+        row = self._con.execute(queries.STORE_APP_EXISTS_QUERY, (app_id,)).fetchone()
         return row is not None
 
     def app(self, app_id: int) -> FlowApp | None:
-        row = self._con.execute(
-            "SELECT app_id, workspace, app_name, app_alias FROM apex_app WHERE app_id = ?",
-            (app_id,),
-        ).fetchone()
+        row = self._con.execute(queries.STORE_APP_QUERY, (app_id,)).fetchone()
         if row is None:
             return None
         return FlowApp(
@@ -224,11 +207,7 @@ class ApexFlowStore:
         )
 
     def pages(self, app_id: int) -> list[FlowPage]:
-        rows = self._con.execute(
-            "SELECT app_id, page_id, page_name, page_alias FROM apex_page"
-            " WHERE app_id = ? ORDER BY page_id",
-            (app_id,),
-        ).fetchall()
+        rows = self._con.execute(queries.STORE_PAGES_QUERY, (app_id,)).fetchall()
         return [
             FlowPage(
                 app_id     = row["app_id"],
@@ -240,31 +219,15 @@ class ApexFlowStore:
         ]
 
     def edges(self, app_id: int) -> list[FlowEdge]:
-        rows = self._con.execute(
-            "SELECT * FROM apex_nav_edge WHERE app_id = ?"
-            " ORDER BY src_type, src_page, component_id",
-            (app_id,),
-        ).fetchall()
+        rows = self._con.execute(queries.STORE_EDGES_QUERY, (app_id,)).fetchall()
         return [_row_to_edge(row) for row in rows]
 
     def incoming(self, app_id: int, page: int) -> list[FlowEdge]:
-        rows = self._con.execute(
-            "SELECT * FROM apex_nav_edge"
-            " WHERE target_app_id = ? AND target_page = ?"
-            "   AND flag IN ('PAGE','CROSS_APP')"
-            " ORDER BY app_id, src_type, src_page",
-            (app_id, page),
-        ).fetchall()
+        rows = self._con.execute(queries.STORE_INCOMING_QUERY, (app_id, page)).fetchall()
         return [_row_to_edge(row) for row in rows]
 
     def outgoing(self, app_id: int, page: int) -> list[FlowEdge]:
-        rows = self._con.execute(
-            "SELECT * FROM apex_nav_edge"
-            " WHERE app_id = ? AND src_page = ?"
-            "   AND flag IN ('PAGE','CROSS_APP')"
-            " ORDER BY target_app_id, target_page, src_type",
-            (app_id, page),
-        ).fetchall()
+        rows = self._con.execute(queries.STORE_OUTGOING_QUERY, (app_id, page)).fetchall()
         return [_row_to_edge(row) for row in rows]
 
     def close(self) -> None:
