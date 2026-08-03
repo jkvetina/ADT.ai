@@ -17,7 +17,6 @@ from adt_ai.cli.constants import (
     DoctorRequest,
     DoctorRunner,
     GatewayFactory,
-    OracleGateway,
     QueryGateway,
     RecompileRequest,
     RecompileRunner,
@@ -36,6 +35,7 @@ from adt_ai.cli.context import (
     _print_startup_debug,
     _repo_root,
 )
+from adt_ai.cli.gateways import build_gateway
 from adt_ai.cli.recompile_reporters import (
     _print_invalid_object_errors,
     _print_recompile_overview_table,
@@ -45,7 +45,6 @@ from adt_ai.recompile.render import (
     _MVIEW_COLUMNS,
     _ConsoleMViewReporter,
     _ConsoleTrailingReporter,
-    _locked_row_cells,
     _mview_row_cells,
     print_disabled_tables,
     print_job_tables,
@@ -109,7 +108,7 @@ def _run_recompile_for_schema(
         gateway = (
             gateway_factory(schema)
             if gateway_factory
-            else OracleGateway(connection, startup_sql=startup.startup_sql, config=startup.config)
+            else build_gateway(startup, connection)
         )
         return DebugQueryGateway(gateway) if args.debug else gateway
 
@@ -185,9 +184,6 @@ def _run_recompile_for_schema(
             if result.invalid:
                 print_adt_header("INVALID OBJECTS")
                 _print_invalid_object_errors(result.invalid, result.error_details)
-        if result.locked:
-            print_adt_header("LOCKED OBJECTS")
-            print_adt_table([_locked_row_cells(lock) for lock in result.locked])
         if request.mview:
             # Batch fallback for non-streamed callers (silent path aside, this is the
             # CLI test fakes). Shares _mview_row_cells with the streamed reporter so
@@ -280,7 +276,7 @@ def _run_discovery(
     gateway = (
         gateway_factory(schema)
         if gateway_factory
-        else OracleGateway(connection, startup_sql=startup.startup_sql, config=startup.config)
+        else build_gateway(startup, connection)
     )
     if args.debug:
         gateway = DebugQueryGateway(gateway)

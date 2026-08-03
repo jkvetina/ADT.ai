@@ -12,7 +12,7 @@ from adt_ai.shared.connections import DEFAULT_PORT
 
 # Keys that may hold a secret. They are stripped when cloning an environment with
 # -like so a copied skeleton never inherits another environment's password.
-_SECRET_KEYS = ("pwd", "pwd!", "wallet_pwd", "wallet_password")
+_SECRET_KEYS = ("pwd", "pwd!", "wallet_pwd", "wallet_pwd!", "wallet_password")
 
 
 class ConnectionEditError(Exception):
@@ -41,7 +41,6 @@ class ConnectionEditRequest:
     app         : str | None = None
     prefix      : str | None = None
     ignore      : str | None = None
-    subfolder   : str | None = None
     like        : str | None = None
     default     : bool = False
     apply       : bool = False
@@ -98,10 +97,34 @@ def _plain(node: Any) -> Any:
     return node
 
 
+def _is_blank(value: Any) -> bool:
+    """Whether a stored YAML scalar is an empty placeholder rather than a value."""
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
 def _strip_secrets(mapping: dict[str, Any]) -> dict[str, Any]:
     for key in _SECRET_KEYS:
         mapping.pop(key, None)
     return mapping
+
+
+def _strip_env_secrets(env_node: dict[str, Any]) -> dict[str, Any]:
+    """Deep structural copy of an environment with every stored secret removed.
+
+    Previews go to stdout, and stdout lands in shell history and agent
+    transcripts — so a preview may show the shape of an environment but never
+    the secrets of the sibling schemas or the wallet it happens to reuse.
+    """
+    plain = _plain(env_node) or {}
+    for section in ("db", "wallet"):
+        if isinstance(plain.get(section), dict):
+            _strip_secrets(plain[section])
+    schemas = plain.get("schemas")
+    if isinstance(schemas, dict):
+        for schema_node in schemas.values():
+            if isinstance(schema_node, dict) and isinstance(schema_node.get("db"), dict):
+                _strip_secrets(schema_node["db"])
+    return plain
 
 
 class ConnectionEditor:
@@ -211,7 +234,7 @@ class ConnectionEditor:
             defaults.setdefault(default_key, request.schema)
 
         summary = f"create or update connection {request.environment}.{request.schema}"
-        return summary, self._dump_node(yaml, {request.environment: env_node})
+        return summary, self._dump_node(yaml, {request.environment: _strip_env_secrets(env_node)})
 
     def _merge_db_defaults(self, env_node: dict[str, Any], request: ConnectionEditRequest) -> None:
         db = env_node.get("db")
@@ -261,7 +284,6 @@ class ConnectionEditor:
         export_values = {
             "prefix": request.prefix,
             "ignore": request.ignore,
-            "subfolder": request.subfolder,
         }
         if any(value for value in export_values.values()):
             export = schema_node.get("export")
@@ -269,8 +291,16 @@ class ConnectionEditor:
                 export = {}
                 schema_node["export"] = export
             for key, value in export_values.items():
-                if value:
-                    export.setdefault(key, value)
+                if not value:
+                    continue
+                # A blank placeholder is not a value: SAMPLE.yaml (and every
+                # project bootstrapped from it) ships `ignore: ''` / `prefix: ''`,
+                # so setdefault() made -ignore/-prefix a permanent
+                # silent no-op on exactly the files that need them. A real
+                # existing value is still preserved.
+                if not _is_blank(export.get(key)):
+                    continue
+                export[key] = value
 
     def _clone_env(self, source: Any, request: ConnectionEditRequest) -> dict[str, Any]:
         db = _strip_secrets(_plain(source.get("db", {})) or {})

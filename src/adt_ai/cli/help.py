@@ -83,7 +83,6 @@ FILTER_DESTS = {
     "search",
     "source",
     "source_schema",
-    "subfolder",
     "summary",
     "target",
     "target_schema",

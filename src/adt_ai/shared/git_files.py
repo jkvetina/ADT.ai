@@ -139,6 +139,41 @@ def fetch_origin(root: Path) -> None:
     )
 
 
+def git_ref_exists(root: Path, ref: str) -> bool:
+    """True when ``ref`` resolves to a commit in the repository at ``root``."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", ref],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def git_is_ancestor(root: Path, commit: str, branch: str) -> bool:
+    """True when ``commit`` is an ancestor of ``branch``."""
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", commit, branch],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def git_checkout(root: Path, name: str) -> None:
+    """Check out ``name``, raising with git's own stderr when it refuses."""
+    result = subprocess.run(
+        ["git", "checkout", name],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout).strip()
+        raise RuntimeError(message or f"git checkout {name} failed")
+
+
 def default_branch_ref(root: Path) -> tuple[str, str]:
     """`(ref, short)` of the default branch, or `("", "")` if unresolved.
 

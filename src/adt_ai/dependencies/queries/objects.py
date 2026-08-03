@@ -285,6 +285,26 @@ WHERE d.REFERENCED_NAME IS NOT NULL
   AND {tracked_owner_predicate("d.REFERENCED_OWNER")}
 """.strip()
 
+# Foreign keys are the table-to-table half of the dependency graph, and
+# USER_DEPENDENCIES does not carry it — Oracle records only PL/SQL and view
+# dependencies there. A child table must be created after the table its FK
+# references, so the edge set is reconstructed from the constraint mirror:
+# resolve R_CONSTRAINT_NAME to the parent's P/U constraint, same owner only,
+# self-references excluded (a hierarchy FK is not an ordering constraint).
+# Ported from old ADT's `object_dependencies` UNION branch; its
+# `status = 'ENABLED'` filter is dropped because the mirror carries no STATUS
+# column, which only ever orders more conservatively.
+FOREIGN_KEY_EDGES_QUERY = """
+SELECT DISTINCT c.TABLE_NAME AS child, r.TABLE_NAME AS parent
+FROM USER_CONSTRAINTS c
+JOIN USER_CONSTRAINTS r
+  ON r.CONSTRAINT_NAME = c.R_CONSTRAINT_NAME
+ AND r.OWNER = c.OWNER
+WHERE c.CONSTRAINT_TYPE = 'R'
+  AND c.OWNER = c.R_OWNER
+  AND c.TABLE_NAME != r.TABLE_NAME
+""".strip()
+
 USER_OBJECTS_BY_OWNER_QUERY = "SELECT * FROM USER_OBJECTS WHERE OWNER = ?"
 
 

@@ -40,6 +40,8 @@ Use `-encrypt` to write OLD ADT-compatible encrypted values. The key comes from 
 
 `-create` is the OLD ADT-style bootstrap path. It creates the resolved connection YAML file when no candidate exists yet, or fills missing fields in the existing resolved file. Existing values are preserved; the command only adds missing environment/schema fields.
 
+For the `export:` filters (`-prefix`, `-ignore`) a **blank** entry counts as missing, not as a value: `SAMPLE.yaml` seeds the block as `ignore: ''` / `prefix: ''`, so treating a pre-seeded placeholder as "already set" would make both flags a permanent no-op on every project bootstrapped from the template. A filter that actually holds a value is still never overwritten — change one by editing the YAML.
+
 ```bash
 adtai connection -create -env DEV -schema APP -user APP \
   -host db.example.com -service DEVDB -default -go
@@ -51,7 +53,7 @@ For wallet/APEX projects:
 adtai connection -create -env DEV -schema APP -user APP \
   -host db.example.com -service DEVDB \
   -wallet Wallet_DEV -workspace DEV_WS -app 100 \
-  -prefix APP_% -ignore TMP_% -subfolder app \
+  -prefix APP_% -ignore TMP_% \
   -default -encrypt -key /secure/adt.key -go
 ```
 
@@ -122,8 +124,7 @@ adtai connection -add-env -env QA -like DEV -go
 | `-workspace`, `--workspace` | No | none | With `-create`, set schema APEX workspace. |
 | `-app`, `--app` | No | none | With `-create`, set schema APEX app scope. |
 | `-prefix`, `--prefix` | No | none | With `-create`, set schema export prefix filter. |
-| `-ignore`, `--ignore` | No | none | With `-create`, set schema export ignore filter. |
-| `-subfolder`, `--subfolder` | No | none | With `-create`, set schema export subfolder. |
+| `-ignore`, `--ignore` | No | none | With `-create`, set schema export ignore filter — the SQL LIKE patterns `export_db` / `export_data` skip (`TMP_%,BIN$%`). Fills a blank or missing entry; never overwrites one that already holds a value. |
 | `-default`, `--default` | No | off | With `-create`, mark the schema as the default database or APEX schema. |
 | `-encrypt`, `--encrypt` | No | off | With password-writing actions, encrypt the stored value using `-key` or `ADT_KEY`. |
 | `-key`, `--key` | No | `ADT_KEY` | Encryption key value or path to a key file. |

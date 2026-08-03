@@ -75,6 +75,14 @@ def data_query(
 ) -> str:
     safe_identifier(table_name, role="table name")
     safe_identifiers(columns, role="column name")
+    safe_identifiers(
+        [
+            part.strip()
+            for part in order_by.split(",")
+            if part.strip() and part.strip().upper() != "ROWID"
+        ],
+        role="order by column",
+    )
     return f"SELECT {', '.join(columns)}\nFROM {table_name}{where_filter}\nORDER BY {order_by}"
 
 

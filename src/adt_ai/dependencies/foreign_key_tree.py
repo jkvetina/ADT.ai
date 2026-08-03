@@ -128,6 +128,23 @@ def _constraint_tree_row(
     }
 
 
+def _iterate_frames(frame, *first_call) -> None:
+    """Drive ``frame`` generators with an explicit stack.
+
+    Depth-first with exact recursion semantics — each ``yield`` is a deferred
+    recursive call — but immune to Python's recursion limit, which a deep
+    (non-cyclic) FK chain in a large schema can exceed.
+    """
+    stack = [frame(*first_call)]
+    while stack:
+        try:
+            call = next(stack[-1])
+        except StopIteration:
+            stack.pop()
+            continue
+        stack.append(frame(*call))
+
+
 def _collect_references(
     connection: sqlite3.Connection,
     row: Mapping[str, Any],
@@ -135,32 +152,29 @@ def _collect_references(
     seen: set[tuple[Any, Any]],
     result: list[tuple[tuple[str, ...], dict[str, Any]]],
 ) -> None:
-    key = (row["OWNER"], row["CONSTRAINT_NAME"])
-    if key in seen:
-        return
-    seen.add(key)
-    result.append((path, _constraint_tree_row(connection, row)))
-    if row["CONSTRAINT_TYPE"] != "R" or not row["R_OWNER"] or not row["R_CONSTRAINT_NAME"]:
-        return
-    referenced = _constraint_by_key(connection, row["R_OWNER"], row["R_CONSTRAINT_NAME"])
-    if referenced is None:
-        return
-    referenced_key = (referenced["OWNER"], referenced["CONSTRAINT_NAME"])
-    if referenced_key in seen:
-        return
-    seen.add(referenced_key)
-    referenced_path = path + (referenced["CONSTRAINT_NAME"],)
-    result.append((referenced_path, _constraint_tree_row(connection, referenced)))
-    for parent_fk in _table_foreign_keys(
-        connection, referenced["OWNER"], referenced["TABLE_NAME"]
-    ):
-        _collect_references(
-            connection,
-            parent_fk,
-            referenced_path + (parent_fk["CONSTRAINT_NAME"],),
-            seen,
-            result,
-        )
+    def frame(row: Mapping[str, Any], path: tuple[str, ...]):
+        key = (row["OWNER"], row["CONSTRAINT_NAME"])
+        if key in seen:
+            return
+        seen.add(key)
+        result.append((path, _constraint_tree_row(connection, row)))
+        if row["CONSTRAINT_TYPE"] != "R" or not row["R_OWNER"] or not row["R_CONSTRAINT_NAME"]:
+            return
+        referenced = _constraint_by_key(connection, row["R_OWNER"], row["R_CONSTRAINT_NAME"])
+        if referenced is None:
+            return
+        referenced_key = (referenced["OWNER"], referenced["CONSTRAINT_NAME"])
+        if referenced_key in seen:
+            return
+        seen.add(referenced_key)
+        referenced_path = path + (referenced["CONSTRAINT_NAME"],)
+        result.append((referenced_path, _constraint_tree_row(connection, referenced)))
+        for parent_fk in _table_foreign_keys(
+            connection, referenced["OWNER"], referenced["TABLE_NAME"]
+        ):
+            yield parent_fk, referenced_path + (parent_fk["CONSTRAINT_NAME"],)
+
+    _iterate_frames(frame, row, path)
 
 
 def _collect_dependencies(
@@ -171,30 +185,26 @@ def _collect_dependencies(
     seen: set[tuple[Any, Any]],
     result: list[tuple[tuple[str, ...], dict[str, Any]]],
 ) -> None:
-    for key_constraint in _table_key_constraints(connection, owner, table_name):
-        child_fks = _referencing_foreign_keys(
-            connection, key_constraint["OWNER"], key_constraint["CONSTRAINT_NAME"]
-        )
-        if not child_fks:
-            continue
-        key = (key_constraint["OWNER"], key_constraint["CONSTRAINT_NAME"])
-        if key in seen:
-            continue
-        seen.add(key)
-        key_path = path + (key_constraint["CONSTRAINT_NAME"],)
-        result.append((key_path, _constraint_tree_row(connection, key_constraint)))
-        for child_fk in child_fks:
-            key = (child_fk["OWNER"], child_fk["CONSTRAINT_NAME"])
+    def frame(owner: str, table_name: str, path: tuple[str, ...]):
+        for key_constraint in _table_key_constraints(connection, owner, table_name):
+            child_fks = _referencing_foreign_keys(
+                connection, key_constraint["OWNER"], key_constraint["CONSTRAINT_NAME"]
+            )
+            if not child_fks:
+                continue
+            key = (key_constraint["OWNER"], key_constraint["CONSTRAINT_NAME"])
             if key in seen:
                 continue
             seen.add(key)
-            child_path = key_path + (child_fk["CONSTRAINT_NAME"],)
-            result.append((child_path, _constraint_tree_row(connection, child_fk)))
-            _collect_dependencies(
-                connection,
-                child_fk["OWNER"],
-                child_fk["TABLE_NAME"],
-                child_path,
-                seen,
-                result,
-            )
+            key_path = path + (key_constraint["CONSTRAINT_NAME"],)
+            result.append((key_path, _constraint_tree_row(connection, key_constraint)))
+            for child_fk in child_fks:
+                key = (child_fk["OWNER"], child_fk["CONSTRAINT_NAME"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                child_path = key_path + (child_fk["CONSTRAINT_NAME"],)
+                result.append((child_path, _constraint_tree_row(connection, child_fk)))
+                yield child_fk["OWNER"], child_fk["TABLE_NAME"], child_path
+
+    _iterate_frames(frame, owner, table_name, path)

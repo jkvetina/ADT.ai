@@ -18,7 +18,6 @@ from dataclasses import dataclass, field
 from adt_ai.recompile.inventory import (
     CompileError,
     DisabledObject,
-    LockedObject,
     MaterializedView,
     ObjectError,
     ObjectOverview,
@@ -81,7 +80,6 @@ class RecompileResult:
     troublemakers: list[RecompileObject] = field(default_factory=list)
     invalid: list[ObjectError] = field(default_factory=list)
     overview: list[ObjectOverview] = field(default_factory=list)
-    locked: list[LockedObject] = field(default_factory=list)
     mviews: list[MaterializedView] = field(default_factory=list)
     mview_actions: list[MViewAction] = field(default_factory=list)
     synonyms: list[SynonymInfo] = field(default_factory=list)
@@ -105,8 +103,6 @@ class RecompileReporter:
     ``trailing_object`` announces each object as it is rewritten (so the visible
     pause sits on the object being worked on), and ``end_trailing`` closes it.
     """
-
-    def locked(self, locked: list[LockedObject]) -> None: ...
 
     def begin_mviews(self, mviews: list[MaterializedView]) -> None: ...
 

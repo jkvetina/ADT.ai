@@ -22,6 +22,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import yaml as pyyaml
 from ruamel.yaml import YAML
 
 from adt_ai.shared import text_files
@@ -102,10 +103,15 @@ def record_sqlcl_registration(
     """
     try:
         path = Path(source_file)
+        text = path.read_text(encoding="utf-8")
+        # Safe-load pre-check before the round-tripper touches an externally
+        # authored file — same defense-in-depth as connection/runner.py; any
+        # unsupported tag raises and lands in the best-effort except below.
+        pyyaml.safe_load(text)
         yaml = YAML()
         yaml.preserve_quotes = True
         yaml.indent(mapping=2, sequence=4, offset=2)
-        data = yaml.load(path.read_text(encoding="utf-8"))
+        data = yaml.load(text)
         schema_node = _schema_node(data, environment, schema)
         if schema_node is None:
             return

@@ -49,19 +49,6 @@ class CompileError:
 
 
 @dataclass(frozen=True)
-class LockedObject:
-    object_type: str
-    object_name: str
-    session_id: int | None
-    serial: int | None
-    oracle_user: str | None
-    os_user: str | None
-    machine: str | None
-    program: str | None
-    lock_mode: str | None
-
-
-@dataclass(frozen=True)
 class MaterializedView:
     object_name: str
     staleness: str | None
@@ -146,7 +133,6 @@ class RecompileDiscovery:
     OBJECTS_TO_RECOMPILE_QUERY = queries.OBJECTS_TO_RECOMPILE_QUERY
     ERRORS_SUMMARY_QUERY = queries.ERRORS_SUMMARY_QUERY
     ERRORS_DETAIL_QUERY = queries.ERRORS_DETAIL_QUERY
-    LOCKED_OBJECTS_QUERY = queries.LOCKED_OBJECTS_QUERY
     MATERIALIZED_VIEWS_QUERY = queries.MATERIALIZED_VIEWS_QUERY
     SYNONYMS_QUERY = queries.SYNONYMS_QUERY
     DISABLED_OBJECTS_QUERY = queries.DISABLED_OBJECTS_QUERY
@@ -294,35 +280,6 @@ class RecompileDiscovery:
                 (int(row["POSITION"]) if row.get("POSITION") is not None else None),
                 str(row["ERROR"] or ""),
                 str(row["TEXT"] or ""),
-            )
-            for row in rows
-        ]
-
-    def locked_objects(
-        self,
-        *,
-        object_name: str = "%",
-        object_type: str = "%",
-        prefix: str = "",
-        ignore: str = "",
-    ) -> list[LockedObject]:
-        rows = self.gateway.fetch_all(
-            self.LOCKED_OBJECTS_QUERY,
-            self._scope_binds(
-                object_name=object_name, object_type=object_type, prefix=prefix, ignore=ignore
-            ),
-        )
-        return [
-            LockedObject(
-                str(row["OBJECT_TYPE"]),
-                str(row["OBJECT_NAME"]),
-                (int(row["SID"]) if row.get("SID") is not None else None),
-                (int(row["SERIAL#"]) if row.get("SERIAL#") is not None else None),
-                _str_or_none(row.get("ORACLE_USER")),
-                _str_or_none(row.get("OS_USER")),
-                _str_or_none(row.get("MACHINE")),
-                _str_or_none(row.get("PROGRAM")),
-                _str_or_none(row.get("LOCK_MODE")),
             )
             for row in rows
         ]

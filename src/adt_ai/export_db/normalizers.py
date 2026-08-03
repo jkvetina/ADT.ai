@@ -55,6 +55,7 @@ class NormalizerRegistry:
         from adt_ai.export_db.object_normalizers.sequence import normalize_sequence
         from adt_ai.export_db.object_normalizers.synonym import normalize_synonym
         from adt_ai.export_db.object_normalizers.table import normalize_table
+        from adt_ai.export_db.object_normalizers.trigger import normalize_trigger
         from adt_ai.export_db.object_normalizers.type import normalize_type, normalize_type_body
         from adt_ai.export_db.object_normalizers.view import normalize_view
 
@@ -67,6 +68,7 @@ class NormalizerRegistry:
                 "SEQUENCE": normalize_sequence,
                 "SYNONYM": normalize_synonym,
                 "TABLE": normalize_table,
+                "TRIGGER": normalize_trigger,
                 "TYPE": normalize_type,
                 "TYPE BODY": normalize_type_body,
                 "VIEW": normalize_view,
@@ -156,7 +158,6 @@ def _normalize_common(
     if context.object_type in BODY_PRESERVING_OBJECT_TYPES:
         lines = _normalize_definition_line_only(lines, context)
         lines = _split_spec_from_body(lines, context)
-        lines = _strip_generated_trigger_enable(lines, context)
         lines = _trim_trailing_blank_lines(lines)
         lines = _ensure_statement_semicolon(lines)
         if terminate:
@@ -350,18 +351,6 @@ def _split_spec_from_body(
         if line.startswith("CREATE OR REPLACE") and " BODY" in line:
             return lines[:index]
     return lines
-
-def _strip_generated_trigger_enable(
-    lines: list[str],
-    context: NormalizationContext,
-) -> list[str]:
-    if context.object_type != "TRIGGER":
-        return lines
-    return [
-        line
-        for line in lines
-        if not re.match(r"\s*ALTER\s+TRIGGER\b.*\bENABLE\s*;\s*$", line, flags=re.IGNORECASE)
-    ]
 
 def _matching_parenthesis_index(payload: str, open_index: int) -> int | None:
     depth = 0

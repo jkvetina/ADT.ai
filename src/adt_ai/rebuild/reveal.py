@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import fnmatch
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from adt_ai.shared.git_files import default_branch_ref, fetch_origin, git_user_email, run_git
+from adt_ai.shared.git_files import (
+    default_branch_ref,
+    fetch_origin,
+    git_checkout,
+    git_user_email,
+    run_git,
+)
 
 REVEAL_DEFAULT_LIMIT = 20
 
@@ -89,7 +94,9 @@ def _branch_infos(root: Path) -> list[BranchInfo]:
         root, ["for-each-ref", "refs/remotes/origin", f"--format={fmt}", "--sort=-committerdate"]
     )
     infos: list[BranchInfo] = []
-    for line in out.splitlines():
+    # "\n" only — `str.splitlines()` would truncate an author name holding an
+    # embedded `\r` and discard the tail as a phantom row.
+    for line in out.split("\n"):
         if not line.strip():
             continue
         parts = line.split("\t")
@@ -114,17 +121,9 @@ def switch_to_branch(root: Path, name: str) -> None:
     # Check out `name` in the working tree at `root`. `git checkout` DWIMs a
     # local tracking branch from `origin/<name>` when no local branch exists, so
     # a name straight off the `-reveal` list (origin prefix already stripped)
-    # works. A dirty tree that would be clobbered makes git refuse — surface that
-    # stderr verbatim instead of swallowing it.
-    result = subprocess.run(
-        ["git", "checkout", name],
-        cwd=root,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        message = (result.stderr or result.stdout).strip()
-        raise RuntimeError(message or f"git checkout {name} failed")
+    # works. A dirty tree that would be clobbered makes git refuse — the shared
+    # adapter surfaces that stderr verbatim instead of swallowing it.
+    git_checkout(root, name)
 
 def branch_commits(
     root: Path,

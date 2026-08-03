@@ -26,7 +26,6 @@ from adt_ai.recompile.contracts import (
     TrailingAction as TrailingAction,
 )
 from adt_ai.recompile.inventory import (
-    LockedObject,
     MaterializedView,
     ObjectError,
     RecompileDiscovery,
@@ -122,11 +121,9 @@ class RecompileRunner:
             )
 
         # -mviews is a materialized-view-focused run: skip the invalid-object
-        # recompile and the OBJECTS OVERVIEW entirely, only collect locks (which
-        # can block an MV refresh) and act on the materialized views themselves.
+        # recompile and the OBJECTS OVERVIEW entirely, and act on the
+        # materialized views themselves.
         if request.mview:
-            locked = _collect_locked(discovery, scope)
-            self.reporter.locked(locked)
             gateway = self.gateway_factory()  # fresh connection for the MV action pass
             discovery = RecompileDiscovery(gateway)
             mviews = discovery.materialized_views(**name_scope)
@@ -158,14 +155,12 @@ class RecompileRunner:
             self.reporter.end_mviews(mview_actions)
             unresolved_mviews = [action for action in mview_actions if not action.ok]
             return RecompileResult(
-                locked        = locked,
                 mviews        = final_mviews,
                 mview_actions = mview_actions,
                 success       = not unresolved_mviews,
             )
 
         overview = discovery.overview(**scope)
-        locked = _collect_locked(discovery, scope)
         # Pass the compile modifiers so a modifier-combined -force narrows the sweep to
         # objects whose settings drift from the requested target state (#146). The
         # invalid-object re-check below stays a plain force=False read.
@@ -183,7 +178,6 @@ class RecompileRunner:
                 compiled = [],
                 invalid  = [],
                 overview = overview,
-                locked   = locked,
                 success  = True,
             )
 
@@ -228,7 +222,6 @@ class RecompileRunner:
             troublemakers = troublemakers,
             invalid       = invalid,
             overview      = overview,
-            locked        = locked,
             error_details = error_details,
             success       = not invalid,
         )
@@ -385,14 +378,6 @@ def _enrich_invalid(
         else:
             enriched.append(ObjectError(obj.object_type, obj.object_name, 0, None))
     return enriched
-
-
-def _collect_locked(discovery: RecompileDiscovery, scope: dict[str, str]) -> list[LockedObject]:
-    """Read session/object locks, degrading to an empty list without gv$ grants."""
-    try:
-        return discovery.locked_objects(**scope)
-    except Exception:
-        return []
 
 
 def _mview_needs_compile(mview: MaterializedView) -> bool:

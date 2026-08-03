@@ -95,7 +95,6 @@ def add_admin_parsers(subparsers) -> None:
     connection.add_argument("--app", "-app", help="with -create, set default APEX app scope")
     connection.add_argument("--prefix", "-prefix", help="with -create, set export prefix filter")
     connection.add_argument("--ignore", "-ignore", help="with -create, set export ignore filter")
-    connection.add_argument("--subfolder", "-subfolder", help="with -create, set export subfolder")
     connection.add_argument(
         "--default",
         "-default",

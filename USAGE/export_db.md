@@ -11,7 +11,23 @@ adtai export_db
 
 During export, ADT.ai prints the connection target, database/APEX version details when available, an object overview by type, and every object as it is exported. Press `Ctrl+C` to stop the export cleanly.
 
-Generated DDL is normalized toward old ADT output where the contract is known: table constraints render as multi-line CHECK, PRIMARY KEY, and FOREIGN KEY blocks with `--` separators; table references and suffixes strip only the exported owner, preserve non-current schemas and FK `ON DELETE` actions, keep trailing `INMEMORY ...` clauses, remove generated `ENABLE` / `USING INDEX`, preserve explicit sequence `MAXVALUE` clauses, and cover old-ADT-aligned `INTERVAL` qualifiers, `XMLTYPE`, `NVARCHAR2`/other Oracle column datatype forms, and quoted schema-qualified object datatypes; simple views drop DBMS_METADATA header column lists and format quoted select-list items as lowercased one-column-per-line output, including `DISTINCT`, mixed quoted/unquoted simple columns, expression/function items, lowercase quoted identifiers, `WHERE` tails, `FROM` on the next line, CTE final `SELECT` lists after `WITH` blocks, compact unquoted simple select lists such as `select BUP_CODE,BUPT_CODE from ...` with one projection item per line, and aliased projections such as `v."COL"`, while preserving expression text and SQL layout from `FROM` onward; simple indexes use `CREATE INDEX IF NOT EXISTS` with schema-free lowercased table and column names, expression indexes unquote simple column references outside string literals, same-schema synonym targets are unqualified and unquoted, TYPE files start with the guarded old ADT `DROP TYPE` block, and TYPE BODY files start with the guarded old ADT `DROP TYPE BODY` block.
+Generated DDL is normalized toward old ADT output where the contract is known: table constraints render as multi-line CHECK, PRIMARY KEY, and FOREIGN KEY blocks with `--` separators; table references and suffixes strip only the exported owner, preserve non-current schemas and FK `ON DELETE` actions, keep trailing `INMEMORY ...` clauses, remove generated `ENABLE` / `USING INDEX`, preserve explicit sequence `MAXVALUE` clauses, and cover old-ADT-aligned `INTERVAL` qualifiers, `XMLTYPE`, `NVARCHAR2`/other Oracle column datatype forms, and quoted schema-qualified object datatypes; simple views drop DBMS_METADATA header column lists and format quoted select-list items as lowercased one-column-per-line output, including `DISTINCT`, mixed quoted/unquoted simple columns, expression/function items, lowercase quoted identifiers, `WHERE` tails, `FROM` on the next line, CTE final `SELECT` lists after `WITH` blocks, compact unquoted simple select lists such as `select BUP_CODE,BUPT_CODE from ...` with one projection item per line, and aliased projections such as `v."COL"`, while preserving expression text and SQL layout from `FROM` onward; simple indexes use `CREATE INDEX IF NOT EXISTS` with schema-free lowercased table and column names, expression indexes unquote simple column references outside string literals, same-schema synonym targets are unqualified and unquoted, TYPE files start with the guarded old ADT `DROP TYPE` block, and TYPE BODY files start with the guarded old ADT `DROP TYPE BODY` block; trigger headers put `FOR EACH ROW` on a line of its own — indented like the line it was split from, with a trailing `WHEN (...)`, `DECLARE`, or `BEGIN` moved to the next line — while the trigger body is preserved verbatim, so the same words in a header comment, in a string literal, or anywhere after `DECLARE`/`BEGIN` are left untouched.
+
+DBMS_METADATA reports a trigger's status as an `ALTER TRIGGER` statement appended *inside* the `CREATE TRIGGER` block. `export_db` drops the `ENABLE` form (it is the default state) and moves the `DISABLE` form below the block's `/` terminator, verbatim and with a blank line on each side, so a disabled trigger exports as a runnable file:
+
+```sql
+CREATE OR REPLACE TRIGGER trg_d
+    BEFORE INSERT ON tab
+    FOR EACH ROW
+BEGIN
+    NULL;
+END;
+/
+
+ALTER TRIGGER "DA"."TRG_D" DISABLE;
+```
+
+Left inside the block — as it arrives from the database — the whole file is one statement and raises `PLS-00103`. Only a real statement line is matched, so a body that logs those words inside a string literal is untouched.
 
 When a PRIMARY KEY or UNIQUE constraint was added after table creation and tied to a pre-existing index, Oracle exports it as a separate `ALTER TABLE ... ADD CONSTRAINT ... USING INDEX <name>` plus a matching `CREATE [UNIQUE] INDEX <name>`. `export_db` folds that constraint back inline on the table — keeping the constraint name and columns, dropping the index name and the two trailing statements — so the table reads as if it had been created cleanly. When any such fold happens, the table's constraints are reordered PRIMARY KEY first, then UNIQUE, then FOREIGN KEY, then others; column lines keep their source order, and tables with no index-backed constraints keep their existing constraint order untouched. Each affected table also gets a `<table>.fix.sql` companion file beside it holding the `ALTER TABLE ... DROP CONSTRAINT` / `DROP INDEX` / `ALTER TABLE ... ADD CONSTRAINT` recovery script (one `--`-separated block per folded constraint); the companion is removed automatically when the table no longer has any index-backed constraint. Ordinary non-constraint trailing DDL such as plain `CREATE INDEX` is still preserved.
 
@@ -117,6 +133,27 @@ db_schema: YOUR_SCHEMA
 apex_account: FIRST.LAST
 email: you@example.com
 ```
+
+## Permanently excluding objects
+
+`-name` and `-type` narrow a single run. To keep a set of objects out of **every** export, put the pattern in the schema's `export:` block in the connection file — it is a standing filter, not a runtime flag:
+
+```yaml
+DEV:
+  schemas:
+    DA:
+      export:
+        ignore: 'REST_SAP_INCOMING_RETRY%,TMP_%'   # SQL LIKE, comma-separated
+        prefix: ''                                  # inverse: export only matching names
+```
+
+Set it with the `connection` command rather than by hand:
+
+```bash
+adtai connection -create -env DEV -schema DA -ignore 'REST_SAP_INCOMING_RETRY%' -go
+```
+
+The patterns are matched by the discovery query, so ignored objects are never listed, never exported, and — because a config filter is not a runtime filter — count as *missing* on the next full run, so `auto_delete` removes the files a previous export already wrote. That is what makes this the right tool for runtime-generated objects: an application that creates one scheduler job per request (`REST_SAP_INCOMING_RETRY_1000169671`, `..._1000206680`, …) otherwise adds one file per job to the repo forever. `export_data` reads the same `export.ignore` block.
 
 Run without per-object output, useful when an LLM or agent drives the export and object names would flood its console:
 
