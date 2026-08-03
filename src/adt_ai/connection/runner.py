@@ -293,11 +293,11 @@ class ConnectionEditor:
             for key, value in export_values.items():
                 if not value:
                     continue
-                # A blank placeholder is not a value: SAMPLE.yaml (and every
-                # project bootstrapped from it) ships `ignore: ''` / `prefix: ''`,
-                # so setdefault() made -ignore/-prefix a permanent
-                # silent no-op on exactly the files that need them. A real
-                # existing value is still preserved.
+                # A blank placeholder is not a value: a connection file
+                # conventionally seeds `ignore: ''` / `prefix: ''`, so
+                # setdefault() made -ignore/-prefix a permanent silent no-op on
+                # exactly the files that need them. A real existing value is
+                # still preserved.
                 if not _is_blank(export.get(key)):
                     continue
                 export[key] = value

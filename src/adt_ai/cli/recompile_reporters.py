@@ -136,8 +136,11 @@ def _print_recompile_overview_table(overviews: Sequence[ObjectOverview]) -> None
         12,
         *(len(overview.object_type) for overview in overviews),
     )
-    widths = [object_width, 5, 7, 11, 10]
-    separators = ["   ", "   ", "   ", "    "]
+    # OBJECT TYPE, TOTAL, VALIDATED, INVALID, MISSING IDENTIFIERS, MISSING STATEMENTS.
+    # VALIDATED sits immediately before INVALID so the two read as a pair: what the
+    # run fixed, and what it could not (#186).
+    widths = [object_width, 5, 9, 7, 11, 10]
+    separators = ["   ", "   ", "   ", "   ", "    "]
 
     def display_cell(cell: object) -> object:
         return "" if isinstance(cell, int) and cell == 0 else cell
@@ -152,43 +155,36 @@ def _print_recompile_overview_table(overviews: Sequence[ObjectOverview]) -> None
             for index, part in enumerate(parts)
         )
 
-    plscope_start = 2 + object_width + 3 + widths[1] + 3 + widths[2] + 3
+    aligns = ["<", ">", ">", ">", ">", ">"]
+    plscope_start = (
+        2 + object_width + 3 + widths[1] + 3 + widths[2] + 3 + widths[3] + 3
+    )
     print()
     print(
         (" " * plscope_start)
-        + f"{'MISSING':>{widths[3]}}"
-        + separators[3]
         + f"{'MISSING':>{widths[4]}}"
+        + separators[4]
+        + f"{'MISSING':>{widths[5]}}"
     )
     print(
         line(
-            ["OBJECT TYPE", "TOTAL", "INVALID", "IDENTIFIERS", "STATEMENTS"],
-            ["<", ">", ">", ">", ">"],
+            ["OBJECT TYPE", "TOTAL", "VALIDATED", "INVALID", "IDENTIFIERS", "STATEMENTS"],
+            aligns,
         )
     )
-    print(
-        line(
-            [
-                "-" * widths[0],
-                "-" * widths[1],
-                "-" * widths[2],
-                "-" * widths[3],
-                "-" * widths[4],
-            ],
-            ["<", ">", ">", ">", ">"],
-        )
-    )
+    print(line([("-" * width) for width in widths], aligns))
     for overview in overviews:
         print(
             line(
                 [
                     overview.object_type,
                     overview.total,
+                    overview.validated,
                     overview.invalid,
                     overview.missing_plscope_identifiers,
                     overview.missing_plscope_statements,
                 ],
-                ["<", ">", ">", ">", ">"],
+                aligns,
             )
         )
     # Trailing blank so the next header gets two empty lines above it (this

@@ -27,6 +27,12 @@ class ObjectOverview:
     invalid: int
     missing_plscope_identifiers: int = 0
     missing_plscope_statements: int = 0
+    # how many objects of this type were invalid before the run and are not any
+    # more (#186). The catalog cannot answer this — it only ever knows the state
+    # it is asked about — so the runner fills it in from the before/after invalid
+    # sets and `overview()` always returns 0. Last field so every positional
+    # construction of the catalog-sourced shape keeps working.
+    validated: int = 0
 
 
 @dataclass(frozen=True)

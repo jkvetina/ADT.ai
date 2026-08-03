@@ -30,6 +30,7 @@ from adt_ai.export_apex.rest import (
     _cleanup_sqlcl,
     _matches_prefix,
     _plsql_block,
+    _rest_export_error,
     _rest_module_name,
     _rest_prefixes,
     _schema_definition,
@@ -185,6 +186,10 @@ class ApexCollectionWriterMixin:
         resolver.rest_export("__enable_schema").parent.mkdir(parents=True, exist_ok=True)
         lines = _cleanup_sqlcl(gateway.sqlcl_request("SET LINESIZE 200;\nrest export;", root))
         first, modules = _split_rest_modules(lines)
+        if not modules:
+            error = _rest_export_error(lines)
+            if error:
+                raise RuntimeError(f"SQLcl rest export failed: {error}")
         prefixes = _rest_prefixes(config)
         for module in modules:
             name = _rest_module_name(module)
