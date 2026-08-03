@@ -7,6 +7,8 @@ objects are still invalid and summarize their errors.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from adt_ai.recompile.contracts import (
     GatewayFactory as GatewayFactory,
 )
@@ -28,6 +30,7 @@ from adt_ai.recompile.contracts import (
 from adt_ai.recompile.inventory import (
     MaterializedView,
     ObjectError,
+    ObjectOverview,
     RecompileDiscovery,
     RecompileObject,
     TrailingObject,
@@ -181,6 +184,16 @@ class RecompileRunner:
                 success  = True,
             )
 
+        # The invalid set as it stood before the first compile — the baseline the
+        # VALIDATED column is measured against (#186). Without -force the todo list
+        # already *is* that set, so nothing extra is read; -force sweeps valid
+        # objects too, so the baseline is read on its own. It runs after the todo
+        # selection deliberately: that keeps the force sweep the run's first
+        # OBJECTS_TO_RECOMPILE read, and an empty todo has already returned above.
+        before_invalid = (
+            discovery.objects_to_recompile(**scope, force=False) if request.force else todo
+        )
+
         compiled: list[RecompileObject] = []
         troublemakers: list[RecompileObject] = []
         for obj in todo:
@@ -212,6 +225,7 @@ class RecompileRunner:
         errors = discovery.errors_summary(**scope)
         remaining = discovery.objects_to_recompile(**scope, force=False)
         invalid = _enrich_invalid(remaining, errors)
+        overview = _with_validated(overview, before_invalid, remaining)
 
         # Surface the full per-line compile messages so an AI agent can pinpoint
         # the offending line/position/text on whatever is still invalid.
@@ -363,6 +377,30 @@ class RecompileRunner:
                 False,
                 str(exc),
             )
+
+
+def _with_validated(
+    overview: list[ObjectOverview],
+    before_invalid: list[RecompileObject],
+    remaining: list[RecompileObject],
+) -> list[ObjectOverview]:
+    """Stamp each overview row with how many of its objects the run repaired (#186).
+
+    A set difference over object identity, never a before/after count delta:
+    recompiling a spec invalidates its dependents, so a run that fixed one object
+    and broke another leaves the INVALID count unchanged — and a delta would
+    report that repair as nothing happening, which is the blindness this column
+    exists to remove.
+    """
+    still_invalid = {(obj.object_type, obj.object_name) for obj in remaining}
+    counts: dict[str, int] = {}
+    for obj in before_invalid:
+        if (obj.object_type, obj.object_name) not in still_invalid:
+            counts[obj.object_type] = counts.get(obj.object_type, 0) + 1
+    return [
+        replace(row, validated=counts.get(row.object_type, 0))
+        for row in overview
+    ]
 
 
 def _enrich_invalid(

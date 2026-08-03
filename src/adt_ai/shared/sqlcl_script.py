@@ -96,12 +96,21 @@ def run_sqlcl_script(script: str, root: Path, project_root: Path | None = None) 
         # ``-S`` (silent) suppresses the banner and command echo so SQLcl does not
         # print the connect line in the first place; the scrub below is the
         # belt-and-braces backstop for the cases where it still does.
+        #
+        # ``stdin=DEVNULL`` is not cosmetic. A CONNECT that fails makes SQLcl
+        # fall back to prompting for a username, and without this the child
+        # inherits the caller's terminal — so it sat at a prompt that
+        # ``capture_output`` had already swallowed, waiting forever while
+        # ``export_apex -rest`` printed nothing but a crawling progress bar
+        # (ADT #188). At EOF the prompt fails immediately instead, and the
+        # ``WHENEVER SQLERROR EXIT FAILURE`` guard turns that into a real error.
         completed = subprocess.run(
             ["sql", "-S", "/nolog", f"@{script_path}"],
             cwd            = root,
             check          = False,
             capture_output = True,
             text           = True,
+            stdin          = subprocess.DEVNULL,
         )
     finally:
         script_path.unlink(missing_ok=True)

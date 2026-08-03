@@ -36,10 +36,13 @@ object_types AS (
         t.column_value AS object_like
     FROM TABLE(APEX_STRING.SPLIT(TRIM(BOTH ',' FROM NVL(:object_type, '%')), ',')) t
 )
+-- No `fixed` column here: old ADT selected one as a NULL placeholder and filled it
+-- in Python, and this port carried the placeholder without the fill. The overview
+-- reads one point in time, so the catalog cannot answer "what did this run repair"
+-- at all — the runner computes VALIDATED from the before/after invalid sets (#186).
 SELECT
     o.object_type,
     COUNT(*) AS total,
-    NULL AS fixed,
     SUM(CASE WHEN o.status != 'VALID' THEN 1 ELSE 0 END) AS invalid,
     SUM(CASE
         WHEN o.object_type IN ('PACKAGE', 'PACKAGE BODY', 'PROCEDURE', 'FUNCTION', 'TRIGGER')
@@ -81,7 +84,6 @@ UNION ALL
 SELECT
     'MVIEW LOG' AS object_type,
     COUNT(*)    AS total,
-    NULL        AS fixed,
     NULL        AS invalid,
     NULL        AS MISSING_PLSCOPE_IDENTIFIERS,
     NULL        AS MISSING_PLSCOPE_STATEMENTS

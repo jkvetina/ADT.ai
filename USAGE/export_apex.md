@@ -130,7 +130,7 @@ When no explicit export format is selected, non-reveal `-recent` requests print 
 | `-embedded`, `--embedded` | No | off | Export embedded code report. |
 | `-apexlang`, `--apexlang`, `-apx`, `--apx` | No | off | Export APEXlang (`.apx`) source into `apexlang/` in the app folder. Requires APEX 26.1+; on an older instance the slice prints a skip note and the rest of the run continues. Whole-app format: `-page`, `-component`, and `-recent` never filter it, and it never advances a `-recent` watermark. Static-file payloads are skipped by design — `-files` stays the single static-file channel. |
 | `-checksum`, `--checksum` | No | off | Export the ID-independent SHA-256 application checksum to `checksum.txt` in the app folder. Whole-app format: `-page`, `-component`, and `-recent` never filter it out, and it never advances a `-recent` watermark. |
-| `-rest`, `--rest` | No | off | Export REST services. Runs through SQLcl using a named `ADT_…` connection (auto-registered, wallet included) — see [connection.md](connection.md#named-sqlcl-connections). |
+| `-rest`, `--rest` | No | off | Export REST services. Runs through SQLcl using a named `ADT_…` connection (auto-registered, wallet included) — see [connection.md](connection.md#named-sqlcl-connections). A schema that publishes no REST modules exports an empty folder and succeeds; a session that could not connect, or a `rest export` reporting an `ORA-`/`SP2-`/`PLS-` error, now fails the run with that message instead of writing nothing quietly. |
 | `-files`, `--files` | No | off | Export application files. |
 | `-files_ws`, `--files_ws`, `--files-ws` | No | off | Export workspace files. |
 | `-debug`, `--debug` | No | off | Show input parameters and SQL queries with bind values. |

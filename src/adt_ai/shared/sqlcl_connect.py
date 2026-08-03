@@ -44,6 +44,22 @@ from adt_ai.shared.sqlcl_names import CONNMGR_DELETE_COMMAND, credential_fingerp
 # STARTUP.sql runs, so a STARTUP.sql keeps whatever feedback level it sets.
 SQLCL_SESSION_SETUP = f"SET FEEDBACK OFF\n{DDL_LOCK_TIMEOUT_STATEMENT};\nSET FEEDBACK ON"
 
+# Every connect is guarded, and that is the whole point (ADT #188). SQLcl's
+# default is WHENEVER SQLERROR CONTINUE, so a script whose ``connect`` failed
+# runs on regardless and its trailing ``exit;`` still returns 0 — a dead session
+# is indistinguishable from an empty result. ``export_apex -rest`` read that as
+# "this schema has no REST services": no files, no message. Worse, on the
+# registering path the gateway then recorded the SQLcl name and credential
+# fingerprint back into the connection YAML for a store entry that had never
+# been created, so the phantom survived every later run. That is the customer
+# report this constant exists for — ``sqlcl``/``sqlcl_sync`` deleted by hand,
+# written straight back by the next export, and still no connection.
+#
+# The guard is released again after the session setup, so errors from the user's
+# STARTUP.sql and from the request body keep their own semantics.
+SQLCL_CONNECT_GUARD = "WHENEVER SQLERROR EXIT FAILURE"
+SQLCL_GUARD_RELEASE = "WHENEVER SQLERROR CONTINUE"
+
 
 @dataclass(frozen=True)
 class SqlclConnect:
@@ -112,21 +128,21 @@ def sqlcl_connect(
         )
 
     if not force_register and connection.sqlcl_sync == credential_fingerprint(connection):
-        # Connect by name only — no credentials in the script. The WHENEVER
-        # guard covers the connect and the session statement, so a store that
-        # lost the entry fails structurally and the caller re-registers, while
-        # errors from STARTUP.sql and the request keep their own semantics.
+        # Connect by name only — no credentials in the script. A store that lost
+        # the entry fails structurally and the caller re-registers.
         return _plan(
-            f"WHENEVER SQLERROR EXIT FAILURE\nconnect -name {name}",
+            f"connect -name {name}",
             startup_sql,
-            name  = name,
-            guard = True,
+            name = name,
         )
 
+    # ``CONNMGR DELETE`` stays *outside* the guard: dropping a name the store
+    # never held is the normal first-run case, and aborting on it would make
+    # registration impossible.
     return _plan(
-        f"{CONNMGR_DELETE_COMMAND.format(name=name)}\n"
-        f"{_connect_line(connection, project_root, save_name=name, savepwd=True)}",
+        _connect_line(connection, project_root, save_name=name, savepwd=True),
         startup_sql,
+        pre       = CONNMGR_DELETE_COMMAND.format(name=name),
         name      = name,
         registers = connection,
     )
@@ -141,14 +157,23 @@ def _plan(
     connect: str,
     startup_sql: str | None,
     *,
+    pre: str | None = None,
     name: str | None = None,
     ephemeral: bool = False,
-    guard: bool = False,
     registers: Connection | None = None,
 ) -> SqlclConnect:
-    lines = [connect, SQLCL_SESSION_SETUP]
-    if guard:
-        lines.append("WHENEVER SQLERROR CONTINUE")
+    """Assemble one connect block: optional preamble, guarded connect, setup.
+
+    The guard is unconditional — see ``SQLCL_CONNECT_GUARD``. ``pre`` is for
+    lines that must run *before* it and are allowed to fail.
+    """
+    lines = [] if pre is None else [pre]
+    lines += [
+        SQLCL_CONNECT_GUARD,
+        connect,
+        SQLCL_SESSION_SETUP,
+        SQLCL_GUARD_RELEASE,
+    ]
     if startup_sql:
         lines.append(startup_sql.rstrip())
     return SqlclConnect(

@@ -1,8 +1,8 @@
 ---
 created: 2026-06-10
-updated: 2026-07-31 16:20
+updated: 2026-08-03 12:10
 name: adt
-version: 1.4.4
+version: 1.4.5
 tags: [oracle, apex, deployment, cli, database]
 description: "ADT.ai usage guide for Oracle/APEX work: export database objects, APEX apps and data, validate APEXlang source, run read-only SQL discovery, search Git history, query the dependency graph, and recompile invalid objects. Use for any ADT.ai command help."
 ---
@@ -250,7 +250,7 @@ adtai dependencies -age
 
 ## recompile — recompile invalid objects
 
-Dependency-aware retry built in. Supports PL/SQL compile flags (native/interpreted, optimization level, PL/Scope, warnings) and old-ADT-style overview with PL/Scope gap counts.
+Dependency-aware retry built in. Supports PL/SQL compile flags (native/interpreted, optimization level, PL/Scope, warnings) and old-ADT-style overview with PL/Scope gap counts. The OBJECTS OVERVIEW carries `VALIDATED` beside `INVALID` — how many objects the run actually repaired, so a successful fix is visible rather than just an empty `INVALID` column.
 
 Recompile invalid objects:
 

@@ -23,6 +23,22 @@ def _cleanup_sqlcl(output: str) -> list[str]:
         lines = lines[:-2]
     return [line for line in lines if line.strip() not in _SQLCL_FEEDBACK_ECHOES]
 
+# SQLcl releases the WHENEVER guard after the connect block, so errors raised by
+# the request body keep their own semantics — which means a ``rest export;`` that
+# failed still leaves SQLcl exiting 0. An empty module list is legitimate on its
+# own (a schema may genuinely publish no REST services), but an empty list *plus*
+# an Oracle/SQLcl diagnostic is a failed export that wrote no files and reported
+# nothing (ADT #188).
+_SQLCL_ERROR_PREFIXES = ("ORA-", "SP2-", "PLS-")
+
+
+def _rest_export_error(lines: list[str]) -> str | None:
+    """The first SQLcl/Oracle diagnostic in a REST export, if any."""
+    for line in lines:
+        if line.lstrip().startswith(_SQLCL_ERROR_PREFIXES):
+            return line.strip()
+    return None
+
 def _split_rest_modules(lines: list[str]) -> tuple[list[str], list[list[str]]]:
     first: list[str] = []
     modules: list[list[str]] = []
