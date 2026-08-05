@@ -7,7 +7,7 @@ from typing import Any, Literal
 from adt_ai.export_db.groups import GroupRules, group_for, object_name_from_file
 from adt_ai.export_db.inventory import DatabaseObject
 from adt_ai.shared import text_files
-from adt_ai.shared.config import DEFAULT_PATH_OBJECTS
+from adt_ai.shared.config import DEFAULT_PATH_OBJECTS, reject_unresolved_placeholders
 
 
 class ObjectFileError(Exception):
@@ -48,7 +48,9 @@ class ObjectFileResolver:
         # path_objects is a path template; it may contain <schema> and
         # <object_type> placeholders. When <object_type> is omitted the
         # per-type folder is appended automatically (legacy 'database/' layout).
-        self.path_objects = str(path_objects)
+        # An old-ADT '{$NAME}' token is never substituted here, so it is rejected
+        # at construction — before the export can write a folder named after it.
+        self.path_objects = reject_unresolved_placeholders(str(path_objects))
         self.object_types = {key.upper(): value for key, value in object_types.items()}
         self._existing_case_paths_by_folder: dict[Path, dict[str, Path]] = {}
         self._duplicate_paths_by_folder: dict[Path, dict[str, list[Path]]] = {}
@@ -349,7 +351,12 @@ class ObjectFileWriter:
         path = request.path or self.resolver.path_for(request.object)
         if not path.exists():
             action: Literal["create", "update", "unchanged"] = "create"
-        elif compare_existing and path.read_text(encoding="utf-8") == request.content:
+        elif compare_existing and path.read_text(encoding="utf-8") == text_files.normalize(
+            request.content
+        ):
+            # read_text() reads with universal newlines, so the file side is always
+            # LF; the DDL side has to be normalized the same way the writer does or
+            # every CRLF-carrying object reports as changed on every export.
             action = "unchanged"
         else:
             action = "update"

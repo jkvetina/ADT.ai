@@ -14,7 +14,11 @@ from adt_ai.export_data.lob_update_scripts import (
     write_lob_update_script,
 )
 from adt_ai.shared import text_files
-from adt_ai.shared.config import DEFAULT_PATH_OBJECTS, is_enabled
+from adt_ai.shared.config import (
+    DEFAULT_PATH_OBJECTS,
+    is_enabled,
+    reject_unresolved_placeholders,
+)
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.row_values import row_value
 
@@ -292,7 +296,9 @@ def _data_folder(root: Path, config: dict[str, Any], schema: str = "") -> Path:
     layout = (config.get("object_types") or {}).get("DATA", ["data", ".sql"])
     folder = str(layout[0]) if isinstance(layout, list | tuple) and layout else "data"
     folder = folder.strip("/")
-    template = str(config.get("path_objects") or DEFAULT_PATH_OBJECTS)
+    template = reject_unresolved_placeholders(
+        str(config.get("path_objects") or DEFAULT_PATH_OBJECTS)
+    )
     rendered = template.replace("<schema>", (schema or "").lower())
     if "<object_type>" in rendered:
         rendered = rendered.replace("<object_type>", folder)

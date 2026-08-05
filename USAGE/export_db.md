@@ -203,6 +203,30 @@ Paths are shown relative to the export root with the leading `database/` folder 
 
 The scan is per schema subtree and case-insensitive, and `.fix.sql` sidecars never count as duplicates. The same object name exported from two schemas is not a collision — each schema owns its own subtree — but a collision present in several schemas is marked in every one of them.
 
+## Where files land (path_objects)
+
+`path_objects` in `config.yaml` is the export path **template**, not a literal folder. It resolves exactly two placeholders:
+
+| Placeholder | Resolves to |
+| ----------- | ----------- |
+| `<schema>` | The schema/owner name, lowercased. |
+| `<object_type>` | The per-type folder from `object_types` (`views/`, `packages/`, …). Appended automatically when the template omits it, which is the legacy `'database/'` layout. |
+
+Old ADT's `{$NAME}` substitution syntax means nothing here. A template such as `'{$INFO_SCHEMA}/database/'` — the value old ADT ships as a commented example, so it is the natural copy-paste when migrating a project — is **rejected**:
+
+```text
+CONFIGURATION INVALID
+---------------------
+Unresolved placeholder in config path_objects: {$INFO_SCHEMA}
+  Value: {$INFO_SCHEMA}/database/
+  ADT.ai substitutes only <schema> and <object_type> in path_objects; '{$NAME}' is old ADT syntax and would be written out as a literal folder name.
+  Fix path_objects in config.yaml (e.g. '<schema>/database/<object_type>/').
+```
+
+The run stops before writing anything, and the same rejection applies to every command that renders the template — `export_db` and `export_data` — so a guarded command cannot leave an unguarded one exporting into the placeholder folder. Until this guard the export simply created a directory named `{$INFO_SCHEMA}` and reported success.
+
+If an earlier run already built such a folder, it is left on disk untouched: delete it yourself once you have confirmed nothing you need is only in there.
+
 ## Arguments
 
 | Argument       | Repeatable | Default | Description |

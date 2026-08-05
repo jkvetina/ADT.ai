@@ -148,6 +148,7 @@ Every SQLcl script ADT generates (including REST export in `export_apex -rest`) 
 - **Machine moves.** The YAML travels with the project; SQLcl's store does not. When the store has no such name (new machine, cleared `~/.dbtools`), the call fails fast and ADT re-registers and retries automatically.
 - **Wallets.** Registration passes `-cloudconfig` with an absolute wallet path, so OCI wallet projects need nothing extra.
 - **Opt-out.** Set `sqlcl_named_connections: false` in project `config.yaml` to restore the old inline `connect user/"pwd"@service` scripts.
+- **Driver.** SQLcl is always launched on the JDBC **thin** driver: ADT starts it with `ORACLE_HOME` withheld from its environment, because SQLcl's launcher otherwise reads that variable as "use the OCI thick driver" and builds a `jdbc:oracle:oci8:` URL the JVM cannot satisfy on macOS (`no ocijdbc23 in java.library.path`, whatever the Instant Client version). Nothing else changes — `PATH` still finds the launcher, `TNS_ADMIN` still resolves aliases, wallet connects are unaffected — and ADT's own python-oracledb connection keeps thick mode, since only the SQLcl child is started without the variable.
 
 ---
 

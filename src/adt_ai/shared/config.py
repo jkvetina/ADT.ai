@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,12 @@ from adt_ai.shared.dict_merge import deep_merge
 # export_db and export_data so both land files in the same tree.
 DEFAULT_PATH_OBJECTS = "database/<schema>/<object_type>"
 
+# Old ADT's `{$NAME}` substitution syntax. ADT.ai resolves it for a few keys
+# (apex_path_app, patch_scripts_dir, patch_deploy_logs, patch_hashes) but never
+# for a path template such as `path_objects`, whose placeholders are the
+# angle-bracket kind.
+_OLD_ADT_PLACEHOLDER_RE = re.compile(r"\{\$[A-Za-z0-9_]*\}")
+
 
 class ConfigError(Exception):
     """Base error for configuration loading failures."""
@@ -23,6 +30,10 @@ class ConfigNotFoundError(ConfigError):
 
 class ConfigCycleError(ConfigError):
     """Raised when explicit configuration inheritance contains a cycle."""
+
+
+class UnresolvedPlaceholderError(ConfigError):
+    """Raised when a path template still carries an old-ADT `{$NAME}` token."""
 
 
 @dataclass(frozen=True)
@@ -78,6 +89,35 @@ class ConfigLoader:
                 return candidate.resolve()
 
         raise ConfigNotFoundError(f"Config parent not found: {value}")
+
+
+def reject_unresolved_placeholders(
+    template: str,
+    *,
+    key: str = "path_objects",
+    supported: str = "<schema> and <object_type>",
+) -> str:
+    """Return ``template``, or raise when it still holds an old-ADT `{$NAME}` token.
+
+    A path template is turned straight into folder names, so an unresolved token
+    does not fail — it exports into a directory named after the placeholder.
+    Old ADT ships ``#path_objects : '{$INFO_SCHEMA}/database/'`` as a commented
+    example, so this is the copy-paste every migrating project makes; the
+    failure has to be loud rather than a real folder called ``{$INFO_SCHEMA}``
+    shadowing the tracked tree (851 files, 2026-08-01).
+    """
+    found = _OLD_ADT_PLACEHOLDER_RE.findall(str(template))
+    if not found:
+        return str(template)
+
+    tokens = ", ".join(sorted(set(found)))
+    raise UnresolvedPlaceholderError(
+        f"Unresolved placeholder in config {key}: {tokens}\n"
+        f"  Value: {template}\n"
+        f"  ADT.ai substitutes only {supported} in {key}; '{{$NAME}}' is old ADT "
+        f"syntax and would be written out as a literal folder name.\n"
+        f"  Fix {key} in config.yaml (e.g. '<schema>/database/<object_type>/')."
+    )
 
 
 def is_enabled(value: Any, default: bool = False) -> bool:

@@ -293,6 +293,56 @@ def add_database_parsers(subparsers) -> None:
         help   = "show input parameters and SQL queries with bind values",
     )
     add_connection_key_argument(discovery)
+    ut3 = subparsers.add_parser(
+        "ut3",
+        description="run the schema's utPLSQL (UT3) test suites",
+        help="run utPLSQL test suites",
+    )
+    ut3.add_argument("--root", "-root", default=".", help="project root folder")
+    ut3.add_argument(
+        "--config-dir",
+        "-config-dir",
+        action = "append",
+        help   = "folder containing config YAML",
+    )
+    ut3.add_argument("--env", "-env", help="connection environment")
+    ut3.add_argument(
+        "--name",
+        "-name",
+        action = "append",
+        nargs  = "+",
+        help   = "suite package name pattern(s) to run, supports multiple arguments "
+                 "and %% wildcards; no pattern runs every _UT suite in the schema",
+    )
+    ut3.add_argument(
+        "--schema",
+        "-schema",
+        action = "append",
+        nargs  = "+",
+        help   = "schema(s) to test, repeatable, comma- or space-separated, "
+                 "supports %% wildcards",
+    )
+    ut3.add_argument(
+        "--refresh",
+        "-refresh",
+        action = "store_true",
+        help   = "rebuild utPLSQL's annotation cache before discovery, so a suite "
+                 "compiled since the last run is found",
+    )
+    ut3.add_argument(
+        "--silent",
+        "-silent",
+        action = "store_true",
+        help   = "suppress the suites roll-up and the per-test results; keep the "
+                 "summary, the errors and failures detail, and command chrome",
+    )
+    ut3.add_argument(
+        "--debug",
+        "-debug",
+        action = "store_true",
+        help   = "show input parameters and SQL queries with bind values",
+    )
+    add_connection_key_argument(ut3)
     flow = subparsers.add_parser(
         "flow",
         description="map APEX page navigation: query incoming/outgoing links or refresh diagrams",

@@ -63,6 +63,7 @@ from adt_ai.export_apex.recent import (
     _print_application_export_header,
     _print_recent_changes_header,
     _print_recent_components,
+    _print_schema_export_header,
     _recent_component_filter,
     _recent_since,
     _used_on_pages,
@@ -273,17 +274,6 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin):
                     page_names,
                     deep_rows,
                 )
-                if request.actions.get("rest"):
-                    self._run_action(
-                        reporter,
-                        timers,
-                        timers_file,
-                        application,
-                        "rest",
-                        lambda gateway=gateway, resolver=resolver: self._write_rest_export(
-                            gateway, resolver, request.config
-                        ),
-                    )
                 if request.actions.get("files"):
                     self._run_action(
                         reporter,
@@ -314,6 +304,23 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin):
                 # Reached only when every requested format wrote successfully, so
                 # an app that raised mid-export keeps its previous watermarks.
                 self._advance_watermarks(request, application, candidate)
+            # REST services belong to the schema, not to an application: the
+            # export writes `apex/workspace/rest/`, a path with no app id in it.
+            # Running it inside the loop above meant a schema with no APEX
+            # application exported nothing at all — silently, exit 0 — and a
+            # schema with N applications ran the identical schema-wide export N
+            # times over the same files (ADT #190).
+            if request.actions.get("rest") and not request.recent_report_only:
+                _print_schema_export_header(schema)
+                self._run_schema_action(
+                    reporter,
+                    timers,
+                    timers_file,
+                    "rest",
+                    lambda gateway=gateway, resolver=resolver: self._write_rest_export(
+                        gateway, resolver, request.config
+                    ),
+                )
 
     def _run_text_actions(
         self,
@@ -405,6 +412,29 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin):
             operation,
         )
         _update_timer(timers, application.app_id, action, elapsed)
+        store_yaml_mapping(timers_file, timers)
+
+    def _run_schema_action(
+        self,
+        reporter: ApexProgressReporter,
+        timers: dict[Any, Any],
+        timers_file: Path,
+        action: str,
+        operation: Callable[[], None],
+    ) -> None:
+        """Run a schema-level action, timed under the workspace slot.
+
+        `apex_timers.yaml` is keyed by app id; app `0` is already the workspace
+        slot (`-files_ws` writes workspace files as app 0), so a schema-level
+        action reuses it rather than borrowing whichever application happened to
+        be last in the loop.
+        """
+        elapsed = reporter.run(
+            ACTION_HEADERS[action],
+            _timer_value(timers, 0, action) or FALLBACK_TARGET_SECONDS,
+            operation,
+        )
+        _update_timer(timers, 0, action, elapsed)
         store_yaml_mapping(timers_file, timers)
 
     def _run_partial_action(

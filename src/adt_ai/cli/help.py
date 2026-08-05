@@ -190,6 +190,20 @@ COMMAND_SUMMARIES = {
         "Reporting shows remaining errors so failed recompiles can be handled without "
         "hunting through SQL clients.",
     ),
+    "ut3": (
+        "Runs the utPLSQL (UT3) test suites installed in a configured Oracle schema.",
+        "A suite is a package whose name ends in _UT and that utPLSQL has parsed as a "
+        "%suite, so production code can never be swept into a test run.",
+        "With no arguments every discovered suite runs; -name takes LIKE patterns to "
+        "select specific ones.",
+        "The matched suites are rolled up before anything runs, then each suite's test "
+        "verdicts print as that suite finishes -- packages A-Z, tests in the order the "
+        "package specification declares them.",
+        "A _UT package that is INVALID or holds no parsed %test is ignored: it is not a "
+        "suite, so it is listed nowhere and does not fail the run on its own.",
+        "The exit code is the deliverable: utPLSQL never raises on a failed test, so "
+        "failures, errors, an unparsable report, and a zero-test run all exit non-zero.",
+    ),
     "validate": (
         "Runs the APEXlang compiler over exported apexlang/ folders and reports its errors.",
         "Use it after export_apex -apexlang, and as a gate before importing edited APEXlang "

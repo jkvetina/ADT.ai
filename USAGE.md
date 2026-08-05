@@ -1,6 +1,6 @@
 # ADT.ai Usage
 
-This is the public usage index for ADT.ai `0.8.2`.
+This is the public usage index for ADT.ai `0.8.3`.
 
 ## Commands
 
@@ -18,6 +18,7 @@ This is the public usage index for ADT.ai `0.8.2`.
 | `rebuild` | [USAGE/rebuild.md](USAGE/rebuild.md) | Refresh the Git commit cache. |
 | `recompile` | [USAGE/recompile.md](USAGE/recompile.md) | Recompile invalid database objects. |
 | `search_repo` | [USAGE/search_repo.md](USAGE/search_repo.md) | Search cached Git commit history. |
+| `ut3` | [USAGE/ut3.md](USAGE/ut3.md) | Run the schema's utPLSQL test suites; non-zero on failures, and on a zero-test run. |
 | `validate` | [USAGE/validate.md](USAGE/validate.md) | Validate exported APEXlang folders with the APEXlang compiler. |
 
 ## Install
