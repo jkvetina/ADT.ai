@@ -57,6 +57,37 @@ def _sqlcl_temp_dir(project_root: Path | None) -> Path | None:
 # SQLcl echoes back into stdout/stderr.
 _CONNECT_PWD_RE = re.compile(r'/"(?P<pwd>[^"\n]+)"@')
 
+# Variables withheld from SQLcl's environment; ``_sqlcl_environment`` says why.
+SQLCL_HIDDEN_VARIABLES = ("ORACLE_HOME",)
+
+
+def _sqlcl_environment() -> dict[str, str]:
+    """The process environment, minus what would flip SQLcl to the thick driver.
+
+    SQLcl is a Java program and ADT.ai only ever asks it for JDBC *thin* -- see
+    ``shared.env_bootstrap``. Its launcher disagrees: an ``ORACLE_HOME`` holding
+    an ``ocijdbc`` library is read as "the thick driver is available", so it
+    front-loads that client's ``ojdbc11.jar`` and hands the JVM the OCI
+    libraries through ``DYLD_LIBRARY_PATH``. The connect URL then comes out as
+    ``jdbc:oracle:oci8:@host:port/service``.
+
+    On macOS that URL can never be satisfied. SIP strips ``DYLD_*`` when
+    exec'ing a protected binary, and both the launcher (``/bin/bash``) and the
+    JVM (``/usr/bin/java``) are protected -- so the library path the launcher
+    exports is gone before Java starts and every connect dies with
+    ``no ocijdbc23 in java.library.path``, whatever the client version is.
+    ADT.ai itself creates the condition: it exports ``ORACLE_HOME`` for
+    python-oracledb's thick mode, a different process that is unaffected.
+
+    Withholding the variable from this one child restores the thin driver ADT
+    documents. ``PATH`` is untouched, so the launcher is still found, and the
+    parent environment is not mutated, so python-oracledb keeps its client.
+    """
+    environment = dict(os.environ)
+    for name in SQLCL_HIDDEN_VARIABLES:
+        environment.pop(name, None)
+    return environment
+
 
 def _connect_secrets(script: str) -> set[str]:
     return {match.group("pwd") for match in _CONNECT_PWD_RE.finditer(script)}
@@ -111,6 +142,7 @@ def run_sqlcl_script(script: str, root: Path, project_root: Path | None = None) 
             capture_output = True,
             text           = True,
             stdin          = subprocess.DEVNULL,
+            env            = _sqlcl_environment(),
         )
     finally:
         script_path.unlink(missing_ok=True)

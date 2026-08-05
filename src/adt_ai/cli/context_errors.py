@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 
 from adt_ai.cli.constants import DROPBOX_PATH_RE, print_adt_header
+from adt_ai.shared.config import UnresolvedPlaceholderError
 
 
 def _is_user_database_error(error: Exception) -> bool:
@@ -59,14 +60,21 @@ def _print_database_error(error: Exception) -> None:
     print(file=sys.stderr)
 
 def _print_config_error(error: Exception) -> None:
-    print_adt_header("CONFIGURATION NOT FOUND", file=sys.stderr)
+    # A config file that cannot be located and a config *value* that cannot be
+    # used are different failures: the "run from a project folder" remedy is
+    # noise on a bad value, and `CONFIGURATION NOT FOUND` above an unresolved
+    # `path_objects` placeholder sends the reader hunting for a missing file.
+    is_invalid_value = isinstance(error, UnresolvedPlaceholderError)
+    header = "CONFIGURATION INVALID" if is_invalid_value else "CONFIGURATION NOT FOUND"
+    print_adt_header(header, file=sys.stderr)
     print(_display(error), file=sys.stderr)
     print(file=sys.stderr)
-    print(
-        "Run ADT.ai from a project folder that has a connection file, or pass "
-        "-config-dir / -root to point at one. See USAGE.md and `adtai doctor -init`.",
-        file=sys.stderr,
-    )
+    if not is_invalid_value:
+        print(
+            "Run ADT.ai from a project folder that has a connection file, or pass "
+            "-config-dir / -root to point at one. See USAGE.md and `adtai doctor -init`.",
+            file=sys.stderr,
+        )
     print("Use -debug to show the Python traceback.", file=sys.stderr)
     print(file=sys.stderr)
 

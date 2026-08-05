@@ -98,6 +98,15 @@ class ConnectionResult:
         available = self.schema_names(environment_name)
         return _expand_schema_patterns(_split_schema_values(values), available)
 
+    # An Oracle schema name is a case-insensitive identifier, but ADT.ai reaches this
+    # lookup with names from two different places: what the user typed in the
+    # connection file, and what a command derived. `patch` derives its group from the
+    # exported folder and uppercases it, so a file keyed `ict_owner` could not serve a
+    # patch group named `ICT_OWNER` — the same project resolved fine for
+    # `dependencies -refresh -schema ict_owner` and failed for `patch -deploy`, which
+    # reads as a broken connection file rather than a lookup rule (`#198`).
+    #
+    # The exact key still wins, so a file deliberately carrying two casings keeps both.
     def resolve(
         self,
         environment: str | None = None,
@@ -107,7 +116,9 @@ class ConnectionResult:
         environment_name = environment or self.default_environment
         environment_data = self._environment(environment_name)
         schema_name = schema or self.default_schema(environment_name, kind=kind)
-        schema_data = environment_data.get("schemas", {}).get(schema_name)
+        schema_name, schema_data = _match_schema(
+            environment_data.get("schemas", {}), schema_name
+        )
         if not isinstance(schema_data, dict):
             raise ConnectionNotFoundError(
                 "\n".join(
@@ -325,6 +336,23 @@ def _is_legacy_adt_wallet_path(path: Path) -> bool:
         parts[index:index + 3] == ("PROJECTS", "ADT", "wallets")
         for index in range(len(parts) - 2)
     )
+
+
+def _match_schema(schemas: Any, wanted: str) -> tuple[str, Any]:
+    """Find ``wanted`` among the configured schema keys, exact match first.
+
+    Returns the key as the file spells it alongside its data, so everything
+    downstream reports the configured name rather than the caller's casing.
+    """
+    if not isinstance(schemas, dict):
+        return wanted, None
+    if wanted in schemas:
+        return wanted, schemas[wanted]
+    folded = str(wanted).casefold()
+    for key, data in schemas.items():
+        if str(key).casefold() == folded:
+            return str(key), data
+    return wanted, None
 
 
 def _split_schema_values(value: Any) -> list[str]:

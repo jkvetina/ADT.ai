@@ -13,6 +13,15 @@ from adt_ai.shared.row_values import row_value
 def _print_application_export_header(application: ApexApplication) -> None:
     print_adt_header(f"APP {application.app_id}/{application.app_alias}, EXPORTING:")
 
+def _print_schema_export_header(schema: str) -> None:
+    """Header for a schema-level export slice, above the per-application ones.
+
+    `-rest` writes workspace artifacts, so it has no `APP <id>/<alias>` to sit
+    under — and on a schema with no applications there is no header at all, which
+    is how a `-rest` run could finish printing nothing (ADT #190).
+    """
+    print_adt_header(f"SCHEMA {schema}, EXPORTING:")
+
 def _print_recent_changes_header(
     application: ApexApplication,
     changed_since: str,

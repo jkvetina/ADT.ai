@@ -1,10 +1,10 @@
 ---
 created: 2026-06-10
-updated: 2026-08-03 12:10
+updated: 2026-08-05 14:57
 name: adt
-version: 1.4.5
+version: 1.5.0
 tags: [oracle, apex, deployment, cli, database]
-description: "ADT.ai usage guide for Oracle/APEX work: export database objects, APEX apps and data, validate APEXlang source, run read-only SQL discovery, search Git history, query the dependency graph, and recompile invalid objects. Use for any ADT.ai command help."
+description: "ADT.ai usage guide for Oracle/APEX work: export database objects, APEX apps and data, validate APEXlang source, run utPLSQL test suites, run read-only SQL discovery, search Git history, query the dependency graph, and recompile invalid objects. Use for any ADT.ai command help."
 ---
 # ADT.ai
 
@@ -305,6 +305,32 @@ adtai recompile -env DEV -trailing -type PACKAGE% -name APP%
 ```
 
 There is **no preview and no dry run** — asking for `-trailing` is asking for the strip, and `-trailing -fix` is a parser error rather than the old spelling. The safety is structural rather than a confirmation prompt: an object with nothing to strip is never touched, and removing trailing whitespace cannot change behaviour. Scope with `-type`/`-name` to narrow the blast radius. Covers `PACKAGE`, `PACKAGE BODY`, `PROCEDURE`, `FUNCTION`, `TRIGGER`, and `VIEW`; wrapped objects, editioning views, and views carrying `WITH READ ONLY` / `WITH CHECK OPTION` are skipped, since none of those survive the rebuild. `CREATE OR REPLACE` invalidates dependents, so follow a sweep with a plain `adtai recompile`.
+
+## ut3 — run utPLSQL test suites
+
+Runs the utPLSQL (UT3) test suites installed in the connected schema. **The exit code is the deliverable**: utPLSQL does *not* raise when a test fails — `ut.run` reports it and returns normally — so a caller that only watches for an exception sees a clean run.
+
+```bash
+adtai ut3 -env DEV
+adtai ut3 -env DEV -name ICT_SEC%
+adtai ut3 -env DEV -name ICT_SEC% ICT_COM%
+adtai ut3 -env DEV -refresh
+adtai ut3 -env DEV -silent
+```
+
+A package is run only when **both** are true: its name ends `_UT`, and utPLSQL has parsed it as a `%suite` with at least one `%test`. The `_UT` suffix is the selection contract, so production code can never be swept in; `-name` takes repeatable Oracle `LIKE` patterns (`%`, `_`, `\` to escape) over the suite package name and narrows that set, never widens it. No `-name` runs every suite in the schema. `-schema A B` tests several schemas as separate console segments.
+
+Non-zero covers three cases, not just a failed assertion:
+
+- a test failed or errored;
+- a suite ran but the reporter returned nothing or unparsable output;
+- **nothing ran at all** — a zero-test run is a failure, not an empty pass, because that is exactly what a suite that stopped compiling looks like from outside.
+
+A `_UT` package that is `INVALID`, or that utPLSQL parsed no `%test` for, is **ignored**: no row in either table, no stanza, no effect on the exit code. It is not a suite, and `ut3` reports suites; the vanished-suite case is still caught by the zero-test rule.
+
+Output order is the point. `UNIT TESTS SUITES:` rolls the **runnable** suites up *before* anything runs — two columns, the suite package and its test count. Every section header **always prints, empty list included**: a run that matched nothing reports it in the same shape as one that matched ten, and the exit code carries the failure. `TEST RESULTS:` prints as the run proceeds — the package name lands before that suite blocks, its dotted rows once the verdict is known — and each row carries the test's **procedure name**, not the `%test` description utPLSQL reports as the JUnit `testcase name`. Packages print A-Z; tests print in package-specification order (`USER_PROCEDURES.SUBPROGRAM_ID`), never the reporter's. `ERRORS & FAILURES:` carries a wrapped stanza per non-passing test, headed `<STATUS> > <PACKAGE>.<TEST>` — status first — with a blank line above each (`FAILED` for a refused expectation, `ERROR` for a raised exception). `SUMMARY:` is the suites table again plus `PASSED` / `FAILED` / `ERRORED`, blank wherever a count is zero. `-silent` drops the two listings — `UNIT TESTS SUITES:` and `TEST RESULTS:` — and keeps the banner, connection block, `SUMMARY:`, the timer, and `ERRORS & FAILURES:` whenever a run has any: it makes a green run quiet, not a red one unreadable.
+
+`-refresh` rebuilds utPLSQL's annotation cache before discovery. A package compiled since the last run is not in that cache yet, so it is not discoverable and is silently ignored — `-refresh` is the first thing to try when a suite you know exists is missing from `UNIT TESTS SUITES:`. `ut3` runs suites; it never installs them.
 
 ## search_repo — search Git history
 

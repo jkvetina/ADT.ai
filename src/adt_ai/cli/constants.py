@@ -98,6 +98,7 @@ PUBLIC_MODULES = (
     ("rebuild", "rebuild the git commit cache", ()),
     ("recompile", "recompile invalid database objects", ()),
     ("search_repo", "search cached Git commit history", ()),
+    ("ut3", "run utPLSQL test suites", ()),
     ("validate", "validate APEXlang application source", ()),
 )
 
