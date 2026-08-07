@@ -204,21 +204,42 @@ class ObjectDiscovery:
     def directories(self, schema: str) -> list[dict[str, Any]]:
         return self.gateway.fetch_all(self.DIRECTORIES_QUERY)
 
-    def authors_objects(self, audit: Any, authors: Iterable[str]) -> set[str]:
-        """Return the uppercased object names attributed to ``authors`` in the audit source."""
+    def authors_objects(
+        self,
+        audit: Any,
+        authors: Iterable[str],
+        recent_days: int | None = None,
+        changed_since: str | None = None,
+    ) -> dict[str, str | None]:
+        """Map each object ``authors`` touched to the author who changed it **last**.
+
+        The value is ``None`` when the project configured no ``changed_at`` column:
+        an unordered log cannot say who was last, so the caller gets the object set
+        and no recency claim. ``recent_days``/``changed_since`` narrow the audit
+        source itself, and are bound only when the query accepts them.
+        """
+        changed_at_column = getattr(audit, "changed_at_column", None)
         query = queries.audit_authors_query(
             audit.source,
             audit.object_name_column,
             audit.changed_by_column,
+            changed_at_column,
         )
-        rows = self.gateway.fetch_all(
-            query,
-            {"authors": _query_pattern_list(_normalize_list(authors), default="")},
-        )
-        return {
-            str(row.get("OBJECT_NAME") or row.get("object_name") or "").upper()
-            for row in rows
+        params: dict[str, Any] = {
+            "authors": _query_pattern_list(_normalize_list(authors), default=""),
         }
+        if changed_at_column is not None:
+            params["recent_days"] = recent_days
+            params["changed_since"] = changed_since
+        rows = self.gateway.fetch_all(query, params)
+        resolved: dict[str, str | None] = {}
+        for row in rows:
+            name = str(row.get("OBJECT_NAME") or row.get("object_name") or "").upper()
+            if not name:
+                continue
+            last_changed_by = row.get("LAST_CHANGED_BY") or row.get("last_changed_by")
+            resolved[name] = str(last_changed_by).upper() if last_changed_by else None
+        return resolved
 
     def prepare_comments(
         self,

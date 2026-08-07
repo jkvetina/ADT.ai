@@ -155,7 +155,9 @@ class _TrailingRowFormatter:
 
 
 def _print_trailing_updated_header(total: int) -> None:
-    print_adt_header("UPDATED OBJECTS:", f"({total})")
+    # Same shape as export_db's EXPORTING <n> OBJECTS: (ADT #237) — the count
+    # belongs in the phrase, not parked after the colon.
+    print_adt_header(f"UPDATED {total} OBJECTS:")
 
 
 def print_trailing_updated_objects(trailing, trailing_actions, silent: bool = False) -> None:
@@ -265,7 +267,7 @@ def print_synonym_tables(synonyms) -> None:
     """Render -synonyms as one compact table per target owner."""
     sorted_synonyms = sorted(synonyms, key=_synonym_sort_key)
     if not sorted_synonyms:
-        print_adt_header("SYNONYMS")
+        print_adt_header("SYNONYMS:")
         print_adt_table([], columns=list(_SYNONYM_COLUMNS))
         return
 
@@ -273,7 +275,7 @@ def print_synonym_tables(synonyms) -> None:
         owner_synonyms = [
             synonym for synonym in sorted_synonyms if _synonym_owner(synonym) == owner
         ]
-        print_adt_header(f"SYNONYMS TO SCHEMA: {owner}")
+        print_adt_header(f"SYNONYMS TO SCHEMA {owner}:")
         print_adt_table(
             [
                 _synonym_row_cells(synonym, privilege)
@@ -311,7 +313,7 @@ class _ConsoleMViewReporter(RecompileReporter):
         self._layout = _compute_adt_layout(rows, list(_MVIEW_COLUMNS), {})
         # Mirror print_adt_table's opening exactly: header_adt prints the section
         # title, then a leading blank, the column header, and the separator.
-        print_adt_header("MATERIALIZED VIEWS")
+        print_adt_header("MATERIALIZED VIEWS:")
         print()
         print(self._layout.header_line())
         print(self._layout.separator_line())
@@ -323,7 +325,13 @@ class _ConsoleMViewReporter(RecompileReporter):
 
     def end_mview(self, mview) -> None:
         values = _mview_row_values(mview)
-        print(self._layout.cells_segment(values, 1, len(_MVIEW_COLUMNS)), flush=True)
+        # rstrip only here, on the half that completes the line: the leading
+        # segment above is mid-line and must keep its gutter, or the two halves
+        # stop rejoining byte-for-byte with the batch ``row_line`` (ADT #237).
+        print(
+            self._layout.cells_segment(values, 1, len(_MVIEW_COLUMNS)).rstrip(),
+            flush=True,
+        )
 
     def end_mviews(self, mview_actions) -> None:
         # close the table with the trailing blank print_adt_table emits, then list

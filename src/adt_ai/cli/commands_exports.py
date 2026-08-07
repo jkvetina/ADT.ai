@@ -16,11 +16,12 @@ from adt_ai.cli.constants import (
     ExportDbRunner,
     GatewayFactory,
     QueryGateway,
-    print_adt_header,
+    print_module_banner,
 )
 from adt_ai.cli.context import (
     DebugQueryGateway,
     _apex_actions,
+    _apex_explicit_actions,
     _apex_recent_report_only,
     _apex_scope,
     _app_in_selection,
@@ -62,7 +63,7 @@ from adt_ai.shared.object_types import normalize_object_type_patterns
 
 def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | None = None) -> int:
     handler_started_at = time.monotonic()
-    print_adt_header("APEX DEPLOYMENT TOOL: EXPORT_DB")
+    print_module_banner("EXPORT_DB")
     startup = _load_startup_context(args)
     root = startup.root
     config = startup.config
@@ -203,7 +204,7 @@ def _run_export_apex(
     args: argparse.Namespace, gateway_factory: GatewayFactory | None = None
 ) -> int:
     handler_started_at = time.monotonic()
-    print_adt_header("APEX DEPLOYMENT TOOL: EXPORT_APEX")
+    print_module_banner("EXPORT_APEX")
     startup = _load_startup_context(args)
     root = startup.root
     config = startup.config
@@ -266,6 +267,7 @@ def _run_export_apex(
         for schema in schemas
     }
     actions = _apex_actions(args, config)
+    explicit_actions = _apex_explicit_actions(args)
     recent_days = args.recent
     recent_report_only = _apex_recent_report_only(args, actions, recent_days)
     my_name, my_email = git_identity.current_git_identity() if args.my else (None, None)
@@ -433,6 +435,7 @@ def _run_export_apex(
                         schemas      = [schema],
                         applications = {schema: applications_by_schema[schema]},
                         actions      = actions,
+                        explicit_actions = explicit_actions,
                         config       = config,
                         release      = args.release,
                         recent       = recent_days,

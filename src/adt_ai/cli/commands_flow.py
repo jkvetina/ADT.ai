@@ -17,6 +17,7 @@ from adt_ai.cli.constants import (
     QueryGateway,
     print_adt_header,
     print_adt_table,
+    print_module_banner,
     resolve_configured_apex_owner_schema,
     write_all_dumps,
 )
@@ -43,7 +44,7 @@ def _run_flow(
     args: argparse.Namespace,
     gateway_factory: GatewayFactory | None = None,
 ) -> int:
-    print_adt_header("APEX DEPLOYMENT TOOL: FLOW")
+    print_module_banner("FLOW")
     try:
         selection = _parse_apex_app_selection(_flatten_arg_groups(args.app))
     except ValueError as exc:
@@ -201,7 +202,7 @@ def _delete_flow_apps(store: ApexFlowStore, app_ids: list[int]) -> int:
     any_error = False
     for app_id in app_ids:
         if store.remove_app(app_id):
-            print_adt_header(f"DELETED APP {app_id}")
+            print_adt_header(f"DELETED APP {app_id}:")
         else:
             print(f"Application {app_id} was not loaded; nothing to delete.", file=sys.stderr)
             any_error = True
@@ -210,7 +211,7 @@ def _delete_flow_apps(store: ApexFlowStore, app_ids: list[int]) -> int:
 
 def _print_flow_incoming(store: ApexFlowStore, app_id: int, page: int) -> int:
     edges = store.incoming(app_id, page)
-    print_adt_header(f"LINKS INTO APP {app_id} PAGE {page} ({len(edges)})")
+    print_adt_header(f"LINKS INTO APP {app_id} PAGE {page} ({len(edges)}):")
     if edges:
         print_adt_table([_incoming_row(edge) for edge in edges])
     else:
@@ -220,7 +221,7 @@ def _print_flow_incoming(store: ApexFlowStore, app_id: int, page: int) -> int:
 
 def _print_flow_outgoing(store: ApexFlowStore, app_id: int, page: int) -> int:
     edges = store.outgoing(app_id, page)
-    print_adt_header(f"LINKS FROM APP {app_id} PAGE {page} ({len(edges)})")
+    print_adt_header(f"LINKS FROM APP {app_id} PAGE {page} ({len(edges)}):")
     if edges:
         print_adt_table([_outgoing_row(edge) for edge in edges])
     else:

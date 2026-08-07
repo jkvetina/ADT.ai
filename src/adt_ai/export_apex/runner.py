@@ -9,6 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.export_apex import queries
+from adt_ai.export_apex.actions import (
+    ACTION_HEADERS,
+    APEXLANG_MIN_APEX_RELEASE,
+    ApexActionTimingMixin,
+    print_apexlang_skip_row,
+    skipped_by_apex_release,
+)
 from adt_ai.export_apex.deep import deep_component_filters, deep_db_object_rows
 from adt_ai.export_apex.files import ApexFileResolver
 from adt_ai.export_apex.filters import (
@@ -51,11 +58,8 @@ from adt_ai.export_apex.postprocess import (
     _target_path,
 )
 from adt_ai.export_apex.progress import (
-    FALLBACK_TARGET_SECONDS,
     ApexProgressReporter,
     ConsoleApexProgressReporter,
-    _timer_value,
-    _update_timer,
 )
 from adt_ai.export_apex.recent import (
     RecentComponentFilter,
@@ -92,7 +96,6 @@ from adt_ai.export_apex.watermarks import (
 )
 from adt_ai.export_apex.writers import ApexCollectionWriterMixin, CollectionWriteResult
 from adt_ai.shared import text_files
-from adt_ai.shared.apex_version import readable_yaml_removed, supports_apexlang
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.progress import FixedWidthProgressPrinter
 from adt_ai.shared.recent_state import (
@@ -107,49 +110,7 @@ from adt_ai.shared.yaml_io import load_yaml_mapping, store_yaml_mapping
 GatewayFactory = Callable[[str], QueryGateway]
 
 
-ACTION_HEADERS = {
-    "full": "  FULL APP EXPORT",
-    "split": "  SPLIT COMPONENTS",
-    "readable": "  READABLE COMPONENTS",
-    "embedded": "  EMBEDDED CODE REPORT",
-    "apexlang": "  APEXLANG EXPORT",
-    "checksum": "  APP CHECKSUM",
-    "rest": "  REST SERVICES",
-    "files": "  APPLICATION FILES",
-    "files_ws": "  WORKSPACE FILES",
-}
-
-# The APEX release that introduced `APEX_EXPORT.c_type_apexlang` and folded
-# READABLE_YAML into it as a deprecated alias.
-APEXLANG_MIN_APEX_RELEASE = "26.1"
-
-def _skipped_by_apex_release(action: str, apex_version: str | None) -> bool:
-    """Whether this instance's APEX release rules the format out.
-
-    Two one-way gates, both reading the release the connection block already
-    probed. An unknown release gates nothing in either direction.
-    """
-    if action == "apexlang":
-        return not supports_apexlang(apex_version)
-    if action == "readable":
-        return readable_yaml_removed(apex_version)
-    return False
-
-
-def _print_apexlang_skip_row(apex_version: str | None) -> None:
-    """Complete an APEXLANG row with a skip status instead of running it.
-
-    A pre-26.1 instance has no `APEXLANG` export type, so an `-all` run has to
-    say why the format produced nothing rather than fail the whole export.
-    """
-    label = ACTION_HEADERS["apexlang"].strip()
-    found = apex_version or "unknown"
-    printer = FixedWidthProgressPrinter()
-    printer.begin(label)
-    printer.status(label, f"SKIPPED | needs APEX {APEXLANG_MIN_APEX_RELEASE}, found {found}")
-
-
-class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin):
+class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexActionTimingMixin):
     EXPORT_START_QUERY    = queries.EXPORT_START_QUERY
     EXPORT_FULL_QUERY     = queries.EXPORT_FULL_QUERY
     EXPORT_SPLIT_QUERY    = queries.EXPORT_SPLIT_QUERY
@@ -193,7 +154,14 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin):
             )
             if not request.recent_report_only:
                 _store_workspace_developers(developers_path, developer_rows)
-            for application in request.applications.get(schema, []):
+            applications = request.applications.get(schema, [])
+            for index, application in enumerate(applications):
+                # `-rest` and `-files_ws` write workspace artifacts — paths with
+                # no app id in them — so they belong to the schema, not to an
+                # application, and must run exactly once however many
+                # applications the schema has. The first one carries them, so
+                # the rows still read among that block's other export rows.
+                schema_slice = index == 0
                 cutoff = self._listing_cutoff(request, application)
                 # Database clock BEFORE the component listing: anything changed
                 # mid-export stays at or after it and is re-selected next run.
@@ -290,36 +258,41 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin):
                             )
                         ),
                     )
-                if request.actions.get("files_ws"):
-                    self._run_action(
+                if request.actions.get("files_ws") and schema_slice:
+                    self._run_schema_action(
                         reporter,
                         timers,
                         timers_file,
-                        application,
                         "files_ws",
                         lambda gateway=gateway, application=application, resolver=resolver: (
                             self._write_static_files(gateway, resolver, application, 0)
                         ),
                     )
+                if request.actions.get("rest") and schema_slice:
+                    self._run_schema_action(
+                        reporter,
+                        timers,
+                        timers_file,
+                        "rest",
+                        lambda gateway=gateway, resolver=resolver: self._write_rest_export(
+                            gateway, resolver, request.config
+                        ),
+                    )
                 # Reached only when every requested format wrote successfully, so
                 # an app that raised mid-export keeps its previous watermarks.
                 self._advance_watermarks(request, application, candidate)
-            # REST services belong to the schema, not to an application: the
-            # export writes `apex/workspace/rest/`, a path with no app id in it.
-            # Running it inside the loop above meant a schema with no APEX
-            # application exported nothing at all — silently, exit 0 — and a
-            # schema with N applications ran the identical schema-wide export N
-            # times over the same files (ADT #190).
-            if request.actions.get("rest") and not request.recent_report_only:
+            # A schema hosting no APEX application still owns its workspace
+            # artifacts, and there is no application block for their rows to sit
+            # under — so this is the one case that keeps a `SCHEMA <name>,
+            # EXPORTING:` header. Skipping the schema entirely here is what made
+            # `-rest` finish printing nothing at all (ADT #190); `-files_ws` had
+            # the same hole and never got that fix.
+            schema_only = self._schema_only_actions(request, applications, gateway, resolver)
+            if schema_only:
                 _print_schema_export_header(schema)
+            for action, operation in schema_only:
                 self._run_schema_action(
-                    reporter,
-                    timers,
-                    timers_file,
-                    "rest",
-                    lambda gateway=gateway, resolver=resolver: self._write_rest_export(
-                        gateway, resolver, request.config
-                    ),
+                    reporter, timers, timers_file, action, operation
                 )
 
     def _run_text_actions(
@@ -348,12 +321,14 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin):
         ):
             if not request.actions.get(action):
                 continue
-            if _skipped_by_apex_release(action, request.apex_version):
-                # Only the pre-26.1 `apexlang` miss is announced: the user asked
-                # for a format this instance cannot make. The 26.1 `readable`
-                # skip is deliberately silent (Jan, 2026-07-27).
-                if action == "apexlang":
-                    _print_apexlang_skip_row(request.apex_version)
+            if skipped_by_apex_release(action, request.apex_version):
+                # The pre-26.1 `apexlang` miss is announced only to the user who
+                # named that format — the line answers "where is my APEXlang
+                # export?", a question `-all` never asked, so under `-all` it was
+                # a notice about something nobody requested (ADT #235). The 26.1
+                # `readable` skip is silent always (Jan, 2026-07-27).
+                if action == "apexlang" and action in request.explicit_actions:
+                    print_apexlang_skip_row()
                 continue
 
             def operation(sql: str = sql, action: str = action) -> list[dict[str, Any]]:
@@ -396,68 +371,6 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin):
                     action,
                     operation,
                 )
-
-    def _run_action(
-        self,
-        reporter: ApexProgressReporter,
-        timers: dict[Any, Any],
-        timers_file: Path,
-        application: ApexApplication,
-        action: str,
-        operation: Callable[[], None],
-    ) -> None:
-        elapsed = reporter.run(
-            ACTION_HEADERS[action],
-            _timer_value(timers, application.app_id, action) or FALLBACK_TARGET_SECONDS,
-            operation,
-        )
-        _update_timer(timers, application.app_id, action, elapsed)
-        store_yaml_mapping(timers_file, timers)
-
-    def _run_schema_action(
-        self,
-        reporter: ApexProgressReporter,
-        timers: dict[Any, Any],
-        timers_file: Path,
-        action: str,
-        operation: Callable[[], None],
-    ) -> None:
-        """Run a schema-level action, timed under the workspace slot.
-
-        `apex_timers.yaml` is keyed by app id; app `0` is already the workspace
-        slot (`-files_ws` writes workspace files as app 0), so a schema-level
-        action reuses it rather than borrowing whichever application happened to
-        be last in the loop.
-        """
-        elapsed = reporter.run(
-            ACTION_HEADERS[action],
-            _timer_value(timers, 0, action) or FALLBACK_TARGET_SECONDS,
-            operation,
-        )
-        _update_timer(timers, 0, action, elapsed)
-        store_yaml_mapping(timers_file, timers)
-
-    def _run_partial_action(
-        self,
-        reporter: ApexProgressReporter,
-        timers: dict[Any, Any],
-        application: ApexApplication,
-        action: str,
-        operation: Callable[[], CollectionWriteResult],
-    ) -> CollectionWriteResult:
-        result: CollectionWriteResult | None = None
-
-        def wrapped_operation() -> None:
-            nonlocal result
-            result = operation()
-
-        reporter.run(
-            ACTION_HEADERS[action],
-            _timer_value(timers, application.app_id, action) or FALLBACK_TARGET_SECONDS,
-            wrapped_operation,
-        )
-        return result or CollectionWriteResult([])
-
 
     def _print_recent_changes(
         self,

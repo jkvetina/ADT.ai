@@ -18,6 +18,7 @@ from adt_ai.cli.constants import (
     CalendarRunner,
     ConfigLoader,
     print_adt_header,
+    print_module_banner,
     RebuildRequest,
     RebuildRunner,
     reveal_branches,
@@ -37,7 +38,7 @@ from adt_ai.shared.recent_state import is_bare_recent
 
 def _run_rebuild(args: argparse.Namespace) -> int:
     root = Path(args.root).expanduser().resolve()
-    print_adt_header("APEX DEPLOYMENT TOOL: REBUILD")
+    print_module_banner("REBUILD")
 
     since_value = getattr(args, "since", None)
     since_date: str | None = None
@@ -102,7 +103,7 @@ def _run_rebuild(args: argparse.Namespace) -> int:
 
 
 def _run_search_repo(args: argparse.Namespace) -> int:
-    print_adt_header("APEX DEPLOYMENT TOOL: SEARCH_REPO")
+    print_module_banner("SEARCH_REPO")
     try:
         file_limit = _search_repo_file_limit(args)
         result = SearchRepoRunner().run(
@@ -167,7 +168,7 @@ def _run_search_repo(args: argparse.Namespace) -> int:
 
 
 def _run_calendar(args: argparse.Namespace) -> int:
-    print_adt_header("APEX DEPLOYMENT TOOL: CALENDAR")
+    print_module_banner("CALENDAR")
     root = Path(args.root).resolve()
     try:
         config = ConfigLoader(
@@ -198,10 +199,10 @@ def _run_calendar(args: argparse.Namespace) -> int:
         print()
         return 1
 
-    overview = f"MONTHLY OVERVIEW: {result.month}"
+    overview = f"MONTHLY OVERVIEW {result.month}"
     if jira_prefix:
         overview += f" ({jira_prefix})"
-    print_adt_header(overview)
+    print_adt_header(f"{overview}:")
     if not result.authors:
         print("No commits found.")
         return 0
@@ -212,7 +213,7 @@ def _run_calendar(args: argparse.Namespace) -> int:
         print()
         print_adt_header(
             f"{author.commit_count} COMMITS BY {author.author} "
-            f"({author.ticket_count} tickets, {author.pr_count} PRs)"
+            f"({author.ticket_count} tickets, {author.pr_count} PRs):"
         )
         _print_calendar_grid(result.month, author.days)
     return 0

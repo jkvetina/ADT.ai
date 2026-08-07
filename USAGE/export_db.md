@@ -75,7 +75,7 @@ Schema values can also be comma-separated or use old ADT `%` patterns:
 adtai export_db -schema APP,CORE%
 ```
 
-A multi-schema run executes schema by schema — connect to CORE, export everything for it, print its own `TIMER`, then connect to APP and repeat — exactly as if you had run the command once per schema, with the `APEX DEPLOYMENT TOOL: EXPORT_DB` banner printed only once. See `USAGE.md` §Console Output Contract for the full shape.
+A multi-schema run executes schema by schema — connect to CORE, export everything for it, print its own `TIMER`, then connect to APP and repeat — exactly as if you had run the command once per schema, with the `APEX DEPLOYMENT TOOL - EXPORT_DB` banner printed only once. See `USAGE.md` §Console Output Contract for the full shape.
 
 Export only objects matching old ADT-style name patterns:
 
@@ -107,24 +107,74 @@ adtai export_db -recent
 adtai export_db -type JOB
 ```
 
-Export only objects last changed by a specific author, or by you, in a shared schema worked through proxy users. Both filters resolve authorship against the project's configured `audit:` source (a DDL-log table or view), so they need no DBA-level audit-trail access:
+Export only the objects a specific author, or you, has worked on in a shared schema worked through proxy users. Both filters resolve authorship against the project's configured `audit:` source (a DDL-log table or view), so they need no DBA-level audit-trail access:
 
 ```bash
-# objects last changed by the SCOTT proxy user
+# objects the SCOTT proxy user has changed
 adtai export_db -by SCOTT
 
-# objects last changed by you (db schema read from config/IDENTITY.yaml)
+# objects you have changed (db schema read from config/IDENTITY.yaml)
 adtai export_db -my
 ```
 
-`-by`/`-my` require an `audit:` block in `config.yaml` naming the log source and its columns:
+`-by`/`-my` require an `audit:` block in `config.yaml` naming the log source and its columns. `changed_at` is optional but strongly recommended — the next section covers what it buys:
 
 ```yaml
 audit:
   source: APP_DDL_LOG     # a table or view of DDL changes
   object_name: object_name
   changed_by: changed_by
+  changed_at: changed_at  # optional; the DDL timestamp
 ```
+
+### What the changed_at key adds
+
+Without `changed_at` a DDL log has no ordering, so the only question that can be asked of it is *who has ever touched this object*. `-by SCOTT` then matches an object SCOTT edited once last year and a colleague rewrote yesterday, with nothing to tell the two apart.
+
+With `changed_at` configured, two things change and neither adds a flag:
+
+- **Objects someone else changed after you are marked.** They stay in the export — dropping them would silently lose work you really did — and carry the later author in square brackets, the same shape as `[DUPE]`:
+
+	```text
+	             PACKAGE | APP_ORDER_PKG [SCOTT]
+	           PROCEDURE | APP_SEND_MAIL
+	```
+
+	`APP_ORDER_PKG` is yours, but SCOTT changed it last; `APP_SEND_MAIL` is yours and still yours.
+
+- **`-recent` reaches the audit source too.** `-recent N` alone filters `user_objects.last_ddl_time`, which knows *when* an object changed but not *who* changed it — so `-my -recent 1` used to mean "changed within a day AND I once touched it", two unrelated sources silently ANDed. With `changed_at` the same window is applied to the DDL log, so it means what it reads like: changed within a day, by me. The bare `-recent` watermark is applied the same way.
+
+### Populating the log, and why proxy users are not free
+
+Oracle records **no** actor for a DDL change. `USER_OBJECTS` carries `LAST_DDL_TIME` and nothing that names a user, so authorship exists only if the project writes it down at DDL time — normally from an `AFTER CREATE OR ALTER OR DROP ON SCHEMA` trigger.
+
+In a proxy session (`sqlplus scott[app_owner]/...`) the expressions such a trigger would naturally use all return the **proxied schema**, never the proxy user:
+
+| expression | direct session | proxy session |
+| --- | --- | --- |
+| `USER` | `APP_OWNER` | `APP_OWNER` |
+| `ORA_LOGIN_USER` | `APP_OWNER` | `APP_OWNER` |
+| `SYS_CONTEXT('USERENV', 'SESSION_USER')` | `APP_OWNER` | `APP_OWNER` |
+| `SYS_CONTEXT('USERENV', 'PROXY_USER')` | *(null)* | `SCOTT` |
+| `SYS_CONTEXT('USERENV', 'AUTHENTICATION_METHOD')` | `PASSWORD` | `PASSWORD_PROXY` |
+
+So a trigger recording `USER` files every developer's work under the shared schema name, and `-by SCOTT` matches nothing — not because the filter is broken, but because the identity was never written. ADT.ai cannot recover it afterwards. Record the proxy explicitly:
+
+```sql
+NVL(SYS_CONTEXT('USERENV', 'PROXY_USER'), USER)
+```
+
+If your developers connect directly rather than through a proxy, ADT.ai already publishes their identity for you: every connection runs `DBMS_SESSION.SET_IDENTIFIER(db_schema)` from `config/IDENTITY.yaml`, so a trigger can read `SYS_CONTEXT('USERENV', 'CLIENT_IDENTIFIER')`. A log that covers both cases records:
+
+```sql
+COALESCE(
+    SYS_CONTEXT('USERENV', 'CLIENT_IDENTIFIER'),
+    SYS_CONTEXT('USERENV', 'PROXY_USER'),
+    USER
+)
+```
+
+A runnable fixture that installs this trigger and demonstrates all three behaviours ships in `TEST_SCENARIOS/fixtures/` — see `TEST_SCENARIOS/export_db.md` §Author filters.
 
 `-my` additionally reads your identity from the gitignored `config/IDENTITY.yaml` (see the Developer Identity section in [USAGE.md](../USAGE.md); there is no committed sample):
 
@@ -237,9 +287,9 @@ If an earlier run already built such a folder, it is left on disk untouched: del
 | `-schema`, `--schema` | Yes | environment default schema | Schema(s) to export, one pass each. Pass multiple times, space-separate (`-schema DA GSN`), use comma lists, or use `%` patterns such as `CORE%`. |
 | `-type`, `--type` | Yes | configured object types | Object type pattern or patterns to export. Supports old ADT SQL-like `%` and `_` wildcards plus comma lists, for example `PACKAGE%,VIEW`. Oracle type names, resolved exactly as on `recompile`: a bare `PACKAGE` exports specifications only, `PACKAGE BODY` (quoted or not) bodies only, `PACKAGE SPEC` the specification, and `MVIEW`/`MATERIALIZED` both mean `MATERIALIZED VIEW`. See [recompile → Object types](recompile.md#object-types). |
 | `-name`, `--name` | Yes | all names | Object name pattern or patterns to export. Supports old ADT SQL-like `%` and `_` wildcards plus comma lists, for example `APP_%,TMP_%`. |
-| `-recent [DAYS]`, `--recent [DAYS]` | No | all objects | Export objects changed in the last DAYS days. Bare `-recent` exports everything changed since that schema's last successful covering export — the per-schema watermark in `config/recent.yaml` — shown as `CHANGED SINCE <timestamp> (LAST EXPORT)`; a schema with no watermark yet is exported in full and seeded, with a visible `RECENT: no previous export recorded` note. Narrowed runs (`-name`/`-type`/`-by`/`-my`) and `-dry-run` never advance the watermark. Do not combine with `-type JOB`. |
-| `-by`, `--by` | No | all authors | Export only objects last changed by `AUTHOR` (a db user/schema), resolved by joining the export set against the project's configured `audit:` source. Lets a shared schema worked by several developers via proxy users still resolve authorship. Requires an `audit:` block (`source`/`object_name`/`changed_by`) in `config.yaml`. |
-| `-my`, `--my` | No | off | Export only objects last changed by the current user, taking the db schema from the gitignored `config/IDENTITY.yaml` (`db_schema`). Same audit resolution as `-by`; requires both the `audit:` block and `config/IDENTITY.yaml`. |
+| `-recent [DAYS]`, `--recent [DAYS]` | No | all objects | Export objects changed in the last DAYS days. Bare `-recent` exports everything changed since that schema's last successful covering export — the per-schema watermark in `config/recent.yaml` — shown as `CHANGED SINCE LAST EXPORT AT <timestamp>`; a schema with no watermark yet is exported in full and seeded, with a visible `NO PREVIOUS EXPORT RECORDED:` note. Narrowed runs (`-name`/`-type`/`-by`/`-my`) and `-dry-run` never advance the watermark. Do not combine with `-type JOB`. |
+| `-by`, `--by` | No | all authors | Export only objects `AUTHOR` (a db user/schema) has changed, resolved by joining the export set against the project's configured `audit:` source. Lets a shared schema worked by several developers via proxy users still resolve authorship. Requires an `audit:` block (`source`/`object_name`/`changed_by`) in `config.yaml`. With the optional `audit.changed_at` column configured, an object someone else changed *after* the author is marked `[OTHER_AUTHOR]` on its export row, and `-recent` narrows the audit source as well as `user_objects`. |
+| `-my`, `--my` | No | off | Export only objects the current user has changed, taking the db schema from the gitignored `config/IDENTITY.yaml` (`db_schema`). Same audit resolution as `-by`; requires both the `audit:` block and `config/IDENTITY.yaml`. |
 | `-groups`, `--groups` | No (move action) | off | Move action: reorganize already-exported files into `<object_type>/<group>/` subfolders. Never connects or exports. Bare `-groups` auto-detects groups by prefix (cluster ≥ `groups_min`, default `5`); `-groups PREFIX ...` takes a space- and/or comma-separated prefix list and moves only those. Group folder names are uppercased. Previews then prompts for confirmation; with `-dry-run` it previews only. Aborts on per-object-type filename collisions. |
 | `-dry-run`, `--dry-run` | No | off | Build the export plan without writing files. |
 | `-delete`, `--delete` | No | off | Delete existing object files before export, excluding `DATA`. |

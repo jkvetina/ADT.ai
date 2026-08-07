@@ -60,6 +60,33 @@ _CONNECT_PWD_RE = re.compile(r'/"(?P<pwd>[^"\n]+)"@')
 # Variables withheld from SQLcl's environment; ``_sqlcl_environment`` says why.
 SQLCL_HIDDEN_VARIABLES = ("ORACLE_HOME",)
 
+# The one diagnostic that means "this script ran against no session at all".
+#
+# ``WHENEVER SQLERROR EXIT FAILURE`` guards every connect block (ADT #188), but
+# it can only trap *SQL* errors. ``SP2-0640`` is a client-level SP2- message, so
+# a connect that left no session behind does not fire the guard: SQLcl runs the
+# rest of the script, answers every statement with ``SP2-0640: Not connected``,
+# and exits **0**. The exit code alone therefore cannot see this failure, and
+# ``run_sqlcl_script`` handed the dead transcript back as success — which is how
+# ``export_apex -rest`` reported ``SP2-0640`` as its own error three escalations
+# running while the connect diagnostic above it was discarded (ADT #232).
+SQLCL_NOT_CONNECTED_CODE = "SP2-0640"
+
+
+class SqlclNotConnectedError(RuntimeError):
+    """SQLcl ran the whole script without ever holding a session."""
+
+
+class SqlclTimeoutError(RuntimeError):
+    """SQLcl outlived the deadline the caller gave it and was killed."""
+
+
+def _ran_without_a_session(output: str) -> bool:
+    return any(
+        line.lstrip().startswith(SQLCL_NOT_CONNECTED_CODE)
+        for line in output.splitlines()
+    )
+
 
 def _sqlcl_environment() -> dict[str, str]:
     """The process environment, minus what would flip SQLcl to the thick driver.
@@ -107,7 +134,18 @@ def _scrub_secrets(text: str, secrets: set[str]) -> str:
     return text
 
 
-def run_sqlcl_script(script: str, root: Path, project_root: Path | None = None) -> str:
+def run_sqlcl_script(
+    script: str,
+    root: Path,
+    project_root: Path | None = None,
+    timeout_seconds: float | None = None,
+) -> str:
+    """Run ``script`` through SQLcl and return its captured, scrubbed output.
+
+    ``timeout_seconds`` bounds the child; ``None`` (the default) leaves it
+    unbounded, which is what ``patch -deploy`` and ``diff`` need. Only the REST
+    export passes a deadline today.
+    """
     root.mkdir(parents=True, exist_ok=True)
     secrets = _connect_secrets(script)
     with tempfile.NamedTemporaryFile(
@@ -135,20 +173,49 @@ def run_sqlcl_script(script: str, root: Path, project_root: Path | None = None) 
         # ``export_apex -rest`` printed nothing but a crawling progress bar
         # (ADT #188). At EOF the prompt fails immediately instead, and the
         # ``WHENEVER SQLERROR EXIT FAILURE`` guard turns that into a real error.
-        completed = subprocess.run(
-            ["sql", "-S", "/nolog", f"@{script_path}"],
-            cwd            = root,
-            check          = False,
-            capture_output = True,
-            text           = True,
-            stdin          = subprocess.DEVNULL,
-            env            = _sqlcl_environment(),
-        )
+        try:
+            completed = subprocess.run(
+                ["sql", "-S", "/nolog", f"@{script_path}"],
+                cwd            = root,
+                check          = False,
+                capture_output = True,
+                text           = True,
+                stdin          = subprocess.DEVNULL,
+                env            = _sqlcl_environment(),
+                timeout        = timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as expired:
+            # `subprocess.run` kills the child before re-raising, so nothing is
+            # left running. Whatever it managed to say first is the only clue
+            # about where it stalled, so it rides the error rather than being
+            # dropped with the process.
+            partial = _scrub_secrets(
+                _decode(expired.stdout) + _decode(expired.stderr), secrets
+            ).strip()
+            raise SqlclTimeoutError(
+                f"SQLcl did not finish within {timeout_seconds:g} seconds and was killed."
+                + (f"\n{partial}" if partial else "")
+            ) from expired
     finally:
         script_path.unlink(missing_ok=True)
     output = _scrub_secrets((completed.stdout or "") + (completed.stderr or ""), secrets)
+    if _ran_without_a_session(output):
+        # Reported in full, not as the one line a regex picked: the cause is
+        # always some earlier line in this same transcript, and asking the user
+        # to rerun with -debug to see it is not a diagnosis (Jan, 2026-08-07).
+        # The output is already secret-scrubbed above.
+        raise SqlclNotConnectedError(
+            "SQLcl ran the script without a connected session "
+            f"(exit code {completed.returncode}). Full SQLcl output:\n{output.strip()}"
+        )
     if completed.returncode != 0:
         raise RuntimeError(
             output.strip() or f"SQLcl failed with exit code {completed.returncode}"
         )
     return output
+
+
+def _decode(stream: str | bytes | None) -> str:
+    if stream is None:
+        return ""
+    return stream if isinstance(stream, str) else stream.decode("utf-8", "replace")

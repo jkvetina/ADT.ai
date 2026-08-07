@@ -4,7 +4,12 @@ import argparse
 from dataclasses import replace
 from pathlib import Path
 
-from adt_ai.cli.constants import ConfigError, ConfigLoader, print_adt_header
+from adt_ai.cli.constants import (
+    ConfigError,
+    ConfigLoader,
+    print_adt_header,
+    print_module_banner,
+)
 from adt_ai.cli.context import _config_search_paths, _repo_root
 from adt_ai.cli.context_apex import _flatten_arg_groups
 from adt_ai.shared.db import run_sqlcl_script
@@ -42,7 +47,7 @@ class ConsoleValidateReporter(ValidateReporter):
 
 
 def _run_validate(args: argparse.Namespace) -> int:
-    print_adt_header("APEX DEPLOYMENT TOOL: VALIDATE")
+    print_module_banner("VALIDATE")
     root = Path(args.root).expanduser().resolve()
     inputs = _flatten_arg_groups(args.input)
     app_ids = _flatten_arg_groups(args.app)
@@ -68,13 +73,13 @@ def _run_validate(args: argparse.Namespace) -> int:
         if folder.report.warnings:
             # Never silent: FILE_IGNORED means the compiler did not check that
             # file at all, which a bare "OK" would hide behind a clean pass.
-            _print_messages(f"WARNINGS: {folder.target.label}", folder.report.warnings)
+            _print_messages(f"WARNINGS IN {folder.target.label}:", folder.report.warnings)
         if folder.report.errors:
-            _print_messages(f"ERRORS: {folder.target.label}", folder.report.errors)
+            _print_messages(f"ERRORS IN {folder.target.label}:", folder.report.errors)
         elif folder.report.outcome == UNRECOGNISED:
             # Never swallow output the parser could not read: show it verbatim so
             # the user can see what SQLcl actually said.
-            print_adt_header(f"UNRECOGNISED OUTPUT: {folder.target.label}")
+            print_adt_header(f"UNRECOGNISED OUTPUT {folder.target.label}:")
             print(folder.report.raw.rstrip("\n"))
             print()
 

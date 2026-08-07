@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "adt-ai"
-version = "0.8.3"
+version = "0.8.4"
 description = "Modern Python rewrite of ADT focused on YAML-configured Oracle/APEX deployment tooling."
 readme = "README.md"
 license = {text = "MIT"}

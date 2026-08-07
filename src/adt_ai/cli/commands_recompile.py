@@ -23,6 +23,7 @@ from adt_ai.cli.constants import (
     format_action_line,
     print_adt_header,
     print_adt_table,
+    print_module_banner,
 )
 from adt_ai.cli.context import (
     DebugQueryGateway,
@@ -39,6 +40,7 @@ from adt_ai.cli.gateways import build_gateway
 from adt_ai.cli.recompile_reporters import (
     _print_invalid_object_errors,
     _print_recompile_overview_table,
+    print_root_causes,
 )
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.recompile.render import (
@@ -60,7 +62,7 @@ def _run_recompile(
     gateway_factory: GatewayFactory | None = None,
 ) -> int:
     handler_started_at = time.monotonic()
-    print_adt_header("APEX DEPLOYMENT TOOL: RECOMPILE")
+    print_module_banner("RECOMPILE")
     startup = _load_startup_context(args)
     connections = startup.connections
 
@@ -87,6 +89,43 @@ def _run_recompile(
         return _run_recompile_for_schema(args, startup, environment, schema, gateway_factory)
 
     return run_schema_sections(schemas, run_one, first_started_at=handler_started_at)
+
+
+def _invalid_dependents_provider(args: argparse.Namespace, schema: str):
+    """Reverse edges among the still-invalid objects, read from the local mirror.
+
+    ``dependencies -refresh`` already maintains ``config/dependencies.db``; this
+    only reads it, offline, and only for the objects that are still invalid — so
+    the cost is one cheap SQLite lookup per leftover, not a graph walk.
+
+    Every failure mode degrades to "no edges" rather than breaking a recompile:
+    no mirror yet, a mirror predating this schema, an unreadable file. The ranking
+    then runs on compile-error evidence alone, which is what it does for a project
+    that never ran ``dependencies`` at all.
+    """
+    def dependents_for(nodes: list[str]) -> dict[str, list[str]]:
+        database = Path(args.root).expanduser().resolve() / "config" / "dependencies.db"
+        if not database.is_file():
+            return {}
+        wanted = set(nodes)
+        try:
+            from adt_ai.dependencies.store import DependencyStore
+
+            with DependencyStore.open(database) as store:
+                return {
+                    node: [
+                        dependent
+                        for dependent in store.used_by(node, owners=[schema])
+                        if dependent in wanted
+                    ]
+                    for node in nodes
+                }
+        except Exception:
+            if args.debug:
+                raise
+            return {}
+
+    return dependents_for
 
 
 def _run_recompile_for_schema(
@@ -131,6 +170,7 @@ def _run_recompile_for_schema(
         object_type    = ",".join(object_types),
         prefix         = prefix,
         ignore         = ignore,
+        schema         = schema,
         force          = args.force,
         native         = args.native,
         interpreted    = args.interpreted,
@@ -156,6 +196,11 @@ def _run_recompile_for_schema(
     )
     runner = RecompileRunner(recompile_gateway_factory)
     runner.reporter = console_reporter
+    # The dependency mirror is the offline half of the root-cause ranking: it
+    # connects invalid objects whose compile errors name nobody. Injected rather
+    # than opened by the runner so the recompile module stays free of SQLite, and
+    # so a project with no mirror simply ranks on error evidence.
+    runner.dependents_for = _invalid_dependents_provider(args, schema)
     result = runner.run(request)
 
     if request.trailing:
@@ -179,18 +224,22 @@ def _run_recompile_for_schema(
             or request.jobs
             or request.trailing
         ):
-            print_adt_header("OBJECTS OVERVIEW")
+            print_adt_header("OBJECTS OVERVIEW:")
             _print_recompile_overview_table(result.overview)
             if result.invalid:
-                print_adt_header("INVALID OBJECTS")
+                print_adt_header("INVALID OBJECTS:")
                 _print_invalid_object_errors(result.invalid, result.error_details)
+                # The verdict reads under the evidence, not over it: ROOT CAUSES
+                # keys off the IDs the tables above just introduced (#209).
+                if result.root_causes:
+                    print_root_causes(result.root_causes, result.invalid)
         if request.mview:
             # Batch fallback for non-streamed callers (silent path aside, this is the
             # CLI test fakes). Shares _mview_row_cells with the streamed reporter so
             # the two renders stay byte-identical: TYPE resolves the configured
             # refresh_method to F/C, LOG flags the MV log, TIMER is Oracle's recorded
             # refresh duration re-read after the action, errors listed below.
-            print_adt_header("MATERIALIZED VIEWS")
+            print_adt_header("MATERIALIZED VIEWS:")
             print_adt_table(
                 [_mview_row_cells(mview) for mview in result.mviews],
                 columns=list(_MVIEW_COLUMNS),
@@ -250,7 +299,7 @@ def _run_discovery(
     args: argparse.Namespace,
     gateway_factory: GatewayFactory | None = None,
 ) -> int:
-    print_adt_header("APEX DEPLOYMENT TOOL: DISCOVERY")
+    print_module_banner("DISCOVERY")
 
     has_sql  = bool(args.sql and args.sql.strip())
     has_file = bool(args.statements_file)
@@ -317,7 +366,7 @@ def _run_discovery(
 
 
 def _run_doctor(args: argparse.Namespace) -> int:
-    print_adt_header("APEX DEPLOYMENT TOOL: DOCTOR")
+    print_module_banner("DOCTOR")
     selected_actions = [
         flag
         for flag, selected in (

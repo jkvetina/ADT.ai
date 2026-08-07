@@ -7,8 +7,9 @@ objects are still invalid and summarize their errors.
 
 from __future__ import annotations
 
-from dataclasses import replace
-
+from adt_ai.recompile.contracts import (
+    DependentsProvider as DependentsProvider,
+)
 from adt_ai.recompile.contracts import (
     GatewayFactory as GatewayFactory,
 )
@@ -29,8 +30,6 @@ from adt_ai.recompile.contracts import (
 )
 from adt_ai.recompile.inventory import (
     MaterializedView,
-    ObjectError,
-    ObjectOverview,
     RecompileDiscovery,
     RecompileObject,
     TrailingObject,
@@ -43,6 +42,8 @@ from adt_ai.recompile.queries import (
     build_trailing_view_ddl,
     count_trailing_view_lines,
 )
+from adt_ai.recompile.results import enrich_invalid, with_validated
+from adt_ai.recompile.root_causes import rank_for_run
 from adt_ai.shared.db import QueryGateway
 
 
@@ -57,6 +58,10 @@ class RecompileRunner:
         # CLI swaps in a console reporter post-construction, so the fake runners in
         # the CLI tests (single-arg __init__) stay untouched.
         self.reporter = reporter or RecompileReporter()
+        # Dependency-graph edges for the root-cause ranking, injected the same way
+        # for the same reason: the runner must not know about SQLite, and a caller
+        # with no mirror gets the error-evidence ranking rather than an error.
+        self.dependents_for: DependentsProvider = lambda _nodes: {}
 
     def run(self, request: RecompileRequest) -> RecompileResult:
         scope = {
@@ -224,8 +229,8 @@ class RecompileRunner:
         overview = discovery.overview(**scope)
         errors = discovery.errors_summary(**scope)
         remaining = discovery.objects_to_recompile(**scope, force=False)
-        invalid = _enrich_invalid(remaining, errors)
-        overview = _with_validated(overview, before_invalid, remaining)
+        invalid = enrich_invalid(remaining, errors)
+        overview = with_validated(overview, before_invalid, remaining)
 
         # Surface the full per-line compile messages so an AI agent can pinpoint
         # the offending line/position/text on whatever is still invalid.
@@ -237,6 +242,8 @@ class RecompileRunner:
             invalid       = invalid,
             overview      = overview,
             error_details = error_details,
+            root_causes   = rank_for_run(
+                discovery, request.schema, invalid, error_details, self.dependents_for),
             success       = not invalid,
         )
 
@@ -377,45 +384,6 @@ class RecompileRunner:
                 False,
                 str(exc),
             )
-
-
-def _with_validated(
-    overview: list[ObjectOverview],
-    before_invalid: list[RecompileObject],
-    remaining: list[RecompileObject],
-) -> list[ObjectOverview]:
-    """Stamp each overview row with how many of its objects the run repaired (#186).
-
-    A set difference over object identity, never a before/after count delta:
-    recompiling a spec invalidates its dependents, so a run that fixed one object
-    and broke another leaves the INVALID count unchanged — and a delta would
-    report that repair as nothing happening, which is the blindness this column
-    exists to remove.
-    """
-    still_invalid = {(obj.object_type, obj.object_name) for obj in remaining}
-    counts: dict[str, int] = {}
-    for obj in before_invalid:
-        if (obj.object_type, obj.object_name) not in still_invalid:
-            counts[obj.object_type] = counts.get(obj.object_type, 0) + 1
-    return [
-        replace(row, validated=counts.get(row.object_type, 0))
-        for row in overview
-    ]
-
-
-def _enrich_invalid(
-    remaining: list[RecompileObject],
-    errors: list[ObjectError],
-) -> list[ObjectError]:
-    index = {(error.object_type, error.object_name): error for error in errors}
-    enriched: list[ObjectError] = []
-    for obj in remaining:
-        match = index.get((obj.object_type, obj.object_name))
-        if match is not None:
-            enriched.append(match)
-        else:
-            enriched.append(ObjectError(obj.object_type, obj.object_name, 0, None))
-    return enriched
 
 
 def _mview_needs_compile(mview: MaterializedView) -> bool:

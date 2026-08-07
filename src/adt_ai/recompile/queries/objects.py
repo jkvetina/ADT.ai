@@ -347,6 +347,43 @@ ORDER BY e.type, e.name, e.line, e.position, e.sequence
 """.strip()
 
 
+# The stored source lines the root-cause ranking needs to name an ORA-00942's
+# missing object (#205). Oracle names nothing in that error and records no
+# USER_DEPENDENCIES row for a reference that never resolved, so the only place the
+# object name survives is the source itself, at the error's own line/position.
+#
+# The two binds are comma lists of the object names and the line numbers the
+# analysis asked about, so the fetch is bounded by the failing errors rather than
+# by object size — a 10k-line package returns only the handful of lines in
+# question. It is a cross-filter, not a pairwise match: a line number wanted for
+# one object is also returned for another, which costs a few extra rows and saves
+# a bind-per-pair query. The caller keys results by (type, name, line), so the
+# extras are simply never read.
+ERROR_SOURCE_LINES_QUERY = """
+WITH object_names AS (
+    SELECT /*+ MATERIALIZE CARDINALITY(t 10) */
+        t.column_value AS object_name
+    FROM TABLE(APEX_STRING.SPLIT(TRIM(BOTH ',' FROM :object_names), ',')) t
+),
+source_lines AS (
+    SELECT /*+ MATERIALIZE CARDINALITY(t 10) */
+        TO_NUMBER(t.column_value) AS line
+    FROM TABLE(APEX_STRING.SPLIT(TRIM(BOTH ',' FROM :source_lines), ',')) t
+)
+SELECT
+    s.type          AS object_type,
+    s.name          AS object_name,
+    s.line          AS line,
+    s.text          AS text
+FROM user_source s
+JOIN object_names n
+    ON s.name       = n.object_name
+JOIN source_lines l
+    ON s.line       = l.line
+ORDER BY s.type, s.name, s.line
+""".strip()
+
+
 # VALID PL/SQL objects missing full PL/Scope (IDENTIFIERS:ALL + STATEMENTS:ALL).
 # Used as the dependencies refresh prerequisite: anything returned here is
 # recompiled with scope=["ALL"] so USER_IDENTIFIERS / USER_STATEMENTS populate.

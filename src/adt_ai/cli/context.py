@@ -22,6 +22,7 @@ from adt_ai.cli.constants import (
 from adt_ai.cli.context_apex import (
     ApexAppSelection,
     _apex_actions,
+    _apex_explicit_actions,
     _apex_recent_report_only,
     _apex_scope,
     _app_in_selection,

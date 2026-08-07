@@ -8,7 +8,7 @@ from adt_ai.cli.constants import (
     ExportDataRunner,
     GatewayFactory,
     QueryGateway,
-    print_adt_header,
+    print_module_banner,
 )
 from adt_ai.cli.context import (
     DebugQueryGateway,
@@ -26,7 +26,7 @@ def _run_export_data(
     args: argparse.Namespace, gateway_factory: GatewayFactory | None = None
 ) -> int:
     handler_started_at = time.monotonic()
-    print_adt_header("APEX DEPLOYMENT TOOL: EXPORT_DATA")
+    print_module_banner("EXPORT_DATA")
     startup = _load_startup_context(args)
     root = startup.root
     config = startup.config

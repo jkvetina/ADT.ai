@@ -21,6 +21,11 @@ from adt_ai.recompile.queries import build_compile_statement
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.oracle_session import is_ddl_lock_timeout
 
+# A skip interrupts the ``USER_OBJECTS`` progress row, so it renders one level
+# deeper than that row's own two-space indent — the same row/detail indent pair
+# ``validate/report.py`` uses for its per-record stanzas.
+_DETAIL_INDENT = "    "
+
 
 def ensure_plscope(
     gateway: QueryGateway,
@@ -65,7 +70,10 @@ def ensure_plscope(
         except Exception as exc:
             if not is_ddl_lock_timeout(exc):
                 raise
-            _progress(f"SKIPPED LOCKED {database_object.object_type}.{database_object.object_name}")
+            _progress(
+                f"{_DETAIL_INDENT}SKIPPED LOCKED "
+                f"{database_object.object_type} {database_object.object_name}"
+            )
             continue
         recompiled.append(database_object)
 

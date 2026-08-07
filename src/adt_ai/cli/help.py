@@ -189,20 +189,48 @@ COMMAND_SUMMARIES = {
         "and interpreted mode.",
         "Reporting shows remaining errors so failed recompiles can be handled without "
         "hunting through SQL clients.",
+        "A COMPILE ERRORS list gives each object its own stanza, one line per distinct "
+        "error, dropping the cascade rows and repeats Oracle files beside every fault.",
+        "A ROOT CAUSES section ranks what is left by what to check first, telling a "
+        "broken object from a knock-on and a missing object from a missing grant.",
     ),
     "ut3": (
         "Runs the utPLSQL (UT3) test suites installed in a configured Oracle schema.",
         "A suite is a package whose name ends in _UT and that utPLSQL has parsed as a "
         "%suite, so production code can never be swept into a test run.",
-        "With no arguments every discovered suite runs; -name takes LIKE patterns to "
-        "select specific ones.",
+        "With no arguments every discovered suite runs; -name takes LIKE patterns and "
+        "selects the suites to run in every mode, so a filtered run costs less than an "
+        "unfiltered one.",
         "The matched suites are rolled up before anything runs, then each suite's test "
         "verdicts print as that suite finishes -- packages A-Z, tests in the order the "
         "package specification declares them.",
         "A _UT package that is INVALID or holds no parsed %test is ignored: it is not a "
         "suite, so it is listed nowhere and does not fail the run on its own.",
+        "SUMMARY closes the run with a row per suite -- the three verdict counts and "
+        "TIMER, that suite's own seconds, which is what tells a slow suite from a slow "
+        "schema.",
         "The exit code is the deliverable: utPLSQL never raises on a failed test, so "
         "failures, errors, an unparsable report, and a zero-test run all exit non-zero.",
+        "-coverage replaces that whole run report with the coverage one; the suites "
+        "still execute, since running the code is how Oracle collects coverage, they "
+        "just do it quietly under a header printed before they start.",
+        "CODE COVERAGE lists what the run reached -- package, body line count, "
+        "PASSED/FAILED/ERRORED, coverage percent. NO CODE COVERAGE is the work list and "
+        "carries package and line count only, because every other column would read the "
+        "same on every row of it.",
+        "Every package in the schema is in one table or the other, so a package no test "
+        "covers is visible rather than absent, and LINES is what says whether that gap "
+        "is 4000 untested lines or 40.",
+        "SUMMARY then closes with one row for the whole schema -- packages, body lines, "
+        "executed lines, percentage -- so the high-level answer does not have to be added "
+        "up by hand.",
+        "COVERED is source lines that ran, read from the block map's own line number. It "
+        "does not divide into LINES: that counts every body row including the comments "
+        "and declarations Oracle never instruments, and COVERAGE stays covered blocks "
+        "over measured blocks.",
+        "A -name pattern narrows a coverage run the same way it narrows a plain one, so "
+        "a package reached only by a suite the pattern excludes reads lower than an "
+        "unfiltered run would report.",
     ),
     "validate": (
         "Runs the APEXlang compiler over exported apexlang/ folders and reports its errors.",

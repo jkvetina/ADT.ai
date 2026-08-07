@@ -26,6 +26,7 @@ from adt_ai.cli.constants import (
     _StderrTracker,
     _StdoutTracker,
     print_adt_header,
+    print_module_banner,
 )
 from adt_ai.cli.context import (
     _is_user_database_error,
@@ -91,7 +92,7 @@ def _run_static_screen(
 
 
 def _run_command_help(command: str, parser: argparse.ArgumentParser) -> int:
-    print_adt_header(f"APEX DEPLOYMENT TOOL: {_command_title(command)}")
+    print_module_banner(_command_title(command))
     print(format_command_help(command, _command_parser(parser, command)), end="")
     return 0
 
@@ -102,7 +103,7 @@ def _run_command_argument_error(
     raw_args: Sequence[str] | None = None,
 ) -> int:
     def render() -> None:
-        print_adt_header(f"APEX DEPLOYMENT TOOL: {_command_title(command)}", file=sys.stderr)
+        print_module_banner(_command_title(command), file=sys.stderr)
         print(f"{command}: error: {message}", file=sys.stderr)
         print(file=sys.stderr)
 
@@ -115,7 +116,7 @@ def _run_command_argument_error(
 
 def _run_top_level_argument_error(message: str) -> int:
     def render() -> None:
-        print_adt_header("APEX DEPLOYMENT TOOL: ERROR")
+        print_module_banner("ERROR")
         print(f"Error: {message}")
         print()
         _print_module_overview()
@@ -128,7 +129,7 @@ def _run_top_level_error(error: Exception) -> int:
     # command banner has printed. Always show the banner and a friendly
     # message; the raw traceback only appears under -debug (handled by caller).
     def render() -> None:
-        print_adt_header("APEX DEPLOYMENT TOOL: ERROR", file=sys.stderr)
+        print_module_banner("ERROR", file=sys.stderr)
         print(f"Error: {type(error).__name__}: {error}", file=sys.stderr)
         print(file=sys.stderr)
         print("This is unexpected. Use -debug to show the Python traceback.", file=sys.stderr)
@@ -299,7 +300,7 @@ def _print_module_overview() -> None:
 
 
 def _run_module_overview() -> int:
-    print_adt_header("APEX DEPLOYMENT TOOL")
+    print_module_banner()
     print("Modern ADT command line tool.")
     print()
     _print_module_overview()
@@ -324,7 +325,7 @@ def _run_invalid_command(command: str) -> int:
     sys.stderr = tracked_stderr
     started_at = time.monotonic()
     try:
-        print_adt_header("APEX DEPLOYMENT TOOL: ERROR")
+        print_module_banner("ERROR")
         print(f"Error: unknown command `{command}`.")
         print()
         if command == "init":

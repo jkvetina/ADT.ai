@@ -35,6 +35,7 @@ from adt_ai.export_apex.rest import (
     _rest_prefixes,
     _schema_definition,
     _split_rest_modules,
+    rest_timeout_seconds,
 )
 from adt_ai.shared import text_files
 from adt_ai.shared.db import QueryGateway
@@ -104,9 +105,14 @@ class ApexCollectionWriterMixin:
         self,
         gateway: QueryGateway,
         resolver: ApexFileResolver,
-        application: ApexApplication,
+        application: ApexApplication | None,
         app_id: int,
     ) -> None:
+        """Static files for one application, or the workspace's own at `app_id` 0.
+
+        `application` is unread on the workspace path and is `None` there: a
+        schema owns its workspace files whether or not it hosts an application.
+        """
         for row in gateway.fetch_all(self.APEX_FILES_QUERY, {"app_id": app_id}):  # type: ignore[attr-defined]
             file_name = str(row_value(row, "FILENAME") or "")
             payload = _blob_bytes(row_value(row, "BLOB_CONTENT"))
@@ -184,12 +190,23 @@ class ApexCollectionWriterMixin:
         root = resolver.apex_root()
         root.mkdir(parents=True, exist_ok=True)
         resolver.rest_export("__enable_schema").parent.mkdir(parents=True, exist_ok=True)
-        lines = _cleanup_sqlcl(gateway.sqlcl_request("SET LINESIZE 200;\nrest export;", root))
+        output = gateway.sqlcl_request(
+            "SET LINESIZE 200;\nrest export;",
+            root,
+            timeout_seconds = rest_timeout_seconds(config),
+        )
+        lines = _cleanup_sqlcl(output)
         first, modules = _split_rest_modules(lines)
         if not modules:
             error = _rest_export_error(lines)
             if error:
-                raise RuntimeError(f"SQLcl rest export failed: {error}")
+                # The headline is the first diagnostic, but the transcript comes
+                # with it: the line a regex picked is regularly the symptom and
+                # the cause is some other line in the same output (ADT #232).
+                raise RuntimeError(
+                    f"SQLcl rest export failed: {error}\nFull SQLcl output:\n"
+                    + "\n".join(lines).strip()
+                )
         prefixes = _rest_prefixes(config)
         for module in modules:
             name = _rest_module_name(module)
