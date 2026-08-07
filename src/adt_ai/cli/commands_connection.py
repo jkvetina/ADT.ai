@@ -5,7 +5,11 @@ import getpass
 import sys
 from pathlib import Path
 
-from adt_ai.cli.constants import ConfigLoader, ConnectionLoader, print_adt_header
+from adt_ai.cli.constants import (
+    ConfigLoader,
+    ConnectionLoader,
+    print_module_banner,
+)
 from adt_ai.cli.context import (
     _config_search_paths,
     _connection_file_candidates,
@@ -145,7 +149,7 @@ def _connection_edit_path(args: argparse.Namespace, *, allow_missing: bool):
 
 
 def _run_connection(args: argparse.Namespace) -> int:
-    print_adt_header("APEX DEPLOYMENT TOOL: CONNECTION")
+    print_module_banner("CONNECTION")
 
     action = _selected_connection_action(args)
     if action is None:

@@ -73,7 +73,9 @@ class ConsoleExportDataReporter:
         self._progress = FixedWidthProgressPrinter()
 
     def start_export(self, total: int) -> None:
-        print_adt_header("EXPORT TABLE DATA:", f"({total})")
+        # Parity with export_db's EXPORTING <n> OBJECTS: (ADT #237) — the same
+        # "starting a run of N things" moment, so the same wording.
+        print_adt_header(f"EXPORTING {total} TABLES:")
 
     def export_table(self, table: DataTable) -> None:
         if self._silent:

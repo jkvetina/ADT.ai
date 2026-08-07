@@ -11,9 +11,58 @@ def print_adt_header(message: str, append: str = "", file=None) -> None:
     print("-" * len(message), file=file)
 
 
+ADT_TOOL_NAME = "APEX DEPLOYMENT TOOL"
+MODULE_BANNER_SEPARATOR = " - "
+
+
+def module_banner(title: str = "") -> str:
+    """The command's H1: ``APEX DEPLOYMENT TOOL - EXPORT_APEX``.
+
+    Separated with ``-`` rather than ``:`` so the dashed rule beneath reads as an
+    underline of the whole title. Every *section* header ends with a colon; this
+    line is the one documented exception, and giving it its own separator is what
+    keeps the two kinds of header telling themselves apart (ADT #237).
+    """
+    if not title:
+        return ADT_TOOL_NAME
+    return f"{ADT_TOOL_NAME}{MODULE_BANNER_SEPARATOR}{title}"
+
+
+def print_module_banner(title: str = "", file=None) -> None:
+    """Print the command H1 through the one shared renderer.
+
+    Underlined across its full width — unlike the ``append`` form, where the rule
+    covers only the message. The title is one unit here, not a label plus a value.
+    """
+    print_adt_header(module_banner(title), file=file)
+
+
+FAILED_STATUS = "FAILED"
+
+
 class DottedProgressBar:
     def __init__(self, line_width: int = 78) -> None:
         self.line_width = line_width
+
+    def print_failed(self, header: str) -> None:
+        """Complete an abandoned crawling row with FAILED, and end the line.
+
+        The crawling row is rewritten in place with ``\\r`` and no trailing
+        newline. Leaving it that way meant whatever printed next — for an
+        uncaught failure, the error banner's own leading blank line — was spent
+        terminating it instead, so the banner landed flush against the progress
+        bar (ADT #232).
+        """
+        print(f"\r{self.failed_text(header)}", flush=True)
+
+    def failed_text(self, header: str) -> str:
+        # Padded to the crawling row's exact width: ``\r`` returns the cursor
+        # but clears nothing, so a shorter replacement leaves that row's tail
+        # on screen behind it.
+        width = len(self.line_text(header, 0, 0))
+        left = f"{header} " if header else ""
+        dots = "." * max(1, width - len(left) - len(FAILED_STATUS) - 1)
+        return f"{left}{dots} {FAILED_STATUS}"
 
     def print_line(
         self,

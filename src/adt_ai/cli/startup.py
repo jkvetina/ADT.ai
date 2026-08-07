@@ -12,7 +12,11 @@ def print_startup_failure(error: BaseException) -> None:
     """
     if "-debug" in sys.argv or "--debug" in sys.argv:
         raise error
-    title = "APEX DEPLOYMENT TOOL: STARTUP ERROR"
+    # Spelled out rather than imported: this path exists precisely for the case
+    # where importing adt_ai is what failed, so it must not reach for
+    # shared.progress. Kept in step with module_banner() by hand — the ' - '
+    # separator is the H1 shape every other banner uses (ADT #237).
+    title = "APEX DEPLOYMENT TOOL - STARTUP ERROR"
     print(file=sys.stderr)
     print(title, file=sys.stderr)
     print("-" * len(title), file=sys.stderr)

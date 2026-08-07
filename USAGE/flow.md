@@ -10,7 +10,7 @@ The command has three modes:
 - **Refresh** (`-refresh`): connect through the default APEX schema, resolve the application's owner, reconnect through that configured schema, and (re)load the application's metadata, pages, and navigation edges. A refresh is a full rewrite: the application's old rows are deleted and replaced in one transaction, never appended. Each refresh writes all diagram formats automatically to `config/flow/app_<id>.mmd`, `.dot`, and `.json`.
 - **Delete** (`-delete`): delete the application and all its pages and edges from the store.
 
-Every run prints the generic `APEX DEPLOYMENT TOOL: FLOW` banner and a completion timer.
+Every run prints the generic `APEX DEPLOYMENT TOOL - FLOW` banner and a completion timer.
 
 ## What counts as an edge
 

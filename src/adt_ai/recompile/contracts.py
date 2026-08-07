@@ -26,11 +26,18 @@ from adt_ai.recompile.inventory import (
     SynonymInfo,
     TrailingObject,
 )
+from adt_ai.recompile.root_causes import RootCauseReport
 from adt_ai.shared.db import QueryGateway
 
 # A no-arg factory that returns a fresh gateway, mirroring old ADT's reconnect
 # between the compile loop, the retry pass, and the final re-check.
 GatewayFactory = Callable[[], QueryGateway]
+
+# Maps each still-invalid ``TYPE.NAME`` node to the invalid objects that depend on
+# it, read from ``config/dependencies.db``. The CLI injects one; the default
+# returns nothing, so a runner with no mirror (every unit test, any non-CLI
+# caller) ranks on error evidence alone instead of failing.
+DependentsProvider = Callable[[list[str]], dict[str, list[str]]]
 
 
 @dataclass(frozen=True)
@@ -39,6 +46,10 @@ class RecompileRequest:
     object_type: str = "%"
     prefix: str = ""
     ignore: str = ""
+    # The connected schema. Only the root-cause ranking reads it, to tell an
+    # own-schema qualifier (`DBADMIN.X`, redundant) from a foreign one
+    # (`SYS.X`, a different object that must never resolve to a local invalid).
+    schema: str = ""
     force: bool = False
     native: bool = False
     interpreted: bool = False
@@ -88,6 +99,11 @@ class RecompileResult:
     trailing: list[TrailingObject] = field(default_factory=list)
     trailing_actions: list[TrailingAction] = field(default_factory=list)
     error_details: list[CompileError] = field(default_factory=list)
+    # Which of the still-invalid objects to check first, and which are knock-ons
+    # of another one in the same list (#205). None when the run never got as far
+    # as a re-check (a report-only flag, an empty todo, or a caller that predates
+    # the field).
+    root_causes: RootCauseReport | None = None
     success: bool = True
 
 

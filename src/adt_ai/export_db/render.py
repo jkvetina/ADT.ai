@@ -39,6 +39,7 @@ class ExportDbReporter:
         self,
         database_object: DatabaseObject,
         duplicates: list[str] | None = None,
+        changed_by: str | None = None,
     ) -> None:
         pass
 
@@ -75,7 +76,14 @@ class _AdtTableLayout:
         return line
 
     def row_line(self, values: Sequence[object]) -> str:
-        return self.cells_segment(values, 0, len(self.columns))
+        # Stripped: every cell is padded to its column width and carries a
+        # three-space gutter, the last column included, so an unstripped row ran
+        # three characters (nine on the header) past its visible content. On an
+        # 80-column terminal that invisible tail wrapped and printed as a blank
+        # line under every row — the table read as perfectly aligned one column
+        # wider and shredded one column narrower (ADT #237). Trailing padding
+        # aligns nothing: a cell is placed by what sits to its left.
+        return self.cells_segment(values, 0, len(self.columns)).rstrip()
 
     def header_line(self) -> str:
         return self.row_line([column.upper().replace("_", " ") for column in self.columns])
@@ -87,6 +95,7 @@ def _compute_adt_layout(
     rows: list[dict[str, object]],
     columns: Sequence[str],
     min_widths: Mapping[str, int],
+    numeric_columns: Sequence[str] = (),
 ) -> _AdtTableLayout:
     columns = list(columns)
     widths = [
@@ -97,11 +106,20 @@ def _compute_adt_layout(
         )
         for column in columns
     ]
+    # Detection reads the cells, so a column of quantities that carry a unit —
+    # `75%`, `1.2s` — sniffs as text and prints left-aligned, which is exactly
+    # where a reader most wants the digits to line up. ``numeric_columns`` is the
+    # caller saying what the column *is*, and it wins over what the cells look
+    # like; formatting the value to hide its unit would be the alternative, and
+    # that trades a real alignment problem for an unreadable number.
     numeric = [
-        bool(rows)
-        and all(
-            str(row.get(column, "")).isnumeric() or row.get(column, "") in {None, ""}
-            for row in rows
+        column in numeric_columns
+        or (
+            bool(rows)
+            and all(
+                str(row.get(column, "")).isnumeric() or row.get(column, "") in {None, ""}
+                for row in rows
+            )
         )
         for column in columns
     ]
@@ -112,6 +130,7 @@ def print_adt_table(
     min_widths: Mapping[str, int] | None = None,
     columns: Sequence[str] | None = None,
     leading_blank: bool = True,
+    numeric: Sequence[str] | None = None,
 ) -> None:
     # ``columns`` makes a requested section render even with zero rows: the
     # header and separator still print so the user sees the feature ran (an
@@ -120,7 +139,7 @@ def print_adt_table(
         return
     min_widths = min_widths or {}
     columns = list(rows[0].keys()) if rows else list(columns)
-    layout = _compute_adt_layout(rows, columns, min_widths)
+    layout = _compute_adt_layout(rows, columns, min_widths, numeric or ())
     if leading_blank:
         print()
     print(layout.header_line())
@@ -178,7 +197,11 @@ class ConsoleExportDbReporter(ExportDbReporter):
         print_adt_table(rows)
 
     def recent_note(self, message: str) -> None:
-        print_adt_header(message)
+        # The title is the header; the sentence explaining it is body text. The
+        # whole note used to be the header, so a dashed rule ran the width of a
+        # sentence and the line could not end on a colon (ADT #237).
+        print_adt_header("NO PREVIOUS EXPORT RECORDED:")
+        print(f"  {message}")
 
     def deleted_objects(self, schema: str, objects: list[DatabaseObject]) -> None:
         if not objects:
@@ -191,7 +214,10 @@ class ConsoleExportDbReporter(ExportDbReporter):
 
     def start_export(self, schema: str, total: int) -> None:
         self._last_type_by_schema[schema] = ""
-        print_adt_header("EXPORTING OBJECTS:", f"({total})")
+        # The count reads as part of the sentence rather than a parenthetical
+        # after the colon: `EXPORTING OBJECTS: (61)` put the rule under the label
+        # and left the number dangling past it (ADT #237, Jan's wording).
+        print_adt_header(f"EXPORTING {total} OBJECTS:")
         if self._silent:
             return
         print()
@@ -200,6 +226,7 @@ class ConsoleExportDbReporter(ExportDbReporter):
         self,
         database_object: DatabaseObject,
         duplicates: list[str] | None = None,
+        changed_by: str | None = None,
     ) -> None:
         last_type = self._last_type_by_schema.get(database_object.schema, "")
         object_type = (
@@ -211,6 +238,12 @@ class ConsoleExportDbReporter(ExportDbReporter):
         if self._silent:
             return
         if not duplicates:
+            if changed_by:
+                # Same deliberately ragged shape as [DUPE] below: the object is in
+                # the export because the requested author worked on it, but someone
+                # else changed it last, and an aligned row would hide that.
+                print(f"{object_type:>20} | {database_object.name} [{changed_by}]")
+                return
             print(f"{object_type:>20} | {database_object.name:<54}")
             return
         # One row per stale clone, so the object's every location is visible and
@@ -235,7 +268,9 @@ def _overview_header(
     if changed_since is not None:
         # Watermark mode: the cutoff is a real stored instant from the database
         # clock, so it is shown verbatim rather than re-derived from a day count.
-        show_header = f"CHANGED SINCE {changed_since} (LAST EXPORT)"
+        # Reads as a sentence — what the cutoff *is* comes before the timestamp,
+        # instead of trailing it as a parenthetical gloss (ADT #237).
+        show_header = f"CHANGED SINCE LAST EXPORT AT {changed_since}"
     elif recent_days is None:
         show_header = "OVERVIEW"
     else:
@@ -244,7 +279,12 @@ def _overview_header(
     show_filter = " ".join(names or ["%"])
     show_filter = f" {show_filter} ".replace(" % ", " ").strip()
     if show_filter:
-        show_header = f"{show_header}, FILTER"
+        # The pattern sits beside the word it qualifies rather than after the
+        # colon. It used to trail the whole header (`OBJECTS OVERVIEW, FILTER:
+        # MY_TABLE%`), which put the dashed rule under the label and left the
+        # pattern past its end — and left this header the one that did not
+        # close on a colon (ADT #237).
+        show_header = f"{show_header}, FILTER {show_filter}"
     if authors:
         show_header = f"{show_header}, CHANGED BY {' '.join(authors)}"
-    return f"OBJECTS {show_header}: {show_filter}".rstrip()
+    return f"OBJECTS {show_header}:"

@@ -29,7 +29,7 @@ adtai calendar -branch feat/PROJ-4995-rework
 The output is a **month calendar grid**: weeks are rows, Monday–Friday are columns, and each active day's cell stacks one `<ticket> (<count>)` line per ticket — the ticket id and the number of commits attributed to it on that day. Commits are aggregated per ticket, never listed one row per commit:
 
 ```text
-APEX DEPLOYMENT TOOL: CALENDAR
+APEX DEPLOYMENT TOOL - CALENDAR
 ------------------------------
 
 MONTHLY OVERVIEW: 2026-06 (PROJ)

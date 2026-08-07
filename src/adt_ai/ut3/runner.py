@@ -19,23 +19,30 @@ start (ORA-20215) rather than reporting anything.
 
 from __future__ import annotations
 
+import time
+import uuid
 from dataclasses import dataclass, field
-from xml.etree import ElementTree
 
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.sql_like import matches_sql_like
 from adt_ai.ut3 import queries
 from adt_ai.ut3.inventory import (
+    BLOCKED_NATIVE,
     RESULT_ERRORED,
     RESULT_FAILED,
     RESULT_PASSED,
     RESULT_SKIPPED,
     SKIP_INVALID,
     SKIP_NOT_A_SUITE,
+    CoverageReport,
+    PackageCoverage,
     SuitePackage,
     SuiteTest,
+    SuiteTiming,
     TestOutcome,
 )
+from adt_ai.ut3.junit import in_declaration_order, parse_junit, row_line, unreported
+from adt_ai.ut3.queries.suites import UT_PACKAGE_SUFFIX
 
 # The one annotation type that is a runnable test; the rest of what
 # get_suites_info returns describes the tree around them (UT_SUITE,
@@ -46,15 +53,32 @@ _SUITE_ITEM_TYPE = "UT_SUITE"
 
 @dataclass(frozen=True)
 class Ut3Request:
-    owner   : str
-    names   : tuple[str, ...] = ()
-    refresh : bool = False
+    owner    : str
+    names    : tuple[str, ...] = ()
+    refresh  : bool = False
+    coverage : bool = False
 
 
 @dataclass(frozen=True)
 class Ut3Result:
     packages : tuple[SuitePackage, ...] = field(default_factory=tuple)
     outcomes : tuple[TestOutcome, ...] = field(default_factory=tuple)
+    # None when coverage was never requested — distinct from an empty report,
+    # which means it was requested and nothing came back.
+    coverage : CoverageReport | None = None
+    timings  : tuple[SuiteTiming, ...] = field(default_factory=tuple)
+
+    def seconds_for(self, package: str) -> float | None:
+        """How long that suite took, or None if it never ran.
+
+        None rather than 0.0 for the absent case: a suite that was skipped and a
+        suite that finished instantly are different facts, and the renderer is
+        the one that decides how each looks.
+        """
+        for timing in self.timings:
+            if timing.package == package:
+                return timing.seconds
+        return None
 
     @property
     def passed(self) -> int:
@@ -132,17 +156,122 @@ class Ut3Runner:
                 {"owner": owner},
             )
 
+        # **`-name` selects the suites to run, in every mode.** It used to be
+        # dropped here under `-coverage` and applied only to the printed rows, on
+        # the argument that coverage of a package can come from any suite and
+        # narrowing the run would under-report it. That argument is sound and it
+        # lost anyway (Jan, 2026-08-07): a flag that silently means two different
+        # things is the worse defect, and the symptom was that
+        # `-coverage -name ICT_INT%` ran the whole schema and took the same 38
+        # seconds as `-name ICT%` while appearing to filter. The under-report is
+        # the accepted cost — a package reached only by a suite the pattern
+        # excludes now reads lower than the truth.
         packages = self._discover(owner, request.names)
         self.reporter.discovered(packages)
+
+        # The run id is generated here, not read back from the database, because
+        # `coverage_start` takes it as an IN parameter. Reading back "the newest
+        # coverage run" instead would pick up a concurrent session's rows.
+        coverage_run_id = uuid.uuid4().hex.upper() if request.coverage else ""
+        if coverage_run_id:
+            self.gateway.execute(
+                queries.COVERAGE_START_STATEMENT,
+                {"coverage_run_id": coverage_run_id},
+            )
+
         outcomes: list[TestOutcome] = []
-        for package in packages:
-            if not package.runnable:
+        timings: list[SuiteTiming] = []
+        try:
+            for package in packages:
+                if not package.runnable:
+                    continue
+                self.reporter.suite_begin(package)
+                # Wall clock around the whole call, so the figure covers the
+                # round trip and the suite's own setup — see `SuiteTiming`.
+                started_at = time.monotonic()
+                suite_outcomes = self._run_suite(owner, package)
+                timings.append(
+                    SuiteTiming(package=package.name, seconds=time.monotonic() - started_at)
+                )
+                outcomes.extend(suite_outcomes)
+                self.reporter.suite_end(package, suite_outcomes)
+        finally:
+            # Coverage instrumentation lives on the session, not on the call, so
+            # an exception between start and stop would keep profiling every
+            # later statement this connection runs.
+            if coverage_run_id:
+                self.gateway.execute(queries.COVERAGE_STOP_STATEMENT)
+
+        coverage = (
+            self._coverage(owner, coverage_run_id, packages, tuple(outcomes), request.names)
+            if coverage_run_id
+            else None
+        )
+        return Ut3Result(
+            packages = packages,
+            outcomes = tuple(outcomes),
+            coverage = coverage,
+            timings  = tuple(timings),
+        )
+
+    def _coverage(
+        self,
+        owner: str,
+        coverage_run_id: str,
+        packages: tuple[SuitePackage, ...],
+        outcomes: tuple[TestOutcome, ...],
+        names: tuple[str, ...],
+    ) -> CoverageReport:
+        """Every package in the schema, with what the run measured about it.
+
+        The schema listing leads and the coverage rows are joined onto it, never
+        the other way round: coverage data only describes packages that were
+        executed, so a coverage-first report silently omits the untested package
+        the reader opened the report to find.
+
+        ``names`` filters this listing with the same patterns that already chose
+        the suites in ``run`` — the flag means one thing in both modes, so the
+        report lists the packages the reader named and the run executed the
+        suites they named.
+        """
+        measured = {
+            str(row.get("PACKAGE_NAME") or "").upper(): row
+            for row in self.gateway.fetch_all(
+                queries.PACKAGE_COVERAGE_QUERY,
+                {"coverage_run_id": coverage_run_id, "owner": owner},
+            )
+        }
+        blocked = _blocked_reasons(
+            self.gateway.fetch_all(queries.PACKAGE_COMPILE_SETTINGS_QUERY)
+        )
+        verdicts = _verdicts_by_target(outcomes)
+
+        listed = []
+        for row in self.gateway.fetch_all(queries.SCHEMA_PACKAGES_QUERY):
+            name = str(row.get("OBJECT_NAME") or "")
+            if names and not any(matches_sql_like(name, pattern) for pattern in names):
                 continue
-            self.reporter.suite_begin(package)
-            suite_outcomes = self._run_suite(owner, package)
-            outcomes.extend(suite_outcomes)
-            self.reporter.suite_end(package, suite_outcomes)
-        return Ut3Result(packages=packages, outcomes=tuple(outcomes))
+            found = measured.get(name.upper(), {})
+            verdict = verdicts.get(name.upper(), {})
+            blocks_total = int(found.get("BLOCKS_TOTAL") or 0)
+            listed.append(
+                PackageCoverage(
+                    name           = name,
+                    lines          = int(row.get("LINES") or 0),
+                    passed         = verdict.get(RESULT_PASSED, 0),
+                    failed         = verdict.get(RESULT_FAILED, 0),
+                    errored        = verdict.get(RESULT_ERRORED, 0),
+                    blocks_total   = blocks_total,
+                    blocks_covered = int(found.get("BLOCKS_COVERED") or 0),
+                    lines_covered  = int(found.get("LINES_COVERED") or 0),
+                    # A reason explains silence. Oracle having collected blocks
+                    # for this package is the answer to "could it be measured",
+                    # so a prerequisite that predicts otherwise loses to the data
+                    # rather than overwriting it.
+                    blocked_reason = "" if blocks_total else blocked.get(name.upper(), ""),
+                )
+            )
+        return CoverageReport(packages=tuple(listed))
 
     def _discover(self, owner: str, names: tuple[str, ...]) -> tuple[SuitePackage, ...]:
         # Packages come back A-Z from the dictionary and stay that way; tests are
@@ -200,11 +329,57 @@ class Ut3Runner:
             queries.RUN_SUITE_QUERY,
             {"path": f"{owner}.{package.name}"},
         )
-        document = "\n".join(_row_line(row) for row in rows).strip()
-        outcomes = _parse_junit(package, document)
+        document = "\n".join(row_line(row) for row in rows).strip()
+        outcomes = parse_junit(package, document)
         if outcomes:
-            return _in_declaration_order(package, outcomes)
-        return _unreported(package, document)
+            return in_declaration_order(package, outcomes)
+        return unreported(package, document)
+
+
+def _verdicts_by_target(outcomes: tuple[TestOutcome, ...]) -> dict[str, dict[str, int]]:
+    """``A_UT``'s verdicts are reported on package ``A``'s row.
+
+    **This is a naming-convention lookup, not an execution fact.** Block coverage
+    records which blocks ran, never which test ran them, so no data source can
+    say "this test covered that package". A suite that exercises a package other
+    than its namesake therefore contributes blocks to that package's coverage and
+    no verdicts to its row. That asymmetry is honest — the blocks were measured,
+    the attribution was inferred — and collapsing it would mean inventing an
+    owner for every test.
+
+    ``SKIPPED`` has no column, so a ``%disabled`` test lands in none of the
+    three; its own result row in a plain run still reads ``SKIPPED``.
+    """
+    verdicts: dict[str, dict[str, int]] = {}
+    for outcome in outcomes:
+        name = outcome.package.upper()
+        if not name.endswith(UT_PACKAGE_SUFFIX):
+            continue
+        target = name[: -len(UT_PACKAGE_SUFFIX)]
+        counts = verdicts.setdefault(target, {})
+        counts[outcome.result] = counts.get(outcome.result, 0) + 1
+    return verdicts
+
+
+def _blocked_reasons(rows: list[dict[str, object]]) -> dict[str, str]:
+    """Compile settings that explain why Oracle collected nothing for a package.
+
+    Only ``PLSQL_CODE_TYPE = NATIVE`` qualifies: native compilation strips the
+    instrumentation, so the unit produces no ``dbmspcc_blocks`` rows and the
+    report would otherwise show a bare `-` indistinguishable from untested code.
+
+    ``PLSQL_OPTIMIZE_LEVEL > 1`` was here until a live run disproved it — see
+    ``inventory.BLOCKED_NATIVE``. The caller applies whatever comes back only to
+    packages with no measurement, so this map can never suppress a real figure.
+    """
+    reasons: dict[str, str] = {}
+    for row in rows:
+        name = str(row.get("PACKAGE_NAME") or "").upper()
+        if not name:
+            continue
+        if str(row.get("PLSQL_CODE_TYPE") or "").upper() == "NATIVE":
+            reasons[name] = BLOCKED_NATIVE
+    return reasons
 
 
 def _declaration_order(rows: list[dict[str, object]]) -> dict[tuple[str, str], int]:
@@ -247,23 +422,6 @@ def _in_spec_order(
     )
 
 
-def _in_declaration_order(
-    package: SuitePackage,
-    outcomes: tuple[TestOutcome, ...],
-) -> tuple[TestOutcome, ...]:
-    """Print the verdicts in the package's own order, not the reporter's.
-
-    utPLSQL emits `testcase` elements in whatever order it walked the suite tree,
-    which is its business and not a contract. Discovery already knows the spec
-    order, so the results block, the problem list and the counts all read in the
-    one order Jan can follow against the source. A test utPLSQL ran that
-    discovery never saw keeps its reported position, at the end.
-    """
-    position = {test.name.upper(): index for index, test in enumerate(package.tests)}
-    unknown = len(position)
-    return tuple(sorted(outcomes, key=lambda outcome: position.get(outcome.test.upper(), unknown)))
-
-
 def _skip_reason(status: str, tests: tuple[SuiteTest, ...]) -> str:
     if status.upper() != "VALID":
         return SKIP_INVALID
@@ -274,104 +432,6 @@ def _skip_reason(status: str, tests: tuple[SuiteTest, ...]) -> str:
         # nothing about it.
         return SKIP_NOT_A_SUITE
     return ""
-
-
-def _row_line(row: dict[str, object]) -> str:
-    # The reporter returns a single unnamed column; take whatever it is called
-    # rather than pinning the alias, so a driver that upper-cases or renames it
-    # cannot silently yield an empty document.
-    for value in row.values():
-        return "" if value is None else str(value)
-    return ""
-
-
-def _parse_junit(package: SuitePackage, document: str) -> tuple[TestOutcome, ...]:
-    if not document:
-        return ()
-    try:
-        root = ElementTree.fromstring(document)
-    except ElementTree.ParseError:
-        return ()
-    outcomes = []
-    for case in root.iter("testcase"):
-        result, message = _case_result(case)
-        outcomes.append(
-            TestOutcome(
-                package = package.name,
-                test    = _known_test_name(package, case.get("name") or ""),
-                result  = result,
-                seconds = _seconds(case.get("time")),
-                message = message,
-            )
-        )
-    return tuple(outcomes)
-
-
-def _case_result(case: ElementTree.Element) -> tuple[str, str]:
-    for tag, result in (("failure", RESULT_FAILED), ("error", RESULT_ERRORED)):
-        node = case.find(tag)
-        if node is not None:
-            return result, _node_message(node)
-    if case.find("skipped") is not None:
-        return RESULT_SKIPPED, ""
-    return RESULT_PASSED, ""
-
-
-def _node_message(node: ElementTree.Element) -> str:
-    parts = [node.get("message") or "", (node.text or "").strip()]
-    return "\n".join(part for part in parts if part)
-
-
-def _seconds(value: str | None) -> float | None:
-    try:
-        return float(value) if value else None
-    except ValueError:
-        return None
-
-
-def _known_test_name(package: SuitePackage, reported: str) -> str:
-    """Resolve whatever the reporter called a test back to its procedure name.
-
-    **A JUnit `testcase name` is not an identifier.** utPLSQL puts the `%test`
-    *description* there whenever the annotation carries one — `%test(fails on
-    purpose)` reports as `fails on purpose` — and falls back to the procedure
-    name only for an undescribed test. Printing the reported value verbatim
-    therefore prints prose in a column of identifiers, and prose that cannot be
-    grepped for in the package source, which is the one thing a reader does
-    with a failing test's name.
-
-    `ut_runner.get_suites_info` holds both spellings for every discovered test,
-    so the reported value is matched against the name *and* the description and
-    the **procedure name** is what comes back. The fallback stays the reported
-    string: a test utPLSQL ran but discovery never saw is still worth printing
-    under whatever it called itself.
-    """
-    for test in package.tests:
-        if test.name.upper() == reported.upper():
-            return test.name
-    for test in package.tests:
-        if test.description and test.description.upper() == reported.upper():
-            return test.name
-    return reported
-
-
-def _unreported(package: SuitePackage, document: str) -> tuple[TestOutcome, ...]:
-    """One ERRORED outcome per discovered test when the run reported nothing.
-
-    A suite that produced no parsable result did not pass — it did not run. The
-    reporter's raw output rides along as the message, because that is where the
-    real cause (an ORA on the producer side, a truncated document) shows up.
-    """
-    message = document or "the reporter returned no output"
-    return tuple(
-        TestOutcome(
-            package = package.name,
-            test    = test.name,
-            result  = RESULT_ERRORED,
-            message = message,
-        )
-        for test in package.tests
-    )
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

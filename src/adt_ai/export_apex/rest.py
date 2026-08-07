@@ -85,6 +85,31 @@ def _plsql_block(lines: list[str]) -> str:
     body = "\n".join(list(filter(None, lines)))
     return f"BEGIN\n{body}\nEND;\n/\n"
 
+# An unbounded SQLcl call is what "the REST export just keeps going" means: the
+# child is left to sit for as long as it likes and the only visible sign is a
+# crawling progress bar (Jan, 2026-08-07). One minute is the budget a REST
+# export is expected to fit in; `rest_timeout_seconds` in the project config
+# raises it for a schema that genuinely publishes more. Deliberately scoped to
+# this one call — `patch -deploy` runs for minutes by design and must stay
+# unbounded.
+DEFAULT_REST_TIMEOUT_SECONDS = 60
+
+
+def rest_timeout_seconds(config: Mapping[str, object]) -> int:
+    """The REST export's SQLcl deadline, in seconds.
+
+    A missing, non-numeric, or non-positive value falls back to the default
+    rather than disabling the deadline: `rest_timeout_seconds: 0` reads as a
+    mistake, and honouring it would restore the unbounded run this exists to
+    end.
+    """
+    try:
+        value = int(config.get("rest_timeout_seconds"))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_REST_TIMEOUT_SECONDS
+    return value if value > 0 else DEFAULT_REST_TIMEOUT_SECONDS
+
+
 def _rest_prefixes(config: Mapping[str, object]) -> list[str]:
     value = config.get("apex_rest_prefixes")
     if value is None:

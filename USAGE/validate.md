@@ -83,7 +83,7 @@ This is also a live hazard in existing repos: a tree whose `shared-components/st
 One streamed row per folder — the label appears before the compile starts, the result after it finishes — then one `ERRORS:` section per folder that has any:
 
 ```text
-APEX DEPLOYMENT TOOL: VALIDATE
+APEX DEPLOYMENT TOOL - VALIDATE
 ------------------------------
 
 VALIDATING:

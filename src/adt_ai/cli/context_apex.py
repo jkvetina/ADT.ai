@@ -185,6 +185,22 @@ def _apex_actions(
             actions[action] = True
     return actions
 
+def _apex_explicit_actions(args: argparse.Namespace) -> frozenset[str]:
+    """The formats the user named by their own flag.
+
+    `_apex_actions` folds `-all` and the individual flags into one
+    `dict[str, bool]`, which is the right shape for "export this" but loses
+    *why* a format is selected. Some output is owed only to a format the user
+    asked for by name — the APEXlang pre-26.1 skip row is a notice about
+    something `-all` never requested (ADT #235) — so the distinction is carried
+    rather than re-derived downstream. Empty under `-all`, by construction.
+    """
+    if getattr(args, "all_formats", False):
+        return frozenset()
+    return frozenset(
+        action for action in APEX_EXPORT_ACTIONS if getattr(args, action, False)
+    )
+
 def _apex_recent_report_only(
     args: argparse.Namespace,
     actions: Mapping[str, bool],

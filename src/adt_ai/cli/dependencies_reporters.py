@@ -30,7 +30,7 @@ def _print_dependency_list(
         print("\n".join(lines))
         return 0
     heading = "USES" if relation == "uses" else "USED BY"
-    print_adt_header(f"{heading}: {query} ({len(items)})")
+    print_adt_header(f"{heading} {query} ({len(items)}):")
     if items:
         print_adt_table([split_object_row(item) for item in items])
     else:
@@ -87,7 +87,7 @@ def _print_dependency_impact(
             )
         print("\n".join(lines))
         return 0
-    print_adt_header(f"IMPACT: {query} ({len(items)})")
+    print_adt_header(f"IMPACT OF {query} ({len(items)}):")
     if items:
         print_adt_table(
             [{**split_object_row(node), "DEPTH": depth} for node, depth in items]
@@ -95,7 +95,7 @@ def _print_dependency_impact(
     else:
         print("  (none)")
     if columns:
-        print_adt_header(f"AFFECTED COLUMNS ({len(columns)})")
+        print_adt_header(f"AFFECTED COLUMNS ({len(columns)}):")
         print_adt_table(
             [
                 {
@@ -107,7 +107,7 @@ def _print_dependency_impact(
             ]
         )
     if apex:
-        print_adt_header(f"APEX CALLERS ({len(apex)})")
+        print_adt_header(f"APEX CALLERS ({len(apex)}):")
         print_adt_table(
             [
                 {
@@ -171,13 +171,13 @@ def _print_foreign_key_tree(
         print("\n".join(lines))
         return 0
 
-    print_adt_header(f"REFERENCES: {query} ({len(references)})")
+    print_adt_header(f"REFERENCES TO {query} ({len(references)}):")
     if references:
         print_adt_table(_foreign_key_tree_table_rows(references))
     else:
         print("  (none)")
     if dependencies:
-        print_adt_header(f"DEPENDENCIES: {query} ({len(dependencies)})")
+        print_adt_header(f"DEPENDENCIES OF {query} ({len(dependencies)}):")
         print_adt_table(_foreign_key_tree_table_rows(dependencies))
     return 0
 
@@ -220,7 +220,7 @@ def _print_dependency_age(
         )
         print("\n".join(lines))
         return 0
-    print_adt_header(f"DEPENDENCY AGE ({len(rows)})")
+    print_adt_header(f"DEPENDENCY AGE ({len(rows)}):")
     if rows:
         print_adt_table(
             [

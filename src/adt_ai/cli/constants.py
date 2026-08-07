@@ -77,7 +77,7 @@ from adt_ai.shared.config import ConfigError, ConfigLoader
 from adt_ai.shared.connections import ConnectionError as ConnectionConfigError
 from adt_ai.shared.connections import ConnectionLoader, ConnectionResult
 from adt_ai.shared.db import OracleGateway, QueryGateway
-from adt_ai.shared.progress import DROPBOX_PATH_RE, DottedProgressBar
+from adt_ai.shared.progress import DROPBOX_PATH_RE, DottedProgressBar, print_module_banner
 from adt_ai.shared.queries import (
     APEX_VERSION_QUERY,
     DATABASE_VERSION_OLD_QUERY,

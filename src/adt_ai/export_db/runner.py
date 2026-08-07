@@ -209,7 +209,6 @@ class ExportDbRunner:
             changed_since = stored if is_bare_recent(request.recent) else None
             if is_bare_recent(request.recent) and stored is None:
                 reporter.recent_note(
-                    f"RECENT: no previous export recorded for "
                     f"{request.environment or '?'}/{schema} — exporting all objects"
                 )
             database_objects = discovery.discover(
@@ -222,14 +221,29 @@ class ExportDbRunner:
                 changed_since = changed_since,
                 prefer_exact_names = True,
             )
+            # Objects the requested authors touched but somebody else changed last.
+            # They stay in the export — dropping them would silently lose work the
+            # author really did — and are marked with the later author instead.
+            overtaken_by: dict[str, str] = {}
             if request.authors is not None:
                 audit = _audit_config(request.config)
-                author_names = discovery.authors_objects(audit, request.authors)
+                author_objects = discovery.authors_objects(
+                    audit,
+                    request.authors,
+                    recent_days   = request.recent_days,
+                    changed_since = changed_since,
+                )
                 database_objects = [
                     database_object
                     for database_object in database_objects
-                    if database_object.name.upper() in author_names
+                    if database_object.name.upper() in author_objects
                 ]
+                requested_authors = {author.upper() for author in request.authors}
+                overtaken_by = {
+                    name: last_changed_by
+                    for name, last_changed_by in author_objects.items()
+                    if last_changed_by and last_changed_by not in requested_authors
+                }
             if not has_exact_name_filter(request.names):
                 reporter.overview(
                     schema,
@@ -275,6 +289,7 @@ class ExportDbRunner:
                             resolver.display_path(location)
                             for location in resolver.duplicate_locations(database_object)
                         ],
+                        changed_by = overtaken_by.get(database_object.name.upper()),
                     )
                 raw_ddl = discovery.ddl(database_object)
                 content = normalize_ddl(

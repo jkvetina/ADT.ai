@@ -17,6 +17,11 @@ class ApexExportRequest:
     applications: dict[str, list[ApexApplication]]
     actions     : Mapping[str, bool]
     config      : Mapping[str, object]
+    # The formats the user named by their own flag, empty under `-all`.
+    # `actions` says what to export; this says what was asked for *by name*,
+    # which is what entitles a format to explain itself on the console (ADT
+    # #235). Defaults to "nothing was named", so the quiet path is the default.
+    explicit_actions: frozenset[str] = frozenset()
     release     : str | None = None
     # None (no recent filter), an int day window, or BARE_RECENT (since the last
     # export of this app+format).

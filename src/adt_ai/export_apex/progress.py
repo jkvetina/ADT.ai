@@ -41,7 +41,14 @@ class ConsoleApexProgressReporter:
             result = pool.apply_async(operation)
             while not result.ready():
                 progress = self._print_progress(header, progress, target_seconds, started_at)
-            result.get()
+            try:
+                result.get()
+            except BaseException:
+                # The visible failure has to sit on the row being worked, and
+                # the row has to end, or the error banner below it loses its
+                # blank line to the unterminated progress write (ADT #232).
+                self._print_failed(header)
+                raise
         elapsed = time.monotonic() - started_at
         self._print_done(header, elapsed)
         return elapsed
@@ -64,6 +71,9 @@ class ConsoleApexProgressReporter:
 
     def _print_done(self, header: str, elapsed: float) -> None:
         self._print_line(header, 100, int(elapsed), close=True)
+
+    def _print_failed(self, header: str) -> None:
+        self._progress.print_failed(header)
 
     def _print_line(
         self,

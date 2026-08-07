@@ -168,7 +168,7 @@ adtai recompile -env DEV -jobs -name APP%
 
 The command reads the object overview, recompiles invalid (or all, with `-force`) objects, retries failures in reverse order on a fresh connection, then re-checks what is still invalid. The shared Oracle connection bootstrap sets `DDL_LOCK_TIMEOUT = 10` immediately before `STARTUP.sql`, so object-lock waits are bounded by default while still letting project startup override the value. If there is nothing to compile, it keeps the initial overview and skips the final re-check. It prints an OBJECTS OVERVIEW table with columns `OBJECT TYPE`, `TOTAL`, `VALIDATED`, `INVALID`, `MISSING IDENTIFIERS`, and `MISSING STATEMENTS` and, when objects remain invalid, a single INVALID OBJECTS section sourced from `user_errors`, then exits non-zero.
 
-`VALIDATED` sits immediately before `INVALID` so the two read as a pair — what the run fixed, and what it could not. It counts the objects of that type that were **invalid before the run and are not any more**, and it is a set difference over object identity, not a before/after count delta: recompiling a package spec invalidates its dependents, so a run that fixes one object and breaks another leaves the `INVALID` count unchanged, and a delta would report that repair as nothing happening. Zero renders blank, exactly as `INVALID` already does, so only real repairs draw the eye. Without `-force` the baseline is free — the invalid set is the recompile list itself; `-force` sweeps valid objects too, so it reads the baseline separately, after the force selection. The first table lists each invalid object once with `ID`, `OBJECT TYPE`, `OBJECT NAME`, the final compile-error code in `ERROR`, and the per-object `ERRORS` count. The adjacent message table uses columns `ID`, `LINE`, `POS`, and `ERROR MESSAGE`, repeats the object `ID` for every compile-error row, sorts by `ID`, `LINE`, and `POS`, has two empty lines above it, and trims long messages so each rendered row stays within 80 characters. Parity gaps vs old ADT: outside `-mviews`/`-synonyms`/`-disabled`/`-jobs` the OBJECTS OVERVIEW table always prints (old ADT showed it only under `__main__`) and there is no Slack-style team notification.
+`VALIDATED` sits immediately before `INVALID` so the two read as a pair — what the run fixed, and what it could not. It counts the objects of that type that were **invalid before the run and are not any more**, and it is a set difference over object identity, not a before/after count delta: recompiling a package spec invalidates its dependents, so a run that fixes one object and breaks another leaves the `INVALID` count unchanged, and a delta would report that repair as nothing happening. Zero renders blank, exactly as `INVALID` already does, so only real repairs draw the eye. Without `-force` the baseline is free — the invalid set is the recompile list itself; `-force` sweeps valid objects too, so it reads the baseline separately, after the force selection. The table lists each invalid object once with `OBJECT TYPE`, `OBJECT NAME`, the final compile-error code in `ERROR`, and the per-object `ERRORS` count. The messages follow it as a `COMPILE ERRORS:` list rather than a second table — one `  <OBJECT TYPE>.<OBJECT NAME>` stanza per object, then one `    - <line>.<pos> <message>` line per distinct error. Parity gaps vs old ADT: outside `-mviews`/`-synonyms`/`-disabled`/`-jobs` the OBJECTS OVERVIEW table always prints (old ADT showed it only under `__main__`) and there is no Slack-style team notification.
 
 There is no lock report. `recompile` used to print a LOCKED OBJECTS table naming the session holding a lock on an object it could not compile, but that read `gv$locked_object`, and the application schema ADT.ai connects as holds no `SELECT` on the `V_$`/`GV_$` views behind those synonyms — that is a DBA grant, not a setting. Oracle offers no unprivileged substitute (`DBA_DDL_LOCKS`, `DBA_BLOCKERS` and plain `V$LOCKED_OBJECT` are all in the same class), so the report was removed rather than kept as a table most connections could never see. Nothing is lost operationally: the shared connection bootstrap sets `DDL_LOCK_TIMEOUT = 10`, so a lock wait is bounded, and an object that stays locked surfaces as its own compile error in INVALID OBJECTS. `-mviews` is a materialized-view-focused run: it **skips the usual invalid-object recompile and the OBJECTS OVERVIEW report** (and the INVALID OBJECTS table) entirely, keeping only the materialized-view sections. With `-mviews`, the command always prints a MATERIALIZED VIEWS table — object name, a combined `STATUS` cell (`<staleness> / <compile state>`, e.g. `FRESH / VALID`), a resolved refresh `TYPE` of `F` (FAST) or `C` (COMPLETE), a `LOG` column, last refreshed at, and a `TIMER`. `TYPE` is derived from the MV's **configured** refresh method (the stable method the view was created with, never the volatile last-refresh type, and the tool never changes it): COMPLETE → `C`, FAST → `F`, and a `FORCE` method resolves to `F` when a usable materialized-view log backs it or `C` when none does — so the column is always a clean F/C. `LOG` shows `Y` when a usable MV log exists on the view's detail (master) tables (`user_mview_detail_relations` joined to `user_mview_logs`) and blank otherwise; this is what resolves a `FORCE` method to F vs C. `TIMER` is Oracle's **own recorded** refresh duration — `ROUND(86400 * (last_refresh_end_time - last_refresh_date))` from the data dictionary, not a tool-measured wall clock — re-read after any action so it reflects the refresh just performed, and rendered as a rounded-up bare `Ns`: any real measurement rounds **up** to whole seconds, so a genuinely sub-second refresh reads as `1s` (never `0`, never a `<`/`>` comparator) and an N-second refresh as `Ns`. (The dictionary times the difference of two `DATE` columns at one-second granularity, so a sub-second refresh records an honest `0`; rounding that 0 up to `1s` shows a real — if brief — measurement instead of a misleading bare `0` or a blank cell.) The cell is blank **only** when the timer is `NULL` — a materialized view that has never been refreshed. The command then acts on the views: invalid/needs-compile MVs get `ALTER MATERIALIZED VIEW … COMPILE` and stale/unusable MVs get `DBMS_MVIEW.REFRESH` using the view's **own** configured method (so a COMPLETE view is never flipped to FAST; a `FORCE` view passes `?` and lets Oracle decide FAST-vs-COMPLETE at runtime). The MATERIALIZED VIEWS table is rendered as a live stream: each view's name prints first, the `COMPILE`/`REFRESH` for that view runs at that point, and only then does the rest of its row (status, type, log, last refreshed at, timer) print — so the visible pause while a view refreshes attaches to the view being worked on, right where its name already sits, instead of stalling on the connection block above the table. When the schema owns no materialized views the table still prints (header only, no rows) so you can see the report ran. Any failed action is listed below the MATERIALIZED VIEWS table as `  <NAME>) <error>` and makes the run exit non-zero. `-mviews` is scoped by the shared `-name` filter: bare `-mviews` reports all materialized views, while `-mviews -name DEP%` reports only those whose name matches `DEP%` (supports `%` wildcards). It carries no name pattern of its own, and `-type` has nothing to select here — the flag already opts in exactly one object class. With `-force`, every matching materialized view is `REFRESH`-ed regardless of staleness, not just the stale/unusable ones.
 
@@ -181,7 +181,7 @@ There is no lock report. `recompile` used to print a LOCKED OBJECTS table naming
 
 `-trailing` fixes the export noise `export_db` creates. `export_db` strips trailing whitespace from every line it writes, so an untouched 10k-line package still differs from the database's stored source on every single export. `-trailing` repairs the *source* side once per schema: it finds objects whose stored source carries trailing whitespace and rewrites them without it, so the database matches what `export_db` writes and the noise is gone for good. Like `-synonyms`/`-disabled`/`-jobs` it skips the invalid-object recompile, the OBJECTS OVERVIEW, the INVALID OBJECTS table, and the materialized-view pass.
 
-**`-trailing` strips.** There is no preview mode and no second flag to confirm with: asking for `-trailing` is asking for the fix. It **lists each rewritten object as it goes**, the same way `export_db` lists the objects it acts on: an `UPDATED OBJECTS: (n)` header, then one `TYPE | NAME` row per object with the type cell printed only when it changes, so a run of one type reads as a group. Each row prints before that object's rewrite runs, so a visible pause sits on the object being worked on. A clean schema prints `UPDATED OBJECTS: (0)`, which is the proof the pass ran. `-silent` suppresses the per-object rows while keeping the header — it drops per-row detail only, never required chrome.
+**`-trailing` strips.** There is no preview mode and no second flag to confirm with: asking for `-trailing` is asking for the fix. It **lists each rewritten object as it goes**, the same way `export_db` lists the objects it acts on: an `UPDATED <n> OBJECTS:` header, then one `TYPE | NAME` row per object with the type cell printed only when it changes, so a run of one type reads as a group. Each row prints before that object's rewrite runs, so a visible pause sits on the object being worked on. A clean schema prints `UPDATED 0 OBJECTS:`, which is the proof the pass ran. `-silent` suppresses the per-object rows while keeping the header — it drops per-row detail only, never required chrome.
 
 The safety here is structural rather than a confirmation prompt: an object with nothing to strip is never touched, and stripping trailing whitespace cannot change what the code does. Scope the run with `-type`/`-name` if you want a smaller blast radius.
 
@@ -209,7 +209,89 @@ What `-trailing` guarantees, and why:
 
 `CREATE OR REPLACE` invalidates dependents, so follow a `-trailing` sweep with a plain `adtai recompile` pass. Any failed rewrite is listed below the table as `  <NAME>) <error>` and makes the run exit non-zero, matching the `-mviews` failed-action shape.
 
-Whenever a normal recompile run leaves invalid objects, ADT.ai prints a single INVALID OBJECTS section so an AI agent or developer can see the invalid object and jump to the detailed offending line without passing a separate flag. The object table has one row per invalid object; the detail table below carries the line, position, and trimmed message rows keyed back to the object `ID`. It uses the same scope and warning filter as the invalid-object summary did (PL/SQL warnings are skipped). Each report header has exactly two blank lines above it.
+Whenever a normal recompile run leaves invalid objects, ADT.ai prints an INVALID OBJECTS table and a COMPILE ERRORS list below it, so an AI agent or developer can see the invalid object and jump to the offending line without passing a separate flag. The table has one row per invalid object; the list carries the messages, one stanza per object. It uses the same scope and warning filter as the invalid-object summary did (PL/SQL warnings are skipped). Each report header has exactly two blank lines above it.
+
+The messages are a list because a compiler message is prose and a table column is not. Until `#212` they were a fourth column in an `ID | LINE | POS | ERROR MESSAGE` table, where the widest column went to an `ID` that existed only to point back at the listing above and the message got whatever was left — live, that truncated `insufficient privilege to access object SSO_AUTH.SSO` to `…object SSO...`, which names nothing to grant. Keyed on the object instead, the cross-reference disappears, the `ID` column leaves the whole report with it, and the width goes to the text:
+
+```text
+COMPILE ERRORS
+--------------
+
+  PROCEDURE.CREATE_APEX_SESSION
+    - 19.14 PLS-00904: insufficient privilege to access object SSO_AUTH.SSO
+    - 20.14 PLS-00904: insufficient privilege to access object SSO_AUTH.AUTHMAN
+
+  PACKAGE BODY.UT_UTILS
+    - 0.0 PL/SQL: Compilation unit analysis terminated
+    - 1.14 PLS-00304: cannot compile body of 'UT_UTILS' without its
+           specification
+    - 1.14 PLS-00905: object DBADMIN.UT_UTILS is invalid
+```
+
+Four rules shape the list, all of them measured against a live 17-invalid schema:
+
+- **The heading is `<OBJECT TYPE>.<OBJECT NAME>`, never the bare name.** That schema carries `UT_UTILS` as both a `PACKAGE` and a `PACKAGE BODY` — two objects with different errors, which a name-keyed stanza would merge.
+- **Cascade rows never print.** Oracle files a `PL/SQL: Statement ignored`, `PL/SQL: SQL Statement ignored` or `PL/SQL: Compilation unit analysis terminated` beside every statement the real error killed, so one missing grant can contribute ten. `CREATE_APEX_SESSION2` filed 20 error rows, 7 of them cascades, and reads as 3 lines. All three are restatements of a failure reported next to them, and the same predicate that keeps them out of the root-cause ranking keeps them off the screen.
+- **A repeated message prints once, at its lowest `line.pos`.** A missing grant referenced eight times is one thing to fix, not eight. Deduping compares the **full** message — the old table compared what it rendered, where `…object SSO...` and `…object SER...` had already been truncated to the same prefix and would have collapsed into one.
+- **Dedupe is per object.** Two objects failing on the same grant both say so; only a repeat *within* one object is a duplicate.
+
+A message too long for one line wraps under a hanging indent aligned to the message start, and is never cut — outside a table column there is no cell to fit, and `PLS-00103: Encountered the symbol "-" when expecting o...` names no symbol the reader can act on. Each message is still stripped on both sides with interior line breaks collapsed first: `user_errors.text` keeps whatever whitespace the compiler wrote, which is what makes the dedupe key stable and lets the wrapper own every line break.
+
+### Root causes — where to start
+
+A flat list stops helping once it is long. Drop a sequence and the package that used it goes invalid, then the trigger and the view that used *that*: twenty rows where three are the actual damage. So a run that leaves invalid objects prints a **ROOT CAUSES** section, separating the objects that are broken from the ones that are merely downstream. There is no flag — the same reasoning that makes INVALID OBJECTS unconditional applies here.
+
+It reads **after** INVALID OBJECTS and its compile-error list, not before. The verdict belongs under the evidence it is drawn from. A normal run's section order is therefore `OBJECTS OVERVIEW:` → `INVALID OBJECTS:` → `COMPILE ERRORS:` → `ROOT CAUSES:`, which is the last section of the report.
+
+This is a real run against a schema carrying 17 invalid objects, trimmed to the interesting rows:
+
+```text
+ROOT CAUSES
+-----------
+
+  OBJECT TYPE    OBJECT NAME                    CAUSE     BLAST
+  ------------   ----------------------------   -------   -----
+  LIBRARY        XMLTYPE_LIB                    SOURCE        1
+  PACKAGE        UT_COVERAGE_HELPER_BLOCK       MISSING       1
+  PACKAGE        UT_UTILS                       MISSING       1
+  PROCEDURE      CREATE_APEX_SESSION2           GRANT
+  PACKAGE BODY   A_GEN_SOAP                     MISSING
+  PROCEDURE      CHECK_ITEMS_TO_SUBMIT          MISSING
+  VIEW           V_DATAPUMP_EXPORT_GROUPS       MISSING
+
+  MISSING - not there; restore it, then recompile:
+    PACKAGE.UT_COVERAGE_HELPER_BLOCK -> UT_COVERAGE_HELPER.T_UNIT_LINE_CALLS
+    PACKAGE.UT_UTILS -> UT_OBJECT_NAMES
+    PROCEDURE.CHECK_ITEMS_TO_SUBMIT -> apex_200100.wwv_flow_page_da_events
+    VIEW.V_DATAPUMP_EXPORT_GROUPS -> WM_CONCAT
+    PACKAGE BODY.A_GEN_SOAP -> Z_SOAP_OUTPUT
+
+  GRANT - it exists and this schema has no privilege on it:
+    PROCEDURE.CREATE_APEX_SESSION2 -> SSO_AUTH.SSO
+
+  SOURCE - its own source does not parse; nothing upstream to fix.
+```
+
+The knock-ons are **not** listed. They are still classified — that is what keeps them out of the ranked table and what `BLAST` counts — but they get no section of their own. `#205` gave them a `DERIVED - DO NOT START HERE` list on the reasoning that an object vanishing from a report reads as fixed; INVALID OBJECTS above already names every one of them, so the section restated a list the reader had just finished. On the run above, `TYPE.SFM_STR_AGG_TYPE` and the two package bodies are absent here and present there.
+
+Every verdict heading carries **exactly one** empty line above it, the first included, so three stanzas read as three answers rather than one block. The ranked table already closes with a blank line, so the first heading takes that one and only the headings after it emit their own — `#209` emitted one unconditionally, which gave the first heading two.
+
+Each entry names its own object as `<OBJECT TYPE>.<OBJECT NAME>` and points at what it needs. There is no `ID` column anywhere in the report: it existed only to join these sections to the INVALID OBJECTS listing, and the compile-error list is keyed on the object itself, so the cross-reference is gone. `BLAST` counts the invalid objects that clear transitively once this one compiles — blank for none — and orders the table: most downstream damage first, ties broken by error count.
+
+What to fix is listed **below** the table, grouped by verdict, rather than in a column: a qualified culprit such as `UT_COVERAGE_HELPER.T_UNIT_LINE_CALLS` is 36 characters, and with a 28-character object name in the table there are nine left at 80 columns — a truncated `Z_SOAP...` answers nothing. Each heading doubles as the verdict's definition:
+
+- **MISSING** — an object or identifier it needs is not there. The listed name is what to restore.
+- **GRANT** — the object exists and this schema has no privilege on it (`PLS-00904`, `ORA-01031`). No amount of recompiling fixes this one; it needs a `GRANT`, and reading it as MISSING sends you hunting for something that is already there.
+- **SOURCE** — the object's own text does not parse (`PLS-00103`). It names nothing because there is nothing upstream: the heading is the whole answer, so no list follows it.
+- **UNKNOWN** — invalid with no compile error to explain it (a view invalidated by a dropped dependency can carry no `user_errors` row at all). Also listless.
+
+The ranking reads three sources, because no one of them is enough:
+
+- **The compile errors.** Oracle usually names the culprit outright, and whether that culprit is *itself* invalid is what separates a knock-on from a root. `PLS-00905: object DBADMIN.UT_UTILS is invalid` on a package body, where the spec is also in the list, is derived — fix the spec. `PLS-00201: identifier 'UT_OBJECT_NAMES' must be declared`, where nothing by that name is invalid, means it is not there at all, which *is* the root. An owner prefix is stripped only when it is the connected schema's own: `SYS.XMLTYPE_LIB` is a different object from a local `XMLTYPE_LIB`, and collapsing the two would report a separate root as a knock-on. Cascade rows (`PL/SQL: Statement ignored`, `Compilation unit analysis terminated`) are excluded from the error count — Oracle emits one per statement it gave up on, so counting them ranks the noisiest object above the most upstream one.
+- **The stored source**, for the errors that name nothing. `ORA-00942: table or view does not exist` reports no object, and Oracle records no `USER_DEPENDENCIES` row for a reference that never resolved — so the graph cannot name it either. The error's own line and position can: that is where the compiler was looking, and the identifier is read back from `user_source` for exactly those lines, never the whole object.
+- **The dependency mirror**, `config/dependencies.db`. Read offline and never refreshed by `recompile`, it supplies the edges no error text carries — the invalid package that breaks two other invalid objects without any of their messages naming it. This is what makes `BLAST` meaningful. A project with no mirror, or one that predates the schema, ranks on the compile errors alone; it is never an error. Keep it current with `adtai dependencies -refresh -schema <SCHEMA>`.
+
+Derived objects are listed rather than hidden: an object that vanishes from a report reads as fixed. Each line names what it waits on, so the chain is visible without re-reading every message.
 
 ## Arguments
 

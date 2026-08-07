@@ -13,23 +13,65 @@ def audit_authors_query(
     source: str,
     object_name_column: str,
     changed_by_column: str,
+    changed_at_column: str | None = None,
 ) -> str:
-    """Build the DISTINCT-object-name query against a project's configured audit view.
+    """Build the object-name query against a project's configured audit view.
 
     ``source``/``object_name_column``/``changed_by_column`` come from config and are
     interpolated as identifiers (validated first); the author list is bound via
     ``:authors`` using the same APEX_STRING.SPLIT pattern as the other list binds.
+
+    ``changed_at_column`` is the optional 4th ``audit:`` key. Without it a DDL log
+    carries no ordering, so the query can only answer *ever touched* — every object
+    the author appears on, in any row. With it the query also reports each object's
+    **latest** author (``LAST_CHANGED_BY``), which is what lets the caller mark an
+    object someone else changed after you, and it accepts the same ``:recent_days``
+    / ``:changed_since`` window the object listing uses, so ``-my -recent 1`` asks
+    one coherent question instead of ANDing two unrelated sources.
     """
-    for identifier in (source, object_name_column, changed_by_column):
+    identifiers = [source, object_name_column, changed_by_column]
+    if changed_at_column is not None:
+        identifiers.append(changed_at_column)
+    for identifier in identifiers:
         if not _AUDIT_IDENTIFIER_RE.match(identifier):
             raise ValueError(f"invalid audit identifier: {identifier!r}")
-    return f"""
+    if changed_at_column is None:
+        return f"""
 SELECT DISTINCT UPPER({object_name_column}) AS object_name
 FROM {source}
 WHERE UPPER({changed_by_column}) IN (
     SELECT UPPER(TRIM(column_value))
     FROM TABLE(APEX_STRING.SPLIT(TRIM(BOTH ',' FROM :authors), ','))
 )
+""".strip()
+    # The window is applied in the inner query, before the ranking. That is safe
+    # rather than distorting: the window is a floor (``>= cutoff``), so no row can
+    # exist after it and be excluded — the last row inside the window is the last
+    # row, full stop. The author tiebreak keeps the ranking deterministic when two
+    # rows share a timestamp, which a per-second DDL log routinely produces.
+    return f"""
+SELECT object_name, MAX(last_changed_by) AS last_changed_by
+FROM (
+    SELECT
+        UPPER({object_name_column}) AS object_name,
+        UPPER({changed_by_column}) AS changed_by,
+        LAST_VALUE(UPPER({changed_by_column})) OVER (
+            PARTITION BY UPPER({object_name_column})
+            ORDER BY {changed_at_column}, UPPER({changed_by_column})
+            ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+        ) AS last_changed_by
+    FROM {source}
+    WHERE (:recent_days IS NULL OR {changed_at_column} >= SYSDATE - :recent_days)
+    AND (
+        :changed_since IS NULL
+        OR {changed_at_column} >= TO_DATE(:changed_since, 'YYYY-MM-DD HH24:MI:SS')
+    )
+)
+WHERE changed_by IN (
+    SELECT UPPER(TRIM(column_value))
+    FROM TABLE(APEX_STRING.SPLIT(TRIM(BOTH ',' FROM :authors), ','))
+)
+GROUP BY object_name
 """.strip()
 
 

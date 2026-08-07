@@ -13,6 +13,7 @@ from adt_ai.cli.constants import (
     GatewayFactory,
     QueryGateway,
     print_adt_header,
+    print_module_banner,
 )
 from adt_ai.cli.context import (
     ApexAppSelection,
@@ -148,7 +149,7 @@ def _run_dependencies(
     # other command; machine output (-format yaml/md) keeps stdout pure data and
     # sends the chrome to stderr so it stays pipeable.
     chrome = sys.stdout if args.format == "table" else sys.stderr
-    print_adt_header("APEX DEPLOYMENT TOOL: DEPENDENCIES", file=chrome)
+    print_module_banner("DEPENDENCIES", file=chrome)
 
     root    = Path(args.root).expanduser().resolve()
     db_path = root / "config" / "dependencies.db"
@@ -324,14 +325,19 @@ def _refresh_dependency_index(
             labels = _apex_app_labels(apps, discovered_apps)
             segment_app_labels = dict(zip(apps, labels, strict=True))
             if is_schema_segment:
-                scope_bits = [schema, ", ".join(f"APEX APP {label}" for label in labels)]
-                print_adt_header(f"REFRESHING: {' | '.join(scope_bits)}")
+                apex_apps = ", ".join(f"APEX APP {label}" for label in labels)
+                print_adt_header(
+                    f"REFRESHING {schema.upper()} SCHEMA AND {apex_apps}:"
+                )
             else:
                 # Same shape export_apex prints before its own per-app export loop:
                 # one APEX APPLICATIONS: table instead of a flat comma-joined banner.
                 ConsoleApexRevealReporter().applications(schema, discovered_apps)
         elif is_schema_segment:
-            print_adt_header(f"REFRESHING: {schema}")
+            # The schema is uppercased into the sentence rather than trailing a
+            # colon: `REFRESHING: ict_owner` left the dashed rule stopping at the
+            # colon, one word short of the line it was underlining (ADT #237).
+            print_adt_header(f"REFRESHING {schema.upper()} SCHEMA:")
 
         runner.refresh(
             DependencyIndexRequest(

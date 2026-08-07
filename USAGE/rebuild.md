@@ -101,7 +101,7 @@ adtai rebuild -reveal feat 4995 -since 2026-05-01 -limit 5
 Once the list shows the branch you want, add `-switch [N]` to check the working tree out to it. `N` is the 1-based rank in the filtered list (bare `-switch` means `-switch 1`). The branch list is **not** printed in switch mode — instead the report shows the branch you switched to and its recent commits:
 
 ```text
-APEX DEPLOYMENT TOOL: REBUILD
+APEX DEPLOYMENT TOOL - REBUILD
 -----------------------------
 
 BRANCH SWITCHED:

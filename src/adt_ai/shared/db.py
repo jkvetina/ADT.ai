@@ -86,7 +86,12 @@ class QueryGateway(Protocol):
     ) -> None:
         ...
 
-    def sqlcl_request(self, request: str, root: Path) -> str:
+    def sqlcl_request(
+        self,
+        request: str,
+        root: Path,
+        timeout_seconds: float | None = None,
+    ) -> str:
         ...
 
 
@@ -102,6 +107,7 @@ class FakeGateway:
         self.read_only_queries: list[tuple[str, dict[str, Any]]] = []
         self.statements: list[tuple[str, dict[str, Any]]] = []
         self.sqlcl_requests: list[tuple[str, Path]] = []
+        self.sqlcl_timeouts: list[float | None] = []
 
     def fetch_all(
         self,
@@ -126,8 +132,14 @@ class FakeGateway:
     ) -> None:
         self.statements.append((sql, dict(params or {})))
 
-    def sqlcl_request(self, request: str, root: Path) -> str:
+    def sqlcl_request(
+        self,
+        request: str,
+        root: Path,
+        timeout_seconds: float | None = None,
+    ) -> str:
         self.sqlcl_requests.append((request, root))
+        self.sqlcl_timeouts.append(timeout_seconds)
         return self.sqlcl_output
 
 
@@ -230,7 +242,12 @@ class OracleGateway:
             raise
         connection.commit()
 
-    def sqlcl_request(self, request: str, root: Path) -> str:
+    def sqlcl_request(
+        self,
+        request: str,
+        root: Path,
+        timeout_seconds: float | None = None,
+    ) -> str:
         root.mkdir(parents=True, exist_ok=True)
         body = f"{request.rstrip()}\nexit;\n"
         plan = self._sqlcl_plan()
@@ -238,15 +255,21 @@ class OracleGateway:
             if plan.name is None:
                 # Plain credentialed connect: nothing is registered, so a
                 # failure here is the caller's to see.
-                return run_sqlcl_script(f"{plan.script}{body}", root, self.project_root)
+                return self._run(plan, body, root, timeout_seconds)
             try:
-                return run_sqlcl_script(f"{plan.script}{body}", root, self.project_root)
+                return self._run(plan, body, root, timeout_seconds)
             except RuntimeError:
                 # Fresh fingerprint, but the local SQLcl store has never seen
                 # the name (the YAML travels with the project, the store does
                 # not). Re-register and retry once.
+                #
+                # This catches `SqlclNotConnectedError` too, and has to: a lost
+                # store entry does not exit non-zero the way this path once
+                # assumed — SQLcl reports `SP2-0640` and exits 0 — so before
+                # ADT #232 the retry never ran for the failure it was written
+                # for.
                 plan = self._sqlcl_plan(force_register=True)
-        output = run_sqlcl_script(f"{plan.script}{body}", root, self.project_root)
+        output = self._run(plan, body, root, timeout_seconds)
         if plan.registers is not None and plan.registers.sqlcl_source:
             record_sqlcl_registration(
                 plan.registers.sqlcl_source,
@@ -256,6 +279,20 @@ class OracleGateway:
                 credential_fingerprint(plan.registers),
             )
         return output
+
+    def _run(
+        self,
+        plan: SqlclConnect,
+        body: str,
+        root: Path,
+        timeout_seconds: float | None,
+    ) -> str:
+        return run_sqlcl_script(
+            f"{plan.script}{body}",
+            root,
+            self.project_root,
+            timeout_seconds = timeout_seconds,
+        )
 
     def _sqlcl_plan(self, *, force_register: bool = False) -> SqlclConnect:
         return sqlcl_connect(

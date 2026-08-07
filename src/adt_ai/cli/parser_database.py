@@ -311,8 +311,9 @@ def add_database_parsers(subparsers) -> None:
         "-name",
         action = "append",
         nargs  = "+",
-        help   = "suite package name pattern(s) to run, supports multiple arguments "
-                 "and %% wildcards; no pattern runs every _UT suite in the schema",
+        help   = "name pattern(s), supports multiple arguments and %% wildcards; "
+                 "selects the _UT suites to run in every mode, and with -coverage "
+                 "the packages the report lists too; no pattern means everything",
     )
     ut3.add_argument(
         "--schema",
@@ -328,6 +329,16 @@ def add_database_parsers(subparsers) -> None:
         action = "store_true",
         help   = "rebuild utPLSQL's annotation cache before discovery, so a suite "
                  "compiled since the last run is found",
+    )
+    ut3.add_argument(
+        "--coverage",
+        "-coverage",
+        action = "store_true",
+        help   = "report code coverage instead of the run: the suites still "
+                 "execute, quietly, and the output is two tables — the packages "
+                 "with coverage, then the packages with none and their line "
+                 "counts — closed by a one-row SUMMARY for the whole schema: "
+                 "packages, body lines, executed lines, percent",
     )
     ut3.add_argument(
         "--silent",

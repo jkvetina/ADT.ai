@@ -22,11 +22,16 @@ class AuditConfig:
     Points export_db at a project-defined log table/view (columns for object name
     and the developer who changed it) so ``-by``/``-my`` can filter the export set
     without requiring DBA-level audit-trail access.
+
+    ``changed_at_column`` is optional and is what makes the filter time-aware: a
+    log with no timestamp can only be asked *who ever touched this*, so without it
+    ``-by``/``-my`` cannot tell your change from the one a colleague made after it.
     """
 
     source: str
     object_name_column: str
     changed_by_column: str
+    changed_at_column: str | None = None
 
 
 def _with_default_layout(config: dict[str, Any]) -> dict[str, Any]:
@@ -85,12 +90,14 @@ def _audit_config(config: dict[str, Any]) -> AuditConfig | None:
     source = raw.get("source")
     object_name_column = raw.get("object_name") or raw.get("object_name_column")
     changed_by_column = raw.get("changed_by") or raw.get("changed_by_column")
+    changed_at_column = raw.get("changed_at") or raw.get("changed_at_column")
     if not (source and object_name_column and changed_by_column):
         return None
     return AuditConfig(
         source             = str(source),
         object_name_column = str(object_name_column),
         changed_by_column  = str(changed_by_column),
+        changed_at_column  = str(changed_at_column) if changed_at_column else None,
     )
 
 

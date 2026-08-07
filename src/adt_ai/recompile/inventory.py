@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -139,6 +140,7 @@ class RecompileDiscovery:
     OBJECTS_TO_RECOMPILE_QUERY = queries.OBJECTS_TO_RECOMPILE_QUERY
     ERRORS_SUMMARY_QUERY = queries.ERRORS_SUMMARY_QUERY
     ERRORS_DETAIL_QUERY = queries.ERRORS_DETAIL_QUERY
+    ERROR_SOURCE_LINES_QUERY = queries.ERROR_SOURCE_LINES_QUERY
     MATERIALIZED_VIEWS_QUERY = queries.MATERIALIZED_VIEWS_QUERY
     SYNONYMS_QUERY = queries.SYNONYMS_QUERY
     DISABLED_OBJECTS_QUERY = queries.DISABLED_OBJECTS_QUERY
@@ -289,6 +291,33 @@ class RecompileDiscovery:
             )
             for row in rows
         ]
+
+    def error_source_lines(
+        self,
+        lookups: Sequence[tuple[str, str, int]],
+    ) -> dict[tuple[str, str, int], str]:
+        """Stored source for the ``(type, name, line)`` triples the ranking asked for.
+
+        Only the errors that name no object reach here (``ORA-00942``), so an
+        object whose errors were already self-describing costs nothing. An empty
+        list short-circuits: no query, no connection use.
+        """
+        if not lookups:
+            return {}
+        names = sorted({name for _type, name, _line in lookups})
+        lines = sorted({line for _type, _name, line in lookups})
+        rows = self.gateway.fetch_all(
+            self.ERROR_SOURCE_LINES_QUERY,
+            {
+                "object_names": ",".join(names),
+                "source_lines": ",".join(str(line) for line in lines),
+            },
+        )
+        return {
+            (str(row["OBJECT_TYPE"]), str(row["OBJECT_NAME"]), int(row["LINE"] or 0)):
+                str(row["TEXT"] or "").rstrip("\n")
+            for row in rows
+        }
 
     def materialized_views(
         self,
