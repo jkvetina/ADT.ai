@@ -65,13 +65,13 @@ Leave `jira_prefix` empty to count every commit you authored across all branches
 
 ## Arguments
 
-| Argument | Required | Default | Notes |
-| -------- | -------- | ------- | ----- |
+| Argument | Repeatable | Default | Notes |
+| -------- | ---------- | ------- | ----- |
 | `-root`, `--root` | No | `.` | Git repository root to read. |
 | `-branch`, `--branch` | No | all branches | Restrict the report to a single branch instead of every branch. |
 | `-month`, `--month` | No | current month | Month to show, in `YYYY-MM` format. |
 | `-calendar [OFFSET]`, `--calendar [OFFSET]` | No | `0` | Old ADT-style month selector. Bare `-calendar` shows the current month; an integer value shows that many months back. |
-| `-by`, `--by` | No | your `git config user.email` | Author email/name substring; repeatable. Overrides the default "my commits" author. |
+| `-by`, `--by` | Yes | your `git config user.email` | Author email/name substring; repeatable. Overrides the default "my commits" author. |
 | `-list`, `--list` | No | off | Accepted for backwards compatibility; no longer changes the output (the task-centric report is now the only format). |
 | `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |
 | `-nobeep`, `--nobeep` | No | off | Suppress completion sounds for this run; this wins over `chime_theme` and `-beep`. |

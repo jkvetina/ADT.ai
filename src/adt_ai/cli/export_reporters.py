@@ -8,7 +8,7 @@ from adt_ai.cli.constants import (
     print_adt_header,
     print_adt_table,
 )
-from adt_ai.shared.progress import FixedWidthProgressPrinter
+from adt_ai.shared.progress import FixedWidthProgressPrinter, schema_label
 
 
 class ConsoleApexRevealReporter:
@@ -45,7 +45,7 @@ class ConsoleApexRevealReporter:
         if not applications:
             return
         workspace = applications[0].workspace
-        print_adt_header("APEX APPLICATIONS:", f"{workspace} | {schema}")
+        print_adt_header("APEX APPLICATIONS:", f"{workspace} | {schema_label(schema)}")
         print_adt_table(
             [
                 {

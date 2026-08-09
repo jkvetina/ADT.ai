@@ -17,14 +17,15 @@ from adt_ai.cli.context import (
 )
 from adt_ai.cli.gateways import build_gateway
 from adt_ai.cli.schema_sections import run_schema_sections
+from adt_ai.ut3.naming import UtNaming
 from adt_ai.ut3.render import (
     ConsoleUt3Reporter,
-    print_coverage,
-    print_coverage_summary,
+    print_module_summary,
     print_problems,
     print_results,
     print_summary,
 )
+from adt_ai.ut3.render_coverage import print_coverage, print_coverage_summary
 from adt_ai.ut3.runner import Ut3Request, Ut3Runner
 
 
@@ -36,6 +37,10 @@ def _run_ut3(
     print_module_banner("UT3")
     startup = _load_startup_context(args)
     connections = startup.connections
+    # Built once for the whole command, before the first schema connects: a
+    # malformed `ut_pattern` is a configuration failure, and reporting it after
+    # a connection banner and a schema header would bury it.
+    naming = UtNaming.from_config(startup.config)
 
     environment = args.env or connections.default_environment
     # -schema is repeatable and pattern-aware, the shape export_db and recompile
@@ -50,7 +55,9 @@ def _run_ut3(
         _print_startup_debug(startup)
 
     def run_one(schema: str) -> int:
-        return _run_ut3_for_schema(args, startup, environment, schema, gateway_factory)
+        return _run_ut3_for_schema(
+            args, startup, environment, schema, gateway_factory, naming
+        )
 
     return run_schema_sections(schemas, run_one, first_started_at=handler_started_at)
 
@@ -61,6 +68,7 @@ def _run_ut3_for_schema(
     environment: str,
     schema: str,
     gateway_factory: GatewayFactory | None = None,
+    naming: UtNaming | None = None,
 ) -> int:
     connection = startup.connections.resolve(environment=environment, schema=schema)
     gateway = (
@@ -99,6 +107,7 @@ def _run_ut3_for_schema(
             names    = names,
             refresh  = args.refresh,
             coverage = args.coverage,
+            naming   = naming or UtNaming(),
         )
     )
 
@@ -124,9 +133,13 @@ def _run_ut3_for_schema(
     # per-suite verdicts and timings for a run, per-table package and line
     # counts for a coverage report.
     if result.coverage is not None:
+        # `-coverage` needs no second table: its roll-up already had this shape,
+        # so `ut_module` splits that one table's rows instead of adding another.
         print_coverage_summary(result.coverage)
     else:
         print_summary(result)
+        if result.modules:
+            print_module_summary(result)
     return 0 if result.success else 1
 
 

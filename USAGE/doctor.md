@@ -8,7 +8,7 @@ Run the setup check from any folder:
 adtai doctor
 ```
 
-Plain `doctor` is read-only. It checks Python, Git, Java, SQLcl, the Python `oracledb` module, Instant Client, `JAVA_TOOL_OPTIONS`, and ADT-compatible environment variables. By default it also checks online update availability for ADT.ai, Java, SQLcl, `oracledb`, and Instant Client. For ADT.ai, editable/git installs are compared against the configured `origin`, and normal installs are compared against the latest public GitHub Release in [`jkvetina/ADT.ai`](https://github.com/jkvetina/ADT.ai) before falling back to PyPI metadata. It prints current versions, runtime environment, row-level update/warning statuses, and the explicit update actions available. Install and environment setup guidance is in [SETUP.md](../SETUP.md); this file owns the detailed Doctor command behavior.
+Plain `doctor` is read-only. It checks Python, Git, Java, SQLcl, the Python `oracledb` module, Instant Client, `JAVA_TOOL_OPTIONS`, and ADT-compatible environment variables. By default it also checks online update availability for ADT.ai, Java, SQLcl, `oracledb`, and Instant Client. For ADT.ai, editable/git installs are compared against the configured `origin`, and normal installs are compared against the latest public GitHub Release in [`jkvetina/ADT.ai`](https://github.com/jkvetina/ADT.ai) before falling back to PyPI metadata. It prints current versions, runtime environment, row-level update/warning statuses, and — only when a check found something out of date — the explicit update actions available. Install and environment setup guidance is in [SETUP.md](../SETUP.md); this file owns the detailed Doctor command behavior.
 
 Old ADT had a self-update path that could run `git pull` from inside the tool and reinstall Python requirements. ADT.ai keeps update behavior explicit and always prints current versions before any action.
 
@@ -27,6 +27,25 @@ Selected rows append a dot leader plus status, capped at 78 characters. Successf
 - `UPDATE` means a newer available version was detected online.
 - `WARN` means the machine can still run read-only Doctor, but optional setup is missing or uncertain, such as Java, SQLcl, Instant Client, `ADT_ENV`, `ADT_KEY`, or `JAVA_TOOL_OPTIONS`.
 - `FAIL` means a required local prerequisite is missing or broken, such as Git or the Python `oracledb` module; Doctor exits non-zero.
+
+## Version reporting
+
+The `ADT.ai` row reports the package's own `__version__`, which is the last published release. In a **git checkout** — an editable install, or the repo itself — the row appends a marker:
+
+```text
+  ADT.ai               | 0.8.5 + WIP
+```
+
+The checkout is that release plus whatever has landed since, so it does not claim to *be* the release. An installed copy has nothing beyond the release and shows the bare `0.8.5`. The marker is display-only: the online update comparison and the upgrade paths use the bare version, so a checkout level with its release is not reported as out of date. The number itself lives in the DEV repo (`src/adt_ai/__init__.py` and `pyproject.toml`, which must agree); the public build refuses a release version DEV does not already declare, which is what keeps the two from drifting apart.
+
+## Actions
+
+`ACTIONS:` closes the run, and lists only upgrades an online check actually found:
+
+- `-update` appears when ADT.ai, `oracledb`, or SQLcl is behind. `oracledb` counts because the full update reinstalls `requirements.txt`.
+- `-sqlcl` appears only when SQLcl itself is behind.
+
+When neither applies the whole section is omitted, header included — an up-to-date machine is offered nothing. `-offline` checks nothing online, so no status is backed by a real check and the section is likewise absent. Under `-update` and `-sqlcl` the section always prints, because it reports the actions that ran.
 
 Run the full ADT.ai, `requirements.txt`, and SQLcl upgrade:
 
@@ -65,8 +84,8 @@ adtai doctor -init -root /path/to/project
 
 ## Arguments
 
-| Argument | Required | Default | Notes |
-| -------- | -------- | ------- | ----- |
+| Argument | Repeatable | Default | Notes |
+| -------- | ---------- | ------- | ----- |
 | `-offline` | No | off | Skip online update metadata checks and show local versions only. |
 | `-update` | No | off | Run the full ADT.ai, Python requirements, and SQLcl update workflow. Cannot be combined with `-sqlcl`. |
 | `-sqlcl` | No | off | Upgrade SQLcl only. Runs immediately without `-update`; cannot be combined with `-update`. |

@@ -40,7 +40,7 @@ from adt_ai.cli.export_apex_messages import (
 from adt_ai.cli.export_apex_owners import (
     _apex_reveal_connection_schema,
     _resolve_apex_app_owners,
-    _resolve_apex_metadata_owners,
+    resolve_apex_owner_routes,
 )
 from adt_ai.cli.export_reporters import ConsoleApexRevealReporter
 from adt_ai.cli.gateways import build_gateway
@@ -232,24 +232,18 @@ def _run_export_apex(
         schemas = connections.schema_names(environment)
         connection_schema = _apex_reveal_connection_schema(connections, environment, schemas)
     else:
-        default_schemas = connections.default_schemas(environment, kind="apex")
-        default_schema = default_schemas[0]
-        schemas = list(default_schemas)
-        connection_schema = default_schema
-        owner_routes = _resolve_apex_metadata_owners(
-            root,
-            sql_app_ids or [],
-            default_schema,
-            connections.schema_names(environment),
+        owner_routes = resolve_apex_owner_routes(
+            root, connections, environment, sql_app_ids, kind="apex"
         )
-        if owner_routes:
-            routed = {app_id for ids in owner_routes.values() for app_id in ids}
-            remaining = [app_id for app_id in sql_app_ids if app_id not in routed]
-            schemas = list(owner_routes)
-            schema_app_ids.update(owner_routes)
-            if remaining:
+        default_schema = owner_routes.default_schemas[0]
+        schemas = list(owner_routes.default_schemas)
+        connection_schema = default_schema
+        if owner_routes.routes:
+            schemas = list(owner_routes.routes)
+            schema_app_ids.update(owner_routes.routes)
+            if owner_routes.unrouted:
                 schemas.append(default_schema)
-                schema_app_ids[default_schema] = remaining
+                schema_app_ids[default_schema] = owner_routes.unrouted
                 connection_schema = default_schema
             else:
                 connection_schema = schemas[0]
@@ -312,9 +306,9 @@ def _run_export_apex(
             scope = schema_scope[schema]
             applications = discovery.applications(
                 owner     = schema,
-                workspace = scope["workspace"],
-                group     = scope["group"],
-                app_ids   = scope["app_ids"],
+                workspace = scope.workspace,
+                group     = scope.group,
+                app_ids   = scope.app_ids,
                 recent_days = recent_days,
                 max_app_id = args.max_app_id,
             )
@@ -326,7 +320,7 @@ def _run_export_apex(
                 ]
             applications_by_schema[schema] = applications
         discovery = ApexDiscovery(export_apex_gateway_factory(connection_schema))
-        workspace = schema_scope[connection_schema]["workspace"]
+        workspace = schema_scope[connection_schema].workspace
         is_filtered = bool(args.app) or bool(args.schema)
         active_workspaces = {
             app.workspace
@@ -369,9 +363,9 @@ def _run_export_apex(
         scope = schema_scope[schema]
         applications = discovery.applications(
             owner     = schema,
-            workspace = scope["workspace"],
-            group     = scope["group"],
-            app_ids   = scope["app_ids"],
+            workspace = scope.workspace,
+            group     = scope.group,
+            app_ids   = scope.app_ids,
             recent_days = None,
             max_app_id = args.max_app_id,
         )

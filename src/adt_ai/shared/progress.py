@@ -11,6 +11,23 @@ def print_adt_header(message: str, append: str = "", file=None) -> None:
     print("-" * len(message), file=file)
 
 
+def schema_label(schema: object) -> str:
+    """Render a schema name for the console: an Oracle identifier is uppercase.
+
+    A schema reaches a header with whatever casing it was spelled — a connection
+    file keyed ``ict_owner`` and a ``-schema ict_owner`` argument both survive to
+    the screen verbatim — while the dictionary they name is uppercase. ``#237``
+    uppercased the ``REFRESHING`` header inline and left the four others raw, so
+    one run printed both casings a dozen lines apart (ADT #240).
+
+    Display only. The connection file's own casing still owns lookups and paths:
+    it renders ``<schema>`` into ``path_apex``, names patch groups, and keys the
+    SQLcl connection, so uppercasing at ``Connections.resolve()`` would move
+    exported files on disk.
+    """
+    return str(schema or "").upper()
+
+
 ADT_TOOL_NAME = "APEX DEPLOYMENT TOOL"
 MODULE_BANNER_SEPARATOR = " - "
 

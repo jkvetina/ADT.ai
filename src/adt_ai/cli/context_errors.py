@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 
 from adt_ai.cli.constants import DROPBOX_PATH_RE, print_adt_header
-from adt_ai.shared.config import UnresolvedPlaceholderError
+from adt_ai.shared.config import InvalidConfigValueError
 
 
 def _is_user_database_error(error: Exception) -> bool:
@@ -64,7 +64,10 @@ def _print_config_error(error: Exception) -> None:
     # used are different failures: the "run from a project folder" remedy is
     # noise on a bad value, and `CONFIGURATION NOT FOUND` above an unresolved
     # `path_objects` placeholder sends the reader hunting for a missing file.
-    is_invalid_value = isinstance(error, UnresolvedPlaceholderError)
+    # Branching on the base class rather than on each subclass means a new
+    # invalid-value error (`ut_pattern`, `ut_match`, `ut_module`) is reported
+    # right without touching this file.
+    is_invalid_value = isinstance(error, InvalidConfigValueError)
     header = "CONFIGURATION INVALID:" if is_invalid_value else "CONFIGURATION NOT FOUND:"
     print_adt_header(header, file=sys.stderr)
     print(_display(error), file=sys.stderr)

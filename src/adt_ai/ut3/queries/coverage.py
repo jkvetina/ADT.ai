@@ -24,8 +24,12 @@ and therefore always knows it, with no OUT bind and no read-back race.
 Reachability, verified against the install rather than assumed: ``dbmspcc_units``
 and ``dbmspcc_blocks`` have public synonyms; ``ut_coverage_runs`` has **no**
 synonym but **is** granted SELECT to PUBLIC, so it is reached as
-``ut3.ut_coverage_runs``. Everything else reads ``USER_*`` — never ``DBA_*``,
-never a dynamic performance view — matching the contract in ``queries/suites.py``.
+``ut3.ut_coverage_runs``. Everything else reads ``ALL_*`` scoped by an explicit
+``:owner`` bind — never ``DBA_*``, never a dynamic performance view — matching
+the contract in ``queries/suites.py``. ``ALL_*`` rather than ``USER_*`` because
+``ut_owner`` made the schema a parameter and ``USER_*`` can only ever see the
+connected one; the bind here is always the schema **under test**, never
+``ut_owner``, since coverage measures the code and not the tests.
 """
 
 from __future__ import annotations
@@ -109,32 +113,52 @@ ORDER BY u.name
 # no coverage row at all and would silently vanish from a report built on
 # coverage data alone — and that is the exact package the reader is looking for.
 #
-# `_UT` packages are excluded here rather than filtered downstream: they pair
-# 1:1 with the packages under test, so listing them doubles the report and
-# invites the reader to measure the coverage of the tests themselves. The suffix
-# is the same selection contract `queries/suites.py` uses.
+# Test packages are excluded here, by the same `ut_pattern` that selects them in
+# `queries/suites.py` — they pair 1:1 with the packages under test, so listing
+# them doubles the report and invites the reader to measure the coverage of the
+# tests themselves. In SQL, where the `NOT LIKE '%\\_UT'` used to be: a schema's
+# whole package list is exactly the fetch this exclusion exists to avoid.
 #
-# LINES counts the **body**, and the body of the listed package — never its
-# `_UT` partner's. It is what turns the uncovered list into a priority order
-# rather than an alphabet: 900 uncovered lines and 9 uncovered lines are not the
-# same problem, and the percentage above it says nothing about scale. The spec is
+# LINES counts the **body**, and the body of the listed package — never its test
+# partner's. It is what turns the uncovered list into a priority order rather
+# than an alphabet: 900 uncovered lines and 9 uncovered lines are not the same
+# problem, and the percentage above it says nothing about scale. The spec is
 # excluded because a count of declarations is not a measure of code. It is a
 # scalar subquery rather than a join so a package with a spec and no body still
 # gets its row, reading 0.
+#
+# `:owner` is the schema under test — never `ut_owner`. Coverage measures the
+# code, and the two schemas are different questions.
+#
+# MODULE_NAME is `ut_module` group 1 read off the **listed package**, not off its
+# test partner. The module is a property of the package: `ICT_INT_ORDERS` spells
+# `INT` whether or not anything tests it. Deriving it only across the `ut_match`
+# pairing — all the report did until card #247 — put every package with no
+# discovered suite into the blank group carrying a module its own name states,
+# and under `-name` that is most of the listing, because the flag selects the
+# listing and the suites independently. Extracted here, in the pass that already
+# reads the row, exactly as `queries/suites.py` does for the suites.
+#
+# `:ut_module` is NULL when a project turns the roll-ups off, and
+# `REGEXP_SUBSTR(name, NULL, ...)` is NULL, so the column comes back empty
+# without the query needing a second shape.
 SCHEMA_PACKAGES_QUERY = """
 SELECT
     o.object_name,
+    REGEXP_SUBSTR(o.object_name, :ut_module, 1, 1, 'i', 1)  AS module_name,
     (
         SELECT COUNT(*)
-        FROM user_source s
+        FROM all_source s
         WHERE 1 = 1
+            AND s.owner         = o.owner
             AND s.name          = o.object_name
             AND s.type          = 'PACKAGE BODY'
     )                       AS lines
-FROM user_objects o
+FROM all_objects o
 WHERE 1 = 1
+    AND o.owner             = :owner
     AND o.object_type       = 'PACKAGE'
-    AND o.object_name NOT LIKE '%\\_UT' ESCAPE '\\'
+    AND NOT REGEXP_LIKE(o.object_name, :ut_pattern, 'i')
 ORDER BY o.object_name
 """
 
@@ -147,7 +171,7 @@ ORDER BY o.object_name
 #
 # The setting is per-object and fixed at compile time — changing the session or
 # system parameter does nothing until the unit is recompiled — so it comes from
-# USER_PLSQL_OBJECT_SETTINGS per package body, never from the session-level
+# ALL_PLSQL_OBJECT_SETTINGS per package body, never from the session-level
 # parameter view, which would report an intention rather than what each body was
 # actually compiled with.
 #
@@ -162,10 +186,11 @@ PACKAGE_COMPILE_SETTINGS_QUERY = """
 SELECT
     s.name                  AS package_name,
     s.plsql_code_type
-FROM user_plsql_object_settings s
+FROM all_plsql_object_settings s
 WHERE 1 = 1
+    AND s.owner             = :owner
     AND s.type              = 'PACKAGE BODY'
-    AND s.name        NOT LIKE '%\\_UT' ESCAPE '\\'
+    AND NOT REGEXP_LIKE(s.name, :ut_pattern, 'i')
 ORDER BY s.name
 """
 

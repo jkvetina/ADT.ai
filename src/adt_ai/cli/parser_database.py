@@ -312,7 +312,7 @@ def add_database_parsers(subparsers) -> None:
         action = "append",
         nargs  = "+",
         help   = "name pattern(s), supports multiple arguments and %% wildcards; "
-                 "selects the _UT suites to run in every mode, and with -coverage "
+                 "selects the suites to run in every mode, and with -coverage "
                  "the packages the report lists too; no pattern means everything",
     )
     ut3.add_argument(
@@ -338,7 +338,9 @@ def add_database_parsers(subparsers) -> None:
                  "execute, quietly, and the output is two tables — the packages "
                  "with coverage, then the packages with none and their line "
                  "counts — closed by a one-row SUMMARY for the whole schema: "
-                 "packages, body lines, executed lines, percent",
+                 "packages, body lines, executed lines, percent; with config "
+                 "ut_module set, one row per module (? where it parses none) and "
+                 "an unnamed total row",
     )
     ut3.add_argument(
         "--silent",

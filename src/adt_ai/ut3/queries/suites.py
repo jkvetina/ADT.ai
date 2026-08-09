@@ -14,30 +14,55 @@ only utPLSQL cannot see a package that failed to compile, because a suite that
 stops compiling simply stops being discovered. That silent disappearance is the
 empty-green run this module exists to make loud.
 
-Everything here reads ``USER_*`` and the ut3 public synonyms — never a dynamic
+Everything here reads ``ALL_*`` and the ut3 public synonyms — never a dynamic
 performance view and never a privileged ``DBA_*`` one: ADT connects as the
-application schema and holds no catalog role.
+application schema and holds no catalog role. ``ALL_*`` rather than ``USER_*``
+because ``ut_owner`` may put the test packages in a schema of their own, and
+``USER_*`` can only ever see the connected one; scoped by an explicit
+``:ut_owner`` bind, it returns the same rows for the default same-schema case.
 """
 
 from __future__ import annotations
 
-# The suffix that marks a package as a test package. Jan's naming rule, and the
-# whole selection contract: `ut3` never runs a package that does not carry it,
-# so production code can never be swept into a test run by a loose pattern.
-UT_PACKAGE_SUFFIX = "_UT"
-
-# Every `_UT` package with its compile state. Deliberately unfiltered by name —
-# `-name` is applied client-side through shared.sql_like so one LIKE
-# implementation covers both halves of the report, and the `_UT` set is small
-# enough that the round trip is not worth splitting.
+# The suite schema's test packages, with their compile state and both names the
+# convention derives from them.
+#
+# **`ut_pattern` is applied here, in SQL, where the `LIKE '%\\_UT'` used to sit.**
+# A schema holds thousands of packages and a handful of them are suites, so
+# fetching the whole list to discard 99% of it after the round trip spends that
+# round trip on rows nobody wants — on a command whose runtime already matters.
+# `REGEXP_LIKE` is the direct replacement: same position in the plan, same one
+# row per suite coming back, and the convention is now configurable.
+#
+# **The two capture groups are extracted in the same pass**, by `REGEXP_SUBSTR`
+# with an explicit subexpression argument. `TARGET_NAME` is `ut_match` group 1 —
+# the package this suite tests, which is what puts its verdicts on the right row
+# of the coverage report — and `MODULE_NAME` is `ut_module` group 1. Both are
+# properties of the row, so deriving them anywhere else would mean a second
+# regex engine disagreeing with this one about the same string.
+#
+# `:ut_module` is NULL when a project turns the roll-ups off, and
+# `REGEXP_SUBSTR(x, NULL, ...)` is NULL, so the column comes back empty without
+# the query needing a second shape.
+#
+# `'i'` throughout: Oracle stores identifiers upper case but a config file is
+# hand-written, and a lower-case pattern that silently selected nothing would be
+# the empty green run this module exists to prevent.
+#
+# `-name` stays client-side, deliberately: it is Oracle LIKE rather than regex,
+# it is a per-run argument rather than a convention, and by the time it applies
+# the set is already down to the schema's suites.
 SUITE_PACKAGES_QUERY = """
 SELECT
     o.object_name,
-    o.status
-FROM user_objects o
+    o.status,
+    REGEXP_SUBSTR(o.object_name, :ut_match,  1, 1, 'i', 1)  AS target_name,
+    REGEXP_SUBSTR(o.object_name, :ut_module, 1, 1, 'i', 1)  AS module_name
+FROM all_objects o
 WHERE 1 = 1
+    AND o.owner         = :ut_owner
     AND o.object_type   = 'PACKAGE'
-    AND o.object_name   LIKE '%\\_UT' ESCAPE '\\'
+    AND REGEXP_LIKE(o.object_name, :ut_pattern, 'i')
 ORDER BY o.object_name
 """
 
@@ -73,11 +98,12 @@ SELECT
     p.object_name,
     p.procedure_name,
     p.subprogram_id
-FROM user_procedures p
+FROM all_procedures p
 WHERE 1 = 1
+    AND p.owner             = :ut_owner
     AND p.object_type       = 'PACKAGE'
-    AND p.object_name       LIKE '%\\_UT' ESCAPE '\\'
     AND p.procedure_name    IS NOT NULL
+    AND REGEXP_LIKE(p.object_name, :ut_pattern, 'i')
 ORDER BY p.object_name, p.subprogram_id
 """
 

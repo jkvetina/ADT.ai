@@ -19,6 +19,20 @@ from adt_ai.doctor._base import (
 from adt_ai.doctor.version_fetch import DoctorLatestVersionMixin
 from adt_ai.shared.env_check import CheckResult
 
+# `__version__` is the last *released* number, so a git checkout printing it
+# bare claims to be that release while sitting on commits the release never
+# shipped. The suffix is display-only: the bare version is what the online
+# comparison and the upgrade paths see.
+WIP_VERSION_SUFFIX = " + WIP"
+
+# Stand-ins for a version we could not read. A marker on top of one of these
+# would read as a version rather than as the failure it is.
+_UNRESOLVED_VERSIONS = frozenset({"", "unknown", "not found", "not installed"})
+
+# The components `doctor` actually checks online. `-update` also reinstalls
+# requirements.txt, which is what a stale `oracledb` needs.
+_FULL_UPDATE_COMPONENTS = frozenset({"adt-ai", "oracledb", "sqlcl"})
+
 
 class DoctorVersionMixin(DoctorLatestVersionMixin):
     def _version_lines(
@@ -35,6 +49,10 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         )
         instant_client_value = self._check_value(checks, "Instant Client")  # type: ignore[attr-defined]
         sqlcl_value          = self._check_value(checks, "SQLcl")  # type: ignore[attr-defined]
+
+        # Rebuilt per run: `_online_update_status` fills it as each row resolves,
+        # and `_status_action_lines` reads it to decide what may be offered.
+        self._stale_components: set[str] = set()
 
         yield "CURRENT VERSIONS:"
         # Fire every online version check concurrently before streaming the rows.
@@ -53,7 +71,11 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         )
         try:
             adt_ai_status = self._online_update_status("adt-ai", adt_ai_value, online=online)
-            yield format_status_line("ADT.ai", adt_ai_value or "unknown", adt_ai_status)
+            yield format_status_line(
+                "ADT.ai",
+                self._adt_ai_display_version(adt_ai_value),
+                adt_ai_status,
+            )
             yield format_status_line(
                 "Python",
                 self._check_value(checks, "Python"),  # type: ignore[attr-defined]
@@ -105,11 +127,35 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         finally:
             self._shutdown_version_executor()
 
+    def _adt_ai_display_version(self, version: str) -> str:
+        """The ADT.ai version as the `CURRENT VERSIONS:` row shows it.
+
+        A wheel install is exactly the release it says it is. A git checkout is
+        that release plus whatever has landed since, so it gets the WIP marker —
+        which is also the honest answer for the dev box, where `__version__`
+        only moves at release time.
+        """
+        if not version or version in _UNRESOLVED_VERSIONS:
+            return version or "unknown"
+        return f"{version}{WIP_VERSION_SUFFIX}" if self._is_git_repo() else version  # type: ignore[attr-defined]
+
     def _status_action_lines(self) -> list[str]:
-        return [
-            "  Run `adtai doctor -update` for full ADT.ai + requirements + SQLcl upgrade.",
-            "  Run `adtai doctor -sqlcl` to upgrade SQLcl only.",
-        ]
+        """The upgrade commands worth offering, given what the online checks found.
+
+        An action is offered only when a real check found something stale — the
+        same rule the status column already follows. With every component
+        current (or `-offline`, where nothing was checked at all) this returns
+        nothing and the caller drops the whole `ACTIONS:` section.
+        """
+        stale = getattr(self, "_stale_components", set())
+        lines = []
+        if stale & _FULL_UPDATE_COMPONENTS:
+            lines.append(
+                "  Run `adtai doctor -update` for full ADT.ai + requirements + SQLcl upgrade."
+            )
+        if "sqlcl" in stale:
+            lines.append("  Run `adtai doctor -sqlcl` to upgrade SQLcl only.")
+        return lines
 
     def _environment_lines(self, check_results: list[CheckResult]) -> list[str]:
         env = self._command_env()  # type: ignore[attr-defined]
@@ -220,7 +266,12 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
             return "WARN"
         if not latest_version:
             return None
-        return "UPDATE" if _is_newer_version(latest_version, current_version) else None
+        if not _is_newer_version(latest_version, current_version):
+            return None
+        # Recorded so `_status_action_lines` offers only the upgrades a real
+        # check actually justified.
+        getattr(self, "_stale_components", set()).add(component)
+        return "UPDATE"
 
     def _check_value(
         self,

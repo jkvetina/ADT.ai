@@ -26,6 +26,7 @@ from adt_ai.discovery.report import (
     report_path,
 )
 from adt_ai.discovery.validator import DiscoveryValidationError, validate_select_only
+from adt_ai.shared import text_files
 from adt_ai.shared.db import QueryGateway
 
 # A distinctive sentinel — not a bare ``/*`` — so a hand-written ``/* … */``
@@ -85,6 +86,34 @@ def split_statements(text: str) -> list[str]:
     """
     clean = _RESULT_BLOCK_RE.sub("", text)
     return _split_top_level_semicolons(clean)
+
+
+def write_file_results(file_path: Path, results: list[str]) -> None:
+    """Rewrite ``file_path`` inserting rendered results after each statement.
+
+    Each statement keeps its ``;`` and gets a ``/* … */`` block appended.
+    On re-runs the old blocks are replaced, so the file stays clean.
+    Statements without a matching result keep their ``;`` and no block is added.
+
+    Lives beside ``split_statements`` because the two are one contract read in
+    opposite directions — the writer emits the ``ADT-RESULT`` sentinel that the
+    reader scrubs — and both now share ``_RESULT_BLOCK_RE`` instead of keeping a
+    private copy each.
+    """
+    text = file_path.read_text(encoding="utf-8")
+    stripped = _RESULT_BLOCK_RE.sub("", text)
+    raw_pieces = stripped.split(";")
+    while raw_pieces and not raw_pieces[-1].strip():
+        raw_pieces.pop()
+
+    parts: list[str] = []
+    for i, piece in enumerate(raw_pieces):
+        stmt = piece.rstrip()
+        if i < len(results):
+            parts.append(f"{stmt};\n{RESULT_BLOCK_START}\n{results[i]}\n{RESULT_BLOCK_END}\n")
+        else:
+            parts.append(f"{stmt};\n")
+    text_files.write_text(file_path, "".join(parts))
 
 
 def _split_top_level_semicolons(text: str) -> list[str]:

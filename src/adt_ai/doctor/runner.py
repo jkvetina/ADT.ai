@@ -130,21 +130,26 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
         )
         self._add(lines, "")
         self._extend(lines, self._environment_lines(check_results))
-        self._add(lines, "")
-        self._add(lines, "ACTIONS:")
         performed_actions: list[str] = []
         exit_code = 1 if any(result.status == "FAIL" for result in check_results) else 0
 
         if request.sqlcl:
+            self._begin_actions_section(lines)
             sqlcl_result = self._upgrade_sqlcl(lines)
             performed_actions.extend(sqlcl_result.performed_actions)
             exit_code = max(exit_code, sqlcl_result.exit_code)
             return DoctorResult(lines, performed_actions, exit_code)
 
         if not request.update:
-            self._extend(lines, self._status_action_lines())
+            # Read-only run: the section exists to offer upgrades, so with
+            # nothing stale it is not an empty section — it is no section.
+            action_lines = self._status_action_lines()
+            if action_lines:
+                self._begin_actions_section(lines)
+                self._extend(lines, action_lines)
             return DoctorResult(lines, performed_actions, exit_code)
 
+        self._begin_actions_section(lines)
         for action in (
             self._upgrade_adt_ai,
             self._install_requirements,
@@ -155,6 +160,15 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
             exit_code = max(exit_code, action_result.exit_code)
 
         return DoctorResult(lines, performed_actions, exit_code)
+
+    def _begin_actions_section(self, lines: list[str]) -> None:
+        """Open `ACTIONS:` with the blank line that separates it from ENVIRONMENT.
+
+        Header and separator move together so a run with nothing to offer leaves
+        neither behind — the shared timer footer then owns the trailing spacing.
+        """
+        self._add(lines, "")
+        self._add(lines, "ACTIONS:")
 
     def _command_env(self) -> dict[str, str]:
         env = dict(self.env)
