@@ -17,10 +17,9 @@ from adt_ai.dependencies.runner import DependencyIndexRequest, DependencyIndexRu
 from adt_ai.dependencies.store import DependencyStore
 from adt_ai.discovery.render import DEFAULT_ROW_LIMIT
 from adt_ai.discovery.runner import (
-    RESULT_BLOCK_END,
-    RESULT_BLOCK_START,
     DiscoveryRequest,
     DiscoveryRunner,
+    write_file_results,
 )
 from adt_ai.doctor.runner import ActionReporter, DoctorRequest, DoctorRunner, format_action_line
 from adt_ai.export_apex.inventory import (

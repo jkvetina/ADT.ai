@@ -32,7 +32,18 @@ class ConfigCycleError(ConfigError):
     """Raised when explicit configuration inheritance contains a cycle."""
 
 
-class UnresolvedPlaceholderError(ConfigError):
+class InvalidConfigValueError(ConfigError):
+    """A config file that was found and read, but holds a value ADT cannot use.
+
+    Separated from the not-found failures because the remedies have nothing in
+    common: "run from a project folder" is noise above a malformed value, and
+    `CONFIGURATION NOT FOUND` above one sends the reader hunting for a file that
+    is sitting right there. The CLI branches its error banner on this class, so
+    a new invalid-value error only has to inherit it to be reported correctly.
+    """
+
+
+class UnresolvedPlaceholderError(InvalidConfigValueError):
     """Raised when a path template still carries an old-ADT `{$NAME}` token."""
 
 

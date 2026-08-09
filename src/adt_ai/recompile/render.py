@@ -16,6 +16,7 @@ from adt_ai.export_db.runner import (
 )
 from adt_ai.recompile.queries import mview_type_code
 from adt_ai.recompile.runner import RecompileReporter
+from adt_ai.shared.progress import schema_label
 
 
 def _mview_status(mview) -> str:
@@ -275,7 +276,7 @@ def print_synonym_tables(synonyms) -> None:
         owner_synonyms = [
             synonym for synonym in sorted_synonyms if _synonym_owner(synonym) == owner
         ]
-        print_adt_header(f"SYNONYMS TO SCHEMA {owner}:")
+        print_adt_header(f"SYNONYMS TO SCHEMA {schema_label(owner)}:")
         print_adt_table(
             [
                 _synonym_row_cells(synonym, privilege)

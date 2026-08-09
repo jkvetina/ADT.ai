@@ -107,15 +107,17 @@ adtai connection -add-env -env QA -like DEV -go
 
 ## Arguments
 
-| Argument | Required | Default | Notes |
-| -------- | -------- | ------- | ----- |
-| `-create` | One action required | off | Create or update a connection entry. Requires `-env` and `-schema`; can create the resolved file if missing. |
-| `-add-env` | One action required | off | Add a new environment. Requires `-env`; use `-like` to clone another environment. |
-| `-add-schema` | One action required | off | Add a new schema to an environment. Requires `-env` and `-schema`. |
-| `-set-pwd` | One action required | off | Set a schema password. Requires `-env` and `-schema`; prompts interactively with `-go`. |
-| `-set-wallet-pwd` | One action required | off | Set an environment wallet password. Requires `-env`; prompts interactively with `-go`. |
-| `-env`, `--env` | Per action | none | Target environment name. |
-| `-schema`, `--schema` | Per action | none | Target schema name (required for `-create`, `-add-schema`, and `-set-pwd`). |
+Exactly one action flag — `-create`, `-add-env`, `-add-schema`, `-set-pwd`, or `-set-wallet-pwd` — is required; each names the further arguments it needs.
+
+| Argument | Repeatable | Default | Notes |
+| -------- | ---------- | ------- | ----- |
+| `-create` | No | off | Action. Create or update a connection entry. Requires `-env` and `-schema`; can create the resolved file if missing. |
+| `-add-env` | No | off | Action. Add a new environment. Requires `-env`; use `-like` to clone another environment. |
+| `-add-schema` | No | off | Action. Add a new schema to an environment. Requires `-env` and `-schema`. |
+| `-set-pwd` | No | off | Action. Set a schema password. Requires `-env` and `-schema`; prompts interactively with `-go`. |
+| `-set-wallet-pwd` | No | off | Action. Set an environment wallet password. Requires `-env`; prompts interactively with `-go`. |
+| `-env`, `--env` | No | none | Target environment name. Required by every action. |
+| `-schema`, `--schema` | No | none | Target schema name (required for `-create`, `-add-schema`, and `-set-pwd`). |
 | `-user`, `--user` | No | schema name | Database user for `-create` and `-add-schema`. |
 | `-like`, `--like` | No | none | With `-add-env`, clone this environment's `db` / `wallet` blocks (secrets stripped). |
 | `-host`, `--host` | No | none | With `-create` or `-add-env`, set the `db` hostname. |
@@ -131,7 +133,7 @@ adtai connection -add-env -env QA -like DEV -go
 | `-encrypt`, `--encrypt` | No | off | With password-writing actions, encrypt the stored value using `-key` or `ADT_KEY`. |
 | `-key`, `--key` | No | `ADT_KEY` | Encryption key value or path to a key file. |
 | `-root`, `--root` | No | `.` | Project root folder used to resolve the connection file. |
-| `-config-dir`, `--config-dir` | No | none | Folder containing config YAML (repeatable). |
+| `-config-dir`, `--config-dir` | Yes | none | Folder containing config YAML. |
 | `-go`, `--go` | No | off | Apply the change. Without it, the command previews without writing. |
 | `-debug`, `--debug` | No | off | Show input parameters and the resolved startup context. |
 | `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |

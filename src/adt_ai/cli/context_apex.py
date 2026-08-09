@@ -161,17 +161,32 @@ def _app_in_selection(app_id: int | str, selection: ApexAppSelection) -> bool:
         for low, high in selection.ranges
     )
 
+@dataclass(frozen=True)
+class ApexScope:
+    """What one schema's APEX export is scoped to: workspace, group, app ids.
+
+    Frozen and named rather than a dict: `export_apex` reads these three fields
+    back at seven call sites, and a string subscript turns a typo into a
+    `KeyError` raised mid-export against a live database instead of an
+    `AttributeError` the type checker and the import already know about.
+    """
+
+    workspace: str | None = None
+    group: str | None = None
+    app_ids: list[str] | None = None
+
+
 def _apex_scope(
     apex_config: Mapping[str, object],
     workspace: str | None = None,
     group: str | None = None,
     app_ids: list[str] | None = None,
-) -> dict[str, object]:
-    return {
-        "workspace": workspace or _string_or_none(apex_config.get("workspace")),
-        "group": group or _string_or_none(apex_config.get("group")),
-        "app_ids": app_ids or _split_config_values(apex_config.get("app")),
-    }
+) -> ApexScope:
+    return ApexScope(
+        workspace = workspace or _string_or_none(apex_config.get("workspace")),
+        group     = group or _string_or_none(apex_config.get("group")),
+        app_ids   = app_ids or _split_config_values(apex_config.get("app")),
+    )
 
 def _apex_actions(
     args: argparse.Namespace,

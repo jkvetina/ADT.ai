@@ -26,8 +26,8 @@ from dataclasses import dataclass, field
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.sql_like import matches_sql_like
 from adt_ai.ut3 import queries
+from adt_ai.ut3.coverage import build_coverage_report
 from adt_ai.ut3.inventory import (
-    BLOCKED_NATIVE,
     RESULT_ERRORED,
     RESULT_FAILED,
     RESULT_PASSED,
@@ -35,14 +35,13 @@ from adt_ai.ut3.inventory import (
     SKIP_INVALID,
     SKIP_NOT_A_SUITE,
     CoverageReport,
-    PackageCoverage,
     SuitePackage,
     SuiteTest,
     SuiteTiming,
     TestOutcome,
 )
 from adt_ai.ut3.junit import in_declaration_order, parse_junit, row_line, unreported
-from adt_ai.ut3.queries.suites import UT_PACKAGE_SUFFIX
+from adt_ai.ut3.naming import UtNaming
 
 # The one annotation type that is a runnable test; the rest of what
 # get_suites_info returns describes the tree around them (UT_SUITE,
@@ -53,10 +52,20 @@ _SUITE_ITEM_TYPE = "UT_SUITE"
 
 @dataclass(frozen=True)
 class Ut3Request:
+    """One ut3 run.
+
+    ``owner`` is the schema under test. Which schema holds its test packages is
+    ``naming.owner_for(owner)`` — the same value by default, and a different one
+    when ``ut_owner`` is configured. The two are kept apart everywhere below:
+    suites are discovered and executed in the test schema, coverage is measured
+    in the schema under test.
+    """
+
     owner    : str
     names    : tuple[str, ...] = ()
     refresh  : bool = False
     coverage : bool = False
+    naming   : UtNaming = field(default_factory=UtNaming)
 
 
 @dataclass(frozen=True)
@@ -67,6 +76,10 @@ class Ut3Result:
     # which means it was requested and nothing came back.
     coverage : CoverageReport | None = None
     timings  : tuple[SuiteTiming, ...] = field(default_factory=tuple)
+    # `ut_module` is configured, so the renderer should print the module
+    # roll-up. A switch rather than a derived "does anything carry a module",
+    # for the reason `CoverageReport.modules` gives.
+    modules  : bool = False
 
     def seconds_for(self, package: str) -> float | None:
         """How long that suite took, or None if it never ran.
@@ -150,10 +163,16 @@ class Ut3Runner:
 
     def run(self, request: Ut3Request) -> Ut3Result:
         owner = request.owner.upper()
+        naming = request.naming
+        # The schema the suites live in, which is the schema under test unless
+        # `ut_owner` says otherwise. utPLSQL's annotation cache is keyed by it
+        # and `ut.run` takes an owner-qualified path, so getting this wrong is
+        # not a narrower run — it is a run that finds nothing.
+        ut_owner = naming.owner_for(owner)
         if request.refresh:
             self.gateway.execute(
                 queries.REBUILD_ANNOTATION_CACHE_STATEMENT,
-                {"owner": owner},
+                {"owner": ut_owner},
             )
 
         # **`-name` selects the suites to run, in every mode.** It used to be
@@ -166,7 +185,7 @@ class Ut3Runner:
         # seconds as `-name ICT%` while appearing to filter. The under-report is
         # the accepted cost — a package reached only by a suite the pattern
         # excludes now reads lower than the truth.
-        packages = self._discover(owner, request.names)
+        packages = self._discover(ut_owner, request.names, naming)
         self.reporter.discovered(packages)
 
         # The run id is generated here, not read back from the database, because
@@ -189,7 +208,7 @@ class Ut3Runner:
                 # Wall clock around the whole call, so the figure covers the
                 # round trip and the suite's own setup — see `SuiteTiming`.
                 started_at = time.monotonic()
-                suite_outcomes = self._run_suite(owner, package)
+                suite_outcomes = self._run_suite(ut_owner, package)
                 timings.append(
                     SuiteTiming(package=package.name, seconds=time.monotonic() - started_at)
                 )
@@ -202,8 +221,18 @@ class Ut3Runner:
             if coverage_run_id:
                 self.gateway.execute(queries.COVERAGE_STOP_STATEMENT)
 
+        # `owner`, not `ut_owner`: coverage measures the code under test, and the
+        # schema holding the suites is a separate question.
         coverage = (
-            self._coverage(owner, coverage_run_id, packages, tuple(outcomes), request.names)
+            build_coverage_report(
+                self.gateway,
+                owner,
+                coverage_run_id,
+                packages,
+                tuple(outcomes),
+                request.names,
+                naming,
+            )
             if coverage_run_id
             else None
         )
@@ -212,74 +241,29 @@ class Ut3Runner:
             outcomes = tuple(outcomes),
             coverage = coverage,
             timings  = tuple(timings),
+            modules  = naming.modules_enabled,
         )
 
-    def _coverage(
+    def _discover(
         self,
         owner: str,
-        coverage_run_id: str,
-        packages: tuple[SuitePackage, ...],
-        outcomes: tuple[TestOutcome, ...],
         names: tuple[str, ...],
-    ) -> CoverageReport:
-        """Every package in the schema, with what the run measured about it.
-
-        The schema listing leads and the coverage rows are joined onto it, never
-        the other way round: coverage data only describes packages that were
-        executed, so a coverage-first report silently omits the untested package
-        the reader opened the report to find.
-
-        ``names`` filters this listing with the same patterns that already chose
-        the suites in ``run`` — the flag means one thing in both modes, so the
-        report lists the packages the reader named and the run executed the
-        suites they named.
-        """
-        measured = {
-            str(row.get("PACKAGE_NAME") or "").upper(): row
-            for row in self.gateway.fetch_all(
-                queries.PACKAGE_COVERAGE_QUERY,
-                {"coverage_run_id": coverage_run_id, "owner": owner},
-            )
-        }
-        blocked = _blocked_reasons(
-            self.gateway.fetch_all(queries.PACKAGE_COMPILE_SETTINGS_QUERY)
-        )
-        verdicts = _verdicts_by_target(outcomes)
-
-        listed = []
-        for row in self.gateway.fetch_all(queries.SCHEMA_PACKAGES_QUERY):
-            name = str(row.get("OBJECT_NAME") or "")
-            if names and not any(matches_sql_like(name, pattern) for pattern in names):
-                continue
-            found = measured.get(name.upper(), {})
-            verdict = verdicts.get(name.upper(), {})
-            blocks_total = int(found.get("BLOCKS_TOTAL") or 0)
-            listed.append(
-                PackageCoverage(
-                    name           = name,
-                    lines          = int(row.get("LINES") or 0),
-                    passed         = verdict.get(RESULT_PASSED, 0),
-                    failed         = verdict.get(RESULT_FAILED, 0),
-                    errored        = verdict.get(RESULT_ERRORED, 0),
-                    blocks_total   = blocks_total,
-                    blocks_covered = int(found.get("BLOCKS_COVERED") or 0),
-                    lines_covered  = int(found.get("LINES_COVERED") or 0),
-                    # A reason explains silence. Oracle having collected blocks
-                    # for this package is the answer to "could it be measured",
-                    # so a prerequisite that predicts otherwise loses to the data
-                    # rather than overwriting it.
-                    blocked_reason = "" if blocks_total else blocked.get(name.upper(), ""),
-                )
-            )
-        return CoverageReport(packages=tuple(listed))
-
-    def _discover(self, owner: str, names: tuple[str, ...]) -> tuple[SuitePackage, ...]:
+        naming: UtNaming,
+    ) -> tuple[SuitePackage, ...]:
         # Packages come back A-Z from the dictionary and stay that way; tests are
         # re-sorted below into the order the package spec declares them.
-        rows = self.gateway.fetch_all(queries.SUITE_PACKAGES_QUERY)
+        #
+        # The dictionary returns the schema's **test** packages, not its
+        # packages: `ut_pattern` is applied by the query, so nothing arrives
+        # here to be thrown away.
+        rows = self.gateway.fetch_all(
+            queries.SUITE_PACKAGES_QUERY, naming.discovery_binds(owner)
+        )
         items = self.gateway.fetch_all(queries.SUITE_ITEMS_QUERY, {"owner": owner})
         declaration_order = _declaration_order(
-            self.gateway.fetch_all(queries.PACKAGE_PROCEDURES_QUERY)
+            self.gateway.fetch_all(
+                queries.PACKAGE_PROCEDURES_QUERY, naming.selection_binds(owner)
+            )
         )
 
         tests_by_package: dict[str, list[SuiteTest]] = {}
@@ -320,6 +304,12 @@ class Ut3Runner:
                     description = suite_description.get(name.upper(), ""),
                     tests       = tests,
                     skip_reason = _skip_reason(status, tests),
+                    # Both derived by Oracle in the discovery query, from
+                    # `ut_match` and `ut_module`. Re-deriving either here would
+                    # be a second regex engine free to disagree with the one
+                    # that selected the row.
+                    target      = str(row.get("TARGET_NAME") or ""),
+                    module      = str(row.get("MODULE_NAME") or ""),
                 )
             )
         return tuple(packages)
@@ -336,58 +326,14 @@ class Ut3Runner:
         return unreported(package, document)
 
 
-def _verdicts_by_target(outcomes: tuple[TestOutcome, ...]) -> dict[str, dict[str, int]]:
-    """``A_UT``'s verdicts are reported on package ``A``'s row.
-
-    **This is a naming-convention lookup, not an execution fact.** Block coverage
-    records which blocks ran, never which test ran them, so no data source can
-    say "this test covered that package". A suite that exercises a package other
-    than its namesake therefore contributes blocks to that package's coverage and
-    no verdicts to its row. That asymmetry is honest — the blocks were measured,
-    the attribution was inferred — and collapsing it would mean inventing an
-    owner for every test.
-
-    ``SKIPPED`` has no column, so a ``%disabled`` test lands in none of the
-    three; its own result row in a plain run still reads ``SKIPPED``.
-    """
-    verdicts: dict[str, dict[str, int]] = {}
-    for outcome in outcomes:
-        name = outcome.package.upper()
-        if not name.endswith(UT_PACKAGE_SUFFIX):
-            continue
-        target = name[: -len(UT_PACKAGE_SUFFIX)]
-        counts = verdicts.setdefault(target, {})
-        counts[outcome.result] = counts.get(outcome.result, 0) + 1
-    return verdicts
-
-
-def _blocked_reasons(rows: list[dict[str, object]]) -> dict[str, str]:
-    """Compile settings that explain why Oracle collected nothing for a package.
-
-    Only ``PLSQL_CODE_TYPE = NATIVE`` qualifies: native compilation strips the
-    instrumentation, so the unit produces no ``dbmspcc_blocks`` rows and the
-    report would otherwise show a bare `-` indistinguishable from untested code.
-
-    ``PLSQL_OPTIMIZE_LEVEL > 1`` was here until a live run disproved it — see
-    ``inventory.BLOCKED_NATIVE``. The caller applies whatever comes back only to
-    packages with no measurement, so this map can never suppress a real figure.
-    """
-    reasons: dict[str, str] = {}
-    for row in rows:
-        name = str(row.get("PACKAGE_NAME") or "").upper()
-        if not name:
-            continue
-        if str(row.get("PLSQL_CODE_TYPE") or "").upper() == "NATIVE":
-            reasons[name] = BLOCKED_NATIVE
-    return reasons
-
-
 def _declaration_order(rows: list[dict[str, object]]) -> dict[tuple[str, str], int]:
-    """``(package, procedure) -> subprogram id`` for every ``_UT`` package.
+    """``(package, procedure) -> subprogram id`` for the suite schema's packages.
 
-    One query for the whole schema rather than one per package: the `_UT` set is
+    One query for the whole schema rather than one per package: the set is
     small, and the discovery pass already reads the dictionary and the annotation
-    cache whole for the same reason.
+    cache whole for the same reason. Unfiltered by name because the pattern that
+    would filter it lives in Python now — an extra package's procedures in the
+    map are never looked up.
     """
     order: dict[tuple[str, str], int] = {}
     for row in rows:

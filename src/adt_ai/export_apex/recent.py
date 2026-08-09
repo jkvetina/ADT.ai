@@ -6,7 +6,7 @@ from typing import Any
 
 from adt_ai.export_apex.inventory import ApexApplication
 from adt_ai.shared.dates import recent_since
-from adt_ai.shared.progress import print_adt_header
+from adt_ai.shared.progress import print_adt_header, schema_label
 from adt_ai.shared.row_values import row_value
 
 
@@ -20,7 +20,7 @@ def _print_schema_export_header(schema: str) -> None:
     under — and on a schema with no applications there is no header at all, which
     is how a `-rest` run could finish printing nothing (ADT #190).
     """
-    print_adt_header(f"SCHEMA {schema}, EXPORTING:")
+    print_adt_header(f"SCHEMA {schema_label(schema)}, EXPORTING:")
 
 def _print_recent_changes_header(
     application: ApexApplication,

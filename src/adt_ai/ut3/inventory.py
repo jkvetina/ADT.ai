@@ -42,11 +42,26 @@ class SuiteTest:
 
 @dataclass(frozen=True)
 class SuitePackage:
+    """One test package, with the tests it holds and the module it belongs to.
+
+    ``target`` and ``module`` are ``ut_match``'s and ``ut_module``'s first
+    capture groups, both extracted by Oracle in the discovery query rather than
+    re-derived here — one regex engine, evaluating each expression once, against
+    the row it also selected.
+
+    Either can be empty: an expression that does not parse this name yields
+    nothing, and ``module`` is empty for every package when a project has turned
+    the roll-ups off. The roll-up tells those apart by its own switch, never by
+    looking for a blank here.
+    """
+
     name        : str
     status      : str = "VALID"
     description : str = ""
     tests       : tuple[SuiteTest, ...] = field(default_factory=tuple)
     skip_reason : str = ""
+    target      : str = ""
+    module      : str = ""
 
     @property
     def runnable(self) -> bool:
@@ -128,6 +143,13 @@ class PackageCoverage:
     covered package reports fewer covered lines than it has lines. Where the
     report prints the two together it says so, rather than leaving a reader to
     divide them and conclude the figure is broken.
+
+    ``module`` is parsed from **this package's own name**, the module being a
+    property of the package rather than of its test. It travels across the
+    ``ut_match`` pairing from the suite that tests it only where the expression
+    finds nothing here — the fallback for a project whose ``ut_module`` is
+    anchored to its test-package marker and therefore cannot read a package under
+    test at all. It is empty only when neither answers.
     """
 
     name           : str
@@ -139,6 +161,7 @@ class PackageCoverage:
     blocks_covered : int = 0
     lines_covered  : int = 0
     blocked_reason : str = ""
+    module         : str = ""
 
     @property
     def has_coverage(self) -> bool:
@@ -182,9 +205,15 @@ class CoverageReport:
     test actually tested", ``uncovered`` is the work list. ``packages`` keeps the
     whole thing in one order so a caller that wants the full picture is not
     reassembling it from halves.
+
+    ``modules`` is the switch, not the data: it says ``ut_module`` is configured
+    and the roll-up should therefore group. Asking whether any package carries a
+    module instead would silently drop the table for a project whose expression
+    parses none of its names — which is a configuration to report, not to hide.
     """
 
     packages : tuple[PackageCoverage, ...] = field(default_factory=tuple)
+    modules  : bool = False
 
     @property
     def covered(self) -> tuple[PackageCoverage, ...]:
@@ -209,10 +238,22 @@ class CoverageReport:
         different question, and the roll-up answers it with the package and line
         counts beside this figure rather than by bending this one.
         """
-        total = sum(package.blocks_total for package in self.covered)
-        if not total:
-            return None
-        return _percent(sum(package.blocks_covered for package in self.covered), total)
+        return coverage_percent(self.covered)
+
+
+def coverage_percent(packages: tuple[PackageCoverage, ...] | list[PackageCoverage]) -> float | None:
+    """Covered blocks over measured blocks, for any set of package rows.
+
+    Shared by the whole-schema roll-up and by each `ut_module` group, so a group
+    percentage and the total under it are the same calculation rather than two
+    that have to be kept in step. ``None`` when nothing in the set was measured:
+    a percentage is a claim about collected data.
+    """
+    measured = [package for package in packages if package.has_coverage]
+    total = sum(package.blocks_total for package in measured)
+    if not total:
+        return None
+    return _percent(sum(package.blocks_covered for package in measured), total)
 
 
 def _percent(covered: int, total: int) -> float:

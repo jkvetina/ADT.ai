@@ -33,13 +33,13 @@ from adt_ai.cli.dependencies_reporters import (
     _print_dependency_list,
     _print_foreign_key_tree,
 )
-from adt_ai.cli.export_apex_owners import _resolve_apex_metadata_owners
+from adt_ai.cli.export_apex_owners import resolve_apex_owner_routes
 from adt_ai.cli.export_reporters import ConsoleApexRevealReporter
 from adt_ai.cli.gateways import build_gateway
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.dependencies.store import DEFAULT_MAX_DEPTH
 from adt_ai.export_apex.inventory import ApexApplication, ApexDiscovery
-from adt_ai.shared.progress import FixedWidthProgressPrinter
+from adt_ai.shared.progress import FixedWidthProgressPrinter, schema_label
 
 _NO_DEPENDENCY_INDEX_MESSAGE = (
     "No dependency database found. Run 'adt dependencies -refresh' to build it."
@@ -272,27 +272,15 @@ def _refresh_dependency_index(
     # APEX_* views are pulled over one schema's connection; default to the first
     # refreshed schema, else the environment's first default schema. When -app is
     # given without -schema, prefer the app's recorded owner schema from the
-    # cached config/apex_apps.yaml (same shortcut as export_apex) so we connect
-    # straight to it and skip the wasted default-schema connection. The runner
-    # uses a single app_schema, so this only applies when every requested app
-    # shares one non-default owner; mixed owners or unknown apps fall back.
+    # cached config/apex_apps.yaml so we connect straight to it and skip the
+    # wasted default-schema connection. The routing itself is export_apex's own
+    # resolver — one derivation, two callers; `sole_owner` is where this command's
+    # single-connection constraint is applied, and mixed owners or unknown apps
+    # fall back to the default schema.
     app_schema: str | None = schemas[0] if schemas else None
     if apps and app_schema is None:
-        defaults = connections.default_schemas(environment)
-        default_schema = defaults[0] if defaults else None
-        if default_schema is not None:
-            owner_routes = _resolve_apex_metadata_owners(
-                root,
-                [str(app) for app in apps],
-                default_schema,
-                connections.schema_names(environment),
-            )
-            if len(owner_routes) == 1:
-                owner_schema, routed_apps = next(iter(owner_routes.items()))
-                if len(routed_apps) == len(apps):
-                    app_schema = owner_schema
-        if app_schema is None:
-            app_schema = default_schema
+        owner_routes = resolve_apex_owner_routes(root, connections, environment, apps)
+        app_schema = owner_routes.sole_owner or owner_routes.default_schema
 
     silent = getattr(args, "silent", False)
     runner = DependencyIndexRunner(selected_gateway_factory)
@@ -327,7 +315,7 @@ def _refresh_dependency_index(
             if is_schema_segment:
                 apex_apps = ", ".join(f"APEX APP {label}" for label in labels)
                 print_adt_header(
-                    f"REFRESHING {schema.upper()} SCHEMA AND {apex_apps}:"
+                    f"REFRESHING {schema_label(schema)} SCHEMA AND {apex_apps}:"
                 )
             else:
                 # Same shape export_apex prints before its own per-app export loop:
@@ -337,7 +325,9 @@ def _refresh_dependency_index(
             # The schema is uppercased into the sentence rather than trailing a
             # colon: `REFRESHING: ict_owner` left the dashed rule stopping at the
             # colon, one word short of the line it was underlining (ADT #237).
-            print_adt_header(f"REFRESHING {schema.upper()} SCHEMA:")
+            # Uppercasing is `schema_label`'s job, not an inline `.upper()` — the
+            # inline call is what let the other headers drift (ADT #240).
+            print_adt_header(f"REFRESHING {schema_label(schema)} SCHEMA:")
 
         runner.refresh(
             DependencyIndexRequest(

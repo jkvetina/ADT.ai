@@ -10,6 +10,7 @@ from adt_ai.cli.constants import (
     print_adt_header,
 )
 from adt_ai.cli.context_errors import _is_database_connection_error
+from adt_ai.shared.progress import schema_label
 
 
 def _print_connection_block(
@@ -22,7 +23,9 @@ def _print_connection_block(
 ) -> dict[str, str]:
     resolved_schema = schema or str(getattr(connection, "schema", "APP"))
     resolved_environment = environment or str(getattr(connection, "environment", "DEV"))
-    print_adt_header(f"CONNECTING TO SCHEMA {resolved_schema}, {resolved_environment}:")
+    print_adt_header(
+        f"CONNECTING TO SCHEMA {schema_label(resolved_schema)}, {resolved_environment}:"
+    )
     return _print_connection_versions(gateway, connection, debug=debug)
 
 def _print_connection_versions(

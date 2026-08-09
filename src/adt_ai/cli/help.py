@@ -196,19 +196,31 @@ COMMAND_SUMMARIES = {
     ),
     "ut3": (
         "Runs the utPLSQL (UT3) test suites installed in a configured Oracle schema.",
-        "A suite is a package whose name ends in _UT and that utPLSQL has parsed as a "
-        "%suite, so production code can never be swept into a test run.",
+        "A suite is a package matching config ut_pattern (default '_UT$') that utPLSQL "
+        "has parsed as a %suite, so production code can never be swept into a test run.",
+        "ut_pattern, ut_match, ut_owner and ut_module configure the naming convention: "
+        "what a test package is called, which package it tests, which schema holds them, "
+        "and which module a package belongs to. All four are Oracle regular expressions, "
+        "evaluated by Oracle inside the dictionary query.",
+        "ut_module is read off the package's own name, falling back to its suite's only "
+        "where that finds nothing, so anchor it to nothing that has to follow the module: "
+        "an expression ending _UT$ cannot read a package that has no suite, and one "
+        "ending _ cannot read ICT_VPD. Whatever it cannot read groups under ? instead.",
         "With no arguments every discovered suite runs; -name takes LIKE patterns and "
         "selects the suites to run in every mode, so a filtered run costs less than an "
         "unfiltered one.",
         "The matched suites are rolled up before anything runs, then each suite's test "
         "verdicts print as that suite finishes -- packages A-Z, tests in the order the "
         "package specification declares them.",
-        "A _UT package that is INVALID or holds no parsed %test is ignored: it is not a "
-        "suite, so it is listed nowhere and does not fail the run on its own.",
+        "A matched package that is INVALID or holds no parsed %test is ignored: it is not "
+        "a suite, so it is listed nowhere and does not fail the run on its own.",
         "SUMMARY closes the run with a row per suite -- the three verdict counts and "
         "TIMER, that suite's own seconds, which is what tells a slow suite from a slow "
         "schema.",
+        "With ut_module configured, a MODULES table follows SUMMARY: the same counts "
+        "grouped by module, with a PACKAGES column for the group size and a last row, "
+        "unnamed, for the whole run. A group the expression could not name reads ?, so "
+        "it is never mistaken for that total.",
         "The exit code is the deliverable: utPLSQL never raises on a failed test, so "
         "failures, errors, an unparsable report, and a zero-test run all exit non-zero.",
         "-coverage replaces that whole run report with the coverage one; the suites "
@@ -223,7 +235,8 @@ COMMAND_SUMMARIES = {
         "is 4000 untested lines or 40.",
         "SUMMARY then closes with one row for the whole schema -- packages, body lines, "
         "executed lines, percentage -- so the high-level answer does not have to be added "
-        "up by hand.",
+        "up by hand. With ut_module configured it is one row per module instead, MODULE "
+        "NAME first and the whole schema on the unnamed last row.",
         "COVERED is source lines that ran, read from the block map's own line number. It "
         "does not divide into LINES: that counts every body row including the comments "
         "and declarations Oracle never instruments, and COVERAGE stays covered blocks "

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 import time
 from datetime import datetime
@@ -9,8 +8,6 @@ from pathlib import Path
 
 from adt_ai import __version__
 from adt_ai.cli.constants import (
-    RESULT_BLOCK_END,
-    RESULT_BLOCK_START,
     ActionReporter,
     DiscoveryRequest,
     DiscoveryRunner,
@@ -24,6 +21,7 @@ from adt_ai.cli.constants import (
     print_adt_header,
     print_adt_table,
     print_module_banner,
+    write_file_results,
 )
 from adt_ai.cli.context import (
     DebugQueryGateway,
@@ -53,7 +51,6 @@ from adt_ai.recompile.render import (
     print_synonym_tables,
     print_trailing_updated_objects,
 )
-from adt_ai.shared import text_files
 from adt_ai.shared.object_types import normalize_object_type_patterns
 
 
@@ -263,38 +260,6 @@ def _run_recompile_for_schema(
     return 0 if result.success else 1
 
 
-# Built from the shared result-block sentinel so the write-back and this scrub
-# can never drift apart: only blocks carrying the ADT-RESULT marker are removed
-# on re-run, leaving any hand-written ``/* … */`` comments untouched.
-_FILE_RESULT_RE = re.compile(
-    r"\n" + re.escape(RESULT_BLOCK_START) + r"\n.*?" + re.escape(RESULT_BLOCK_END),
-    re.DOTALL,
-)
-
-
-def _write_file_results(file_path: Path, results: list[str]) -> None:
-    """Rewrite ``file_path`` inserting rendered results after each statement.
-
-    Each statement keeps its ``;`` and gets a ``/* … */`` block appended.
-    On re-runs the old blocks are replaced, so the file stays clean.
-    Statements without a matching result keep their ``;`` and no block is added.
-    """
-    text = file_path.read_text(encoding="utf-8")
-    stripped = _FILE_RESULT_RE.sub("", text)
-    raw_pieces = stripped.split(";")
-    while raw_pieces and not raw_pieces[-1].strip():
-        raw_pieces.pop()
-
-    parts: list[str] = []
-    for i, piece in enumerate(raw_pieces):
-        stmt = piece.rstrip()
-        if i < len(results):
-            parts.append(f"{stmt};\n{RESULT_BLOCK_START}\n{results[i]}\n{RESULT_BLOCK_END}\n")
-        else:
-            parts.append(f"{stmt};\n")
-    text_files.write_text(file_path, "".join(parts))
-
-
 def _run_discovery(
     args: argparse.Namespace,
     gateway_factory: GatewayFactory | None = None,
@@ -347,7 +312,7 @@ def _run_discovery(
     )
 
     if has_file:
-        _write_file_results(Path(args.statements_file).expanduser(), result.results)
+        write_file_results(Path(args.statements_file).expanduser(), result.results)
 
     print_adt_header("RESULT:")
     if has_sql:
