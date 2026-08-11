@@ -9,6 +9,25 @@ from adt_ai.doctor._base import (
 )
 from adt_ai.shared import text_files
 
+# The patch template scaffold ships with ADT.ai but is read from the *project*
+# root, so `-init` is what actually puts it where `patch -create` looks (ADT #256).
+# `#254` shipped it as a reference copy the tool never reads, which left every
+# project that did not copy it in by hand with six silently empty template slots.
+# Copied verbatim from the package, never re-authored here -- the same way the
+# root `.gitignore` above is copied rather than templated.
+PATCH_TEMPLATE_DIR = Path("config/patch_template")
+
+
+def _patch_template_files(package_root: Path) -> list[tuple[Path, str]]:
+    source_root = package_root / PATCH_TEMPLATE_DIR
+    if not source_root.is_dir():
+        return []
+    return [
+        (PATCH_TEMPLATE_DIR / path.relative_to(source_root), path.read_text(encoding="utf-8"))
+        for path in sorted(source_root.rglob("*"))
+        if path.is_file() and path.name != ".DS_Store"
+    ]
+
 
 class DoctorInitMixin:
     def _init_project(self, request: object) -> DoctorResult:  # type: ignore[override]
@@ -22,12 +41,15 @@ class DoctorInitMixin:
             encoding="utf-8"
         )
 
-        for relative_path, content in (
+        scaffold: list[tuple[Path, str]] = [
             (Path("config/config.yaml"), PROJECT_CONFIG_TEMPLATE),
             (Path(".gitignore"), source_gitignore),
             (Path("connections/.gitkeep"), ""),
             (Path("connections/wallets/.gitkeep"), ""),
-        ):
+            *_patch_template_files(self.package_root),  # type: ignore[attr-defined]
+        ]
+
+        for relative_path, content in scaffold:
             path = root / relative_path
             if path.exists() and not request.force:  # type: ignore[union-attr]
                 skipped.append(relative_path)

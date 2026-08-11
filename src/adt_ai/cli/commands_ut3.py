@@ -25,7 +25,6 @@ from adt_ai.ut3.render import (
     print_results,
     print_summary,
 )
-from adt_ai.ut3.render_coverage import print_coverage, print_coverage_summary
 from adt_ai.ut3.runner import Ut3Request, Ut3Runner
 
 
@@ -81,65 +80,43 @@ def _run_ut3_for_schema(
     _print_connection_block(gateway, connection, debug=args.debug)
 
     # -name is multi-pattern (append + nargs="+"), matching recompile/export_db.
-    # It selects the suites to run in both modes, and under -coverage the same
-    # patterns also select the packages the report lists. No pattern means
-    # everything.
+    # It selects the suites to run; the coverage figures then describe whatever
+    # those suites reached. No pattern means everything.
     names = tuple(_flatten_arg_groups(args.name) or ())
 
     # The connected user owns USER_OBJECTS and is what utPLSQL's annotation
     # cache is keyed by; the configured schema key is only its label.
     owner = connection.username or connection.schema or schema
 
-    # `-coverage` asks one question and gets one answer, so the sections that
-    # report the run itself are suppressed exactly as `-silent` suppresses them.
-    # The suites still execute — block coverage is collected by running code and
-    # there is no other way to get it — they just do it quietly.
-    report_only = args.silent or args.coverage
-
     # The reporter prints the suites roll-up the moment discovery returns and
     # then each suite's results as it finishes — the whole point of listing them.
-    # Under -coverage there is nothing to stream, so what it prints at that same
-    # moment is the CODE COVERAGE: header the silent run belongs under.
-    reporter = ConsoleUt3Reporter(silent=report_only, coverage=args.coverage)
+    reporter = ConsoleUt3Reporter(silent=args.silent)
     result = Ut3Runner(gateway, reporter=reporter).run(
         Ut3Request(
-            owner    = owner,
-            names    = names,
-            refresh  = args.refresh,
-            coverage = args.coverage,
-            naming   = naming or UtNaming(),
+            owner   = owner,
+            names   = names,
+            refresh = args.refresh,
+            naming  = naming or UtNaming(),
         )
     )
 
-    if not report_only and not reporter.streamed:
+    if not args.silent and not reporter.streamed:
         # Nothing ran, so nothing streamed. The section still prints, empty: a
         # run that found no suite reports it in the same shape as one that did,
         # and the exit code below carries the failure.
         print_results(result)
 
-    # Both modes end the same way round — the detail, then whatever went wrong,
-    # then the one table that answers "how did this go". Under `-coverage` the
-    # detail is the two report tables; on a plain run it streamed above.
-    if result.coverage is not None:
-        print_coverage(result.coverage)
-
-    # Neither flag ever takes out the problem stanzas. `-silent` exists to make a
-    # green run quiet, not to make a red one unreadable, and under `-coverage`
-    # the same argument is sharper still: the report's own `FAILED` column would
-    # otherwise be a count whose message is reachable only by re-running.
+    # `-silent` never takes out the problem stanzas: it exists to make a green
+    # run quiet, not to make a red one unreadable, and a `FAIL` count whose
+    # message is reachable only by re-running is not a report.
     print_problems(result)
 
-    # `SUMMARY:` closes either mode, with the roll-up that mode's reader wants:
-    # per-suite verdicts and timings for a run, per-table package and line
-    # counts for a coverage report.
-    if result.coverage is not None:
-        # `-coverage` needs no second table: its roll-up already had this shape,
-        # so `ut_module` splits that one table's rows instead of adding another.
-        print_coverage_summary(result.coverage)
-    else:
-        print_summary(result)
-        if result.modules:
-            print_module_summary(result)
+    # The run closes on its roll-up — per-suite first, then per module when
+    # `ut_module` is configured. `names` reaches the renderer because the header
+    # says what the table covers: `SUMMARY FOR <PATTERNS>:` under `-name`.
+    print_summary(result, names)
+    if result.modules:
+        print_module_summary(result)
     return 0 if result.success else 1
 
 

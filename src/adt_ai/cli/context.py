@@ -49,6 +49,7 @@ from adt_ai.cli.context_errors import (
     _is_user_database_error,
     _print_config_error,
     _print_database_error,
+    _print_sqlcl_error,
     _print_unexpected_error,
 )
 from adt_ai.shared import text_files

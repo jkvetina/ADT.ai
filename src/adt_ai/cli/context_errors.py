@@ -81,12 +81,33 @@ def _print_config_error(error: Exception) -> None:
     print("Use -debug to show the Python traceback.", file=sys.stderr)
     print(file=sys.stderr)
 
+def _print_sqlcl_error(error: Exception) -> None:
+    # SQLcl exiting non-zero is a failure ADT.ai raises on purpose, so it gets a
+    # banner that says so rather than the internal-surprise catch-all. The
+    # message IS the captured transcript: printed on its own lines, never after
+    # a type name, because whatever line lands beside the type reads as the
+    # diagnosis (ADT #271).
+    print_adt_header("SQLCL SCRIPT FAILED:", file=sys.stderr)
+    print(_display(error), file=sys.stderr)
+    print(file=sys.stderr)
+    print("Use -debug to show the Python traceback.", file=sys.stderr)
+    print(file=sys.stderr)
+
 def _print_unexpected_error(error: Exception) -> None:
     # Catch-all for any failure that is not a recognised config/database error.
     # The command banner has already printed (it is the first handler statement),
     # so this only adds a friendly framing instead of leaking a raw traceback.
     print_adt_header("UNEXPECTED ERROR:", file=sys.stderr)
-    print(f"{type(error).__name__}: {_display(error)}", file=sys.stderr)
+    message = _display(error)
+    if "\n" in message:
+        # A multi-line message is a captured transcript, not a sentence. Gluing
+        # the type onto its first line makes that line the reported cause --
+        # `RuntimeError: Connection <name> has been deleted` above the SP2-0556
+        # that actually failed the run (ADT #271).
+        print(f"{type(error).__name__}:", file=sys.stderr)
+        print(message, file=sys.stderr)
+    else:
+        print(f"{type(error).__name__}: {message}", file=sys.stderr)
     print(file=sys.stderr)
     print("Use -debug to show the Python traceback.", file=sys.stderr)
     print(file=sys.stderr)

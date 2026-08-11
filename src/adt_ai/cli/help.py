@@ -202,48 +202,34 @@ COMMAND_SUMMARIES = {
         "what a test package is called, which package it tests, which schema holds them, "
         "and which module a package belongs to. All four are Oracle regular expressions, "
         "evaluated by Oracle inside the dictionary query.",
-        "ut_module is read off the package's own name, falling back to its suite's only "
-        "where that finds nothing, so anchor it to nothing that has to follow the module: "
-        "an expression ending _UT$ cannot read a package that has no suite, and one "
-        "ending _ cannot read ICT_VPD. Whatever it cannot read groups under ? instead.",
+        "ut_module is read off the suite's own name, in the query that already selected "
+        "it, so anchor it to nothing that has to follow the module token: an expression "
+        "ending in _ cannot read ICT_VPD_UT, a module whose whole implementation is one "
+        "package. Whatever it cannot read groups under ? instead.",
         "With no arguments every discovered suite runs; -name takes LIKE patterns and "
-        "selects the suites to run in every mode, so a filtered run costs less than an "
-        "unfiltered one.",
+        "selects the suites to run, so a filtered run costs less than an unfiltered one.",
         "The matched suites are rolled up before anything runs, then each suite's test "
         "verdicts print as that suite finishes -- packages A-Z, tests in the order the "
-        "package specification declares them.",
+        "package specification declares them. A verdict reads PASS, FAIL, ERROR or SKIP, "
+        "the same words the roll-up columns are headed with.",
         "A matched package that is INVALID or holds no parsed %test is ignored: it is not "
         "a suite, so it is listed nowhere and does not fail the run on its own.",
-        "SUMMARY closes the run with a row per suite -- the three verdict counts and "
-        "TIMER, that suite's own seconds, which is what tells a slow suite from a slow "
-        "schema.",
-        "With ut_module configured, a MODULES table follows SUMMARY: the same counts "
+        "SUMMARY closes the run with a row per suite -- the three verdict counts, TIMER, "
+        "that suite's own seconds, and COVERAGE, the block-coverage percentage of the "
+        "package that suite tests. Under -name the header reads SUMMARY FOR <PATTERNS>:.",
+        "Coverage is measured on every run through utPLSQL's own coverage session, and it "
+        "is run-scoped: a row describes the package its suite tests, so a suite ut_match "
+        "cannot pair, or a target Oracle never instrumented, reads blank rather than 0.0.",
+        "With ut_module configured, a MODULES table follows SUMMARY: the same columns "
         "grouped by module, with a PACKAGES column for the group size and a last row, "
         "unnamed, for the whole run. A group the expression could not name reads ?, so "
         "it is never mistaken for that total.",
+        "A group's COVERAGE covers its whole code, not just the part a test reached: the "
+        "pooled block figure is scaled by the share of body lines Oracle measured at all, "
+        "so a target nothing entered pulls its module down and a group nothing reached "
+        "reads 0.0.",
         "The exit code is the deliverable: utPLSQL never raises on a failed test, so "
         "failures, errors, an unparsable report, and a zero-test run all exit non-zero.",
-        "-coverage replaces that whole run report with the coverage one; the suites "
-        "still execute, since running the code is how Oracle collects coverage, they "
-        "just do it quietly under a header printed before they start.",
-        "CODE COVERAGE lists what the run reached -- package, body line count, "
-        "PASSED/FAILED/ERRORED, coverage percent. NO CODE COVERAGE is the work list and "
-        "carries package and line count only, because every other column would read the "
-        "same on every row of it.",
-        "Every package in the schema is in one table or the other, so a package no test "
-        "covers is visible rather than absent, and LINES is what says whether that gap "
-        "is 4000 untested lines or 40.",
-        "SUMMARY then closes with one row for the whole schema -- packages, body lines, "
-        "executed lines, percentage -- so the high-level answer does not have to be added "
-        "up by hand. With ut_module configured it is one row per module instead, MODULE "
-        "NAME first and the whole schema on the unnamed last row.",
-        "COVERED is source lines that ran, read from the block map's own line number. It "
-        "does not divide into LINES: that counts every body row including the comments "
-        "and declarations Oracle never instruments, and COVERAGE stays covered blocks "
-        "over measured blocks.",
-        "A -name pattern narrows a coverage run the same way it narrows a plain one, so "
-        "a package reached only by a suite the pattern excludes reads lower than an "
-        "unfiltered run would report.",
     ),
     "validate": (
         "Runs the APEXlang compiler over exported apexlang/ folders and reports its errors.",

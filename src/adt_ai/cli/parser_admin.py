@@ -28,7 +28,7 @@ def add_admin_parsers(subparsers) -> None:
     doctor.add_argument(
         "-init",
         action="store_true",
-        help="scaffold project config, ignore rules, and safe local folders",
+        help="scaffold project config, ignore rules, patch templates, and safe local folders",
     )
     doctor.add_argument("--root", "-root", default=".", help="project root folder for -init")
     doctor.add_argument(

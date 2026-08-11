@@ -20,13 +20,16 @@ from decimal import ROUND_HALF_UP, Decimal
 SKIP_INVALID = "INVALID"
 SKIP_NOT_A_SUITE = "NOT A SUITE"
 
-RESULT_PASSED = "PASSED"
-RESULT_FAILED = "FAILED"
-# The status word a test row prints. A failed expectation and a raised exception
-# are different things and stay counted apart, but both have to fit the same
-# fixed-width status column, and `ERROR` is what the reader is looking for.
+# The four status words, and they are the *printed* words: one constant is both
+# the header of a `SUMMARY:` verdict column and the value in a `TEST RESULTS:`
+# row, so a row can never read one spelling under a header that reads another.
+# Jan's 2026-08-11 call is the short form everywhere. A failed expectation and a
+# raised exception stay counted apart, but all four fit the same fixed-width
+# status column, and the short word is what the reader is scanning for.
+RESULT_PASSED = "PASS"
+RESULT_FAILED = "FAIL"
 RESULT_ERRORED = "ERROR"
-RESULT_SKIPPED = "SKIPPED"
+RESULT_SKIPPED = "SKIP"
 
 
 @dataclass(frozen=True)
@@ -98,92 +101,36 @@ class SuiteTiming:
     seconds : float
 
 
-# Why Oracle collected nothing for a package. Native compilation strips the
-# PL/SQL instrumentation block coverage reads, so the unit never reaches
-# `dbmspcc_blocks` at all — and an unexplained absence is indistinguishable from
-# genuinely untested code, which is why it is named rather than left as a bare
-# `-`.
-#
-# **A reason explains an absent measurement; it never replaces a present one.**
-# The runner attaches it only when nothing was collected.
-#
-# `PLSQL_OPTIMIZE_LEVEL > 1` sat beside it until 2026-08-06 and was removed
-# because a live run disproved it: level 2 is Oracle's default, and block
-# coverage is collected there regardless. The optimizer reshapes the *line* map a
-# profiler reads, not the basic-block map this report is built on. Measured on
-# `ICT_OWNER@ORCLPDB1` — all 78 package bodies at level 2, 36 of them recorded in
-# `dbmspcc_blocks` — the flag fired on every package of every default database
-# and not one percentage ever printed.
-BLOCKED_NATIVE = "NATIVE"
-
-
 @dataclass(frozen=True)
 class PackageCoverage:
-    """One package's line in the coverage report.
+    """One package under test, with what the run measured about it.
 
-    ``lines`` is the package body's own line count — how much code the
-    percentage beside it is a percentage of. It is the only field here that says
-    anything about scale, and it is what makes a list of uncovered packages a
-    priority order rather than an alphabet.
+    There is one of these per package a discovered suite **tests** — resolved
+    through ``ut_match`` — and none for anything else in the schema. Coverage is
+    run-scoped since card `#291`: the figure describes the code this run
+    exercised, not the schema it ran in.
 
-    ``passed``, ``failed`` and ``errored`` come from the package's ``_UT``
-    partner **by name**, not from whatever executed it: attributing execution
-    back to a specific test is not something block coverage records, so a package
-    covered by somebody else's suite shows real blocks and no verdicts. There is
-    deliberately no ``tests`` count — the three verdicts sum to it, and a fourth
-    number derived from three already on the row is noise.
+    ``lines`` is the package body's own line count. It is the only field that
+    says anything about scale, and it is what ``coverage_percent`` weighs a group
+    by: a measured 40-line package and an unmeasured 4000-line one do not
+    contribute equally to the module row above them.
 
     ``blocks_total`` already excludes ``not_feasible`` blocks — the exclusion
     happens in SQL, so every consumer of this record sees the same denominator.
-
-    ``lines_covered`` is the line half of that same block measurement: the
-    distinct source lines carrying a covered block. **It is not a fraction of
-    ``lines``** — that counts every row of the body, comments, blanks and
-    declarations included, none of which Oracle instruments — so even a fully
-    covered package reports fewer covered lines than it has lines. Where the
-    report prints the two together it says so, rather than leaving a reader to
-    divide them and conclude the figure is broken.
-
-    ``module`` is parsed from **this package's own name**, the module being a
-    property of the package rather than of its test. It travels across the
-    ``ut_match`` pairing from the suite that tests it only where the expression
-    finds nothing here — the fallback for a project whose ``ut_module`` is
-    anchored to its test-package marker and therefore cannot read a package under
-    test at all. It is empty only when neither answers.
     """
 
     name           : str
     lines          : int = 0
-    passed         : int = 0
-    failed         : int = 0
-    errored        : int = 0
     blocks_total   : int = 0
     blocks_covered : int = 0
-    lines_covered  : int = 0
-    blocked_reason : str = ""
-    module         : str = ""
-
-    @property
-    def has_coverage(self) -> bool:
-        """Did anything actually execute this package? The report splits on this.
-
-        Deliberately stricter than ``measured``: a package Oracle instrumented
-        and nothing ever entered has a real, honest ``0%``, and a reader scanning
-        for what still needs tests wants it beside the packages that were never
-        measured at all. Both answer "is this covered" with no.
-        """
-        return self.measured and self.blocks_covered > 0
 
     @property
     def measured(self) -> bool:
         """Did Oracle actually collect anything for this package?
 
-        A package with no blocks was either never executed or could not be
-        instrumented. The two are different answers and the report must not
-        print ``0%`` for both — ``blocked_reason`` separates them.
-
-        A measured package never carries a ``blocked_reason``: the runner only
-        attaches one where there is silence to explain.
+        A package with no blocks was either never entered or could not be
+        instrumented — natively compiled code carries no instrumentation at all.
+        Both are an absent measurement, and an absent measurement renders blank.
         """
         return self.blocks_total > 0
 
@@ -199,61 +146,95 @@ class PackageCoverage:
 
 @dataclass(frozen=True)
 class CoverageReport:
-    """Every package the report lists, in dictionary order, split two ways.
+    """What the run measured, keyed so a suite's row can find its own figure.
 
-    The split is the report's shape: ``covered`` answers "how well is what we
-    test actually tested", ``uncovered`` is the work list. ``packages`` keeps the
-    whole thing in one order so a caller that wants the full picture is not
-    reassembling it from halves.
+    There is no ``covered``/``uncovered`` split any more: the two tables that
+    split on it went with `-coverage` (card `#291`), and a run-scoped report has
+    nothing to split — every package in it is one a suite tests.
 
-    ``modules`` is the switch, not the data: it says ``ut_module`` is configured
-    and the roll-up should therefore group. Asking whether any package carries a
-    module instead would silently drop the table for a project whose expression
-    parses none of its names — which is a configuration to report, not to hide.
+    An empty report is the honest state for a run that measured nothing, and it
+    renders as blank `COVERAGE` cells rather than as a missing column.
     """
 
     packages : tuple[PackageCoverage, ...] = field(default_factory=tuple)
-    modules  : bool = False
 
-    @property
-    def covered(self) -> tuple[PackageCoverage, ...]:
-        return tuple(package for package in self.packages if package.has_coverage)
+    def for_package(self, name: str) -> PackageCoverage | None:
+        """The figure for one package under test, or None when there is none.
 
-    @property
-    def uncovered(self) -> tuple[PackageCoverage, ...]:
-        return tuple(package for package in self.packages if not package.has_coverage)
-
-    @property
-    def blocked(self) -> tuple[PackageCoverage, ...]:
-        return tuple(package for package in self.packages if package.blocked_reason)
-
-    @property
-    def percent(self) -> float | None:
-        """The `covered` half aggregated — the roll-up's one percentage.
-
-        **The denominator is the measured blocks and nothing wider.** A package
-        Oracle never instrumented has no block count at all, so stretching the
-        figure across the whole schema would mean inventing how much code sits
-        in the packages that were never reached. How far the tests reach is a
-        different question, and the roll-up answers it with the package and line
-        counts beside this figure rather than by bending this one.
+        Looked up case-insensitively: the name arrives from ``ut_match``'s
+        capture group against a dictionary row, and the report is keyed on the
+        dictionary's own spelling.
         """
-        return coverage_percent(self.covered)
+        if not name:
+            return None
+        wanted = name.upper()
+        for package in self.packages:
+            if package.name.upper() == wanted:
+                return package
+        return None
 
 
 def coverage_percent(packages: tuple[PackageCoverage, ...] | list[PackageCoverage]) -> float | None:
-    """Covered blocks over measured blocks, for any set of package rows.
+    """How much of a set of packages is covered — the whole set, not its measured part.
 
-    Shared by the whole-schema roll-up and by each `ut_module` group, so a group
-    percentage and the total under it are the same calculation rather than two
-    that have to be kept in step. ``None`` when nothing in the set was measured:
-    a percentage is a claim about collected data.
+    Shared by every `MODULES:` group row and by the total under them, so a group
+    and the total can never be two calculations that drift apart.
+
+    **Two halves, because code no test enters is invisible to Oracle.** Block
+    coverage only records units something ran, so a package a suite is supposed
+    to test but never reaches produces no `dbmspcc` rows at all and cannot
+    contribute a denominator. Pooling the measured blocks alone therefore
+    answered "how well is the reached code reached", which is not the question a
+    module row is read for: Jan's 2026-08-09 run printed `COM 3 1639 21 88.0`
+    where `ICT_COM_INVOICE` is 224 well-tested lines and the group's other 1415
+    lines had never executed (card `#250`).
+
+    So the pooled block figure is scaled by **reach** — the share of the set's
+    body lines Oracle measured at all. `LINES` is the only size every package
+    has. A set every package of which was measured has reach 1 and is unchanged,
+    so this can only ever move a figure that was over-claiming.
+
+    Two answers that are not percentages of measured blocks:
+
+    * **``0.0`` when nothing in the set was measured but there is code in it.**
+      Unreached code is 0% covered, and the blank a `None` renders as reads
+      "not measured" in the one column a reader scans for what needs attention.
+    * **``None`` only when the set holds no code at all**, which is the one case
+      with genuinely nothing to be a percentage of.
+
+    The measured set is everything Oracle collected blocks for, including a
+    package it measured at a real zero — a package instrumented and never
+    entered belongs on both sides of the fraction, not dropped from it.
     """
-    measured = [package for package in packages if package.has_coverage]
-    total = sum(package.blocks_total for package in measured)
-    if not total:
-        return None
-    return _percent(sum(package.blocks_covered for package in measured), total)
+    measured = [package for package in packages if package.measured]
+    blocks_total = sum(package.blocks_total for package in measured)
+    lines_total = sum(package.lines for package in packages)
+    if not blocks_total:
+        return 0.0 if lines_total else None
+    blocks_covered = sum(package.blocks_covered for package in measured)
+    if not lines_total:
+        return _percent(blocks_covered, blocks_total)
+    return _reach_percent(
+        blocks_covered,
+        blocks_total,
+        sum(package.lines for package in measured),
+        lines_total,
+    )
+
+
+def _reach_percent(covered: int, total: int, lines_measured: int, lines_total: int) -> float:
+    """The pooled block figure, scaled by the share of lines it was measured over.
+
+    One expression rather than two roundings: quantizing the block ratio first
+    and then scaling it would round twice and disagree with the same figure
+    computed by hand. With ``lines_measured == lines_total`` this is exactly
+    `_percent`, which is what keeps a fully measured set unchanged.
+    """
+    ratio = (
+        Decimal(covered) * 100 * Decimal(lines_measured)
+        / (Decimal(total) * Decimal(lines_total))
+    )
+    return float(ratio.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 def _percent(covered: int, total: int) -> float:
