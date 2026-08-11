@@ -113,6 +113,11 @@ REMOVED_COMPATIBILITY_FLAGS = {
         "-remove", "--remove", "-schema", "--schema",
     ),
 }
+# `patch` used to reject `-head` and `-local` here. That entry was the honest
+# form of "never built" while they were unimplemented (SOP §Command surface:
+# implement the behaviour, or leave the flag unsupported with a parser-error
+# test). ADT #280 implemented both -- plus `-nosnap` -- so keeping them rejected
+# would now be the opposite defect.
 
 APEX_EXPORT_ACTIONS = (
     "full", "split", "readable", "embedded", "apexlang", "checksum", "rest",
@@ -177,9 +182,17 @@ class _StdoutTracker:
         return len(text)
 
     def normalize_trailing_newlines(self, count: int) -> None:
-        if self._pending_newlines:
-            self._pending_newlines = "\n" * count
-            return
+        # Already-committed trailing newlines count toward the total in BOTH
+        # cases. This used to ignore them whenever anything was still pending,
+        # so a section that committed its own trailing blank through
+        # commit_pending() -- print_adt_table does, to flush the table -- and
+        # then printed one more blank got the committed pair *underneath* the
+        # normalized three: `patch -patch 65` printed four empty lines before
+        # TIMER where the contract allows two (ADT #269).
+        #
+        # write() resets the committed count to 0 on any real body text, so
+        # outside that window the two branches were always equal anyway -- the
+        # split was the bug, not a distinction worth keeping.
         self._pending_newlines = "\n" * max(count - self._committed_trailing_newlines, 0)
 
     def flush(self) -> None:

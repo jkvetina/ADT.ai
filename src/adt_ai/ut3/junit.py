@@ -75,7 +75,7 @@ def in_declaration_order(
 
 
 def unreported(package: SuitePackage, document: str) -> tuple[TestOutcome, ...]:
-    """One ERRORED outcome per discovered test when the run reported nothing.
+    """One ERROR outcome per discovered test when the run reported nothing.
 
     A suite that produced no parsable result did not pass — it did not run. The
     reporter's raw output rides along as the message, because that is where the

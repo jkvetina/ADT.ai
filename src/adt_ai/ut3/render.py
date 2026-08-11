@@ -15,8 +15,8 @@ a table column that would be sized to its widest sentence.
 A test package that cannot run — INVALID, or holding no parsed `%test` — is in
 none of the four sections. It is not a suite, and `ut3` reports suites.
 
-`-coverage`'s own sections live in `render_coverage.py`; what both modules share
-is how a single cell looks, which is `cells.py`.
+How a single cell looks is `cells.py`, so the two tables cannot disagree about
+what a zero or an absent measurement renders as.
 """
 
 from __future__ import annotations
@@ -25,24 +25,45 @@ import textwrap
 
 from adt_ai.export_db.runner import print_adt_header, print_adt_table
 from adt_ai.shared.progress import FixedWidthProgressPrinter
-from adt_ai.ut3.cells import SUMMARY_NUMERIC, count_cell, module_cell, seconds_cell
+from adt_ai.ut3.cells import (
+    SUMMARY_NUMERIC,
+    count_cell,
+    coverage_cell,
+    module_cell,
+    percent_cell,
+    seconds_cell,
+)
 from adt_ai.ut3.inventory import (
     RESULT_ERRORED,
     RESULT_FAILED,
     RESULT_PASSED,
+    PackageCoverage,
     SuitePackage,
     TestOutcome,
+    coverage_percent,
 )
-from adt_ai.ut3.render_coverage import print_coverage_header
 from adt_ai.ut3.runner import Ut3Reporter, Ut3Result
 
 _SUITE_COLUMNS = ("SUITE_PACKAGE", "TESTS")
-_SUMMARY_COLUMNS = ("SUITE_PACKAGE", "PASSED", "FAILED", "ERRORED", "TIMER")
+
+# **`COVERAGE` closes the row, after `TIMER`.** Jan's 2026-08-11 shape: the
+# verdicts say whether the suite is green, `TIMER` what it cost, and `COVERAGE`
+# how much of the code it actually reached — the three questions in the order a
+# reader asks them.
+_SUMMARY_COLUMNS = ("SUITE_PACKAGE", "PASS", "FAIL", "ERROR", "TIMER", "COVERAGE")
 
 # `SUMMARY:` again, one row per `ut_module` group instead of per suite package.
 # `PACKAGES` is the only column the per-suite table does not have, and it is
 # there because a group of one and a group of nine are the same row without it.
-_MODULE_COLUMNS = ("MODULE_NAME", "PACKAGES", "PASSED", "FAILED", "ERRORED", "TIMER")
+_MODULE_COLUMNS = (
+    "MODULE_NAME",
+    "PACKAGES",
+    "PASS",
+    "FAIL",
+    "ERROR",
+    "TIMER",
+    "COVERAGE",
+)
 
 # One grid for both content sections. `TEST RESULTS:` and `ERRORS & FAILURES:`
 # have the same shape — a heading naming what follows, then its detail — so a
@@ -174,7 +195,7 @@ def print_problems(result: Ut3Result) -> None:
     print()
 
 
-def print_summary(result: Ut3Result) -> None:
+def print_summary(result: Ut3Result, names: tuple[str, ...] = ()) -> None:
     """The suites table again, with what each suite's tests actually did.
 
     Same first column as `UNIT TESTS SUITES:` so the two read as before and
@@ -186,27 +207,58 @@ def print_summary(result: Ut3Result) -> None:
     the total was a fourth number derivable from the other three — and the count
     the reader wanted was already on the `UNIT TESTS SUITES:` row above. The one
     thing it carried alone was the `%disabled` test, which appears in no verdict
-    column; its own result row still reads `SKIPPED`.
+    column; its own result row still reads `SKIP`.
 
-    **`TIMER` closes the row** with that suite's own seconds, which is what turns
-    the table from a tally into something that explains a slow run. It is the one
-    column a zero does not blank out of — see `seconds_cell`.
+    **`TIMER` carries that suite's own seconds**, which is what turns the table
+    from a tally into something that explains a slow run. It is one of the two
+    columns a zero does not blank out of — see `seconds_cell`.
+
+    **`COVERAGE` closes the row with the figure for the package that suite
+    tests**, paired through `ut_match`. It is a property of the package, not of
+    the suite, so a suite the expression cannot pair — or one whose target Oracle
+    never instrumented — reads blank rather than `0.0`; see `coverage_cell`. Two
+    suites that test the same package therefore print the same figure, because
+    block coverage records which blocks ran and never which test ran them.
+
+    **The header names the filter when there is one.** With `-name` passed the
+    section reads `SUMMARY FOR <PATTERNS>:`, upper-cased, several patterns joined
+    with commas — a roll-up over part of a schema should say so in its own
+    heading rather than leaving the reader to remember the command they typed.
+    `MODULES:` below keeps its own heading: it is one section down from this one
+    and the filter has already been stated.
     """
-    print_adt_header("SUMMARY:")
+    print_adt_header(_summary_header(names))
     print_adt_table(
         [
             {
                 "SUITE_PACKAGE" : package.name,
-                "PASSED"        : count_cell(_count(outcomes, RESULT_PASSED)),
-                "FAILED"        : count_cell(_count(outcomes, RESULT_FAILED)),
-                "ERRORED"       : count_cell(_count(outcomes, RESULT_ERRORED)),
+                "PASS"          : count_cell(_count(outcomes, RESULT_PASSED)),
+                "FAIL"          : count_cell(_count(outcomes, RESULT_FAILED)),
+                "ERROR"         : count_cell(_count(outcomes, RESULT_ERRORED)),
                 "TIMER"         : seconds_cell(result.seconds_for(package.name)),
+                "COVERAGE"      : coverage_cell(result.coverage.for_package(package.target)),
             }
             for package, outcomes in _outcomes_by_package(result)
         ],
         columns = list(_SUMMARY_COLUMNS),
         numeric = SUMMARY_NUMERIC,
     )
+
+
+def _summary_header(names: tuple[str, ...]) -> str:
+    """`SUMMARY:`, or `SUMMARY FOR <PATTERNS>:` when `-name` narrowed the run.
+
+    Upper-cased because every other word in an ADT section header is, and the
+    patterns are Oracle identifiers-with-wildcards where case carries no meaning:
+    `-name ict_sec%` and `-name ICT_SEC%` select the same suites, so they must
+    not print two different headings.
+
+    `-name` is repeatable and multi-value, so the heading joins what was passed
+    rather than naming the first pattern and silently dropping the rest.
+    """
+    if not names:
+        return "SUMMARY:"
+    return f"SUMMARY FOR {', '.join(name.upper() for name in names)}:"
 
 
 def print_module_summary(result: Ut3Result) -> None:
@@ -226,7 +278,15 @@ def print_module_summary(result: Ut3Result) -> None:
     read as one — so the total is placed rather than labelled. A suite whose name
     `ut_module` cannot parse groups at the top, and reads `?` rather than blank:
     two unnamed rows in one table say nothing about which is which, which is the
-    defect card `#248` fixed in `-coverage`'s table and this one alike.
+    defect card `#248` fixed.
+
+    **`COVERAGE` is the group's own figure, over the packages its suites test.**
+    Every column on the row describes one set of suites, `COVERAGE` included, so
+    a group is never a mix of this run's verdicts and some wider schema's
+    coverage. The one shared `coverage_percent` helper computes the groups and
+    the total alike, so the total can never disagree with the rows above it — and
+    a target Oracle measured nothing for still counts its body lines, which pulls
+    the group down in proportion to how much of it went unreached.
 
     Prints only when `ut_module` is configured. A project without one sees the
     output it saw before this existed, not a table of empty groups.
@@ -238,10 +298,11 @@ def print_module_summary(result: Ut3Result) -> None:
             {
                 "MODULE_NAME" : module_cell(module),
                 "PACKAGES"    : len(packages),
-                "PASSED"      : count_cell(sum(row["passed"] for row in packages)),
-                "FAILED"      : count_cell(sum(row["failed"] for row in packages)),
-                "ERRORED"     : count_cell(sum(row["errored"] for row in packages)),
+                "PASS"        : count_cell(sum(row["passed"] for row in packages)),
+                "FAIL"        : count_cell(sum(row["failed"] for row in packages)),
+                "ERROR"       : count_cell(sum(row["errored"] for row in packages)),
                 "TIMER"       : seconds_cell(_total_seconds(packages)),
+                "COVERAGE"    : percent_cell(coverage_percent(_measured(packages))),
             }
             for module, packages in grouped
         ]
@@ -249,11 +310,14 @@ def print_module_summary(result: Ut3Result) -> None:
             {
                 "MODULE_NAME" : "",
                 "PACKAGES"    : sum(len(packages) for _, packages in grouped),
-                "PASSED"      : count_cell(_across(grouped, "passed")),
-                "FAILED"      : count_cell(_across(grouped, "failed")),
-                "ERRORED"     : count_cell(_across(grouped, "errored")),
+                "PASS"        : count_cell(_across(grouped, "passed")),
+                "FAIL"        : count_cell(_across(grouped, "failed")),
+                "ERROR"       : count_cell(_across(grouped, "errored")),
                 "TIMER"       : seconds_cell(
                     _total_seconds([row for _, rows in grouped for row in rows])
+                ),
+                "COVERAGE"    : percent_cell(
+                    coverage_percent(_measured([row for _, rows in grouped for row in rows]))
                 ),
             }
         ],
@@ -266,18 +330,41 @@ def _by_module(
     grouped: list[tuple[SuitePackage, tuple[TestOutcome, ...]]],
     result: Ut3Result,
 ) -> list[tuple[str, list[dict[str, object]]]]:
-    """One entry per module, A-Z, each holding its suites' counted verdicts."""
+    """One entry per module, A-Z, each holding its suites' counted verdicts.
+
+    ``coverage`` on a row is the suite's **target** package, not the suite: it is
+    the code the group's figure is about, and it is None for a suite `ut_match`
+    could not pair. Carried here rather than looked up again in the renderer so
+    the group and the total read the same records.
+    """
     modules: dict[str, list[dict[str, object]]] = {}
     for package, outcomes in grouped:
         modules.setdefault(package.module, []).append(
             {
-                "passed"  : _count(outcomes, RESULT_PASSED),
-                "failed"  : _count(outcomes, RESULT_FAILED),
-                "errored" : _count(outcomes, RESULT_ERRORED),
-                "seconds" : result.seconds_for(package.name),
+                "passed"   : _count(outcomes, RESULT_PASSED),
+                "failed"   : _count(outcomes, RESULT_FAILED),
+                "errored"  : _count(outcomes, RESULT_ERRORED),
+                "seconds"  : result.seconds_for(package.name),
+                "coverage" : result.coverage.for_package(package.target),
             }
         )
     return sorted(modules.items())
+
+
+def _measured(packages: list[dict[str, object]]) -> list[PackageCoverage]:
+    """The group's target packages, each counted once.
+
+    **Deduplicated by name**, because two suites testing one package are two rows
+    in `SUMMARY:` and one body of code here. Left as-is, that package's lines and
+    blocks would enter `coverage_percent` twice and skew the reach scaling toward
+    whichever package happens to have the most suites.
+    """
+    unique: dict[str, PackageCoverage] = {}
+    for row in packages:
+        package = row["coverage"]
+        if package is not None:
+            unique.setdefault(package.name.upper(), package)
+    return list(unique.values())
 
 
 def _across(grouped: list[tuple[str, list[dict[str, object]]]], key: str) -> int:
@@ -320,21 +407,13 @@ class ConsoleUt3Reporter(Ut3Reporter):
     heading lands before that suite blocks and its test rows once the verdict is
     known. A reader watching a slow run sees the suite currently being executed,
     not a silent terminal followed by everything at once.
-
-    `-coverage` keeps the same principle with nothing left to stream: the run is
-    deliberately quiet there, so what lands at discovery is the section header
-    for the report that run is producing.
     """
 
-    def __init__(self, silent: bool = False, coverage: bool = False) -> None:
+    def __init__(self, silent: bool = False) -> None:
         self._silent = silent
-        self._coverage = coverage
         self.streamed = False
 
     def discovered(self, packages: tuple[SuitePackage, ...]) -> None:
-        if self._coverage:
-            print_coverage_header()
-            return
         if self._silent:
             return
         print_suites(packages)

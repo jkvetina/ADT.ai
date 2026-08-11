@@ -1,13 +1,18 @@
 """How a single ut3 table cell renders.
 
-Four rules, each of which two sections now have to agree on: the plain run's
-tables and `-coverage`'s live in separate modules since the naming configuration
-pushed ``render.py`` past the repo's 20 KB context budget, and a count that
-blanks in one and prints `0` in the other would be a visible inconsistency in
-the same report.
+Four rules, each of which the run's two tables have to agree on: `SUMMARY:` and
+`MODULES:` carry the same columns — the verdicts, `TIMER`, `COVERAGE` — over
+different groupings, and a count that blanks in one and prints `0` in the other
+would be a visible inconsistency inside one report.
+
+They stay out of ``render.py`` because that module is close to the repo's 20 KB
+per-file context budget, and because a rendering rule is a fact about the value
+rather than about the table it sits in.
 """
 
 from __future__ import annotations
+
+from adt_ai.ut3.inventory import PackageCoverage
 
 
 def count_cell(count: int) -> object:
@@ -64,30 +69,39 @@ def module_cell(module: str) -> str:
     return module or UNNAMED_MODULE
 
 
-def coverage_cell(package) -> str:
-    """Only ever called for a package with a real figure.
+def coverage_cell(package: PackageCoverage | None) -> str:
+    """One suite row's `COVERAGE` figure, and a blank where there is none.
 
-    The `-` and `NATIVE` cases this used to carry are gone with the column they
-    lived in: a package with no measurement is in the other table now, where the
-    absence *is* the row rather than something a cell has to spell.
+    **A blank means "no measurement", and there are two honest ways to get one.**
+    The suite's own name may pair to nothing (`ut_match` found no capture group,
+    or names a package the schema does not hold), or Oracle may have collected no
+    block for the package it does pair to — natively compiled code carries no
+    instrumentation at all. Neither is a zero: `0.0` is the answer for a package
+    Oracle *did* instrument and nothing entered, which `percent` returns as a
+    real figure.
+
+    This is the one place the run's per-suite figure differs from a group's:
+    `percent_cell` blanks only a `None` from `coverage_percent`, which reports an
+    unmeasured group as `0.0` because a group has code in it whether or not any
+    of it ran.
 
     **One decimal place, always present, and no `%`.** The header names the unit
     once, so repeating it on every row bought nothing and cost a character of
-    width on each. Variable precision cost more than that: stripping the
-    trailing zeros ended `100`, `75` and `53.1` at three different offsets, so
-    even flush right the figures did not stack under each other — and a column
-    read by scanning down it for the low numbers is exactly the column that has
-    to stack.
+    width on each. Variable precision cost more: with trailing zeros stripped,
+    `100`, `75` and `53.1` end at three different offsets, so even flush right
+    the figures do not stack — and a column read by scanning down it for the low
+    numbers is exactly the column that has to stack.
     """
+    if package is None or package.percent is None:
+        return ""
     return f"{package.percent:.1f}"
 
 
-# COVERAGE is a number and lines up on its units digit like one. Detection reads
-# the cells with `isnumeric()`, which rejects the decimal point, so `75.0` is no
-# more numeric to the sniffer than `75%` was — the column stays declared. `TIMER`
-# is declared for exactly the same reason: `3.0` sniffs as text.
-COVERAGE_NUMERIC = ("COVERAGE",)
-SUMMARY_NUMERIC = ("TIMER",)
+# `TIMER` and `COVERAGE` are numbers and line up on their units digit like ones.
+# Detection reads the cells with `isnumeric()`, which rejects the decimal point,
+# so `75.0` is no more numeric to the sniffer than `75%` was — both columns stay
+# declared. One tuple, because since card `#291` both tables carry both columns.
+SUMMARY_NUMERIC = ("TIMER", "COVERAGE")
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

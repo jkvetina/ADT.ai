@@ -72,24 +72,16 @@ END;
 # it as a flag, but a CASE is correct whether it is a flag or a hit count, and
 # the difference would otherwise surface as a coverage percentage above 100.
 #
-# LINES_COVERED is the **line** half of the same measurement, and it comes from
-# this table rather than from DBMS_PROFILER. `dbmspcc_blocks` is keyed on `line`
-# and `col`, so the block map already records which source line every block sits
-# on; the distinct lines carrying a covered block are therefore a real
-# executed-line count, out of rows this query has already joined. utPLSQL does
-# pair a profiler run through `ut_coverage_runs.line_coverage_id`, and reading it
-# would mean a second set of tables whose reachability nothing here has measured
-# — exactly the assumption card #227 was written about. One source, already
-# proven against a live schema.
-#
-# COUNT(DISTINCT), because several blocks share a source line: summing the block
-# counts would report more covered lines than the package body has.
+# A LINES_COVERED aggregate sat beside them — the distinct `b.line` values
+# carrying a covered block — feeding the `COVERED` column of the roll-up
+# `-coverage` closed with. Card `#291` removed that table and nothing renders an
+# executed-line count now, so the aggregate went with it rather than staying as a
+# figure every run computes and no run prints.
 PACKAGE_COVERAGE_QUERY = """
 SELECT
     u.name                                                      AS package_name,
     COUNT(*)                                                    AS blocks_total,
-    SUM(CASE WHEN b.covered > 0 THEN 1 ELSE 0 END)              AS blocks_covered,
-    COUNT(DISTINCT CASE WHEN b.covered > 0 THEN b.line END)     AS lines_covered
+    SUM(CASE WHEN b.covered > 0 THEN 1 ELSE 0 END)              AS blocks_covered
 FROM ut3.ut_coverage_runs r
     JOIN dbmspcc_units u
         ON  u.run_id    = r.block_coverage_id
@@ -105,47 +97,36 @@ GROUP BY u.name
 ORDER BY u.name
 """
 
-# Every package in the schema, so the report can list the ones no test touched —
-# each with the size of its body.
+# The schema's packages with the size of each body — the half of the measurement
+# coverage data cannot supply.
 #
-# This is the half that makes the report worth printing. Coverage data can only
-# ever describe packages that were executed; a package with no test contributes
-# no coverage row at all and would silently vanish from a report built on
-# coverage data alone — and that is the exact package the reader is looking for.
+# Coverage rows only ever describe packages something executed, so a package a
+# suite is supposed to test and never reached contributes no `dbmspcc` row at
+# all. Its body still exists, and its line count is what lets `coverage_percent`
+# scale a group by how much of it was measured: without this query an unreached
+# target would simply vanish from the arithmetic and push the figure up.
 #
 # Test packages are excluded here, by the same `ut_pattern` that selects them in
-# `queries/suites.py` — they pair 1:1 with the packages under test, so listing
-# them doubles the report and invites the reader to measure the coverage of the
-# tests themselves. In SQL, where the `NOT LIKE '%\\_UT'` used to be: a schema's
-# whole package list is exactly the fetch this exclusion exists to avoid.
+# `queries/suites.py`, in SQL where the `NOT LIKE '%\\_UT'` used to be. Narrowing
+# further — to the packages this run's suites actually test — happens in
+# `ut3.coverage`, because the target set is a property of the run and a bind list
+# built per run cannot be a stored constant the way every statement here is.
 #
 # LINES counts the **body**, and the body of the listed package — never its test
-# partner's. It is what turns the uncovered list into a priority order rather
-# than an alphabet: 900 uncovered lines and 9 uncovered lines are not the same
-# problem, and the percentage above it says nothing about scale. The spec is
-# excluded because a count of declarations is not a measure of code. It is a
-# scalar subquery rather than a join so a package with a spec and no body still
-# gets its row, reading 0.
+# partner's, and never the spec, since a count of declarations is not a measure
+# of code. It is a scalar subquery rather than a join so a package with a spec
+# and no body still gets its row, reading 0.
 #
 # `:owner` is the schema under test — never `ut_owner`. Coverage measures the
 # code, and the two schemas are different questions.
 #
-# MODULE_NAME is `ut_module` group 1 read off the **listed package**, not off its
-# test partner. The module is a property of the package: `ICT_INT_ORDERS` spells
-# `INT` whether or not anything tests it. Deriving it only across the `ut_match`
-# pairing — all the report did until card #247 — put every package with no
-# discovered suite into the blank group carrying a module its own name states,
-# and under `-name` that is most of the listing, because the flag selects the
-# listing and the suites independently. Extracted here, in the pass that already
-# reads the row, exactly as `queries/suites.py` does for the suites.
-#
-# `:ut_module` is NULL when a project turns the roll-ups off, and
-# `REGEXP_SUBSTR(name, NULL, ...)` is NULL, so the column comes back empty
-# without the query needing a second shape.
+# A MODULE_NAME column sat here until card `#291`, deriving `ut_module` group 1
+# off the listed package so the removed coverage roll-up could group the whole
+# schema by module. `MODULES:` groups the run's **suites**, whose module the
+# discovery query already derives, so nothing reads a package's own module now.
 SCHEMA_PACKAGES_QUERY = """
 SELECT
     o.object_name,
-    REGEXP_SUBSTR(o.object_name, :ut_module, 1, 1, 'i', 1)  AS module_name,
     (
         SELECT COUNT(*)
         FROM all_source s
@@ -162,36 +143,19 @@ WHERE 1 = 1
 ORDER BY o.object_name
 """
 
-# The one compile-time setting that explains an absent measurement.
+# A PACKAGE_COMPILE_SETTINGS_QUERY sat here until card `#291`. It read
+# ALL_PLSQL_OBJECT_SETTINGS for `PLSQL_CODE_TYPE = NATIVE`, the one compile-time
+# setting that explains an absent measurement — natively compiled code carries no
+# PL/SQL instrumentation, so it produces no `dbmspcc_blocks` row and looked
+# exactly like untested code. The `NATIVE` cell that named the cause went with
+# the removed `-coverage` tables, leaving a query every run paid for and no
+# surface rendered.
 #
-# **It fails to zero, not to an error.** A natively compiled unit is machine code
-# with the PL/SQL instrumentation stripped, so it produces no dbmspcc_blocks rows
-# at all and the report would otherwise show it exactly like a package no test
-# touched. Naming the cause is the entire value of the check.
-#
-# The setting is per-object and fixed at compile time — changing the session or
-# system parameter does nothing until the unit is recompiled — so it comes from
-# ALL_PLSQL_OBJECT_SETTINGS per package body, never from the session-level
-# parameter view, which would report an intention rather than what each body was
-# actually compiled with.
-#
-# PLSQL_OPTIMIZE_LEVEL was selected here too until 2026-08-06, to flag anything
-# above level 1. Measured on ICT_OWNER@ORCLPDB1: every one of the 78 package
-# bodies is at level 2 — Oracle's default — and dbmspcc_blocks still recorded 36
-# of them, ICT_COM_INVOICE at 22 of 25 blocks covered. The optimizer reshapes the
-# line map DBMS_PROFILER reads, not the basic-block map this report is built on,
-# so the flag suppressed every real figure on every default database and the
-# section printed one repeated word. Do not reintroduce it.
-PACKAGE_COMPILE_SETTINGS_QUERY = """
-SELECT
-    s.name                  AS package_name,
-    s.plsql_code_type
-FROM all_plsql_object_settings s
-WHERE 1 = 1
-    AND s.owner             = :owner
-    AND s.type              = 'PACKAGE BODY'
-    AND NOT REGEXP_LIKE(s.name, :ut_pattern, 'i')
-ORDER BY s.name
-"""
+# If a reason for a blank `COVERAGE` cell is ever wanted back, that is the query
+# to restore — and `PLSQL_OPTIMIZE_LEVEL` is not to be restored with it. It was
+# selected alongside until 2026-08-06 to flag anything above level 1; measured on
+# ICT_OWNER@ORCLPDB1, every one of the 78 package bodies is at level 2 (Oracle's
+# default) and `dbmspcc_blocks` still recorded 36 of them, so the flag suppressed
+# every real figure on every default database (card `#227`).
 
 __all__ = [name for name in globals() if not name.startswith("__")]

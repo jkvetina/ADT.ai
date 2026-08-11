@@ -11,11 +11,10 @@ command. Four config values replace all five:
   are built on;
 * ``ut_owner``   — the schema holding them; **the only one that defaults empty**,
   meaning the schema being tested;
-* ``ut_module``  — capture group 1 is the module a **package** belongs to
-  (``'^[^_]+_([^_]+)'``), which drives the two module roll-ups. It is matched
-  against a suite's name and against a package under test's, so it must not be
-  anchored to whatever marks a test package — nor to anything that has to follow
-  the module token, since a module's own package (``ICT_VPD``) ends there.
+* ``ut_module``  — capture group 1 is the module a **suite** belongs to
+  (``'^[^_]+_([^_]+)'``), which drives the ``MODULES:`` roll-up. It must not be
+  anchored to anything that has to follow the module token, since a module whose
+  whole implementation is one package (``ICT_VPD_UT``) ends there.
 
 **These are Oracle regular expressions, and every one of them is evaluated by
 Oracle.** ``REGEXP_LIKE`` selects the test packages inside the dictionary query,
@@ -43,14 +42,13 @@ from typing import Any
 DEFAULT_UT_PATTERN = "_UT$"
 DEFAULT_UT_MATCH = "^(.+)_UT$"
 
-# **Not anchored to the test-package suffix**, and that is the point. It is
-# applied to two kinds of name — a suite, and a package under test — because the
-# module is a property of the package, not of its test. Anchored to `_UT$` (as it
-# shipped in card `#244`) it could only ever read a suite, so a package with no
-# discovered suite had no module at all even when its own name spelled one; under
-# `-name` that was most of the listing. Dropping the anchor also picks up a
-# three-token suite like `ICT_INT_UT`, which the `.+_UT$` form needed a fourth
-# token to match.
+# **Not anchored to the test-package suffix**, and that is the point. Anchored to
+# `.+_UT$` (as it shipped in card `#244`) it needed a fourth token, so a
+# three-token suite like `ICT_INT_UT` was unparseable and grouped blank despite
+# having run. Card `#247` dropped the anchor so the expression could also read a
+# package under test's own name, for the coverage roll-up that grouped the whole
+# schema; card `#291` removed that roll-up, and only suites are grouped now — but
+# the anchor stays off, because the suite half of the argument stands on its own.
 #
 # **It does not require a trailing `_` either** (card `#248`). Prefix plus module
 # and nothing after it is a real name: `ICT_VPD` is a module whose whole

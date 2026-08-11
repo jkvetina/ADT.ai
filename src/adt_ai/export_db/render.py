@@ -46,6 +46,22 @@ class ExportDbReporter:
     def finish_type(self, schema: str, object_type: str) -> None:
         pass
 
+ADT_TABLE_INDENT = "  "
+ADT_TABLE_GUTTER = "   "
+
+def adt_table_line_width(widths: Sequence[int]) -> int:
+    """Rendered width of a row whose columns are ``widths`` wide.
+
+    The trailing gutter is excluded because ``row_line`` strips it. A caller
+    that has to *budget* a column — fit the whole line inside 78 characters and
+    spend whatever is left on the last one — needs this geometry, and copying
+    the indent and gutter to the call site is how the copy drifts from the
+    renderer (ADT #269). Pass ``0`` for the column being sized.
+    """
+    if not widths:
+        return 0
+    return len(ADT_TABLE_INDENT) + sum(widths) + len(ADT_TABLE_GUTTER) * (len(widths) - 1)
+
 def _adt_cell(value: object, width: int, numeric: bool) -> str:
     # coalesce only None to "" — a legitimate falsy value such as the int 0
     # (e.g. a sub-second duration) must still render. ``str(value or "")``
@@ -53,7 +69,7 @@ def _adt_cell(value: object, width: int, numeric: bool) -> str:
     cell = "" if value is None else str(value)
     text = DROPBOX_PATH_RE.sub("Dropbox/", cell)
     align = ">" if numeric else "<"
-    return f"{text:{align}{width}}   "
+    return f"{text:{align}{width}}{ADT_TABLE_GUTTER}"
 
 @dataclass(frozen=True)
 class _AdtTableLayout:
@@ -70,7 +86,7 @@ class _AdtTableLayout:
     numeric: tuple[bool, ...]
 
     def cells_segment(self, values: Sequence[object], start: int, end: int) -> str:
-        line = "  " if start == 0 else ""
+        line = ADT_TABLE_INDENT if start == 0 else ""
         for index in range(start, end):
             line += _adt_cell(values[index], self.widths[index], self.numeric[index])
         return line

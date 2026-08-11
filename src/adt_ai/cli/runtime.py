@@ -34,6 +34,7 @@ from adt_ai.cli.context import (
     _print_completion_timer,
     _print_config_error,
     _print_database_error,
+    _print_sqlcl_error,
     _print_unexpected_error,
 )
 from adt_ai.cli.help import format_command_help
@@ -45,6 +46,7 @@ from adt_ai.cli.parser import (
     build_parser,
 )
 from adt_ai.shared.env_bootstrap import hydrate_environment
+from adt_ai.shared.sqlcl_script import SqlclScriptError
 
 
 def _run_static_screen(
@@ -245,7 +247,9 @@ def main(
         exit_code = 1
         if getattr(args, "debug", False):
             raise
-        if _is_user_database_error(error):
+        if isinstance(error, SqlclScriptError):
+            _print_sqlcl_error(error)
+        elif _is_user_database_error(error):
             _print_database_error(error)
         else:
             _print_unexpected_error(error)

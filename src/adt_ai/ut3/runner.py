@@ -64,7 +64,6 @@ class Ut3Request:
     owner    : str
     names    : tuple[str, ...] = ()
     refresh  : bool = False
-    coverage : bool = False
     naming   : UtNaming = field(default_factory=UtNaming)
 
 
@@ -72,9 +71,10 @@ class Ut3Request:
 class Ut3Result:
     packages : tuple[SuitePackage, ...] = field(default_factory=tuple)
     outcomes : tuple[TestOutcome, ...] = field(default_factory=tuple)
-    # None when coverage was never requested — distinct from an empty report,
-    # which means it was requested and nothing came back.
-    coverage : CoverageReport | None = None
+    # Always a report, never None: every run measures coverage since card `#291`,
+    # so "was it requested" is no longer a question a caller can ask. An empty
+    # report means the run measured nothing, and renders as blank cells.
+    coverage : CoverageReport = field(default_factory=CoverageReport)
     timings  : tuple[SuiteTiming, ...] = field(default_factory=tuple)
     # `ut_module` is configured, so the renderer should print the module
     # roll-up. A switch rather than a derived "does anything carry a module",
@@ -175,28 +175,25 @@ class Ut3Runner:
                 {"owner": ut_owner},
             )
 
-        # **`-name` selects the suites to run, in every mode.** It used to be
-        # dropped here under `-coverage` and applied only to the printed rows, on
-        # the argument that coverage of a package can come from any suite and
-        # narrowing the run would under-report it. That argument is sound and it
-        # lost anyway (Jan, 2026-08-07): a flag that silently means two different
-        # things is the worse defect, and the symptom was that
-        # `-coverage -name ICT_INT%` ran the whole schema and took the same 38
-        # seconds as `-name ICT%` while appearing to filter. The under-report is
-        # the accepted cost — a package reached only by a suite the pattern
-        # excludes now reads lower than the truth.
+        # **`-name` selects the suites to run.** It narrows the run itself, not
+        # just the printed rows, and the coverage figures follow from whatever
+        # ran — so a filtered run costs less than an unfiltered one and reports
+        # less coverage for a package reached only by an excluded suite. That
+        # under-report is the accepted cost (Jan, 2026-08-07): a flag that
+        # silently means two different things is the worse defect, and the
+        # symptom was `-coverage -name ICT_INT%` running the whole schema and
+        # taking the same 38 seconds as `-name ICT%` while appearing to filter.
         packages = self._discover(ut_owner, request.names, naming)
         self.reporter.discovered(packages)
 
         # The run id is generated here, not read back from the database, because
         # `coverage_start` takes it as an IN parameter. Reading back "the newest
         # coverage run" instead would pick up a concurrent session's rows.
-        coverage_run_id = uuid.uuid4().hex.upper() if request.coverage else ""
-        if coverage_run_id:
-            self.gateway.execute(
-                queries.COVERAGE_START_STATEMENT,
-                {"coverage_run_id": coverage_run_id},
-            )
+        coverage_run_id = uuid.uuid4().hex.upper()
+        self.gateway.execute(
+            queries.COVERAGE_START_STATEMENT,
+            {"coverage_run_id": coverage_run_id},
+        )
 
         outcomes: list[TestOutcome] = []
         timings: list[SuiteTiming] = []
@@ -218,23 +215,16 @@ class Ut3Runner:
             # Coverage instrumentation lives on the session, not on the call, so
             # an exception between start and stop would keep profiling every
             # later statement this connection runs.
-            if coverage_run_id:
-                self.gateway.execute(queries.COVERAGE_STOP_STATEMENT)
+            self.gateway.execute(queries.COVERAGE_STOP_STATEMENT)
 
         # `owner`, not `ut_owner`: coverage measures the code under test, and the
         # schema holding the suites is a separate question.
-        coverage = (
-            build_coverage_report(
-                self.gateway,
-                owner,
-                coverage_run_id,
-                packages,
-                tuple(outcomes),
-                request.names,
-                naming,
-            )
-            if coverage_run_id
-            else None
+        coverage = build_coverage_report(
+            self.gateway,
+            owner,
+            coverage_run_id,
+            packages,
+            naming.pattern,
         )
         return Ut3Result(
             packages = packages,

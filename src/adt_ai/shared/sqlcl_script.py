@@ -81,6 +81,18 @@ class SqlclTimeoutError(RuntimeError):
     """SQLcl outlived the deadline the caller gave it and was killed."""
 
 
+class SqlclScriptError(RuntimeError):
+    """SQLcl exited non-zero; the message is its whole captured transcript.
+
+    Named so the CLI can tell it apart from an internal surprise. As a bare
+    ``RuntimeError`` it landed under the ``UNEXPECTED ERROR:`` catch-all, which
+    renders ``<type>: <message>`` on one line and so promoted the transcript's
+    FIRST line to the diagnosis -- reporting `Connection <name> has been deleted`
+    (SQLcl echoing the script's own `CONNMGR DELETE` preamble) for a deploy that
+    actually died on `SP2-0556` several lines later (ADT #271).
+    """
+
+
 def _ran_without_a_session(output: str) -> bool:
     return any(
         line.lstrip().startswith(SQLCL_NOT_CONNECTED_CODE)
@@ -209,7 +221,7 @@ def run_sqlcl_script(
             f"(exit code {completed.returncode}). Full SQLcl output:\n{output.strip()}"
         )
     if completed.returncode != 0:
-        raise RuntimeError(
+        raise SqlclScriptError(
             output.strip() or f"SQLcl failed with exit code {completed.returncode}"
         )
     return output

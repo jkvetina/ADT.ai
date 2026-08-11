@@ -37,6 +37,14 @@ META_LAST_REFRESH_QUERY = (
     "SELECT key, value FROM _meta WHERE key LIKE 'last_refresh:%' ORDER BY key"
 )
 
+# The dictionary's own LAST_DDL_TIME per object, mirrored on every
+# `dependencies -refresh`. `patch -create` reads it to prove the exported files
+# still match the schema, so a stale `export_db` cannot ship a previous package
+# body (ADT #261) — and reads it OFFLINE, because the mirror already carries it.
+LAST_DDL_TIMES_QUERY = (
+    "SELECT OWNER, OBJECT_TYPE, OBJECT_NAME, LAST_DDL_TIME FROM USER_OBJECTS"
+)
+
 # ------------------------------------------------------------- SQLite mirror reads
 
 CONSTRAINT_COLUMNS = (
