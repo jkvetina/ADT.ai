@@ -104,7 +104,7 @@ def _stage_targets(
     compiler sees a complete tree while the repo keeps exactly one copy of each
     file (card `#165`).
 
-    The label is deliberately not rewritten — the user asked about their export,
+    The label is deliberately not rewritten, the user asked about their export,
     so the progress row and every message section keep naming the folder they can
     open, and the staging tree stays an invisible build detail.
     """
@@ -175,8 +175,8 @@ def _optional_config(
 ) -> dict[str, object]:
     """Load ``config.yaml`` only when path resolution actually needs it.
 
-    A pure ``-input`` run must work from any folder — that is what makes the
-    command usable in CI and from a checkout with no ADT project around it — so
+    A pure ``-input`` run must work from any folder, that is what makes the
+    command usable in CI and from a checkout with no ADT project around it, so
     a missing config is not an error there. ``-app`` and bare discovery do read
     ``path_apex``, and a missing config there simply means the defaults.
     """

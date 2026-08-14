@@ -169,7 +169,7 @@ def _instant_client_version(env: Mapping[str, str]) -> str:
     try:
         text = readme.read_text(encoding="utf-8", errors="ignore")
     except OSError:
-        # A directory or unreadable file degrades to "not found" — the doctor
+        # A directory or unreadable file degrades to "not found", the doctor
         # pass must keep reporting the other rows.
         return ""
     for line in text.splitlines():

@@ -2,7 +2,7 @@
 
 Internal vs external is decided at query time from owners present in the tracked
 dependency mirror (see :mod:`adt_ai.dependencies.store`), so no name-prefix
-heuristic lives here anymore — only the node parser that the query modes still
+heuristic lives here anymore, only the node parser that the query modes still
 need to turn ``TYPE.NAME`` input into its components.
 """
 

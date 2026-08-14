@@ -19,14 +19,14 @@ from adt_ai.shared.sql_identifiers import safe_identifier, safe_identifiers
 
 # Object types -trailing rebuilds from user_source. Identical to
 # PLSQL_OBJECT_TYPES, listed through it so the two can never drift. Views are not
-# here because they have no user_source rows at all — they take the separate
+# here because they have no user_source rows at all, they take the separate
 # user_views.text path below (#122), not because they are out of scope.
 _TRAILING_TYPE_IN_LIST = ", ".join(f"'{object_type}'" for object_type in PLSQL_OBJECT_TYPES)
 
 
 # Objects whose stored source carries trailing whitespace, with the count of
 # affected lines per object. Detection runs in SQL so a sweep only ever fetches and
-# rewrites objects that actually need it — an untouched schema costs one query.
+# rewrites objects that actually need it, an untouched schema costs one query.
 #
 # Scoped by the standard :object_type / :object_name filters (-type/-name), not by a
 # flag-local pattern: -trailing acts on the same compilable objects as the recompile
@@ -97,7 +97,7 @@ ORDER BY s.type, s.name
 
 
 # One object's stored source, line by line. Fetched per object immediately before
-# that object is rewritten — never for the whole schema up front, because the
+# that object is rewritten, never for the whole schema up front, because the
 # database is live and somebody else's change must not be silently reverted.
 OBJECT_SOURCE_QUERY = """
 SELECT
@@ -125,17 +125,17 @@ def build_trailing_source_ddl(lines: Sequence[str]) -> str | None:
 
     ``user_source`` stores each line with its terminator, so a line reads
     ``"  x := 1;   \\n"``. Strip each line the same way export_db does
-    (``rstrip()``) and rejoin with ``\\n`` — that is exactly what makes the stored
+    (``rstrip()``) and rejoin with ``\\n``, that is exactly what makes the stored
     source match the exported file and kills the diff noise.
 
     Returns ``None`` when no line carries trailing whitespace. That is the
     load-bearing guarantee: the caller must then leave the object completely
-    untouched — no CREATE OR REPLACE, no LAST_DDL_TIME churn, no dependent
-    invalidation — even though the detection query offered it up.
+    untouched, no CREATE OR REPLACE, no LAST_DDL_TIME churn, no dependent
+    invalidation, even though the detection query offered it up.
     """
     cleaned = [line.rstrip() for line in lines]
     # The same lines with only their terminator (\n) removed. A trailing \r is *not*
-    # part of the terminator here — export_db strips it too, so a CRLF-stored line
+    # part of the terminator here, export_db strips it too, so a CRLF-stored line
     # counts as needing the fix. If stripping changed nothing these are identical and
     # the object is clean.
     if cleaned == [line.rstrip("\n") for line in lines]:
@@ -160,7 +160,7 @@ def build_trailing_source_ddl(lines: Sequence[str]) -> str | None:
 #     CREATE OR REPLACE VIEW is not how they are maintained.
 #   - any view carrying a constraint: WITH READ ONLY records constraint type 'O'
 #     and WITH CHECK OPTION type 'V', and neither clause survives a rebuild from
-#     user_views.text — the property would be silently dropped. Testing for any
+#     user_views.text, the property would be silently dropped. Testing for any
 #     user_constraints row covers both without depending on the READ_ONLY column,
 #     which only exists on newer releases.
 TRAILING_VIEWS_QUERY = """
@@ -251,8 +251,8 @@ def build_trailing_view_ddl(
 ) -> str | None:
     """Rebuild one view's DDL from ``user_views.text`` with trailing whitespace stripped.
 
-    ``text`` is the stored defining query — just the ``SELECT``, without the
-    ``CREATE OR REPLACE VIEW ... AS`` wrapper — so the wrapper and the column list
+    ``text`` is the stored defining query, just the ``SELECT``, without the
+    ``CREATE OR REPLACE VIEW ... AS`` wrapper, so the wrapper and the column list
     have to be rebuilt around it. ``FORCE`` matches the #121/#122 contract: a view
     that is already invalid for an unrelated reason must come back exactly as
     invalid, not fail the sweep.

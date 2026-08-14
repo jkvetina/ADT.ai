@@ -81,9 +81,9 @@ def add_export_parsers(subparsers) -> None:
         nargs  = "*",
         default= None,
         metavar= "PREFIX",
-        help   = "move action: reorganize exported files into <type>/<group>/ "
-                 "subfolders (previews then confirms, never connects). Pass PREFIX "
-                 "names to group only those; bare -groups auto-detects by prefix",
+        help   = "reorganize exported files into <type>/<group>/ subfolders, previewing "
+                 "then confirming and never connecting; PREFIX names group only those, "
+                 "bare -groups auto-detects by prefix",
     )
     export_db.add_argument(
         "--by",
@@ -185,7 +185,7 @@ def add_export_parsers(subparsers) -> None:
         "--deep",
         "-deep",
         action = "store_true",
-        help   = "with -page, also export page components from config/dependencies.db",
+        help   = "with -page, also export page components from config/internal/dependencies.db",
     )
     export_apex.add_argument(
         "--component",
@@ -257,7 +257,7 @@ def add_export_parsers(subparsers) -> None:
         "--embedded", "-embedded", action="store_true", help="export embedded code report"
     )
     # `allow_abbrev` is off, so the `-apx` short form has to be declared here;
-    # both spellings share the one `apexlang` dest — one action, never two.
+    # both spellings share the one `apexlang` dest, one action, never two.
     export_apex.add_argument(
         "--apexlang",
         "-apexlang",

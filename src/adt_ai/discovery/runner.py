@@ -29,7 +29,7 @@ from adt_ai.discovery.validator import DiscoveryValidationError, validate_select
 from adt_ai.shared import text_files
 from adt_ai.shared.db import QueryGateway
 
-# A distinctive sentinel — not a bare ``/*`` — so a hand-written ``/* … */``
+# A distinctive sentinel (not a bare ``/*``) so a hand-written ``/* … */``
 # block comment in a ``-file`` is never mistaken for a written-back result block
 # and scrubbed. ``-file`` re-runs only strip blocks carrying this marker.
 RESULT_BLOCK_START = "/* ADT-RESULT"
@@ -96,8 +96,8 @@ def write_file_results(file_path: Path, results: list[str]) -> None:
     Statements without a matching result keep their ``;`` and no block is added.
 
     Lives beside ``split_statements`` because the two are one contract read in
-    opposite directions — the writer emits the ``ADT-RESULT`` sentinel that the
-    reader scrubs — and both now share ``_RESULT_BLOCK_RE`` instead of keeping a
+    opposite directions, the writer emits the ``ADT-RESULT`` sentinel that the
+    reader scrubs, and both now share ``_RESULT_BLOCK_RE`` instead of keeping a
     private copy each.
     """
     text = file_path.read_text(encoding="utf-8")

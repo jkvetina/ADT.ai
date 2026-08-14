@@ -13,7 +13,7 @@ from adt_ai.shared import text_files
 # root, so `-init` is what actually puts it where `patch -create` looks (ADT #256).
 # `#254` shipped it as a reference copy the tool never reads, which left every
 # project that did not copy it in by hand with six silently empty template slots.
-# Copied verbatim from the package, never re-authored here -- the same way the
+# Copied verbatim from the package, never re-authored here, the same way the
 # root `.gitignore` above is copied rather than templated.
 PATCH_TEMPLATE_DIR = Path("config/patch_template")
 

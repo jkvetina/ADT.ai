@@ -28,7 +28,7 @@ def run_schema_sections(
     Every schema runs even when one fails; the first non-zero return becomes
     the aggregate exit code. An exception in ``run_schema`` propagates
     immediately, so the suppression latch below is set only once every
-    requested/appended schema has completed without raising — leaving the
+    requested/appended schema has completed without raising, leaving the
     shared teardown footer active to cover a mid-loop failure.
     """
     if not schemas:

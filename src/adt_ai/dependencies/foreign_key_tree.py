@@ -131,8 +131,8 @@ def _constraint_tree_row(
 def _iterate_frames(frame, *first_call) -> None:
     """Drive ``frame`` generators with an explicit stack.
 
-    Depth-first with exact recursion semantics — each ``yield`` is a deferred
-    recursive call — but immune to Python's recursion limit, which a deep
+    Depth-first with exact recursion semantics, each ``yield`` is a deferred
+    recursive call, but immune to Python's recursion limit, which a deep
     (non-cyclic) FK chain in a large schema can exceed.
     """
     stack = [frame(*first_call)]

@@ -6,7 +6,7 @@ source of truth. That makes this parser the gate: every outcome it cannot
 recognise is a failure, never a pass, because an unread failure that renders as
 clean is the one bug a validation gate must not have.
 
-The compiler prints two blocks with an identical record shape — ``File:``,
+The compiler prints two blocks with an identical record shape, ``File:``,
 ``Line:``, ``Column:``, ``Type:``, then either ``Error:`` or ``Warning:`` closing
 the record. They are parsed per block rather than by scanning the whole text, so
 a warning's fields can never leak into the first error record.
@@ -65,7 +65,7 @@ class FolderReport:
     @property
     def failed(self) -> bool:
         # Gate semantics: exit 0 means every requested folder validated clean.
-        # EMPTY and NOT_FOUND are failures too — a folder that was asked for and
+        # EMPTY and NOT_FOUND are failures too, a folder that was asked for and
         # had nothing to check is a broken export, not a quiet success. The
         # compiler agrees: NO_APEXLANG_FILES is one of its own error types.
         return self.outcome != SUCCESS
@@ -108,7 +108,7 @@ def _parse_block(text: str, marker: str, closing_field: str) -> tuple[CompileMes
     """Collect one block's records, stopping where the next block begins.
 
     ``closing_field`` (``Error:`` or ``Warning:``) is the last field the compiler
-    prints per record, so it closes the record — a record with a missing
+    prints per record, so it closes the record, a record with a missing
     ``Line``/``Column`` still lands rather than swallowing the next one. Values
     keep the compiler's own spacing: ``Component:   not found`` says the
     component name came back blank, and squashing it would hide that.
@@ -168,14 +168,14 @@ def message_lines(
     """Render one stanza per message: locator, then type and text nested under it.
 
     This was a five-column table until card `#164`. The compiler's prose does not
-    fit a column — one ``REFERENCE_NOT_FOUND`` row ran past 150 characters, and
+    fit a column, one ``REFERENCE_NOT_FOUND`` row ran past 150 characters, and
     the terminal's own re-wrap then broke the table's alignment as well. A stanza
     per message keeps every line inside the 80 columns ``recompile`` already
     treats as the console ceiling (``_MAX_COMPILE_ERROR_LINE_WIDTH``).
 
     Where ``recompile`` truncates its message column, this wraps: the validate
-    message *is* the answer — ``REFERENCE_NOT_FOUND`` names the file that is
-    missing — so cutting it at a width would throw away the reason for the run.
+    message *is* the answer, ``REFERENCE_NOT_FOUND`` names the file that is
+    missing, so cutting it at a width would throw away the reason for the run.
     """
     lines: list[str] = []
     for message in messages:
@@ -189,7 +189,7 @@ def message_lines(
 
 
 def _locator(message: CompileMessage) -> str:
-    """``file:line:col`` — the editor-clickable convention, minus absent parts.
+    """``file:line:col``, the editor-clickable convention, minus absent parts.
 
     The compiler omits ``Line``/``Column`` on whole-file findings such as
     ``NO_APEXLANG_FILES``, and a rendered ``application.apx:None:None`` would
@@ -208,8 +208,8 @@ def _wrapped(text: str, width: int) -> list[str]:
     """Wrap the message body under the detail indent.
 
     Long words are never broken. A token wider than the remaining space is almost
-    always a path — the one thing in the message a reader wants to select and
-    paste — so it is allowed to overhang rather than be split across lines.
+    always a path, the one thing in the message a reader wants to select and
+    paste, so it is allowed to overhang rather than be split across lines.
     """
     body = text.strip()
     if not body:

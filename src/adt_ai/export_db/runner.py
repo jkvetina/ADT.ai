@@ -209,7 +209,7 @@ class ExportDbRunner:
             changed_since = stored if is_bare_recent(request.recent) else None
             if is_bare_recent(request.recent) and stored is None:
                 reporter.recent_note(
-                    f"{request.environment or '?'}/{schema} — exporting all objects"
+                    f"{request.environment or '?'}/{schema}, exporting all objects"
                 )
             database_objects = discovery.discover(
                 schema       = schema,
@@ -222,8 +222,8 @@ class ExportDbRunner:
                 prefer_exact_names = True,
             )
             # Objects the requested authors touched but somebody else changed last.
-            # They stay in the export — dropping them would silently lose work the
-            # author really did — and are marked with the later author instead.
+            # They stay in the export, dropping them would silently lose work the
+            # author really did, and are marked with the later author instead.
             overtaken_by: dict[str, str] = {}
             if request.authors is not None:
                 audit = _audit_config(request.config)

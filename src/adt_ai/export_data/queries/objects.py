@@ -57,7 +57,10 @@ LEFT JOIN (
 ) u
     ON u.constraint_name    = c.constraint_name
 WHERE t.table_name          = UPPER(:table_name)
-    AND t.column_id         > 0
+    AND t.column_id         > 0     -- ignore hidden columns, whose column_id is NULL
+    AND t.virtual_column    = 'NO'  -- a virtual column HAS a column_id, so the line
+                                    -- above never excluded one; its value is derived,
+                                    -- and naming it in DML raises ORA-54013
 GROUP BY
     t.column_name,
     t.data_type,

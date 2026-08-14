@@ -10,7 +10,7 @@ rather than a missing environment.
 :func:`hydrate_environment` runs once at the top of the CLI entry point, so
 every module inherits it from a single hook. When either sentinel
 (``ADT_ENV`` / ``ORACLE_HOME``) is unset it fills in the allowlisted variables
-from the user's startup file — never overwriting one that is already set, so
+from the user's startup file, never overwriting one that is already set, so
 an explicit environment always wins.
 
 Extraction is hybrid. The file is read as text and its ``export VAR=value``
@@ -26,15 +26,15 @@ reasoned about:
 
 - **Thick mode**: ``ORACLE_HOME``. python-oracledb reads it out of the live
   ``os.environ`` when ``init_oracle_client()`` runs, so a late-set value works
-  — which is why hydration must mutate the real environment, not a copy. With
+ , which is why hydration must mutate the real environment, not a copy. With
   only ``DYLD_LIBRARY_PATH`` set the call fails ``DPI-1047``: dyld fixes its
   search path when the process starts and never rereads the variable.
-- **SQLcl**: ``PATH``. It is a Java program on the JDBC *thin* driver — ADT.ai
-  never asks it for thick JDBC — so it needs no Oracle client libraries at
+- **SQLcl**: ``PATH``. It is a Java program on the JDBC *thin* driver, ADT.ai
+  never asks it for thick JDBC, so it needs no Oracle client libraries at
   all, only to be found and launched.
 
 ``DYLD_LIBRARY_PATH`` and ``LD_LIBRARY_PATH`` are still hydrated because they
-are correct on Linux and harmless here — **not** because they reach a child
+are correct on Linux and harmless here, **not** because they reach a child
 process on macOS. They do not: SIP strips ``DYLD_*`` when exec'ing a protected
 binary, and the SQLcl launcher is a bash script, so ``/bin/bash`` drops the
 variable before the JVM ever starts.
@@ -100,7 +100,7 @@ _VARIABLE_REFERENCE = re.compile(
 
 @dataclass(frozen=True)
 class BootstrapResult:
-    """What hydration did — names only, never values (``ADT_KEY`` is a secret)."""
+    """What hydration did, names only, never values (``ADT_KEY`` is a secret)."""
 
     source : str = ""               # startup file parsed, or the shell that was run
     method : str = ""               # "" | "parse" | "shell"
@@ -142,7 +142,7 @@ def hydrate_environment(
     """Fill in missing ADT/Oracle variables from the user's startup file.
 
     Returns a :class:`BootstrapResult`; also stored for :func:`last_result`.
-    Safe to call more than once — a fully-set environment is a no-op.
+    Safe to call more than once, a fully-set environment is a no-op.
     """
     global _LAST_RESULT
 

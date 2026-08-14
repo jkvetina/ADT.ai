@@ -17,7 +17,7 @@ def _print_schema_export_header(schema: str) -> None:
     """Header for a schema-level export slice, above the per-application ones.
 
     `-rest` writes workspace artifacts, so it has no `APP <id>/<alias>` to sit
-    under — and on a schema with no applications there is no header at all, which
+    under, and on a schema with no applications there is no header at all, which
     is how a `-rest` run could finish printing nothing (ADT #190).
     """
     print_adt_header(f"SCHEMA {schema_label(schema)}, EXPORTING:")

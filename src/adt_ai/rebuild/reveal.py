@@ -73,7 +73,7 @@ def reveal_branches(
 def _contains_glob(pattern: str) -> str:
     # Treat the user's wildcard as a case-insensitive "contains" match: a branch
     # like `feat/PROJ-4995_...` should match `feat*4995` even though text
-    # trails the digits. Anchor only where the user anchored — wrap each end with
+    # trails the digits. Anchor only where the user anchored, wrap each end with
     # `*` unless they already supplied one.
     needle = pattern.lower()
     if not needle.startswith("*"):
@@ -94,7 +94,7 @@ def _branch_infos(root: Path) -> list[BranchInfo]:
         root, ["for-each-ref", "refs/remotes/origin", f"--format={fmt}", "--sort=-committerdate"]
     )
     infos: list[BranchInfo] = []
-    # "\n" only — `str.splitlines()` would truncate an author name holding an
+    # "\n" only, `str.splitlines()` would truncate an author name holding an
     # embedded `\r` and discard the tail as a phantom row.
     for line in out.split("\n"):
         if not line.strip():
@@ -121,7 +121,7 @@ def switch_to_branch(root: Path, name: str) -> None:
     # Check out `name` in the working tree at `root`. `git checkout` DWIMs a
     # local tracking branch from `origin/<name>` when no local branch exists, so
     # a name straight off the `-reveal` list (origin prefix already stripped)
-    # works. A dirty tree that would be clobbered makes git refuse — the shared
+    # works. A dirty tree that would be clobbered makes git refuse, the shared
     # adapter surfaces that stderr verbatim instead of swallowing it.
     git_checkout(root, name)
 
@@ -139,7 +139,7 @@ def branch_commits(
     `mine=True` keeps only commits authored by the configured git user
     (`user.email`), via `git log --author`.
 
-    Only commits unique to the branch are returned — those it inherited from the
+    Only commits unique to the branch are returned, those it inherited from the
     default branch at creation are excluded by listing the `origin/<default>..name`
     range. When `name` IS the default branch (or no default can be resolved), all
     of its commits are listed.

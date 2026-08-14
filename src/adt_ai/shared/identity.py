@@ -1,6 +1,6 @@
 """Load the per-developer ``config/IDENTITY.yaml`` identity file.
 
-``IDENTITY.yaml`` is gitignored and never committed — it holds the developer's
+``IDENTITY.yaml`` is gitignored and never committed, it holds the developer's
 personal identity (``db_schema``, ``apex_account``, ``email``) so a schema
 worked by several developers can still resolve who did what. There is
 deliberately no committed sample; the shape is documented in ``USAGE.md``.

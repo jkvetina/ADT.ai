@@ -2,7 +2,7 @@
 
 ``-type`` names an Oracle object type, so Oracle's own spelling is the contract:
 multi-word types carry a space (``PACKAGE BODY``, ``MATERIALIZED VIEW``), and a
-bare ``PACKAGE`` is the specification — never the body. The filters match a type
+bare ``PACKAGE`` is the specification, never the body. The filters match a type
 with LIKE, so an unwildcarded pattern is already an exact match; this module's job
 is only to resolve the spellings a user reasonably types (``MVIEW``, ``MATERIALIZED``,
 ``package_body``) onto that canonical vocabulary.
@@ -71,7 +71,7 @@ MAX_OBJECT_TYPE_WORDS = max(
 def normalize_object_type_pattern(pattern: str) -> str:
     """Resolve one ``-type`` token to its canonical Oracle type name.
 
-    Resolution happens only when the token definitively names a type — via an alias,
+    Resolution happens only when the token definitively names a type, via an alias,
     an underscore-for-space spelling, or any casing. Anything else is returned
     uppercased but otherwise untouched, so ``PACKAGE%`` stays the LIKE pattern the
     user meant and ``_`` keeps its single-char-wildcard meaning everywhere it is not
@@ -106,14 +106,14 @@ def join_object_type_words(patterns: Iterable[str]) -> list[str]:
 
     ``-type`` is nargs="+", so an unquoted ``-type PACKAGE BODY`` arrives as two
     tokens. Left alone they become two independent filters and the run reports
-    package *specifications* — the opposite of the request — because BODY names no
+    package *specifications* (the opposite of the request) because BODY names no
     type and quietly matches nothing. Joining makes the unquoted and quoted forms
     identical, so quoting never changes what a command means.
 
     Greedy longest-first, and only when the joined words name a real type: two real
     types side by side (``-type PACKAGE TRIGGER``) stay two filters, since 'PACKAGE
     TRIGGER' is not a type. ``-type MATERIALIZED VIEW`` is the one genuinely
-    ambiguous input — it reads as the single type, not as MATERIALIZED VIEW + VIEW;
+    ambiguous input, it reads as the single type, not as MATERIALIZED VIEW + VIEW;
     write ``-type MVIEW VIEW`` for the pair.
     """
     tokens = list(patterns)

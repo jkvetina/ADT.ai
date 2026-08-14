@@ -17,7 +17,7 @@ from adt_ai.shared.sqlcl_script import run_sqlcl_script
 from adt_ai.shared.startup import apply_startup
 
 # Fail-fast network timeouts, applied on the single shared OracleGateway connect
-# path so every module that talks to the database inherits them — there is no
+# path so every module that talks to the database inherits them, there is no
 # second connection code path to keep in sync. The two timeouts are independent
 # budgets, configurable via ``connect_timeout_seconds`` / ``query_timeout_seconds``
 # in config.yaml (see ``_resolve_timeout_seconds``): a query must never inherit
@@ -211,7 +211,7 @@ class OracleGateway:
 
         Issues ``SET TRANSACTION READ ONLY`` on the session before the query so the
         database itself rejects any write a side-effecting function might attempt
-        (ORA-01456), then rolls back to end the transaction — the committing
+        (ORA-01456), then rolls back to end the transaction, the committing
         ``execute`` path is never used.
         """
         connection = self.connect()
@@ -265,7 +265,7 @@ class OracleGateway:
                 #
                 # This catches `SqlclNotConnectedError` too, and has to: a lost
                 # store entry does not exit non-zero the way this path once
-                # assumed — SQLcl reports `SP2-0640` and exits 0 — so before
+                # assumed (SQLcl reports `SP2-0640` and exits 0) so before
                 # ADT #232 the retry never ran for the failure it was written
                 # for.
                 plan = self._sqlcl_plan(force_register=True)

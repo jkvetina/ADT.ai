@@ -4,14 +4,14 @@
 payloads so `-files` stays the single static-file channel and the repo never
 holds two copies of a static file. The compiler does not accept that: the
 exported `static-files.apx` names each payload in a `fileName` property, so a
-committed `apexlang/` tree reports one `REFERENCE_NOT_FOUND` per payload — and
+committed `apexlang/` tree reports one `REFERENCE_NOT_FOUND` per payload, and
 since `apex import` validates first, the export is not importable as it stands
 (cards `#160`, `#163`).
 
 This module closes that gap the way a build step should: it mirrors `apexlang/`
 into a gitignored staging tree with **hardlinked** files, then hardlinks
 `files/**` into place under `shared-components/static-files/`. One inode per
-file, no bytes copied, nothing new in git — the repo keeps its single copy and
+file, no bytes copied, nothing new in git, the repo keeps its single copy and
 the compiler gets the complete tree it needs. The same tree is what a future
 `apex import` should be handed.
 
@@ -22,12 +22,12 @@ compiler silently skipping whole folders. `os.link` is verified to work under th
 macOS Dropbox File Provider, with project and staging tree on one device; a copy
 is the fallback when a filesystem refuses.
 
-**A payload we do not have is left missing — never touched into existence.**
+**A payload we do not have is left missing, never touched into existence.**
 Measured on 2026-07-27 against one tree in three variants: real payload bytes and
 payloads truncated to *zero bytes* validate identically, while deleting one file
 produces its `REFERENCE_NOT_FOUND`. The compiler checks that the referenced path
 exists, not what is in it. An empty placeholder would therefore turn the gate
-green and then import an application with broken images — the failure this whole
+green and then import an application with broken images, the failure this whole
 module exists to prevent. A genuine gap must reach the compiler and be reported.
 """
 
@@ -105,7 +105,7 @@ class _LinkState:
 def _mirror(source_root: Path, target_root: Path, state: _LinkState) -> int:
     """Link every file under `source_root` into `target_root`, keeping the shape.
 
-    A missing source root places nothing at all — no directory, no placeholder.
+    A missing source root places nothing at all, no directory, no placeholder.
     That is deliberate: see the module docstring on why an empty stand-in is
     worse than an absent file.
     """

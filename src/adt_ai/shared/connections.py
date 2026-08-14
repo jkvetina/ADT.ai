@@ -102,7 +102,7 @@ class ConnectionResult:
     # lookup with names from two different places: what the user typed in the
     # connection file, and what a command derived. `patch` derives its group from the
     # exported folder and uppercases it, so a file keyed `ict_owner` could not serve a
-    # patch group named `ICT_OWNER` — the same project resolved fine for
+    # patch group named `ICT_OWNER`, the same project resolved fine for
     # `dependencies -refresh -schema ict_owner` and failed for `patch -deploy`, which
     # reads as a broken connection file rather than a lookup rule (`#198`).
     #

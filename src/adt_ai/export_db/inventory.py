@@ -77,7 +77,7 @@ class ObjectDiscovery:
         if _includes_object_type("INDEX", filters.object_types):
             objects.extend(self._discover_indexes(schema, filters, recent_days, changed_since))
         # JOB and MVIEW LOG have no reliable last_ddl_time, so any change-window
-        # mode skips them — watermark mode for exactly the reason -recent N does.
+        # mode skips them, watermark mode for exactly the reason -recent N does.
         windowed = recent_days is not None or changed_since is not None
         if _includes_object_type("JOB", filters.object_types) and not windowed:
             objects.extend(self._discover_jobs(schema, filters))

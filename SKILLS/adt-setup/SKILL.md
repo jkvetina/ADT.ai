@@ -20,7 +20,7 @@ From the ADT.ai repo folder:
 python3 -m pip install -e .
 ```
 
-This puts `adtai` and `adt` on `PATH`. Re-run after pulling changes only if dependencies changed — or use `adtai doctor -update` (below).
+This puts `adtai` and `adt` on `PATH`. Re-run after pulling changes only if dependencies changed, or use `adtai doctor -update` (below).
 
 Windows uses `python` instead of `python3`:
 
@@ -63,7 +63,7 @@ export ADT_ENV="DEV"
 export ADT_SCHEMA="CORE"
 ```
 
-`ADT_KEY` is the decryption key for encrypted connection passwords. `connection -set-pwd -encrypt` (and `-set-wallet-pwd`) write OLD-ADT-compatible encrypted values marked `pwd!: Y` / `wallet_pwd!: Y`, and runtime connection loading decrypts them with `-key` or `ADT_KEY`. Without it, a connection file holding encrypted passwords cannot open. `doctor` never prints the value — it renders as `<redacted>` when set and `<empty>` when missing.
+`ADT_KEY` is the decryption key for encrypted connection passwords. `connection -set-pwd -encrypt` (and `-set-wallet-pwd`) write OLD-ADT-compatible encrypted values marked `pwd!: Y` / `wallet_pwd!: Y`, and runtime connection loading decrypts them with `-key` or `ADT_KEY`. Without it, a connection file holding encrypted passwords cannot open. `doctor` never prints the value, it renders as `<redacted>` when set and `<empty>` when missing.
 
 ```bash
 export ADT_KEY="your-key"
@@ -73,9 +73,9 @@ On Windows use `setx NAME "value"` for each of these (takes effect in new shells
 
 ### When an AI tool runs ADT.ai
 
-Claude Code, Codex, and similar agents spawn a non-login, non-interactive shell, which never sources `~/.zshrc` — so none of the variables above reach ADT.ai, and you see encrypted connections failing to open, thick mode unavailable, and SQLcl reported as `not found`.
+Claude Code, Codex, and similar agents spawn a non-login, non-interactive shell, which never sources `~/.zshrc`, so none of the variables above reach ADT.ai, and you see encrypted connections failing to open, thick mode unavailable, and SQLcl reported as `not found`.
 
-You do not have to do anything about it. On every run, if `ADT_ENV` or `ORACLE_HOME` is unset, ADT.ai reads your shell startup file itself and fills in the ADT/Oracle variables, appending `$ORACLE_HOME` and `$ORACLE_HOME/sqlcl/bin` to `PATH`. A variable you set explicitly is never overwritten. `adtai doctor` shows a `HYDRATED` row naming what it filled in and from which file; no row means nothing was needed. This is macOS/Linux only — on Windows, set the variables yourself. Full behavior: `USAGE.md` §Environment Variables.
+You do not have to do anything about it. On every run, if `ADT_ENV` or `ORACLE_HOME` is unset, ADT.ai reads your shell startup file itself and fills in the ADT/Oracle variables, appending `$ORACLE_HOME` and `$ORACLE_HOME/sqlcl/bin` to `PATH`. A variable you set explicitly is never overwritten. `adtai doctor` shows a `HYDRATED` row naming what it filled in and from which file; no row means nothing was needed. This is macOS/Linux only, on Windows, set the variables yourself. Full behavior: `USAGE.md` §Environment Variables.
 
 So if a command fails under an agent with a missing-credential or missing-client error, run `adtai doctor -offline` first and read the `HYDRATED` row: it tells you whether your startup file was found and what came out of it.
 
@@ -88,7 +88,7 @@ ADT.ai keeps sensitive runtime material separate from project output. Connection
 3. `<root>/connections/<FOLDER>.yaml`
 4. the ADT.ai repo's `connections/<FOLDER>.yaml`
 
-`connections.file` overrides the looked-up filename. Wallets live under `connections/wallets/`; if only `Wallet_NAME.zip` is present, ADT.ai extracts it before connecting. The `connections/` folder is gitignored except `.gitkeep` — it is local runtime state.
+`connections.file` overrides the looked-up filename. Wallets live under `connections/wallets/`; if only `Wallet_NAME.zip` is present, ADT.ai extracts it before connecting. The `connections/` folder is gitignored except `.gitkeep`, it is local runtime state.
 
 To keep secrets outside the project repo, point the project config at an external folder:
 
@@ -101,9 +101,9 @@ connections:
 
 When a requested environment or schema is missing, ADT.ai prints the connection file to edit and the configured choices as a sorted, two-space-indented list.
 
-## doctor — verify and update
+## doctor, verify and update
 
-`adtai doctor` is the health check. **Plain `doctor` is read-only** — it changes nothing, never updates ADT.ai, never reinstalls requirements, never downloads SQLcl.
+`adtai doctor` is the health check. **Plain `doctor` is read-only**, it changes nothing, never updates ADT.ai, never reinstalls requirements, never downloads SQLcl.
 
 ```bash
 adtai doctor
@@ -112,9 +112,9 @@ adtai doctor
 It reports current versions (ADT.ai, Python, Git, Java, `oracledb`, Instant Client, SQLcl), an `ENVIRONMENT:` section (`ARCH`, `JAVA_TOOL_OPTIONS`, `LANG`, `NLS_LANG`, `ORACLE_HOME`, resolved `SQLCL` launcher, `ADT_ENV`, `ADT_KEY`), and online update availability for ADT.ai, Java, SQLcl, `oracledb`, and Instant Client.
 
 Row statuses:
-- `UPDATE` — a newer version is available online.
-- `WARN` — read-only doctor still runs, but optional setup is missing/uncertain (Java, SQLcl, Instant Client, `ADT_ENV`, `ADT_KEY`, `JAVA_TOOL_OPTIONS`).
-- `FAIL` — a required prerequisite is missing or broken (Git, `oracledb`); doctor exits non-zero.
+- `UPDATE`, a newer version is available online.
+- `WARN`, read-only doctor still runs, but optional setup is missing/uncertain (Java, SQLcl, Instant Client, `ADT_ENV`, `ADT_KEY`, `JAVA_TOOL_OPTIONS`).
+- `FAIL`, a required prerequisite is missing or broken (Git, `oracledb`); doctor exits non-zero.
 - A plain version row with no tag means the value was detected and no newer version was found online (or online checks were skipped).
 
 Run only local checks, with no remote metadata calls:
@@ -129,7 +129,7 @@ Run the full ADT.ai + `requirements.txt` + SQLcl upgrade (only when explicitly r
 adtai doctor -update
 ```
 
-Upgrade SQLcl only — runs immediately, checks Oracle's download page, fetches newer ZIPs, and replaces the resolved SQLcl install folder:
+Upgrade SQLcl only, runs immediately, checks Oracle's download page, fetches newer ZIPs, and replaces the resolved SQLcl install folder:
 
 ```bash
 adtai doctor -sqlcl
@@ -137,7 +137,7 @@ adtai doctor -sqlcl
 
 Standalone `update` and `upgrade` command names are not public commands. They use the generic ADT.ai error screen and point to `doctor -update` or `doctor -sqlcl`.
 
-## doctor -init — bootstrap project config
+## doctor -init, bootstrap project config
 
 After install, scaffold a project config template:
 
@@ -153,7 +153,7 @@ It writes the project config template, repo ignore rules for generated artifacts
 - Garbled or non-English SQLcl/Oracle messages → set `JAVA_TOOL_OPTIONS="-Duser.language=en"`.
 - `DPI-1047` or `libclntsh.dylib` missing → thick Oracle mode cannot locate Instant Client. Check `ORACLE_HOME` points at Instant Client, add it to `PATH`, open a new shell, and confirm with `adtai doctor` or `adtai doctor -offline`.
 - "Schema/environment not configured" → open the connection file named in the error and add the listed choice.
-- Always start troubleshooting with `adtai doctor` (or `adtai doctor -offline` when offline) — it pinpoints which prerequisite is the `FAIL`/`WARN`.
+- Always start troubleshooting with `adtai doctor` (or `adtai doctor -offline` when offline), it pinpoints which prerequisite is the `FAIL`/`WARN`.
 
 ## Examples
 

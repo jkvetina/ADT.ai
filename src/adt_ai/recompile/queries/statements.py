@@ -56,7 +56,7 @@ def build_compile_statement(
 ) -> str:
     """Build the ALTER ... COMPILE statement for one object.
 
-    Faithful port of old ADT ``Recompile.build_query`` — including the
+    Faithful port of old ADT ``Recompile.build_query``, including the
     ``'PERFORMANE'`` spelling accepted for the PERFORMANCE warning.
 
     ``PLSQL_CODE_TYPE`` is stamped **only** when the caller explicitly asks for a
@@ -118,7 +118,7 @@ def compile_drift_binds(
 ) -> dict[str, object]:
     """The ``:drift_*`` binds that gate the modifier-narrowed ``-force`` sweep.
 
-    ``-force`` alone recompiles every matching object (``drift_only = 'N'`` — today's
+    ``-force`` alone recompiles every matching object (``drift_only = 'N'``, today's
     meaning). Combined with a compile modifier it becomes drift-narrowed: only VALID
     PL/SQL objects whose current ``USER_PLSQL_OBJECT_SETTINGS`` differ from the
     requested target state are selected, any single mismatch qualifying (#146).
@@ -188,7 +188,7 @@ def mview_type_code(refresh_method: str | None, has_log: bool = False) -> str:
     Unlike :func:`_refresh_method_code` (which feeds DBMS_MVIEW.REFRESH and leaves
     FORCE as '?' so Oracle decides at runtime), the *display* always resolves to a
     clean letter: COMPLETE → 'C', FAST → 'F'. FORCE resolves to what Oracle would
-    actually do — 'F' when a usable MV log exists, 'C' otherwise. NEVER → 'N', and a
+    actually do, 'F' when a usable MV log exists, 'C' otherwise. NEVER → 'N', and a
     missing method → '' (nothing to show).
     """
     method = (refresh_method or "").strip().upper()

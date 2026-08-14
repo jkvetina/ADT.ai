@@ -5,7 +5,7 @@ mirror that the sibling :mod:`adt_ai.dependencies.queries.objects` then reads
 offline. Both are re-exported by the package ``__init__``.
 
 Each ``USER_*`` SELECT pulls one dictionary view verbatim for the *connected*
-schema — the views scope implicitly to the session user, so there is no bind and
+schema, the views scope implicitly to the session user, so there is no bind and
 no ``OWNER`` column; the runner stamps ``OWNER`` per scope when it writes the row
 (see :meth:`adt_ai.dependencies.store.DependencyStore.refresh_schema`). The
 ``APEX_*`` SELECTs are filtered by ``:app_id`` and the runner stamps
@@ -28,7 +28,7 @@ WHERE oracle_maintained = 'N'
   AND object_type != 'LOB'
 """.strip()
 
-# `-refresh -recent` narrowing: exactly one of the two binds is non-NULL — the
+# `-refresh -recent` narrowing: exactly one of the two binds is non-NULL, the
 # scope's stored `_meta` last-refresh stamp (bare -recent) or an N-day window
 # (-recent N). COALESCE picks whichever mode is active.
 USER_OBJECTS_RECENT_QUERY = """
@@ -163,7 +163,7 @@ WHERE cc.constraint_name IN (
 )
 """.strip()
 
-# PL/Scope identifier usages — populated only for objects compiled with
+# PL/Scope identifier usages, populated only for objects compiled with
 # PLSCOPE_SETTINGS='IDENTIFIERS:ALL'. The refresh prerequisite recompiles
 # VALID-but-missing-scope objects first; an empty result is still valid.
 USER_IDENTIFIERS_QUERY = """
@@ -184,7 +184,7 @@ WHERE EXISTS (
 )
 """.strip()
 
-# PL/Scope SQL statements — shares the usage-id space with USER_IDENTIFIERS per
+# PL/Scope SQL statements, shares the usage-id space with USER_IDENTIFIERS per
 # object, so a column ref's context chain reaches its enclosing SELECT/UPDATE/...
 USER_STATEMENTS_QUERY = """
 SELECT object_name, object_type, type, usage_id, usage_context_id
@@ -358,7 +358,7 @@ _apex_version_tuple = apex_version_tuple
 
 # ------------------------------------------------------------------- PL/Scope
 
-# Session prerequisite — turn full PL/Scope on so a subsequent recompile of
+# Session prerequisite, turn full PL/Scope on so a subsequent recompile of
 # missing-scope objects populates USER_IDENTIFIERS / USER_STATEMENTS. Issued by
 # adt_ai.dependencies.plscope on the same connection (no new connection).
 PLSCOPE_SESSION_STATEMENT = "ALTER SESSION SET PLSCOPE_SETTINGS = 'IDENTIFIERS:ALL,STATEMENTS:ALL'"

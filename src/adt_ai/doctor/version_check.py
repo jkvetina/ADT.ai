@@ -56,7 +56,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
 
         yield "CURRENT VERSIONS:"
         # Fire every online version check concurrently before streaming the rows.
-        # A default `doctor` run otherwise made 3 sequential HTTP calls — ADT.ai,
+        # A default `doctor` run otherwise made 3 sequential HTTP calls, ADT.ai,
         # oracledb, and SQLcl (each a 30s timeout), so wall-clock was their sum
         # (~90s worst case); concurrent fetches bound it to the slowest single
         # request. The cheap local rows below still stream as they are produced;
@@ -131,7 +131,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         """The ADT.ai version as the `CURRENT VERSIONS:` row shows it.
 
         A wheel install is exactly the release it says it is. A git checkout is
-        that release plus whatever has landed since, so it gets the WIP marker —
+        that release plus whatever has landed since, so it gets the WIP marker,
         which is also the honest answer for the dev box, where `__version__`
         only moves at release time.
         """
@@ -142,7 +142,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
     def _status_action_lines(self) -> list[str]:
         """The upgrade commands worth offering, given what the online checks found.
 
-        An action is offered only when a real check found something stale — the
+        An action is offered only when a real check found something stale, the
         same rule the status column already follows. With every component
         current (or `-offline`, where nothing was checked at all) this returns
         nothing and the caller drops the whole `ACTIONS:` section.
@@ -199,7 +199,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
     def _hydrated_line(self) -> str | None:
         """Name the variables this run filled in from the shell startup file.
 
-        Names only — ``ADT_KEY`` is a password and its value never prints here
+        Names only, ``ADT_KEY`` is a password and its value never prints here
         or anywhere else. Absent when nothing was hydrated, which is the normal
         case in a real terminal.
         """

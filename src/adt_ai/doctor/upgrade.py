@@ -155,7 +155,7 @@ class DoctorUpgradeMixin:
 
         ``ZipFile.extractall`` drops the stored mode, so the SQLcl ``bin/sql``
         launcher lands as ``0644`` and the very next ``sql -V`` fails with
-        "permission denied" — which is why a freshly upgraded SQLcl reported
+        "permission denied", which is why a freshly upgraded SQLcl reported
         ``not found`` on the following run. Re-apply each member's stored mode.
 
         Each member is checked before extraction so a crafted ``../`` (or
@@ -174,8 +174,8 @@ class DoctorUpgradeMixin:
     @staticmethod
     def _ensure_executable(launcher: Path) -> None:
         """Guarantee the SQLcl launcher is runnable even if the archive carried
-        no mode bits (e.g. a Windows-built zip), so version detection — which
-        runs the executable — succeeds right after an upgrade."""
+        no mode bits (e.g. a Windows-built zip), so version detection, which
+        runs the executable, succeeds right after an upgrade."""
         if launcher.exists():
             current = launcher.stat().st_mode
             launcher.chmod(current | 0o111)

@@ -2,8 +2,8 @@
 
 Split out of ``commit_discovery`` when that file crossed the 20 KB context
 budget (ADT #268). The seam is the question each half answers:
-``commit_discovery`` reads a patch folder's *contents* -- which commits and
-files it carries -- while this module reads only its *logs*, and the two share
+``commit_discovery`` reads a patch folder's *contents*, which commits and
+files it carries, while this module reads only its *logs*, and the two share
 nothing but the folder path.
 """
 
@@ -62,7 +62,7 @@ def deploy_log_records(path: Path) -> list[tuple[int, str, str, str]]:
 def target_status(path: Path) -> dict[str, str]:
     """Per-target deploy status: for each target, its NEWEST log wins.
 
-    This read is load-bearing beyond any report -- ``deploy_patch`` skips a
+    This read is load-bearing beyond any report, ``deploy_patch`` skips a
     target already sitting at ``SUCCESS`` unless ``-force``. It used to AND every
     log the folder had ever collected, so one early failure pinned the target at
     ``ERROR`` permanently: a successful re-deploy never cleared it, and the skip
@@ -80,7 +80,7 @@ def latest_deploy_status(path: Path) -> str | None:
 
     Jan, 2026-08-10: "status will be reflecting the latest deployed log, so if
     the latest file is log_DEV_<result> I want to see the DEV:<result> as a
-    value" -- one value, the latest, not one per target.
+    value", one value, the latest, not one per target.
     """
     records = deploy_log_records(path)
     if not records:

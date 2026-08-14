@@ -9,6 +9,7 @@ from adt_ai.cli.constants import (
     ConnectionConfigError,
     ConnectionResult,
 )
+from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.yaml_io import load_yaml_mapping
 
 
@@ -39,7 +40,7 @@ def _resolve_apex_metadata_owners(
 ) -> dict[str, list[str]]:
     """Map requested app ids to a recorded *non-default* owner schema.
 
-    Reads the cached ``config/apex_apps.yaml`` (written by
+    Reads the cached ``config/internal/apex_apps.yaml`` (written by
     ``export_apex/metadata._store_application_metadata``, keyed by ``app_id``
     with an ``owner`` field) so the command can connect straight to an app's
     owner schema and skip the wasted default-schema connection + live
@@ -50,7 +51,7 @@ def _resolve_apex_metadata_owners(
     """
     if not app_ids:
         return {}
-    app_metadata = load_yaml_mapping(root / "config" / "apex_apps.yaml")
+    app_metadata = load_yaml_mapping(internal_path(root, "apex_apps.yaml"))
     if not app_metadata:
         return {}
     schema_lookup = {name.upper(): name for name in schema_names}
@@ -71,7 +72,7 @@ def _resolve_apex_metadata_owners(
 class ApexOwnerRoutes:
     """Which schema each requested APEX app should be reached through.
 
-    `default_schemas` is the environment's configured default list in full —
+    `default_schemas` is the environment's configured default list in full,
     `export_apex` exports every one of them when nothing is routed away, so
     collapsing it to the first schema here would silently narrow a multi-schema
     run.
@@ -109,8 +110,8 @@ def resolve_apex_owner_routes(
     """The pre-connect owner routing both APEX-aware handlers start from.
 
     `export_apex` and `dependencies -refresh` both answer the same question
-    before they connect — *which schema owns each requested app?* — and both
-    answer it from the same cached `config/apex_apps.yaml`. They differ only in
+    before they connect (*which schema owns each requested app?*) and both
+    answer it from the same cached `config/internal/apex_apps.yaml`. They differ only in
     what they do with the answer, so the derivation (default schema, configured
     schema names, routed vs. left-over app ids) lives here once and each handler
     applies its own policy to the result.

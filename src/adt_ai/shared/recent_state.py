@@ -3,9 +3,10 @@
 ``-recent N`` keeps its day-window meaning everywhere. **Bare** ``-recent`` means
 "everything changed since my last covering export of this scope", so repeated
 refreshes stop re-exporting the whole schema. The cutoff for that mode is a
-timestamp this module stores per scope in ``config/recent.yaml`` — generated
-runtime metadata that lives next to ``config/dependencies.db`` and is gitignored
-for the same reason: it describes one checkout's export history, not the project.
+timestamp this module stores per scope in ``config/internal/recent.yaml``,
+generated runtime metadata that lives next to ``config/internal/dependencies.db``
+and is gitignored for the same reason: it describes one checkout's export
+history, not the project.
 
 Two rules keep the watermark honest, and both are the reason this is a shared
 module rather than per-command bookkeeping:
@@ -14,7 +15,7 @@ module rather than per-command bookkeeping:
   ``LAST_DDL_TIME`` is written by the database, so a client clock that runs slow
   would silently skip objects forever. Capturing before the listing also means an
   object changed *during* the run still has ``last_ddl_time >= candidate`` and is
-  re-selected next time — the overlap window shrinks from a day to the duration
+  re-selected next time, the overlap window shrinks from a day to the duration
   of the previous run instead of becoming a hole.
 * **The watermark advances only for a run that actually covered the scope**
   (:func:`may_advance`). A ``-name``/``-type``/``-by``/``-my``-narrowed export, a
@@ -31,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.shared import queries
+from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.row_values import row_value
 from adt_ai.shared.yaml_io import load_yaml_mapping, store_yaml_mapping
 
@@ -42,7 +44,7 @@ def read_db_now(gateway: Any) -> str | None:
 
     Called BEFORE the object listing so anything changed during the run stays at
     or after this instant and is re-selected next time. Returns ``None`` when the
-    database gives nothing usable, which callers treat as "do not advance" — a
+    database gives nothing usable, which callers treat as "do not advance", a
     missing candidate must never be mistaken for a covered scope.
     """
     rows = gateway.fetch_all(queries.DB_NOW_QUERY)
@@ -88,7 +90,7 @@ def recent_days(value: object) -> int | None:
 
 def recent_state_path(root: Path) -> Path:
     """Location of the watermark file for a project root."""
-    return root / "config" / "recent.yaml"
+    return internal_path(root, "recent.yaml")
 
 
 def parse_timestamp(value: str | None) -> datetime.datetime | None:
@@ -134,10 +136,10 @@ def may_advance(
 
 
 class RecentStore:
-    """Read/modify/write access to ``config/recent.yaml``.
+    """Read/modify/write access to ``config/internal/recent.yaml``.
 
-    Scope keys are nested mappings — ``export_db`` → env → schema, ``export_apex``
-    → env → app_id → format — so the file stays readable and one module's scopes
+    Scope keys are nested mappings, ``export_db`` → env → schema, ``export_apex``
+    → env → app_id → format, so the file stays readable and one module's scopes
     can never collide with another's. Every key is stored as a string so a
     numeric APEX app id round-trips through YAML unchanged.
     """

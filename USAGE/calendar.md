@@ -2,7 +2,7 @@
 
 `calendar` shows your Git activity as a monthly author/ticket **calendar grid**. It reads commit metadata from the shared `adtai rebuild` commit cache instead of re-walking every branch live, so it is fast and gets faster the more often you run it. It does not connect to Oracle, so no rebuild is needed first.
 
-Before reading, it tops the cache up for exactly the branches it needs — the default branch plus every branch whose name carries the configured `jira_prefix` (when no prefix is set, every branch). The top-up runs `rebuild` in update mode, so steady-state runs only read the handful of new commits since last time. The cache lives at the path `repo_commits_file` points to in `config/config.yaml` (default `./config/commits/#BRANCH#.yaml`, one file per branch).
+Before reading, it tops the cache up for exactly the branches it needs, the default branch plus every branch whose name carries the configured `jira_prefix` (when no prefix is set, every branch). The top-up runs `rebuild` in update mode, so steady-state runs only read the handful of new commits since last time. The cache lives at the path `repo_commits_file` points to in `config/config.yaml` (default `./config/commits/#BRANCH#.yaml`, one file per branch).
 
 By default the author is your own `git config user.email`; activity is sourced from the cached commits you authored. Pass `-by` to look at someone else instead.
 
@@ -26,7 +26,7 @@ adtai calendar -by bob@example.com
 adtai calendar -branch feat/PROJ-4995-rework
 ```
 
-The output is a **month calendar grid**: weeks are rows, Monday–Friday are columns, and each active day's cell stacks one `<ticket> (<count>)` line per ticket — the ticket id and the number of commits attributed to it on that day. Commits are aggregated per ticket, never listed one row per commit:
+The output is a **month calendar grid**: weeks are rows, Monday–Friday are columns, and each active day's cell stacks one `<ticket> (<count>)` line per ticket, the ticket id and the number of commits attributed to it on that day. Commits are aggregated per ticket, never listed one row per commit:
 
 ```text
 APEX DEPLOYMENT TOOL - CALENDAR
@@ -45,7 +45,7 @@ PROJ-100 (2)     |                    |                    | PROJ-204 (1)     | 
 
 Saturday and Sunday commits are folded into the preceding Friday's bucket, so `2026-06-05` above carries both the Friday and weekend commits for `PROJ-300`. Weeks with no activity in the month are skipped.
 
-`-list` is accepted for backwards compatibility but no longer changes the output — the task-centric report shown above is now the only format:
+`-list` is accepted for backwards compatibility but no longer changes the output, the task-centric report shown above is now the only format:
 
 ```bash
 adtai calendar -month 2026-06 -list
@@ -56,10 +56,10 @@ adtai calendar -month 2026-06 -list
 Set `jira_prefix` in `config/config.yaml` (e.g. `jira_prefix: 'PROJ'`) to scope activity to one project. With a prefix configured, a commit counts when **any** of these hold:
 
 - its message carries a matching ticket (`PROJ-4995`, case-insensitive, dash optional);
-- it lives on a branch whose **name** carries the prefix (the whole branch counts — every commit on it, even ones whose message has no ticket);
-- it is a **pull request** — PRs always get special attention and are surfaced regardless of prefix.
+- it lives on a branch whose **name** carries the prefix (the whole branch counts, every commit on it, even ones whose message has no ticket);
+- it is a **pull request**, PRs always get special attention and are surfaced regardless of prefix.
 
-Each grid cell shows the ticket id, a `PR#<n>` marker for pull requests, or a branch-derived label as a fallback, followed by `(<count>)` — the number of commits attributed to that ticket on that day. The per-author header reports the distinct ticket and PR counts, and the overview header shows the active prefix.
+Each grid cell shows the ticket id, a `PR#<n>` marker for pull requests, or a branch-derived label as a fallback, followed by `(<count>)`, the number of commits attributed to that ticket on that day. The per-author header reports the distinct ticket and PR counts, and the overview header shows the active prefix.
 
 Leave `jira_prefix` empty to count every commit you authored across all branches (in which case every branch is cached, not just the prefixed ones).
 

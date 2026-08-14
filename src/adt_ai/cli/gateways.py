@@ -10,7 +10,7 @@ Before ADT #179 there was no single place that *applied* them: eleven call sites
 across seven command modules each wrote their own ``OracleGateway(...)``,
 restating ``startup_sql`` / ``config`` / ``project_root`` and their own debug
 wrap. Every one of those keywords was optional, so each site could quietly skip
-one — and ``dependencies`` did (ADT #177): it never passed ``startup_sql``, ran
+one, and ``dependencies`` did (ADT #177): it never passed ``startup_sql``, ran
 no session setup, and died on a schema whose DDL trigger requires a client
 identifier. Nothing else was affected, which is precisely the problem: the fix
 had to be applied per site, so the *next* addition to session setup would have
@@ -18,7 +18,7 @@ to be threaded through eleven places again.
 
 Hence this module. ``build_gateway`` reads what a connection needs from the
 context itself rather than from its caller, so a caller cannot decline session
-setup — the choice does not exist at the call site. Adding to what every ADT.ai
+setup, the choice does not exist at the call site. Adding to what every ADT.ai
 connection does is now an edit to one function, and every command inherits it.
 
 ``tests/contracts/test_gateway_startup_wiring.py`` pins that: exactly one

@@ -20,7 +20,7 @@ _TEMP_GITIGNORE_ENTRY = "config/temp/"
 def _ensure_temp_ignored(root: Path) -> None:
     """Idempotently ensure ``config/temp/`` is git-ignored in ``root``.
 
-    Mirrors ``ensure_discovery_ignored`` for ``config/discovery/`` — appends the
+    Mirrors ``ensure_discovery_ignored`` for ``config/discovery/``, appends the
     entry to an existing ``.gitignore`` (fixing a missing trailing newline) or
     creates the file when absent.
     """
@@ -52,7 +52,7 @@ def _sqlcl_temp_dir(project_root: Path | None) -> Path | None:
 
 
 # Pulls the cleartext password out of a SQLcl ``connect`` line. The connect
-# lines we build all embed it the same way -- ``user/"password"@dsn`` -- so we
+# lines we build all embed it the same way (``user/"password"@dsn``) so we
 # can recover it from the script we are about to run and scrub it from anything
 # SQLcl echoes back into stdout/stderr.
 _CONNECT_PWD_RE = re.compile(r'/"(?P<pwd>[^"\n]+)"@')
@@ -67,7 +67,7 @@ SQLCL_HIDDEN_VARIABLES = ("ORACLE_HOME",)
 # a connect that left no session behind does not fire the guard: SQLcl runs the
 # rest of the script, answers every statement with ``SP2-0640: Not connected``,
 # and exits **0**. The exit code alone therefore cannot see this failure, and
-# ``run_sqlcl_script`` handed the dead transcript back as success — which is how
+# ``run_sqlcl_script`` handed the dead transcript back as success, which is how
 # ``export_apex -rest`` reported ``SP2-0640`` as its own error three escalations
 # running while the connect diagnostic above it was discarded (ADT #232).
 SQLCL_NOT_CONNECTED_CODE = "SP2-0640"
@@ -87,7 +87,7 @@ class SqlclScriptError(RuntimeError):
     Named so the CLI can tell it apart from an internal surprise. As a bare
     ``RuntimeError`` it landed under the ``UNEXPECTED ERROR:`` catch-all, which
     renders ``<type>: <message>`` on one line and so promoted the transcript's
-    FIRST line to the diagnosis -- reporting `Connection <name> has been deleted`
+    FIRST line to the diagnosis, reporting `Connection <name> has been deleted`
     (SQLcl echoing the script's own `CONNMGR DELETE` preamble) for a deploy that
     actually died on `SP2-0556` several lines later (ADT #271).
     """
@@ -103,7 +103,7 @@ def _ran_without_a_session(output: str) -> bool:
 def _sqlcl_environment() -> dict[str, str]:
     """The process environment, minus what would flip SQLcl to the thick driver.
 
-    SQLcl is a Java program and ADT.ai only ever asks it for JDBC *thin* -- see
+    SQLcl is a Java program and ADT.ai only ever asks it for JDBC *thin*, see
     ``shared.env_bootstrap``. Its launcher disagrees: an ``ORACLE_HOME`` holding
     an ``ocijdbc`` library is read as "the thick driver is available", so it
     front-loads that client's ``ojdbc11.jar`` and hands the JVM the OCI
@@ -112,7 +112,7 @@ def _sqlcl_environment() -> dict[str, str]:
 
     On macOS that URL can never be satisfied. SIP strips ``DYLD_*`` when
     exec'ing a protected binary, and both the launcher (``/bin/bash``) and the
-    JVM (``/usr/bin/java``) are protected -- so the library path the launcher
+    JVM (``/usr/bin/java``) are protected, so the library path the launcher
     exports is gone before Java starts and every connect dies with
     ``no ocijdbc23 in java.library.path``, whatever the client version is.
     ADT.ai itself creates the condition: it exports ``ORACLE_HOME`` for
@@ -180,7 +180,7 @@ def run_sqlcl_script(
         #
         # ``stdin=DEVNULL`` is not cosmetic. A CONNECT that fails makes SQLcl
         # fall back to prompting for a username, and without this the child
-        # inherits the caller's terminal — so it sat at a prompt that
+        # inherits the caller's terminal, so it sat at a prompt that
         # ``capture_output`` had already swallowed, waiting forever while
         # ``export_apex -rest`` printed nothing but a crawling progress bar
         # (ADT #188). At EOF the prompt fails immediately instead, and the

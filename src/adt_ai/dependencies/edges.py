@@ -1,6 +1,6 @@
 """Graph edge builders over the raw mirror.
 
-Both maps share one node vocabulary — ``TYPE.NAME`` — so a caller that needs the
+Both maps share one node vocabulary (``TYPE.NAME``) so a caller that needs the
 whole ordering graph can merge them directly. They are separate because Oracle
 stores the two halves in unrelated dictionary views: ``USER_DEPENDENCIES`` holds
 PL/SQL and view dependencies and records nothing about tables, so foreign keys

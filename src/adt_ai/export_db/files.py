@@ -49,7 +49,7 @@ class ObjectFileResolver:
         # <object_type> placeholders. When <object_type> is omitted the
         # per-type folder is appended automatically (legacy 'database/' layout).
         # An old-ADT '{$NAME}' token is never substituted here, so it is rejected
-        # at construction — before the export can write a folder named after it.
+        # at construction, before the export can write a folder named after it.
         self.path_objects = reject_unresolved_placeholders(str(path_objects))
         self.object_types = {key.upper(): value for key, value in object_types.items()}
         self._existing_case_paths_by_folder: dict[Path, dict[str, Path]] = {}
@@ -210,7 +210,7 @@ class ObjectFileResolver:
     def duplicate_locations(self, database_object: DatabaseObject) -> list[Path]:
         """Every existing file sharing this object's filename inside its type subtree.
 
-        Empty unless the same filename really does sit in more than one place —
+        Empty unless the same filename really does sit in more than one place,
         the stale-clone case. ``_existing_case_path`` silently keeps the first
         match and exports there, so the other copies drift; the export surfaces
         them inline with a ``[DUPE]`` marker rather than aborting the run.

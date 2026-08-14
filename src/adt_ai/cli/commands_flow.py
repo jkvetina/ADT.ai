@@ -31,6 +31,7 @@ from adt_ai.cli.context import (
     _print_connection_block,
 )
 from adt_ai.cli.gateways import build_gateway
+from adt_ai.shared.internal_paths import internal_path
 
 _NO_FLOW_DB_MESSAGE = (
     "No APEX flow database found. Run 'adt flow -app N -refresh' to build it."
@@ -55,7 +56,7 @@ def _run_flow(
         return 2
 
     root    = Path(args.root).expanduser().resolve()
-    db_path = root / "config" / "flow.db"
+    db_path = internal_path(root, "flow.db")
 
     if args.refresh:
         return _refresh_flow(args, root, db_path, gateway_factory, selection)

@@ -1,6 +1,6 @@
-"""Decide which APEXlang folders a ``validate`` run covers — entirely offline.
+"""Decide which APEXlang folders a ``validate`` run covers, entirely offline.
 
-``config/apex_apps.yaml`` already records ``owner``/``app_alias`` per app id
+``config/internal/apex_apps.yaml`` already records ``owner``/``app_alias`` per app id
 (written by ``export_apex``), and ``ApexFileResolver.apexlang_root()`` already
 knows where an APEXlang tree lives, so ``-app 800`` resolves to a path with no
 database round-trip. That is what keeps ``validate`` connectionless.
@@ -15,10 +15,11 @@ from typing import Any
 
 from adt_ai.export_apex.files import ApexFileResolver
 from adt_ai.export_apex.inventory import ApexApplication
+from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.yaml_io import load_yaml_mapping
 
 APEXLANG_DIR = "apexlang"
-APPS_METADATA = "config/apex_apps.yaml"
+APPS_METADATA = "config/internal/apex_apps.yaml"
 
 
 @dataclass(frozen=True)
@@ -43,7 +44,7 @@ def resolve_targets(
 
     Precedence follows the command surface: explicit ``-input`` paths first, then
     ``-app`` ids, and a bare run discovers every ``apexlang/`` folder under the
-    configured APEX root. Notes are the actionable half — an app with no export
+    configured APEX root. Notes are the actionable half, an app with no export
     on disk names the path where one was expected instead of raising.
     """
     targets: list[ValidateTarget] = []
@@ -81,7 +82,7 @@ def _targets_for_apps(
     config  : Mapping[str, Any],
     app_ids : list[str],
 ) -> tuple[list[ValidateTarget], list[str]]:
-    metadata = load_yaml_mapping(root / "config" / "apex_apps.yaml")
+    metadata = load_yaml_mapping(internal_path(root, "apex_apps.yaml"))
     resolver = ApexFileResolver.from_config(root, dict(config))
     targets: list[ValidateTarget] = []
     notes: list[str] = []
@@ -130,7 +131,7 @@ def _discovery_root(root: Path, config: Mapping[str, Any]) -> Path:
     """The folder a bare run walks.
 
     ``path_apex`` may carry a ``<schema>`` token, which only resolves once a
-    schema is bound — and a bare run has none. Walking from the static prefix
+    schema is bound, and a bare run has none. Walking from the static prefix
     before that token covers every schema at once without guessing which ones
     exist on disk.
     """
@@ -155,8 +156,8 @@ def _discover(root: Path, config: Mapping[str, Any]) -> list[ValidateTarget]:
 def _under_dot_folder(path: Path, base: Path) -> bool:
     """Skip hidden folders *below the base* only.
 
-    The base itself routinely sits under a dot folder — every ADT.ai task
-    worktree lives in ``.worktrees/`` — so judging the absolute path's parts
+    The base itself routinely sits under a dot folder, every ADT.ai task
+    worktree lives in ``.worktrees/``, so judging the absolute path's parts
     would discover nothing there.
     """
     try:

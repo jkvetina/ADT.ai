@@ -1,6 +1,6 @@
 # Export Table Data (adtai export_data)
 
-`export_data` exports the *rows* of selected tables — reference data, settings, lookup lists — as CSV plus a generated MERGE script per table, so seed data lives in Git next to the DDL and can be replayed idempotently into any environment. LOB columns become sidecar files with self-contained SQL import scripts. It complements `export_db`, which exports object DDL but never data.
+`export_data` exports the *rows* of selected tables, reference data, settings, lookup lists, as CSV plus a generated MERGE script per table, so seed data lives in Git next to the DDL and can be replayed idempotently into any environment. LOB columns become sidecar files with self-contained SQL import scripts. It complements `export_db`, which exports object DDL but never data.
 
 Export named table data from the current folder:
 
@@ -27,7 +27,7 @@ tables:
       update: false
 ```
 
-A multi-schema `-schema DA GSN` run executes schema by schema: connect to DA, export its own tables, print its own `TIMER`, then connect to GSN and repeat — exactly as if you had run the command once per schema, with the banner printed only once. See `USAGE.md` §Console Output Contract for the full shape.
+A multi-schema `-schema DA GSN` run executes schema by schema: connect to DA, export its own tables, print its own `TIMER`, then connect to GSN and repeat, exactly as if you had run the command once per schema, with the banner printed only once. See `USAGE.md` §Console Output Contract for the full shape.
 
 ## Arguments
 

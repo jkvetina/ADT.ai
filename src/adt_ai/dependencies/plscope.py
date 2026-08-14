@@ -3,7 +3,7 @@
 Before a schema's ``USER_IDENTIFIERS`` / ``USER_STATEMENTS`` mirrors can be
 pulled, every PL/SQL object must have been compiled with full PL/Scope
 (``IDENTIFIERS:ALL`` + ``STATEMENTS:ALL``). This runs that prerequisite *on the
-already-open gateway* — it sets the session setting, asks the recompile module
+already-open gateway*, it sets the session setting, asks the recompile module
 which VALID objects are still missing scope, optionally narrows that list to
 objects whose dictionary rows changed, and recompiles each with ``REUSE
 SETTINGS`` so only PL/Scope changes. No new connection is opened and
@@ -22,7 +22,7 @@ from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.oracle_session import is_ddl_lock_timeout
 
 # A skip interrupts the ``USER_OBJECTS`` progress row, so it renders one level
-# deeper than that row's own two-space indent — the same row/detail indent pair
+# deeper than that row's own two-space indent, the same row/detail indent pair
 # ``validate/report.py`` uses for its per-record stanzas.
 _DETAIL_INDENT = "    "
 
@@ -47,7 +47,7 @@ def ensure_plscope(
 
     # 2. Discover VALID PL/SQL objects whose stored PL/Scope settings are not
     #    already IDENTIFIERS:ALL + STATEMENTS:ALL (reuses the recompile catalog
-    #    read — no RecompileRunner, no second connection).
+    #    read, no RecompileRunner, no second connection).
     pending = RecompileDiscovery(gateway).objects_missing_plscope()
     if candidates is not None:
         candidate_keys = set(candidates)

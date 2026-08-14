@@ -39,7 +39,7 @@ def _display(value: object) -> str:
 def _print_database_error(error: Exception) -> None:
     # A failing query attaches its SQL to the exception (OracleGateway). When the
     # SQL is present the failure happened *after* connecting, so it is a query
-    # error, not a connection failure — show the offending query and a query
+    # error, not a connection failure, show the offending query and a query
     # banner. Otherwise classify by message markers (TNS/wallet/credential codes).
     sql = getattr(error, "adt_sql", None)
     is_connection = sql is None and _is_database_connection_error(error)

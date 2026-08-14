@@ -7,6 +7,7 @@ from adt_ai.export_db.normalizers import (
     _ensure_sql_terminator,
     _ensure_statement_semicolon,
     _trim_trailing_blank_lines,
+    sql_spans,
 )
 
 
@@ -92,6 +93,11 @@ def _expand_simple_view_select(lines: list[str]) -> list[str]:
 
     if tail_lines is None:
         return lines
+    if any(_contains_sql_comment(line) for line in projection_lines):
+        # The reflow joins the select list onto one line, which would park every
+        # later column (and `from`) behind the comment (ADT #299). A commented
+        # select list is the body-preserving "stays literal" case.
+        return lines
 
     projection = " ".join(line.strip() for line in projection_lines)
     columns = _view_projection_columns(projection)
@@ -109,6 +115,9 @@ def _expand_simple_view_select(lines: list[str]) -> list[str]:
         *projection_output_lines,
         *tail_lines,
     ]
+
+def _contains_sql_comment(payload: str) -> bool:
+    return any(kind == "comment" for kind, _, _ in sql_spans(payload))
 
 def _top_level_view_select_index(lines: list[str]) -> int | None:
     depth = 0

@@ -6,7 +6,7 @@ each type the run repaired (:func:`with_validated`). Both are pure functions ove
 the re-check reads, so they are exercised through ``runner.run`` without a
 database.
 
-Split out of ``runner.py`` for the same reason ``contracts.py`` was — to keep that
+Split out of ``runner.py`` for the same reason ``contracts.py`` was, to keep that
 module inside the repo's 20 KB context-size contract (``tests/contracts/
 test_context_file_size.py``). ``runner.py`` is the only caller.
 """
@@ -27,7 +27,7 @@ def with_validated(
 
     A set difference over object identity, never a before/after count delta:
     recompiling a spec invalidates its dependents, so a run that fixed one object
-    and broke another leaves the INVALID count unchanged — and a delta would
+    and broke another leaves the INVALID count unchanged, and a delta would
     report that repair as nothing happening, which is the blindness this column
     exists to remove.
     """

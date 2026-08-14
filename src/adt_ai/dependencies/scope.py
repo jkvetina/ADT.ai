@@ -65,7 +65,7 @@ def _walk_context(
     """Walk a column usage's context chain to the root.
 
     Returns the owning relation node (nearest relation-typed ancestor, or
-    ``None``) and every enclosing statement type — the statement usually sits
+    ``None``) and every enclosing statement type, the statement usually sits
     above the relation, so the walk continues past the first match.
     """
     relation: str | None = None

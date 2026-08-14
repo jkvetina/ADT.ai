@@ -1,6 +1,6 @@
 # Environment Check and Updates (adtai doctor)
 
-`doctor` verifies the local toolchain ADT.ai depends on — Python, Git, Java, SQLcl, `oracledb`, Instant Client — reports versions and available updates, and applies explicitly requested updates or project scaffolding. Run it after installing ADT.ai, after a toolchain upgrade, or whenever a command fails in a way that smells environmental.
+`doctor` verifies the local toolchain ADT.ai depends on, Python, Git, Java, SQLcl, `oracledb`, Instant Client, reports versions and available updates, and applies explicitly requested updates or project scaffolding. Run it after installing ADT.ai, after a toolchain upgrade, or whenever a command fails in a way that smells environmental.
 
 Run the setup check from any folder:
 
@@ -8,13 +8,13 @@ Run the setup check from any folder:
 adtai doctor
 ```
 
-Plain `doctor` is read-only. It checks Python, Git, Java, SQLcl, the Python `oracledb` module, Instant Client, `JAVA_TOOL_OPTIONS`, and ADT-compatible environment variables. By default it also checks online update availability for ADT.ai, Java, SQLcl, `oracledb`, and Instant Client. For ADT.ai, editable/git installs are compared against the configured `origin`, and normal installs are compared against the latest public GitHub Release in [`jkvetina/ADT.ai`](https://github.com/jkvetina/ADT.ai) before falling back to PyPI metadata. It prints current versions, runtime environment, row-level update/warning statuses, and — only when a check found something out of date — the explicit update actions available. Install and environment setup guidance is in [SETUP.md](../SETUP.md); this file owns the detailed Doctor command behavior.
+Plain `doctor` is read-only. It checks Python, Git, Java, SQLcl, the Python `oracledb` module, Instant Client, `JAVA_TOOL_OPTIONS`, and ADT-compatible environment variables. By default it also checks online update availability for ADT.ai, Java, SQLcl, `oracledb`, and Instant Client. For ADT.ai, editable/git installs are compared against the configured `origin`, and normal installs are compared against the latest public GitHub Release in [`jkvetina/ADT.ai`](https://github.com/jkvetina/ADT.ai) before falling back to PyPI metadata. It prints current versions, runtime environment, row-level update/warning statuses, and, only when a check found something out of date, the explicit update actions available. Install and environment setup guidance is in [SETUP.md](../SETUP.md); this file owns the detailed Doctor command behavior.
 
 Old ADT had a self-update path that could run `git pull` from inside the tool and reinstall Python requirements. ADT.ai keeps update behavior explicit and always prints current versions before any action.
 
 The status output always starts with current component versions (`ADT.ai`, Python, Git, Java, `oracledb`, Instant Client, SQLcl), then an `ENVIRONMENT:` section with relevant runtime variables such as `ARCH`, `JAVA_TOOL_OPTIONS`, `LANG`, `NLS_LANG`, `ORACLE_HOME`, resolved `SQLCL` launcher, `ADT_ENV`, and `ADT_KEY`. `ADT_KEY` is never printed directly: non-empty values render as `<redacted>`, and missing values render as `<empty>`. Update subprocesses force English/UTF-8-safe settings so SQLcl, Oracle messages, and Python/pip output are not affected by local language overrides.
 
-When ADT.ai had to fill in its own environment — the usual case under an AI tool, whose shell never sourced your startup file — the `ENVIRONMENT:` section ends with a `HYDRATED` row naming what was filled in and where it came from, for example `ADT_ENV, ADT_KEY, ORACLE_HOME, PATH from ~/.zshrc`. Only variable names appear; `ADT_KEY` still renders as `<redacted>` on its own row. In a normal terminal nothing needs hydrating and the row is absent. See [USAGE.md](../USAGE.md) §Environment Variables for the full behavior.
+When ADT.ai had to fill in its own environment, the usual case under an AI tool, whose shell never sourced your startup file, the `ENVIRONMENT:` section ends with a `HYDRATED` row naming what was filled in and where it came from, for example `ADT_ENV, ADT_KEY, ORACLE_HOME, PATH from ~/.zshrc`. Only variable names appear; `ADT_KEY` still renders as `<redacted>` on its own row. In a normal terminal nothing needs hydrating and the row is absent. See [USAGE.md](../USAGE.md) §Environment Variables for the full behavior.
 
 Use local checks only when you do not want Doctor to call remote metadata pages:
 
@@ -30,7 +30,7 @@ Selected rows append a dot leader plus status, capped at 78 characters. Successf
 
 ## Version reporting
 
-The `ADT.ai` row reports the package's own `__version__`, which is the last published release. In a **git checkout** — an editable install, or the repo itself — the row appends a marker:
+The `ADT.ai` row reports the package's own `__version__`, which is the last published release. In a **git checkout**, an editable install, or the repo itself, the row appends a marker:
 
 ```text
   ADT.ai               | 0.8.5 + WIP
@@ -45,7 +45,7 @@ The checkout is that release plus whatever has landed since, so it does not clai
 - `-update` appears when ADT.ai, `oracledb`, or SQLcl is behind. `oracledb` counts because the full update reinstalls `requirements.txt`.
 - `-sqlcl` appears only when SQLcl itself is behind.
 
-When neither applies the whole section is omitted, header included — an up-to-date machine is offered nothing. `-offline` checks nothing online, so no status is backed by a real check and the section is likewise absent. Under `-update` and `-sqlcl` the section always prints, because it reports the actions that ran.
+When neither applies the whole section is omitted, header included, an up-to-date machine is offered nothing. `-offline` checks nothing online, so no status is backed by a real check and the section is likewise absent. Under `-update` and `-sqlcl` the section always prints, because it reports the actions that ran.
 
 Run the full ADT.ai, `requirements.txt`, and SQLcl upgrade:
 

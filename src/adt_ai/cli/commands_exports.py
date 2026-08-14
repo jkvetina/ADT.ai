@@ -294,7 +294,7 @@ def _run_export_apex(
 
     if args.reveal:
         # -reveal is a single cross-schema inventory screen, not a per-schema
-        # export — one connection, one shared teardown footer, untouched by
+        # export, one connection, one shared teardown footer, untouched by
         # the per-schema segmenting below.
         _print_connection_block(
             export_apex_gateway_factory(connection_schema),
@@ -346,7 +346,7 @@ def _run_export_apex(
             reporter.applications(schema, applications_by_schema[schema])
         return 0
 
-    # -- export mode: each schema is its own console segment (connection block
+    # Export mode: each schema is its own console segment (connection block
     # -> discovery -> export -> TIMER), driven by the shared per-schema-section
     # helper. `schemas` is mutated in place by the missing-app owner routing
     # below, and the helper's lazy iteration picks up whatever gets appended.
@@ -382,7 +382,7 @@ def _run_export_apex(
         # requested schema's segment, after its own export/before its timer.
         # A newly-routed owner schema is appended to `schemas` and gets its
         # own full segment (connection block, discovery, export, timer) the
-        # next time the helper's loop reaches it — it is never spliced into
+        # next time the helper's loop reaches it, it is never spliced into
         # an already-completed segment.
         if processed == initial_schema_count and not has_app_ranges:
             requested_app_ids = _flatten_arg_groups(args.app)
@@ -442,7 +442,7 @@ def _run_export_apex(
                         page_selection=page_selection,
                         component_filters=component_filters,
                         deep=args.deep,
-                        # Already probed by the connection block above — the 26.1
+                        # Already probed by the connection block above, the 26.1
                         # format gates read it rather than asking the DB again.
                         apex_version=versions.get("APEX"),
                     )

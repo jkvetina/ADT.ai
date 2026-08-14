@@ -52,7 +52,7 @@ def _run_rebuild(args: argparse.Namespace) -> int:
 
     if getattr(args, "reveal", None) is not None:
         # In reveal mode `-since` is a date filter on each branch's tip commit and
-        # `-limit` caps the rows — they are orthogonal, so (unlike normal mode)
+        # `-limit` caps the rows, they are orthogonal, so (unlike normal mode)
         # they compose instead of conflicting.
         return _run_rebuild_reveal(args, root, since_date)
 
@@ -78,7 +78,7 @@ def _run_rebuild(args: argparse.Namespace) -> int:
         # Default mode is an incremental update since the last cached commit.
         # An explicit -limit window runs a full bounded rebuild instead. (In
         # normal mode `-limit` is the per-branch commit cap; in reveal mode it
-        # is the branch-row count — see _run_rebuild_reveal.)
+        # is the branch-row count, see _run_rebuild_reveal.)
         # A `-since` window is a full bounded rebuild, never an incremental
         # update (same as an explicit -limit).
         update_only = args.limit is None and since_date is None
@@ -304,7 +304,7 @@ def _run_rebuild_switch(
     switch: int,
 ) -> int:
     # Select the branch against the FULL filtered list (no row cap) so the rank
-    # resolves regardless of `-limit` — which here caps the COMMITS section, not
+    # resolves regardless of `-limit`, which here caps the COMMITS section, not
     # the branch list. The list itself is not printed; the switched branch and its
     # commits are.
     try:
@@ -323,7 +323,7 @@ def _run_rebuild_switch(
         return 1
     target = result.branches[switch - 1]
 
-    # Skip the checkout entirely when we're already on the branch — no git ops,
+    # Skip the checkout entirely when we're already on the branch, no git ops,
     # so in-flight WiP is left exactly where it is.
     if _current_branch(root) != target.name:
         try:
@@ -342,7 +342,7 @@ def _run_rebuild_switch(
         count = REVEAL_DEFAULT_LIMIT
     commit_limit = count if count and count > 0 else None
     commits = branch_commits(root, target.name, limit=commit_limit, mine=mine)
-    print()  # second blank line above the header — print_adt_header adds one, we want two
+    print()  # second blank line above the header, print_adt_header adds one, we want two
     print_adt_header("COMMITS:")
     print()
     if not commits:

@@ -51,6 +51,7 @@ from adt_ai.recompile.render import (
     print_synonym_tables,
     print_trailing_updated_objects,
 )
+from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.object_types import normalize_object_type_patterns
 
 
@@ -67,7 +68,7 @@ def _run_recompile(
     # -schema is repeatable and pattern-aware, the shape export_db already uses:
     # expand_schemas splits a comma-separated value and expands % against the
     # configured schemas, deduping while preserving order. Bare -schema means every
-    # default schema — taking only the first is what made a configured
+    # default schema, taking only the first is what made a configured
     # `schema_db: APP,CORE` export both and recompile one.
     schemas = (
         connections.expand_schemas(_flatten_arg_groups(args.schema), environment=environment)
@@ -91,8 +92,8 @@ def _run_recompile(
 def _invalid_dependents_provider(args: argparse.Namespace, schema: str):
     """Reverse edges among the still-invalid objects, read from the local mirror.
 
-    ``dependencies -refresh`` already maintains ``config/dependencies.db``; this
-    only reads it, offline, and only for the objects that are still invalid — so
+    ``dependencies -refresh`` already maintains ``config/internal/dependencies.db``; this
+    only reads it, offline, and only for the objects that are still invalid, so
     the cost is one cheap SQLite lookup per leftover, not a graph walk.
 
     Every failure mode degrades to "no edges" rather than breaking a recompile:
@@ -101,7 +102,7 @@ def _invalid_dependents_provider(args: argparse.Namespace, schema: str):
     that never ran ``dependencies`` at all.
     """
     def dependents_for(nodes: list[str]) -> dict[str, list[str]]:
-        database = Path(args.root).expanduser().resolve() / "config" / "dependencies.db"
+        database = internal_path(Path(args.root).expanduser().resolve(), "dependencies.db")
         if not database.is_file():
             return {}
         wanted = set(nodes)
@@ -155,7 +156,7 @@ def _run_recompile_for_schema(
     # on. No patterns given means no filter, i.e. everything.
     object_names = _flatten_arg_groups(args.name) or ["%"]
     # -type names an Oracle type, so the user's spelling (MVIEW, package_body) is
-    # resolved to Oracle's here at the edge — once, before anything downstream sees
+    # resolved to Oracle's here at the edge, once, before anything downstream sees
     # it. -name is an identifier pattern and gets no such treatment: an underscore
     # there is a real wildcard over real underscores.
     object_types = normalize_object_type_patterns(_flatten_arg_groups(args.type) or ["%"])

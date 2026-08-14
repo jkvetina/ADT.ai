@@ -1,6 +1,6 @@
 """Output rendering for the ``dependencies`` CLI query modes.
 
-Pure formatting helpers split out of ``cli_commands_dependencies`` — no
+Pure formatting helpers split out of ``cli_commands_dependencies``, no
 argparse, gateway, or store coupling. Each printer renders one query result
 in the shared table/yaml/md contract: table mode prints human chrome on
 stdout, machine formats keep stdout pure data.

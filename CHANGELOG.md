@@ -2,6 +2,24 @@
 
 All notable changes to the public ADT.ai release are recorded here, newest first.
 
+## 0.8.7 - 2026-08-14
+
+- **The data ADT.ai writes about a project moves into `config/internal/`.** The APEX metadata caches, the recent-export watermark and the stores behind `dependencies` and `flow` leave `config/`, which is for configuration you edit. Every run relocates what it finds, so nothing needs a command.
+- **The sweep adds `config/internal/` to the project's own `.gitignore`.** On one live root it turned a folder git had never seen into an untracked 273 MB store, one `git add .` from a commit. Folders keep their documented locations: `config/commits/`, `config/discovery/`, `config/flow/` and `config/temp/` do not move.
+- **`ut3` shows a progress bar by default, and the per-test listing moves behind `-verbose`.** The bar is bumped by finished suites and its label counts the tests the run will execute. The time on the right is what is left, seeded from the previous run.
+- **`ut3` caps `ERRORS & FAILURES:` at the first 20 stanzas.** A real run put 397 of them on screen and pushed both summary tables out of scrollback. The new `ut_limit_errors` sets the cap, `0` prints everything, and the counts in the tables are never capped.
+- **`ut3 -gate [N]` fails a run whose tested packages fall under a coverage threshold.** The whole report prints first and a `COVERAGE BELOW <n>:` table closes it, worst first. Bare `-gate` uses the new `ut_coverage_gate`, and only a measured figure is compared.
+- **`ut3`'s `MODULES:` gains a `LINES` column, and a passing test row shows its own elapsed seconds.** `LINES` totals the body lines of the packages a group's suites test, the same set `COVERAGE` beside it is computed over. A clean test's timing is new information where `PASS` restated nothing.
+- **`export_db` keeps a multi-line CHECK constraint's own line breaks and comments.** Flattening the body parked every value behind the first comment, and the exported table then failed to deploy with `ORA-00936`. Eleven table files on one measured schema were unusable.
+- **A comment is no longer read as SQL anywhere the DDL is scanned.** An apostrophe inside a line comment flipped the string state, and an unbalanced bracket inside one moved the parenthesis depth, which could drop a whole table back to raw dictionary output.
+- **`export_data` no longer exports virtual columns.** A virtual column carries an ordinary `column_id`, so the filter meant to exclude it never did, and the generated INSERT or UPDATE naming it fails with `ORA-54013`. The column list now filters on `virtual_column` instead.
+- **A finished progress row closes itself, so two rows can never share a line.** An `export_apex` run could weld `READABLE COMPONENTS` and `EMBEDDED CODE REPORT` onto one 125-column line, which reads as the first action having failed when both had succeeded.
+- **An `&` in a password no longer hangs the SQLcl connect.** The credential is embedded verbatim, so an ampersand read as a substitution variable and SQLcl blocked on a prompt nothing could answer. The directive making it inert now leads every connect block, covering `export_apex` and `validate`.
+- **`search_repo` accepts a commit range.** `-commit 12` selects that commit, `12+` that commit and everything newer, and `12-40` the inclusive span. `-hash` reads the same syntax. One shared resolver answers for every command taking a commit reference.
+- **Every command's `--help` says what the module is for, not how it works.** The SUMMARY on `calendar`, `connection`, `discovery`, `doctor`, `rebuild`, `recompile` and every other command was rewritten and capped at eight lines, so it no longer repeats what the option rows and the USAGE page already explain.
+- **Option rows across every command speak in one voice.** Multi-value flags had three spellings for one idea, ranges had two, and six descriptions had grown into paragraphs that belonged in the USAGE page. Every caption is now a single fragment bound to four rendered lines.
+- **No text a reader sees spells a dash the wrong way.** Every help screen, USAGE page and error message was swept of the em dash and of the two-hyphen stand-in for it, which the ADT.ai writing style bans. SQL comment syntax inside generated scripts is untouched.
+
 ## 0.8.6 - 2026-08-11
 
 - **Breaking: `ut3 -coverage` is removed, and coverage is measured on every run.** It lands as a `COVERAGE` column immediately after `TIMER` in both `SUMMARY:` and `MODULES:`, so a plain `ut3` reports it. The flag now errors rather than being accepted and ignored.

@@ -53,8 +53,8 @@ def adt_table_line_width(widths: Sequence[int]) -> int:
     """Rendered width of a row whose columns are ``widths`` wide.
 
     The trailing gutter is excluded because ``row_line`` strips it. A caller
-    that has to *budget* a column — fit the whole line inside 78 characters and
-    spend whatever is left on the last one — needs this geometry, and copying
+    that has to *budget* a column, fit the whole line inside 78 characters and
+    spend whatever is left on the last one, needs this geometry, and copying
     the indent and gutter to the call site is how the copy drifts from the
     renderer (ADT #269). Pass ``0`` for the column being sized.
     """
@@ -63,7 +63,7 @@ def adt_table_line_width(widths: Sequence[int]) -> int:
     return len(ADT_TABLE_INDENT) + sum(widths) + len(ADT_TABLE_GUTTER) * (len(widths) - 1)
 
 def _adt_cell(value: object, width: int, numeric: bool) -> str:
-    # coalesce only None to "" — a legitimate falsy value such as the int 0
+    # coalesce only None to "", a legitimate falsy value such as the int 0
     # (e.g. a sub-second duration) must still render. ``str(value or "")``
     # disagreed with the width/numeric detection and silently dropped the cell.
     cell = "" if value is None else str(value)
@@ -75,8 +75,8 @@ def _adt_cell(value: object, width: int, numeric: bool) -> str:
 class _AdtTableLayout:
     """Pre-computed column geometry, shared by the batch and streaming renders.
 
-    Holding the widths/alignment lets a single row be emitted in pieces — the
-    object name first, the rest after an action runs — that rejoin byte-for-byte
+    Holding the widths/alignment lets a single row be emitted in pieces, the
+    object name first, the rest after an action runs, that rejoin byte-for-byte
     with the whole-row render. ``cells_segment`` carries the two-space table
     indent only on the leading segment (``start == 0``).
     """
@@ -96,7 +96,7 @@ class _AdtTableLayout:
         # three-space gutter, the last column included, so an unstripped row ran
         # three characters (nine on the header) past its visible content. On an
         # 80-column terminal that invisible tail wrapped and printed as a blank
-        # line under every row — the table read as perfectly aligned one column
+        # line under every row, the table read as perfectly aligned one column
         # wider and shredded one column narrower (ADT #237). Trailing padding
         # aligns nothing: a cell is placed by what sits to its left.
         return self.cells_segment(values, 0, len(self.columns)).rstrip()
@@ -122,8 +122,8 @@ def _compute_adt_layout(
         )
         for column in columns
     ]
-    # Detection reads the cells, so a column of quantities that carry a unit —
-    # `75%`, `1.2s` — sniffs as text and prints left-aligned, which is exactly
+    # Detection reads the cells, so a column of quantities that carry a unit,
+    # `75%`, `1.2s`, sniffs as text and prints left-aligned, which is exactly
     # where a reader most wants the digits to line up. ``numeric_columns`` is the
     # caller saying what the column *is*, and it wins over what the cells look
     # like; formatting the value to hide its unit would be the alternative, and
@@ -284,7 +284,7 @@ def _overview_header(
     if changed_since is not None:
         # Watermark mode: the cutoff is a real stored instant from the database
         # clock, so it is shown verbatim rather than re-derived from a day count.
-        # Reads as a sentence — what the cutoff *is* comes before the timestamp,
+        # Reads as a sentence, what the cutoff *is* comes before the timestamp,
         # instead of trailing it as a parenthetical gloss (ADT #237).
         show_header = f"CHANGED SINCE LAST EXPORT AT {changed_since}"
     elif recent_days is None:
@@ -298,7 +298,7 @@ def _overview_header(
         # The pattern sits beside the word it qualifies rather than after the
         # colon. It used to trail the whole header (`OBJECTS OVERVIEW, FILTER:
         # MY_TABLE%`), which put the dashed rule under the label and left the
-        # pattern past its end — and left this header the one that did not
+        # pattern past its end, and left this header the one that did not
         # close on a colon (ADT #237).
         show_header = f"{show_header}, FILTER {show_filter}"
     if authors:

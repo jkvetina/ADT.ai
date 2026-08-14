@@ -5,6 +5,7 @@ import textwrap
 from collections.abc import Sequence
 
 from adt_ai.cli.constants import PUBLIC_MODULES
+from adt_ai.cli.help_summaries import COMMAND_SUMMARIES
 
 COMMON_DEST_ORDER = ("debug", "beep", "nobeep", "env", "root", "config_dir", "key")
 OPTION_HELP_WIDTH = 80
@@ -15,7 +16,7 @@ ACTION_DESTS = {
     "archive",
     "calendar_offset",
     "checksum",
-    "continue_patch",
+    "contents",
     "create",
     "delete",
     "disabled",
@@ -23,7 +24,6 @@ ACTION_DESTS = {
     "deploy",
     "dump",
     "embedded",
-    "fetch",
     "files",
     "files_ws",
     "from_page",
@@ -95,162 +95,13 @@ FILTER_DESTS = {
 # on, so they belong in MODIFIERS. Both dests are recompile-only, so no other
 # command's help shifts.
 
-COMMAND_SUMMARIES = {
-    "flow": (
-        "Maps APEX page navigation links into a local SQLite store you can query offline.",
-        "Use it to answer where links point to a page and which pages you can reach from a page.",
-        "Refresh mode rescrapes one application from the database and rewrites its edges.",
-        "The to and from queries report incoming and outgoing page links for a chosen page.",
-        "Each refresh writes Mermaid, Graphviz DOT, and JSON diagrams under config/flow.",
-    ),
-    "calendar": (
-        "Shows your Git activity across all branches as a calendar or compact list.",
-        "It reads commit metadata from the shared rebuild commit cache, topping it up for "
-        "the default branch and every jira_prefix-named branch, so repeat runs stay fast.",
-        "The calendar mode turns that activity into a month grid for quick gaps and bursts.",
-        "The list mode keeps the same data in a scan-friendly chronological report.",
-        "A config jira_prefix limits activity to prefixed commits, whole prefix-named branches, "
-        "and pull requests, which are always surfaced.",
-    ),
-    "connection": (
-        "Edits the resolved ADT.ai connection file to add environments, schemas, or passwords.",
-        "Use it instead of hand-editing connection YAML so comments and key order are preserved.",
-        "Add actions create a new environment or attach a schema, "
-        "optionally cloning an existing one.",
-        "Set-password mode prompts interactively so secrets never appear on the command line.",
-        "Changes preview by default and only write to disk when the apply switch is passed.",
-    ),
-    "dependencies": (
-        "Builds and queries the Oracle dependency index used by ADT.ai impact reports.",
-        "Use it to see what an object uses, what depends on it, and what a change can break.",
-        "Refresh mode reloads dependency metadata from the configured database connection.",
-        "Impact mode walks transitive dependencies instead of stopping at direct relationships.",
-        "Use -schema OWNER to scope any query to a specific tracked owner.",
-    ),
-    "discovery": (
-        "Runs configured read-only SELECT discovery queries against an Oracle schema.",
-        "Use it to collect inventory or diagnostic facts without changing the database.",
-        "Queries can be scoped to a schema and written back into the project as reports.",
-        "The command is intended for safe metadata exploration before export or cleanup work.",
-        "Result handling keeps discovery output reproducible instead of relying on "
-        "ad hoc SQL scratchpads.",
-    ),
-    "doctor": (
-        "Checks whether the local ADT.ai environment is ready for export and deployment work.",
-        "Use it to inspect tool versions, configuration paths, and required external dependencies.",
-        "Init and install actions bootstrap project configuration or missing local "
-        "tooling deliberately.",
-        "Update actions refresh ADT.ai-managed assets without running a deployment workflow.",
-        "Debug output helps separate local setup problems from database or repository problems.",
-    ),
-    "export_apex": (
-        "Exports Oracle APEX workspaces, applications, REST modules, files, and code reports.",
-        "Use it to refresh source-controlled APEX artifacts from configured workspaces.",
-        "Discovery actions reveal available workspaces and applications before choosing "
-        "an export target.",
-        "Format switches cover readable, split, SQLcl, and legacy export layouts "
-        "used by reviewers.",
-        "Modifiers control static files, embedded code extraction, REST export, "
-        "cleanup, and dry-run planning.",
-    ),
-    "export_data": (
-        "Exports configured Oracle table data into CSV files and generated MERGE scripts.",
-        "Use it for reference data, seed data, or deployment data that belongs in source control.",
-        "The module discovers configured tables and writes replayable scripts for selected rows.",
-        "Filters limit work by schema, table name, recent changes, or configured export scope.",
-        "Cleanup and dry-run options make it possible to inspect file changes before "
-        "rewriting exports.",
-    ),
-    "export_db": (
-        "Export database object DDL from configured schemas into the project tree.",
-        "Use it to refresh source-controlled tables, views, packages, triggers, grants, "
-        "jobs, and metadata.",
-        "Filters narrow the export by schema, object type, object name, and recent DDL changes.",
-        "The writer preserves configured folder layouts and can clean stale files when requested.",
-        "DDL is normalized toward known ADT output parity, including readable table, "
-        "view, and index formatting.",
-    ),
-    "rebuild": (
-        "Refreshes the cached Git commit index behind repository search and calendar.",
-        "Use it after new commits, branch switches, or repository fetches so ADT.ai "
-        "sees current history.",
-        "Incremental mode updates only missing commit data for normal day-to-day use.",
-        "Full rebuild mode recreates the cache when history, parser rules, or metadata changed.",
-        "Branch actions reveal remote branches and can switch the working tree when "
-        "reviewing history.",
-    ),
-    "recompile": (
-        "Recompiles invalid or selected Oracle database objects through configured "
-        "database connections.",
-        "Use it after deployment, export validation, or dependency repair to clear "
-        "invalid objects.",
-        "Object filters target specific schemas, names, types, or compiler settings.",
-        "PL/SQL options control warnings, PL/Scope identifiers, native compilation, "
-        "and interpreted mode.",
-        "Reporting shows remaining errors so failed recompiles can be handled without "
-        "hunting through SQL clients.",
-        "A COMPILE ERRORS list gives each object its own stanza, one line per distinct "
-        "error, dropping the cascade rows and repeats Oracle files beside every fault.",
-        "A ROOT CAUSES section ranks what is left by what to check first, telling a "
-        "broken object from a knock-on and a missing object from a missing grant.",
-    ),
-    "ut3": (
-        "Runs the utPLSQL (UT3) test suites installed in a configured Oracle schema.",
-        "A suite is a package matching config ut_pattern (default '_UT$') that utPLSQL "
-        "has parsed as a %suite, so production code can never be swept into a test run.",
-        "ut_pattern, ut_match, ut_owner and ut_module configure the naming convention: "
-        "what a test package is called, which package it tests, which schema holds them, "
-        "and which module a package belongs to. All four are Oracle regular expressions, "
-        "evaluated by Oracle inside the dictionary query.",
-        "ut_module is read off the suite's own name, in the query that already selected "
-        "it, so anchor it to nothing that has to follow the module token: an expression "
-        "ending in _ cannot read ICT_VPD_UT, a module whose whole implementation is one "
-        "package. Whatever it cannot read groups under ? instead.",
-        "With no arguments every discovered suite runs; -name takes LIKE patterns and "
-        "selects the suites to run, so a filtered run costs less than an unfiltered one.",
-        "The matched suites are rolled up before anything runs, then each suite's test "
-        "verdicts print as that suite finishes -- packages A-Z, tests in the order the "
-        "package specification declares them. A verdict reads PASS, FAIL, ERROR or SKIP, "
-        "the same words the roll-up columns are headed with.",
-        "A matched package that is INVALID or holds no parsed %test is ignored: it is not "
-        "a suite, so it is listed nowhere and does not fail the run on its own.",
-        "SUMMARY closes the run with a row per suite -- the three verdict counts, TIMER, "
-        "that suite's own seconds, and COVERAGE, the block-coverage percentage of the "
-        "package that suite tests. Under -name the header reads SUMMARY FOR <PATTERNS>:.",
-        "Coverage is measured on every run through utPLSQL's own coverage session, and it "
-        "is run-scoped: a row describes the package its suite tests, so a suite ut_match "
-        "cannot pair, or a target Oracle never instrumented, reads blank rather than 0.0.",
-        "With ut_module configured, a MODULES table follows SUMMARY: the same columns "
-        "grouped by module, with a PACKAGES column for the group size and a last row, "
-        "unnamed, for the whole run. A group the expression could not name reads ?, so "
-        "it is never mistaken for that total.",
-        "A group's COVERAGE covers its whole code, not just the part a test reached: the "
-        "pooled block figure is scaled by the share of body lines Oracle measured at all, "
-        "so a target nothing entered pulls its module down and a group nothing reached "
-        "reads 0.0.",
-        "The exit code is the deliverable: utPLSQL never raises on a failed test, so "
-        "failures, errors, an unparsable report, and a zero-test run all exit non-zero.",
-    ),
-    "validate": (
-        "Runs the APEXlang compiler over exported apexlang/ folders and reports its errors.",
-        "Use it after export_apex -apexlang, and as a gate before importing edited APEXlang "
-        "source back into APEX.",
-        "The command never connects: the compiler runs inside SQLcl, so no environment, "
-        "schema, or credentials are needed.",
-        "Targets come from -input paths, -app ids resolved offline through "
-        "config/apex_apps.yaml, or every exported folder when neither is given.",
-        "The exit code is the deliverable: zero when every folder validates clean, "
-        "non-zero on any compiler error, so CI and agents can branch on it.",
-    ),
-    "search_repo": (
-        "Searches cached Git history for commits, files, database objects, authors, and dates.",
-        "Use it to answer where a change happened before opening raw Git logs manually.",
-        "Filters combine branch, commit, file path, object name, hash, author, and "
-        "date boundaries.",
-        "Restore mode can recover historical file contents into the working tree for inspection.",
-        "The command depends on rebuild's cache, so searches stay fast across large "
-        "ADT repositories.",
-    ),
+# The two sets above key on `dest`, which is GLOBAL: a dest several commands
+# declare cannot be grouped one way here and another way there. Where one
+# dest genuinely carries different meanings in different commands, regrouping
+# it by dest would move it for every command that shares it, so the override
+# below is per COMMAND and is the only sanctioned way to disagree with the
+# dest sets above.
+COMMAND_SECTION_OVERRIDES = {
 }
 
 SECTION_ORDER = (
@@ -274,7 +125,7 @@ def format_command_help(command: str, parser: argparse.ArgumentParser) -> str:
         "",
         "",
     ]
-    grouped = _group_actions(parser._actions)
+    grouped = _group_actions(parser._actions, canonical)
     for title, key in SECTION_ORDER:
         actions = grouped[key]
         if not actions:
@@ -288,30 +139,37 @@ def format_command_help(command: str, parser: argparse.ArgumentParser) -> str:
 def generated_command_usage(command: str, parser: argparse.ArgumentParser) -> str:
     tokens = [
         _usage_token(action)
-        for action in ordered_option_actions(parser._actions)
+        for action in ordered_option_actions(parser._actions, command)
     ]
     return f"adt {command} {' '.join(tokens)}".rstrip()
 
 
-def ordered_option_actions(actions: Sequence[argparse.Action]) -> list[argparse.Action]:
-    grouped = _group_actions(actions)
+def ordered_option_actions(
+    actions: Sequence[argparse.Action],
+    command: str | None = None,
+) -> list[argparse.Action]:
+    grouped = _group_actions(actions, command)
     ordered: list[argparse.Action] = []
     for _title, key in SECTION_ORDER:
         ordered.extend(grouped[key])
     return ordered
 
 
-def _group_actions(actions: Sequence[argparse.Action]) -> dict[str, list[argparse.Action]]:
+def _group_actions(
+    actions: Sequence[argparse.Action],
+    command: str | None = None,
+) -> dict[str, list[argparse.Action]]:
     grouped: dict[str, list[argparse.Action]] = {
         "actions": [],
         "filters": [],
         "modifiers": [],
         "common": [],
     }
+    overrides = COMMAND_SECTION_OVERRIDES.get(command or "", {})
     for action in actions:
         if not action.option_strings or isinstance(action, argparse._HelpAction):
             continue
-        grouped[_section_key(action)].append(action)
+        grouped[overrides.get(action.dest) or _section_key(action)].append(action)
     grouped["common"].sort(key=lambda action: COMMON_DEST_ORDER.index(action.dest))
     return grouped
 

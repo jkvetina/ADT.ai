@@ -1,18 +1,18 @@
 """Raw-mirror table definitions and DDL for the ``dependencies`` database.
 
-The single source of truth for ``config/dependencies.db``: each Oracle
+The single source of truth for ``config/internal/dependencies.db``: each Oracle
 dictionary mirror as ``((column, sqlite_type)…, primary-key-columns)`` plus the
 secondary lookup indexes used by the query layer. The ``CREATE TABLE`` DDL, the
 per-table insert column lists, and the ``CREATE INDEX`` DDL are generated from
 module constants so they cannot drift. Columns keep only dictionary fields
 consumed by query modes or generated artifacts, plus a leading ``OWNER`` on the
-``USER_*`` tables (the dictionary views have none — they scope implicitly to the
+``USER_*`` tables (the dictionary views have none, they scope implicitly to the
 connected schema).
 """
 
 from __future__ import annotations
 
-# Bump when any table definition changes — open() auto-wipes and recreates on mismatch.
+# Bump when any table definition changes, open() auto-wipes and recreates on mismatch.
 SCHEMA_VERSION = "3"
 
 # Tables removed from the schema that must be dropped on every open() (no version bump needed).
@@ -184,7 +184,7 @@ TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
 
 
 def _ddl(table: str, defs: tuple[tuple[str, str], ...], pk: tuple[str, ...]) -> str:
-    # Quote every identifier — some dictionary columns (DEFERRABLE, DEFERRED)
+    # Quote every identifier, some dictionary columns (DEFERRABLE, DEFERRED)
     # collide with SQLite reserved keywords.
     columns = ",\n    ".join(f'"{name}" {type_}' for name, type_ in defs)
     pk_cols = ", ".join(f'"{name}"' for name in pk)

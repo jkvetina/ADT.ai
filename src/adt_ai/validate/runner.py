@@ -6,8 +6,8 @@ SQLcl and answers on a bare ``sql -S /nolog`` session (verified on SQLcl
 ``connect`` line, needs no credentials, and works in CI and from any checkout.
 
 One SQLcl call per folder rather than one batched session. A batch is measurably
-cheaper — three folders cost about as much as one, since JVM startup dominates
-the ~4.5s — but the whole batch is a single blocking call, which cannot stream a
+cheaper, three folders cost about as much as one, since JVM startup dominates
+the ~4.5s, but the whole batch is a single blocking call, which cannot stream a
 per-folder progress row. The console contract makes label-first streaming
 non-negotiable, so the per-folder call wins and the batching remains a measured
 option if the cost ever bites.

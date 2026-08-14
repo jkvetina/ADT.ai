@@ -7,6 +7,7 @@ from pathlib import Path
 
 from adt_ai.rebuild.runner import REVEAL_DEFAULT_LIMIT
 from adt_ai.shared.commit_cache import current_branch, load_history_cache
+from adt_ai.shared.commit_discovery import commit_ref_matches
 from adt_ai.shared.git_files import git_user_email, run_git, run_git_bytes
 
 FIELD_SEPARATOR = "\x1f"
@@ -181,7 +182,7 @@ class SearchRepoRunner:
                 try:
                     payload = run_git_bytes(root, ["show", f"{record.id}:{file_path}"])
                 except subprocess.CalledProcessError:
-                    # A stale cache entry (rebased/rewritten history) — record
+                    # A stale cache entry (rebased/rewritten history), record
                     # it so a partial restore never looks like a full one.
                     failed.append(file_path)
                     continue
@@ -209,10 +210,12 @@ def _matches_refs(
 
 
 def _matches_ref(commit: _Commit, ref: str) -> bool:
-    value = str(ref).lower()
-    if value.endswith("+") and value[:-1].isdigit():
-        return commit.number >= int(value[:-1])
-    return value == str(commit.number) or commit.id.lower().startswith(value)
+    # ONE resolver with `patch` (ADT #309). `search_repo` understood `N+` and
+    # `patch` understood neither spelling, so the same argument written the same
+    # way meant different things depending on which command read it, and
+    # `USAGE/patch.md` documented the syntax `patch` did not have. `N-M` arrives
+    # here for free, which is the point of sharing rather than copying.
+    return commit_ref_matches(commit.number, commit.id, ref)
 
 
 def _matches_date(commit_date: str, request: SearchRepoRequest) -> bool:

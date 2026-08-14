@@ -1,15 +1,15 @@
 """Validation for Oracle identifiers spliced into generated SQL.
 
 ADT builds SQL by interpolating table, column and object names directly into
-statement text — bind variables cannot stand in for identifiers. Those names
+statement text, bind variables cannot stand in for identifiers. Those names
 are normally read from the data dictionary or derived from versioned file
 names, but validating them at the point of interpolation is cheap
 defense-in-depth: an object created with a quoted, non-conforming name (or a
 corrupted/hand-crafted value) is rejected instead of being able to break out of
 its identifier position in the surrounding SQL.
 
-Free-form fragments that are *meant* to carry SQL — column definitions in an
-``ALTER TABLE`` and ``where`` conditions in the export config — are trusted
+Free-form fragments that are *meant* to carry SQL, column definitions in an
+``ALTER TABLE`` and ``where`` conditions in the export config, are trusted
 project content and are deliberately out of scope here.
 """
 

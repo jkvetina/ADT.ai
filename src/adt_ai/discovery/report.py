@@ -11,7 +11,7 @@ GITIGNORE_ENTRY = "config/discovery/"
 def report_path(root: Path, when: datetime) -> Path:
     """Return the discovery report path for ``when`` (local 24h time).
 
-    ``<root>/config/discovery/<YYYY-MM-DD--HH-MI>.md`` — the minute granularity is
+    ``<root>/config/discovery/<YYYY-MM-DD--HH-MI>.md``, the minute granularity is
     what makes same-minute re-runs append to one file (see ``append_sections``).
     """
     return root / "config" / "discovery" / f"{when:%Y-%m-%d--%H-%M}.md"
@@ -22,7 +22,7 @@ def next_query_index(path: Path) -> int:
 
     Counts existing ``## `` section headers so same-minute appends continue the
     run-wide numbering instead of restarting at 1. A comment-derived header still
-    counts — every rendered query owns one number.
+    counts, every rendered query owns one number.
     """
     if not path.exists():
         return 1

@@ -55,8 +55,8 @@ class GroupRules:
             group = str(raw_group).strip()
             if not key or not group:
                 print(
-                    f"Warning: groups.yaml: ignoring entry {raw_key!r}: {raw_group!r} "
-                    "— empty key or group value",
+                    f"Warning: groups.yaml: ignoring entry {raw_key!r}: {raw_group!r}, "
+                    "empty key or group value",
                     file=sys.stderr,
                 )
                 continue
@@ -107,7 +107,7 @@ def group_for(object_type: str, name: str, rules: GroupRules | None) -> str | No
     if not words:
         return None
 
-    # (scope_rank, prefix_word_count, group) — higher sorts later, last wins.
+    # (scope_rank, prefix_word_count, group), higher sorts later, last wins.
     candidates: list[tuple[int, int, str]] = []
     for prefix, group in rules.type_rules.get(object_type.upper(), {}).items():
         if _prefix_matches(words, prefix):
@@ -302,7 +302,7 @@ def plan_group_moves(
     type folder are routed by prefix: a matching object moves into an uppercased
     group subfolder (its `.fix` sidecar travels with it), and an unmatched object is
     left where it is. After planning, the object name (file basename) per object
-    type must be unique across the whole subtree — root and every group folder. Any
+    type must be unique across the whole subtree, root and every group folder. Any
     duplicate is recorded as a collision so the caller can abort instead of
     overwriting.
     """
@@ -369,7 +369,7 @@ def execute_group_move(
     """Render the move preview, then gate the relocation behind a confirmation.
 
     Returns an exit code: `2` when a uniqueness collision aborts the run (nothing
-    moves), `1` when the user declines at the prompt, and `0` otherwise — including
+    moves), `1` when the user declines at the prompt, and `0` otherwise, including
     a dry run (preview only, never prompts or moves) and the empty case.
     """
     if plan.collisions:

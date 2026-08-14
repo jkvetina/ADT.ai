@@ -5,6 +5,7 @@ from typing import Any
 
 from adt_ai.dependencies.store import DependencyStore
 from adt_ai.export_apex.filters import ApexComponentFilter, ApexPageSelection
+from adt_ai.shared.internal_paths import internal_path
 
 
 class ApexDeepFilterError(ValueError):
@@ -19,7 +20,7 @@ def deep_component_filters(
 ) -> tuple[ApexComponentFilter, ...]:
     if page_selection is None:
         raise ApexDeepFilterError("-deep requires -page")
-    db_path = root / "config" / "dependencies.db"
+    db_path = internal_path(root, "dependencies.db")
     if not db_path.exists():
         raise ApexDeepFilterError(
             f"-deep requires dependency database at {db_path}"
@@ -57,7 +58,7 @@ def deep_db_object_rows(
 ) -> list[dict[str, Any]]:
     if page_selection is None:
         raise ApexDeepFilterError("-deep requires -page")
-    db_path = root / "config" / "dependencies.db"
+    db_path = internal_path(root, "dependencies.db")
     if not db_path.exists():
         raise ApexDeepFilterError(
             f"-deep requires dependency database at {db_path}"

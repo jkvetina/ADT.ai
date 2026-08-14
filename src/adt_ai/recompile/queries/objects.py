@@ -39,7 +39,7 @@ object_types AS (
 -- No `fixed` column here: old ADT selected one as a NULL placeholder and filled it
 -- in Python, and this port carried the placeholder without the fill. The overview
 -- reads one point in time, so the catalog cannot answer "what did this run repair"
--- at all — the runner computes VALIDATED from the before/after invalid sets (#186).
+-- at all, the runner computes VALIDATED from the before/after invalid sets (#186).
 SELECT
     o.object_type,
     COUNT(*) AS total,
@@ -185,7 +185,7 @@ FROM (
         -- PL/SQL objects whose *current* settings drift from the requested target
         -- state: any one mismatch (OR) selects the object, and non-PL/SQL types are
         -- skipped entirely (they carry no settings to drift from). Bare -force
-        -- (:drift_only = 'N') keeps today's meaning — every matching object. Each
+        -- (:drift_only = 'N') keeps today's meaning, every matching object. Each
         -- predicate is self-gated by its own :drift_* flag, so an inactive modifier
         -- contributes nothing. The PL/Scope / warning LIKE checks mirror the
         -- OBJECTS_MISSING_PLSCOPE_QUERY gap pattern against USER_PLSQL_OBJECT_SETTINGS.
@@ -354,7 +354,7 @@ ORDER BY e.type, e.name, e.line, e.position, e.sequence
 #
 # The two binds are comma lists of the object names and the line numbers the
 # analysis asked about, so the fetch is bounded by the failing errors rather than
-# by object size — a 10k-line package returns only the handful of lines in
+# by object size, a 10k-line package returns only the handful of lines in
 # question. It is a cross-filter, not a pairwise match: a line number wanted for
 # one object is also returned for another, which costs a few extra rows and saves
 # a bind-per-pair query. The caller keys results by (type, name, line), so the
@@ -387,7 +387,7 @@ ORDER BY s.type, s.name, s.line
 # VALID PL/SQL objects missing full PL/Scope (IDENTIFIERS:ALL + STATEMENTS:ALL).
 # Used as the dependencies refresh prerequisite: anything returned here is
 # recompiled with scope=["ALL"] so USER_IDENTIFIERS / USER_STATEMENTS populate.
-# Whole-schema scan — no binds. The IN-list is built from PLSQL_OBJECT_TYPES so
+# Whole-schema scan, no binds. The IN-list is built from PLSQL_OBJECT_TYPES so
 # it cannot drift from build_compile_statement's accepted types.
 _PLSCOPE_TYPE_IN_LIST = ", ".join(f"'{object_type}'" for object_type in PLSQL_OBJECT_TYPES)
 

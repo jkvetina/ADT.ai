@@ -27,8 +27,8 @@ META_UPSERT_SCHEMA_VERSION = (
 )
 
 # Per-scope last-refresh stamps share the same key/value ``_meta`` table under a
-# ``last_refresh:<kind>:<name>`` key, so refresh can record — and ``-age`` can
-# read — staleness offline without a dedicated table or a SCHEMA_VERSION bump.
+# ``last_refresh:<kind>:<name>`` key, so refresh can record, and ``-age`` can
+# read, staleness offline without a dedicated table or a SCHEMA_VERSION bump.
 META_LAST_REFRESH_PREFIX = "last_refresh:"
 
 META_UPSERT_QUERY = "INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)"
@@ -40,7 +40,7 @@ META_LAST_REFRESH_QUERY = (
 # The dictionary's own LAST_DDL_TIME per object, mirrored on every
 # `dependencies -refresh`. `patch -create` reads it to prove the exported files
 # still match the schema, so a stale `export_db` cannot ship a previous package
-# body (ADT #261) — and reads it OFFLINE, because the mirror already carries it.
+# body (ADT #261), and reads it OFFLINE, because the mirror already carries it.
 LAST_DDL_TIMES_QUERY = (
     "SELECT OWNER, OBJECT_TYPE, OBJECT_NAME, LAST_DDL_TIME FROM USER_OBJECTS"
 )
@@ -189,7 +189,7 @@ WHERE d.REFERENCED_TYPE = ? AND d.REFERENCED_NAME = ?
 
 def dependency_used_by_query(owner_count: int = 0) -> str:
     """Reverse-dependency query; ``-schema`` narrows the referenced side
-    (d.REFERENCED_OWNER) — the owner of the queried object."""
+    (d.REFERENCED_OWNER), the owner of the queried object."""
     sql = DEPENDENCY_USED_BY_QUERY
     if owner_count:
         sql += f"\n  AND {owner_in_clause('d.REFERENCED_OWNER', owner_count)}"
@@ -294,7 +294,7 @@ WHERE d.REFERENCED_NAME IS NOT NULL
 """.strip()
 
 # Foreign keys are the table-to-table half of the dependency graph, and
-# USER_DEPENDENCIES does not carry it — Oracle records only PL/SQL and view
+# USER_DEPENDENCIES does not carry it, Oracle records only PL/SQL and view
 # dependencies there. A child table must be created after the table its FK
 # references, so the edge set is reconstructed from the constraint mirror:
 # resolve R_CONSTRAINT_NAME to the parent's P/U constraint, same owner only,

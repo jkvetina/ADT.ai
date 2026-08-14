@@ -112,12 +112,45 @@ REMOVED_COMPATIBILITY_FLAGS = {
         "-dump", "--dump", "-format", "--format", "-out", "--out",
         "-remove", "--remove", "-schema", "--schema",
     ),
+    # Renamed by ADT #292: `-commits` -> `-window`, `-full` -> `-fullapp`.
+    #
+    # `-full` NEEDS this entry to make the break real. argparse resolves an
+    # unambiguous prefix, and `-full` is a prefix of `-fullapp`, so on Python
+    # 3.11 `patch -full 100` was still silently accepted as the renamed flag --
+    # the exact opposite of the loud failure a hard break is for. CI caught it:
+    # py3.13 rejected it and py3.11 did not, because argparse's abbreviation
+    # handling differs between them. Rejecting on the raw argv, before argparse
+    # sees it, is version-independent.
+    #
+    # `-commits` is listed for the same reason of principle rather than need --
+    # it is not a prefix of `-window`, so argparse already errors, but a
+    # removed name belongs in the removed list whatever today's parser does with
+    # it, and it makes both renames produce the same message.
+    # ADT #309 closed the set Jan postponed: `-refresh` -> `-contents`,
+    # `-hash` -> `-rollout`, and `-ref` dropped outright with no successor.
+    # None of the three old names is a prefix of its new one, so argparse
+    # already errors on them, but a removed name belongs in the removed list
+    # whatever today's parser does with it, and listing them keeps every
+    # rejection message identical.
+    # ADT #317 removed `-dense` outright: it restyled the rows of a section that
+    # no longer prints by default. The per-test listing it collapsed is now
+    # `-verbose`, and what a default run shows is the `RUNNING TESTS:` bar --
+    # there is no successor flag, because the shape `-dense` produced (one
+    # counted line per suite) was `SUMMARY:` one section early.
+    #
+    # Listed here rather than merely deleted for the reason `patch -full` proved:
+    # a name is only reliably gone when the rejection happens on the raw argv.
+    # `-dense` is not a prefix of any surviving `ut3` flag, so argparse would
+    # error on it today, but that is a property of today's flag set, and the
+    # next flag added to this command could silently make an old name resolve
+    # again.
+    "ut3": ("-dense", "--dense"),
 }
-# `patch` used to reject `-head` and `-local` here. That entry was the honest
-# form of "never built" while they were unimplemented (SOP §Command surface:
-# implement the behaviour, or leave the flag unsupported with a parser-error
-# test). ADT #280 implemented both -- plus `-nosnap` -- so keeping them rejected
-# would now be the opposite defect.
+# `patch` also used to reject `-head` and `-local` here. That entry was the
+# honest form of "never built" while they were unimplemented (SOP §Command
+# surface: implement the behaviour, or leave the flag unsupported with a
+# parser-error test). ADT #280 implemented both (plus `-nosnap`) so keeping
+# them rejected would now be the opposite defect.
 
 APEX_EXPORT_ACTIONS = (
     "full", "split", "readable", "embedded", "apexlang", "checksum", "rest",
@@ -173,7 +206,7 @@ class _StdoutTracker:
         # Flush the visible body immediately. A header line printed right before a
         # long silent operation (e.g. rebuild's per-commit hashing) carries its
         # line-ending newline in _pending_newlines, so without this flush the body
-        # stays in the TTY line buffer — invisible until the first progress line
+        # stays in the TTY line buffer, invisible until the first progress line
         # commits the pending newline. Flushing only the already-written body keeps
         # the trailing newlines retractable for the shared footer normalizer.
         self.wrapped.flush()
@@ -185,13 +218,13 @@ class _StdoutTracker:
         # Already-committed trailing newlines count toward the total in BOTH
         # cases. This used to ignore them whenever anything was still pending,
         # so a section that committed its own trailing blank through
-        # commit_pending() -- print_adt_table does, to flush the table -- and
+        # commit_pending() (print_adt_table does, to flush the table) and
         # then printed one more blank got the committed pair *underneath* the
         # normalized three: `patch -patch 65` printed four empty lines before
         # TIMER where the contract allows two (ADT #269).
         #
         # write() resets the committed count to 0 on any real body text, so
-        # outside that window the two branches were always equal anyway -- the
+        # outside that window the two branches were always equal anyway, the
         # split was the bug, not a distinction worth keeping.
         self._pending_newlines = "\n" * max(count - self._committed_trailing_newlines, 0)
 
