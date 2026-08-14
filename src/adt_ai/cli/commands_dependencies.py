@@ -39,6 +39,7 @@ from adt_ai.cli.gateways import build_gateway
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.dependencies.store import DEFAULT_MAX_DEPTH
 from adt_ai.export_apex.inventory import ApexApplication, ApexDiscovery
+from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.progress import FixedWidthProgressPrinter, schema_label
 
 _NO_DEPENDENCY_INDEX_MESSAGE = (
@@ -50,7 +51,7 @@ def _dependencies_argument_error(args: argparse.Namespace) -> str | None:
     """Reject ``-app``/``-force`` outside ``-refresh`` and bad ``-app`` ids.
 
     Returned (non-``None``) by the dispatcher before the command runs, so misuse
-    surfaces as a parser-style error screen — never a silently-accepted flag.
+    surfaces as a parser-style error screen, never a silently-accepted flag.
     ``-schema`` is allowed without ``-refresh``: in a query mode it acts as an
     offline owner disambiguator (see ``_resolve_query_schemas``).
     """
@@ -91,7 +92,7 @@ def _resolve_refresh_app_ids(
 
     No selection → no apps. Explicit ids (no ranges) pass straight through. A
     range (MIN-MAX / MIN+) is resolved against apps discovered across the
-    configured schemas and filtered with ``_app_in_selection`` — the same shape
+    configured schemas and filtered with ``_app_in_selection``, the same shape
     ``_refresh_flow`` uses (cli_commands_flow.py) so the two commands agree on
     range semantics.
     """
@@ -152,7 +153,7 @@ def _run_dependencies(
     print_module_banner("DEPENDENCIES", file=chrome)
 
     root    = Path(args.root).expanduser().resolve()
-    db_path = root / "config" / "dependencies.db"
+    db_path = internal_path(root, "dependencies.db")
 
     if args.refresh is not None:
         return _refresh_dependency_index(args, root, gateway_factory)
@@ -272,9 +273,9 @@ def _refresh_dependency_index(
     # APEX_* views are pulled over one schema's connection; default to the first
     # refreshed schema, else the environment's first default schema. When -app is
     # given without -schema, prefer the app's recorded owner schema from the
-    # cached config/apex_apps.yaml so we connect straight to it and skip the
+    # cached config/internal/apex_apps.yaml so we connect straight to it and skip the
     # wasted default-schema connection. The routing itself is export_apex's own
-    # resolver — one derivation, two callers; `sole_owner` is where this command's
+    # resolver, one derivation, two callers; `sole_owner` is where this command's
     # single-connection constraint is applied, and mixed owners or unknown apps
     # fall back to the default schema.
     app_schema: str | None = schemas[0] if schemas else None
@@ -325,7 +326,7 @@ def _refresh_dependency_index(
             # The schema is uppercased into the sentence rather than trailing a
             # colon: `REFRESHING: ict_owner` left the dashed rule stopping at the
             # colon, one word short of the line it was underlining (ADT #237).
-            # Uppercasing is `schema_label`'s job, not an inline `.upper()` — the
+            # Uppercasing is `schema_label`'s job, not an inline `.upper()`, the
             # inline call is what let the other headers drift (ADT #240).
             print_adt_header(f"REFRESHING {schema_label(schema)} SCHEMA:")
 

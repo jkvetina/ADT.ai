@@ -7,11 +7,11 @@ by name instead of embedding cleartext credentials on every call.
 
 The name is ``ADT_`` + the connection-file basename, qualified with ``_<ENV>``
 only when the file defines more than one environment and ``_<SCHEMA>`` only
-when that environment defines more than one schema — every tuple gets a unique
+when that environment defines more than one schema, every tuple gets a unique
 deterministic name while single-purpose files keep the bare ``ADT_<BASENAME>``.
 The assigned name and a credential fingerprint are recorded back into the
-connection YAML (round-trip, comments preserved) so the user can see — and
-override — the SQLcl name in use, and so a credential change is detected and
+connection YAML (round-trip, comments preserved) so the user can see, and
+override, the SQLcl name in use, and so a credential change is detected and
 re-registered on the next SQLcl call.
 """
 
@@ -35,7 +35,7 @@ SQLCL_NAME_PREFIX = "ADT_"
 # The generic filename identifies no project; the parent folder does.
 _GENERIC_FILE_STEMS = {"connections"}
 
-# SQLcl's CONNMGR subcommand is ``DELETE -conn <name>`` — there is no ``DEL``
+# SQLcl's CONNMGR subcommand is ``DELETE -conn <name>``, there is no ``DEL``
 # abbreviation, it fails with "Expected a subcommand" (verified against SQLcl
 # 26.1's own bundled help text). One shared constant so both the named-connection
 # re-registration path (db.py) and diff's ephemeral-connection cleanup
@@ -98,14 +98,14 @@ def record_sqlcl_registration(
     """Write ``sqlcl`` / ``sqlcl_sync`` onto the schema's ``db:`` block.
 
     Round-trip edit (comments and key order preserved). Best-effort by design:
-    bookkeeping must never break the export that triggered it — on any failure
+    bookkeeping must never break the export that triggered it, on any failure
     the fingerprint simply stays stale and the next run re-registers.
     """
     try:
         path = Path(source_file)
         text = path.read_text(encoding="utf-8")
         # Safe-load pre-check before the round-tripper touches an externally
-        # authored file — same defense-in-depth as connection/runner.py; any
+        # authored file, same defense-in-depth as connection/runner.py; any
         # unsupported tag raises and lands in the best-effort except below.
         pyyaml.safe_load(text)
         yaml = YAML()

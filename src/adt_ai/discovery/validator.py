@@ -5,7 +5,7 @@ static gate that admits exactly one read-only ``SELECT`` (or ``WITH ... SELECT``
 statement and rejects everything else. Comments and string literals are scrubbed
 before the keyword scan so payloads such as ``'DROP TABLE x'`` or ``-- delete``
 cannot false-trigger. Layer 2 (a ``SET TRANSACTION READ ONLY`` session) defends
-even if this gate were ever fooled — but only against *DML*: it does not block
+even if this gate were ever fooled, but only against *DML*: it does not block
 DDL or autonomous-transaction PL/SQL, so this static gate must catch a non-SELECT
 statement hidden behind a ``WITH`` clause rather than leaning on layer 2 for it.
 """

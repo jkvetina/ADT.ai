@@ -129,7 +129,7 @@ def git_user_email(root: Path) -> str:
 
 def fetch_origin(root: Path) -> None:
     # Best-effort refresh of remote-tracking refs; `--prune` drops branches
-    # deleted on the server. Offline/no-remote failures are non-fatal — fall
+    # deleted on the server. Offline/no-remote failures are non-fatal, fall
     # back to whatever refs are already present locally.
     subprocess.run(
         ["git", "fetch", "--quiet", "--prune", "origin"],

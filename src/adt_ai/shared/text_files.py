@@ -4,13 +4,13 @@ Python's text mode translates ``"\\n"`` to ``os.linesep`` when ``newline`` is
 omitted, so the same export writes LF on macOS/Linux and CRLF on Windows and
 one repo exported from two machines diffs on every line (card #138). Every
 ADT.ai text write therefore goes through this module or pins an explicit
-``newline=`` at the call site — guarded by
+``newline=`` at the call site, guarded by
 ``tests/contracts/test_text_write_newline.py``.
 
 The active ending is process-wide state configured once per run from the
 ``file_crlf`` config key, matching old ADT semantics (``lib/util.py``'s
 module-level ``newline``): LF everywhere by default, CRLF everywhere when
-enabled. Raw data payloads such as LOB sidecars are the deliberate exception —
+enabled. Raw data payloads such as LOB sidecars are the deliberate exception,
 they mirror stored database values byte for byte, so their call sites pin
 ``newline=""`` and never translate.
 
@@ -18,9 +18,9 @@ Pinning ``newline=`` is not enough on its own, because Python only ever
 translates ``"\\n"`` on write and never touches a ``"\\r"`` already in the
 string. ``newline="\\n"`` therefore passes an existing ``"\\r\\n"`` straight
 through, and ``newline="\\r\\n"`` rewrites the ``"\\n"`` inside it into
-``"\\r\\r\\n"``. Oracle hands back whatever bytes were compiled — anything ever
+``"\\r\\r\\n"``. Oracle hands back whatever bytes were compiled, anything ever
 loaded from a Windows client carries CRLF in ``ALL_SOURCE`` /
-``DBMS_METADATA.GET_DDL`` — so both modes wrote CRLF and ``file_crlf`` read as
+``DBMS_METADATA.GET_DDL``, so both modes wrote CRLF and ``file_crlf`` read as
 ignored (card #193). Everything here therefore *normalizes* first: incoming
 CR/CRLF collapse to LF, then the configured ending is applied, so the configured
 ending is the only ending on disk. ``open_text`` normalizes inside the returned
@@ -62,7 +62,7 @@ class _NormalizingWriter:
     """Text handle that rewrites every incoming line ending to ``newline``.
 
     The underlying handle is opened with ``newline=""`` so Python translates
-    nothing; this wrapper does the whole job itself and is therefore symmetric —
+    nothing; this wrapper does the whole job itself and is therefore symmetric,
     CRLF, CR and LF input all produce exactly one configured ending.
     """
 
@@ -79,7 +79,7 @@ class _NormalizingWriter:
         if text.endswith("\r"):
             # A trailing CR may be the first half of a CRLF split across two
             # writes (yaml.dump() emits many small chunks), so hold it back until
-            # the next chunk — or close() — settles what it is.
+            # the next chunk (or close()) settles what it is.
             self._pending_cr = True
             text = text[:-1]
         if text:

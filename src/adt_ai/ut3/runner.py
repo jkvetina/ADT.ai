@@ -5,10 +5,10 @@ The whole module exists because **utPLSQL does not raise when a test fails**.
 watches for an exception sees a clean run. Three shapes of dishonest green are
 therefore treated as failures here, not as nothing-to-report:
 
-* tests failed or errored — the obvious one;
-* the reporter produced nothing parsable, or no test cases at all — the run did
+* tests failed or errored, the obvious one;
+* the reporter produced nothing parsable, or no test cases at all, the run did
   not complete, and "no failures" is not "passed";
-* nothing matched at all — a suite that stops compiling stops being discovered,
+* nothing matched at all, a suite that stops compiling stops being discovered,
   and an empty green run is exactly what that looks like from the outside.
 
 Everything is driven through the ordinary query gateway, never the read-only
@@ -55,7 +55,7 @@ class Ut3Request:
     """One ut3 run.
 
     ``owner`` is the schema under test. Which schema holds its test packages is
-    ``naming.owner_for(owner)`` — the same value by default, and a different one
+    ``naming.owner_for(owner)``, the same value by default, and a different one
     when ``ut_owner`` is configured. The two are kept apart everywhere below:
     suites are discovered and executed in the test schema, coverage is measured
     in the schema under test.
@@ -115,7 +115,7 @@ class Ut3Result:
 
     @property
     def success(self) -> bool:
-        # A zero-test run is a failure, never an empty pass — see the module
+        # A zero-test run is a failure, never an empty pass, see the module
         # docstring. A package that could not run is **not** counted here: Jan's
         # instruction is that `ut3` ignores a `_UT` package that is INVALID or
         # holds no parsed test, and a command that ignores something cannot also
@@ -167,7 +167,7 @@ class Ut3Runner:
         # The schema the suites live in, which is the schema under test unless
         # `ut_owner` says otherwise. utPLSQL's annotation cache is keyed by it
         # and `ut.run` takes an owner-qualified path, so getting this wrong is
-        # not a narrower run — it is a run that finds nothing.
+        # not a narrower run, it is a run that finds nothing.
         ut_owner = naming.owner_for(owner)
         if request.refresh:
             self.gateway.execute(
@@ -177,7 +177,7 @@ class Ut3Runner:
 
         # **`-name` selects the suites to run.** It narrows the run itself, not
         # just the printed rows, and the coverage figures follow from whatever
-        # ran — so a filtered run costs less than an unfiltered one and reports
+        # ran, so a filtered run costs less than an unfiltered one and reports
         # less coverage for a package reached only by an excluded suite. That
         # under-report is the accepted cost (Jan, 2026-08-07): a flag that
         # silently means two different things is the worse defect, and the
@@ -203,7 +203,7 @@ class Ut3Runner:
                     continue
                 self.reporter.suite_begin(package)
                 # Wall clock around the whole call, so the figure covers the
-                # round trip and the suite's own setup — see `SuiteTiming`.
+                # round trip and the suite's own setup, see `SuiteTiming`.
                 started_at = time.monotonic()
                 suite_outcomes = self._run_suite(ut_owner, package)
                 timings.append(
@@ -322,7 +322,7 @@ def _declaration_order(rows: list[dict[str, object]]) -> dict[tuple[str, str], i
     One query for the whole schema rather than one per package: the set is
     small, and the discovery pass already reads the dictionary and the annotation
     cache whole for the same reason. Unfiltered by name because the pattern that
-    would filter it lives in Python now — an extra package's procedures in the
+    would filter it lives in Python now, an extra package's procedures in the
     map are never looked up.
     """
     order: dict[tuple[str, str], int] = {}
@@ -342,8 +342,8 @@ def _in_spec_order(
 ) -> tuple[SuiteTest, ...]:
     """Sort a package's tests the way its specification declares them.
 
-    A test the dictionary has no row for sorts last rather than first — an
-    unknown position is not position zero — and ties keep the annotation cache's
+    A test the dictionary has no row for sorts last rather than first, an
+    unknown position is not position zero, and ties keep the annotation cache's
     own line order, which is the best remaining guess.
     """
     unknown = len(declaration_order) + 1

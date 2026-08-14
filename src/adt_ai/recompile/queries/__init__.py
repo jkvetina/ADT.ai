@@ -1,6 +1,6 @@
 """The recompile module's SQL home.
 
-A re-export shim over the topic modules — ``objects`` (overview, selection, and
+A re-export shim over the topic modules, ``objects`` (overview, selection, and
 error read SQL), ``statements`` (the ALTER ... COMPILE / DBMS_MVIEW.REFRESH
 builders and the ``-force`` drift-selection binds), ``reports`` (materialized
 views, synonyms, disabled objects, jobs), and ``trailing`` (the -trailing

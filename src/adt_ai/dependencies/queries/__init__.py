@@ -1,6 +1,6 @@
 """The dependencies module's SQL home.
 
-A re-export shim over the topic modules — ``objects`` (the offline SQLite
+A re-export shim over the topic modules, ``objects`` (the offline SQLite
 raw-mirror reads that back the query modes) and ``dictionary_reads`` (the live
 Oracle dictionary SELECTs that populate that mirror). The two halves answer to
 different databases but are one module's SQL, so they share one home.

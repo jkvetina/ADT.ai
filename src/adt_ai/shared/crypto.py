@@ -50,7 +50,7 @@ def _fernet(key: str) -> Fernet:
     # what lets an encrypted connection file be committed and read back by a
     # colleague or a CI runner holding only the key. A per-file random salt
     # would have to be persisted next to each secret, which is a format change.
-    # What the empty salt costs is offline resistance to a *weak* ADT_KEY —
+    # What the empty salt costs is offline resistance to a *weak* ADT_KEY,
     # every project shares one derivation, so one dictionary attack covers all
     # of them. Revisit only if that threat becomes real; until then the answer
     # is a strong key, not a salt.

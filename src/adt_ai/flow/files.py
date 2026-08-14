@@ -21,7 +21,7 @@ def _node_id(prefix: str, *parts: object) -> str:
 
 
 def _src_node(edge: FlowEdge, page_names: dict[int, str | None]) -> tuple[str, str]:
-    # Shared components (tabs, lists, nav bar) have no source page — they are
+    # Shared components (tabs, lists, nav bar) have no source page, they are
     # global entry points, drawn as a single labelled node per source type.
     if edge.src_page is None:
         return _node_id("shared", edge.src_type), f"{edge.src_type} (shared)"

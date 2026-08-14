@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 from adt_ai.export_db.normalizers import (
     NormalizationContext,
+    _code_positions,
     _constraint_column_names,
     _matching_parenthesis_index,
     _normalize_sql_identifier,
@@ -85,13 +87,9 @@ def _formatted_table_items_reordered(
 def _format_table_item(item: str, context: NormalizationContext) -> list[str] | None:
     if not item.strip():
         return None
-    item_type = re.sub(r"\s+", " ", item.strip())
-    if item_type.startswith("CONSTRAINT ") or re.match(
-        r"^(PRIMARY KEY|FOREIGN KEY|UNIQUE|CHECK)\b",
-        item_type,
-        flags=re.IGNORECASE,
-    ):
-        return _format_table_constraint(item_type, context)
+    if _is_constraint_item(re.sub(r"\s+", " ", item.strip())):
+        # Pass the raw item: a constraint body's own line breaks are content.
+        return _format_table_constraint(item.strip(), context)
 
     item = _cleanup_table_item(item)
     if not item:
@@ -207,17 +205,71 @@ def _interval_qualifier(data_type: str) -> str | None:
 
 def _format_table_constraint(item: str, context: NormalizationContext) -> list[str]:
     item = _cleanup_constraint_item(item)
-    named = re.match(r"CONSTRAINT\s+(?P<name>\S+)\s+(?P<body>.*)", item, flags=re.IGNORECASE)
+    named = re.match(
+        r"CONSTRAINT\s+(?P<name>\S+)\s+(?P<body>.*)",
+        item,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
     if named:
         name = _normalize_sql_identifier(named.group("name"), context)
         return _format_constraint_body(named.group("body"), name=name, context=context)
     return _format_constraint_body(item, name=None, context=context)
 
 def _cleanup_constraint_item(item: str) -> str:
-    item = re.sub(r"\s+", " ", item.replace("\n", " ")).strip()
-    item = re.sub(r"\s+ENABLE\b", "", item, flags=re.IGNORECASE)
-    item = re.sub(r"\s+USING\s+INDEX\b.*", "", item, flags=re.IGNORECASE)
-    return re.sub(r"\s+", " ", item).strip()
+    """Collapse the constraint's own scaffolding, never its parenthesized body.
+
+    ``CONSTRAINT <name> CHECK (...)`` is wrapped across lines by DBMS_METADATA,
+    so the text outside the parentheses is reflowed as before. What sits inside
+    them is the search condition as the data dictionary stores it, line breaks
+    and ``--`` comments included, and flattening that moved every value behind
+    the first comment (ADT #299).
+    """
+
+    item = _truncate_outside_parentheses(item.strip(), r"\s+USING\s+INDEX\b")
+    item = _replace_outside_parentheses(item, _collapse_constraint_scaffolding)
+    return item.strip()
+
+def _collapse_constraint_scaffolding(chunk: str) -> str:
+    chunk = re.sub(r"\s+", " ", chunk)
+    return re.sub(r"\s+ENABLE\b", "", chunk, flags=re.IGNORECASE)
+
+def _top_level_parenthesis_segments(text: str) -> list[tuple[bool, str]]:
+    """Split ``text`` into ``(is_outside_parentheses, segment)`` pieces."""
+
+    segments: list[tuple[bool, str]] = []
+    depth = 0
+    start = 0
+    for index in _code_positions(text):
+        char = text[index]
+        if char == "(":
+            if depth == 0:
+                segments.append((True, text[start:index]))
+                start = index
+            depth += 1
+        elif char == ")" and depth > 0:
+            depth -= 1
+            if depth == 0:
+                segments.append((False, text[start : index + 1]))
+                start = index + 1
+    segments.append((depth == 0, text[start:]))
+    return segments
+
+def _replace_outside_parentheses(text: str, replace_chunk: Callable[[str], str]) -> str:
+    return "".join(
+        replace_chunk(segment) if outside else segment
+        for outside, segment in _top_level_parenthesis_segments(text)
+    )
+
+def _truncate_outside_parentheses(text: str, pattern: str) -> str:
+    kept: list[str] = []
+    for outside, segment in _top_level_parenthesis_segments(text):
+        if outside:
+            match = re.search(pattern, segment, flags=re.IGNORECASE)
+            if match:
+                kept.append(segment[: match.start()])
+                return "".join(kept)
+        kept.append(segment)
+    return "".join(kept)
 
 def _format_constraint_body(
     body: str,
@@ -297,12 +349,34 @@ def _format_references_clause(
     ]
 
 def _format_check_constraint(expression: str, named: bool) -> list[str]:
-    expression_line = _normalize_constraint_expression(expression)
+    open_indent = "        " if named else "    "
+    body_indent = f"{open_indent}    "
     return [
-        "        CHECK (" if named else "    CHECK (",
-        f"            {expression_line}" if named else f"        {expression_line}",
-        "        )" if named else "    )",
+        f"{open_indent}CHECK (",
+        *_format_check_expression_lines(expression, body_indent),
+        f"{open_indent})",
     ]
+
+def _format_check_expression_lines(expression: str, indent: str) -> list[str]:
+    # Blank lines are dropped: they carry no documentation, and an empty line
+    # inside a statement ends the buffer in a plain SQLcl session (only the patch
+    # payload sets SET SQLBLANKLINES ON). Comment lines are kept as they are.
+    lines = [
+        line.rstrip()
+        for line in _normalize_constraint_expression(expression).splitlines()
+        if line.strip()
+    ]
+    if len(lines) <= 1:
+        return [f"{indent}{lines[0].strip()}" if lines else indent.rstrip()]
+
+    # The first line lost its indentation to the surrounding strip; the rest keep
+    # their relative shape, re-hung off this block's indent.
+    body = [lines[0].strip(), *_dedent_lines(lines[1:])]
+    return [f"{indent}{line}" for line in body]
+
+def _dedent_lines(lines: list[str]) -> list[str]:
+    common = min(len(line) - len(line.lstrip()) for line in lines)
+    return [line[common:] for line in lines]
 
 def _normalize_constraint_expression(expression: str) -> str:
     return _replace_outside_sql_strings(

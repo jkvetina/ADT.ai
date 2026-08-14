@@ -69,12 +69,12 @@ def _reject_unsafe_yaml(text: str) -> None:
     """Reject anything a safe loader would refuse before round-tripping.
 
     The editor loads with ruamel's RoundTrip loader to preserve comments and key
-    order on write -- but RoundTrip is *not* a safe loader. A connection file
+    order on write, but RoundTrip is *not* a safe loader. A connection file
     authored elsewhere could carry a ``!!python/...`` (or other custom) tag. A
     safe-load pass first ensures the document is plain YAML; only then do we hand
     it to the round-tripper. (In practice ruamel's RoundTrip loader degrades such
     tags to plain data rather than executing them, so this is defense-in-depth,
-    not an RCE patch -- but it keeps unsupported documents out entirely.)
+    not an RCE patch, but it keeps unsupported documents out entirely.)
     """
     try:
         YAML(typ="safe").load(text)
@@ -112,7 +112,7 @@ def _strip_env_secrets(env_node: dict[str, Any]) -> dict[str, Any]:
     """Deep structural copy of an environment with every stored secret removed.
 
     Previews go to stdout, and stdout lands in shell history and agent
-    transcripts — so a preview may show the shape of an environment but never
+    transcripts, so a preview may show the shape of an environment but never
     the secrets of the sibling schemas or the wallet it happens to reuse.
     """
     plain = _plain(env_node) or {}
@@ -131,7 +131,7 @@ class ConnectionEditor:
     """Round-trip editor for an ADT connections YAML file.
 
     Loads the file with ruamel (preserving comments and key order), applies one
-    structural mutation, and -- only when ``request.apply`` is set -- writes the
+    structural mutation, and (only when ``request.apply`` is set) writes the
     whole document back. Otherwise the file is left untouched and the caller
     renders the returned ``preview`` block. Passwords are never rendered into the
     preview; only the structural skeleton is shown.
@@ -334,7 +334,7 @@ class ConnectionEditor:
             self._write_password(db, "pwd", "pwd!", request, request.password)
         schemas[schema] = {"db": db}
         summary = f"add schema {request.environment}.{schema}"
-        # Preview is structural only -- never render the password.
+        # Preview is structural only, never render the password.
         preview = self._dump_node(yaml, {schema: {"db": {"user": user}}})
         return summary, preview
 

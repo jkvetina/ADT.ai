@@ -32,7 +32,7 @@ _ROOT_CAUSE_COLUMNS = ["OBJECT_TYPE", "OBJECT_NAME", "CAUSE", "BLAST"]
 # Each verdict's stanza heading, which doubles as its glossary: the reader learns
 # what MISSING means from the line the missing objects are listed under. Ordered
 # most-actionable first. A cause whose culprit is never named (SOURCE, UNKNOWN)
-# carries no list — the heading alone is the whole answer.
+# carries no list, the heading alone is the whole answer.
 _CAUSE_SECTIONS = (
     ("MISSING", "MISSING - not there; restore it, then recompile:", True),
     ("GRANT",   "GRANT - it exists and this schema has no privilege on it:", True),
@@ -42,7 +42,7 @@ _CAUSE_SECTIONS = (
 
 
 def _object_label(object_type: str, object_name: str) -> str:
-    """``TYPE.NAME`` — the one identifier every section of the report shares.
+    """``TYPE.NAME``, the one identifier every section of the report shares.
 
     The name alone is ambiguous and measurably so: ANDRITZ DBADMIN carries
     ``UT_UTILS`` as both a ``PACKAGE`` and a ``PACKAGE BODY``, two objects with
@@ -56,7 +56,7 @@ def _report_order(invalid: Sequence[ObjectError]) -> dict[tuple[str, str], int]:
 
     A sort key only. Until `#212` this was also printed as an ``ID`` column that
     every other section pointed back at; the per-object error list keys off the
-    object itself, so the cross-reference — and the column — are gone. The
+    object itself, so the cross-reference (and the column) are gone. The
     ordering it encoded is not: the stanzas below still read in step with the
     listing above them.
     """
@@ -69,13 +69,13 @@ def _report_order(invalid: Sequence[ObjectError]) -> dict[tuple[str, str], int]:
 def print_root_causes(report: RootCauseReport, invalid: Sequence[ObjectError]) -> None:
     """Rank the still-invalid objects so the reader knows where to start (#205).
 
-    Prints **below** INVALID OBJECTS and its compile-error list — the verdict
+    Prints **below** INVALID OBJECTS and its compile-error list, the verdict
     reads under the evidence it is drawn from (#209; `#205` had this the other
     way round). Only roots are printed, most downstream damage first.
 
     The knock-ons they explain are classified but no longer listed: `#205` gave
     them a ``DERIVED - DO NOT START HERE`` section on the reasoning that an
-    object vanishing from a report reads as fixed, and `#213` removed it —
+    object vanishing from a report reads as fixed, and `#213` removed it,
     ``INVALID OBJECTS`` above already names every one of them, so the section
     restated a list the reader had just read. The classification stays load-
     bearing regardless: it is what keeps a knock-on out of the ranking, and what
@@ -108,9 +108,9 @@ def _print_cause_sections(
 
     The culprit was a sixth column until the first live run: with a 28-character
     object name in the table, 80 columns leave it nine, and ``Z_SOAP...`` answers
-    nothing. It is also the one genuinely unbounded field here — a qualified
+    nothing. It is also the one genuinely unbounded field here, a qualified
     package member such as ``UT_COVERAGE_HELPER.T_UNIT_LINE_CALLS`` is 36
-    characters — so the console contract's per-record stanza is its shape, not a
+    characters, so the console contract's per-record stanza is its shape, not a
     truncated cell. Grouping by verdict makes the headings the glossary too, so
     the separate legend the column needed disappears with it.
     """
@@ -121,7 +121,7 @@ def _print_cause_sections(
             continue
         # Exactly one blank above every heading. The ranked table already closes
         # with one, so the first heading takes that and only the rest emit their
-        # own — an unconditional print() here gave the first heading two (#212).
+        # own, an unconditional print() here gave the first heading two (#212).
         if printed:
             print()
         printed = True
@@ -174,8 +174,8 @@ def _print_compile_error_list(
 
     Replaces the four-column ``ID | LINE | POS | ERROR MESSAGE`` table, which had
     no section header, spent its widest column on an ``ID`` that existed only to
-    point back at the listing above, and then truncated the message — the only
-    field that is the answer — to whatever was left. Keying the stanza on the
+    point back at the listing above, and then truncated the message, the only
+    field that is the answer, to whatever was left. Keying the stanza on the
     object removes the cross-reference, and the reclaimed width goes to the text.
     """
     stanzas = [
@@ -202,7 +202,7 @@ def _distinct_compile_errors(
 
     Two filters, both measured against the live ANDRITZ DBADMIN run: cascade rows
     go (they restate a failure whose real cause is printed beside them), and a
-    message repeated at several positions collapses to its lowest ``line.pos`` —
+    message repeated at several positions collapses to its lowest ``line.pos``,
     a missing grant referenced eight times is one thing to fix, not eight.
 
     Cascade rows are identified by :func:`is_cascade_message`, the same predicate
@@ -233,7 +233,7 @@ def _compile_error_lines(line: int, position: int, message: str) -> list[str]:
     """``    - <line>.<pos> <message>``, wrapped under a hanging indent.
 
     Wrapped rather than truncated: outside a table column there is no cell to fit,
-    and the message is the answer — ``PLS-00103: Encountered the symbol "-" when
+    and the message is the answer, ``PLS-00103: Encountered the symbol "-" when
     expecting o...`` names no symbol the reader can act on. This is the console
     contract's per-record stanza, the same shape `validate` was rebuilt into after
     it shipped compiler prose in a table column (`#163` → `#164`).
@@ -261,7 +261,7 @@ def _clean_compile_error_message(text: str) -> str:
     """One line's worth of message, whatever Oracle stored (#209).
 
     `user_errors.text` keeps whatever whitespace the compiler wrote, and several
-    rows end with a newline — `ORA-00904: "WM_CONCAT": invalid identifier` on
+    rows end with a newline, `ORA-00904: "WM_CONCAT": invalid identifier` on
     ANDRITZ DBADMIN among them. Rendered raw in the table this list replaced, that
     newline ended the row early and the column's remaining width printed as a line
     of spaces underneath. Normalizing still matters for the list: it is what makes

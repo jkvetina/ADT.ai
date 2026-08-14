@@ -1,13 +1,13 @@
 """Refresh the raw-mirror dependency database from live Oracle dictionaries.
 
-Two independent axes feed one ``config/dependencies.db``:
+Two independent axes feed one ``config/internal/dependencies.db``:
 
-* ``-schema`` (USER_* axis) — for each schema, pull the object inventory, use
+* ``-schema`` (USER_* axis), for each schema, pull the object inventory, use
   ``LAST_DDL_TIME`` to detect changed objects, run the same-connection PL/Scope
   prerequisite only for those changed objects (see
   :mod:`adt_ai.dependencies.plscope`), then bulk-fetch detail mirrors and let
   SQLite keep only rows for changed objects.
-* ``-app`` (APEX axis) — for each app, re-scan its component sources
+* ``-app`` (APEX axis), for each app, re-scan its component sources
   (``APEX_APP_OBJECT_DEPENDENCY.SCAN``) then pull each ``APEX_USED_DB*`` view and
   hand it to :meth:`DependencyStore.refresh_app_incremental`.
 
@@ -29,6 +29,7 @@ from adt_ai.dependencies.store import DependencyStore
 from adt_ai.export_apex import queries as export_apex_queries
 from adt_ai.export_db.render import print_adt_header
 from adt_ai.shared.db import QueryGateway
+from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.progress import fixed_width_count_line, fixed_width_status_line
 from adt_ai.shared.recent_state import is_bare_recent
 
@@ -67,7 +68,7 @@ class DependencyIndexRunner:
 
     @staticmethod
     def _schema_last_refresh(store: DependencyStore, schema: str) -> str | None:
-        """The schema scope's own ``_meta`` stamp — bare ``-recent``'s cutoff."""
+        """The schema scope's own ``_meta`` stamp, bare ``-recent``'s cutoff."""
         for row in store.last_refreshes():
             if row["type"] == "schema" and row["scope"] == schema:
                 return row["last_refresh"]
@@ -80,7 +81,7 @@ class DependencyIndexRunner:
         app_schema = request.app_schema or (request.schemas[0] if request.schemas else None)
         refreshed_at = request.refreshed_at or _now_stamp()
 
-        db_path = request.root / "config" / "dependencies.db"
+        db_path = internal_path(request.root, "dependencies.db")
         store = DependencyStore.open(db_path, rebuild=True)
         prepared: set[int] = set()
         try:
@@ -101,8 +102,8 @@ class DependencyIndexRunner:
                     )
                     if is_bare_recent(request.recent) and stamp is None:
                         progress.line(
-                            f"  RECENT: no previous refresh recorded for {schema} "
-                            "— refreshing all objects"
+                            f"  RECENT: no previous refresh recorded for {schema}, "
+                            "refreshing all objects"
                         )
                     else:
                         recent_params = {
@@ -158,7 +159,7 @@ class DependencyIndexRunner:
                     progress.finish("USER_OBJECTS", len(changed_objects), total=len(object_rows))
                 if recent_names is not None and not recent_names:
                     # Nothing changed since the cutoff: skip the detail pulls
-                    # entirely, but still advance the stamp — the scope WAS
+                    # entirely, but still advance the stamp, the scope WAS
                     # covered for everything since the previous refresh.
                     store.record_refresh("schema", schema, refreshed_at)
                     continue
@@ -286,7 +287,7 @@ class _NoProgressReporter:
 class _CallableProgressReporter:
     """Test-only adapter: one complete formatted string per callback.
 
-    Not console-streaming safe — ``begin()`` cannot emit a bare label the way
+    Not console-streaming safe, ``begin()`` cannot emit a bare label the way
     ``FixedWidthProgressPrinter.begin()`` does, because a plain callable has
     no notion of "the same terminal line, filled in later". Real CLI output
     always goes through ``FixedWidthProgressPrinter`` (see

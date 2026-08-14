@@ -259,42 +259,64 @@ def _normalize_definition_name(name: str) -> str:
         return object_name.lower()
     return object_name
 
+def sql_spans(payload: str) -> list[tuple[str, int, int]]:
+    """Split SQL text into ``code``, ``string`` and ``comment`` spans.
+
+    Every scan and rewrite of DDL text goes through this, so a comment is never
+    read as SQL: the apostrophe in ``don't`` is not a string delimiter and the
+    parenthesis in ``-- (see spec)`` is not a parenthesis. Both used to flip the
+    scanners' state and corrupt the rest of the object (ADT #299).
+    """
+
+    spans: list[tuple[str, int, int]] = []
+    length = len(payload)
+    index = 0
+    start = 0
+
+    while index < length:
+        if payload[index] == "'":
+            if start < index:
+                spans.append(("code", start, index))
+            end = index + 1
+            while end < length:
+                if payload[end] == "'":
+                    if end + 1 < length and payload[end + 1] == "'":
+                        end += 2
+                        continue
+                    end += 1
+                    break
+                end += 1
+            spans.append(("string", index, end))
+            index = start = end
+            continue
+
+        if payload.startswith("--", index) or payload.startswith("/*", index):
+            if start < index:
+                spans.append(("code", start, index))
+            if payload[index + 1] == "-":
+                newline = payload.find("\n", index)
+                end = length if newline < 0 else newline
+            else:
+                closing = payload.find("*/", index + 2)
+                end = length if closing < 0 else closing + 2
+            spans.append(("comment", index, end))
+            index = start = end
+            continue
+
+        index += 1
+
+    if start < length:
+        spans.append(("code", start, length))
+    return spans
+
 def _replace_outside_sql_strings(
     payload: str,
     replace_chunk: Callable[[str], str],
 ) -> str:
-    result: list[str] = []
-    outside: list[str] = []
-    index = 0
-
-    while index < len(payload):
-        char = payload[index]
-        if char != "'":
-            outside.append(char)
-            index += 1
-            continue
-
-        if outside:
-            result.append(replace_chunk("".join(outside)))
-            outside = []
-
-        quoted = [char]
-        index += 1
-        while index < len(payload):
-            char = payload[index]
-            quoted.append(char)
-            index += 1
-            if char == "'":
-                if index < len(payload) and payload[index] == "'":
-                    quoted.append(payload[index])
-                    index += 1
-                    continue
-                break
-        result.append("".join(quoted))
-
-    if outside:
-        result.append(replace_chunk("".join(outside)))
-    return "".join(result)
+    return "".join(
+        replace_chunk(payload[start:end]) if kind == "code" else payload[start:end]
+        for kind, start, end in sql_spans(payload)
+    )
 
 def _drop_create_wrap(lines: list[str], drop_statement: str) -> list[str]:
     """Prefix a CREATE block with the old-ADT EXEC_DDL drop-before-create guard.
@@ -352,42 +374,37 @@ def _split_spec_from_body(
             return lines[:index]
     return lines
 
+def _code_positions(payload: str, from_index: int = 0) -> Iterable[int]:
+    for kind, start, end in sql_spans(payload):
+        if kind != "code" or end <= from_index:
+            continue
+        yield from range(max(start, from_index), end)
+
 def _matching_parenthesis_index(payload: str, open_index: int) -> int | None:
     depth = 0
-    in_string = False
-    index = open_index
-    while index < len(payload):
+    for index in _code_positions(payload, open_index):
         char = payload[index]
-        if char == "'":
-            in_string = not in_string
-            if in_string and index + 1 < len(payload) and payload[index + 1] == "'":
-                index += 1
-        elif not in_string:
-            if char == "(":
-                depth += 1
-            elif char == ")":
-                depth -= 1
-                if depth == 0:
-                    return index
-        index += 1
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return index
     return None
 
 def _split_top_level_commas(body: str) -> list[str]:
     items: list[str] = []
     start = 0
     depth = 0
-    in_string = False
-    for index, char in enumerate(body):
-        if char == "'":
-            in_string = not in_string
-        elif not in_string:
-            if char == "(":
-                depth += 1
-            elif char == ")":
-                depth -= 1
-            elif char == "," and depth == 0:
-                items.append(body[start:index].strip())
-                start = index + 1
+    for index in _code_positions(body):
+        char = body[index]
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif char == "," and depth == 0:
+            items.append(body[start:index].strip())
+            start = index + 1
     items.append(body[start:].strip())
     return [item for item in items if item]
 

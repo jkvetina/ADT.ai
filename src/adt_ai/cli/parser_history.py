@@ -80,14 +80,14 @@ def add_history_parsers(subparsers) -> None:
         "-type",
         action = "append",
         nargs  = "+",
-        help   = "object type text, supports multiple arguments",
+        help   = "object type text, repeatable, comma- or space-separated",
     )
     search_repo.add_argument(
         "--name",
         "-name",
         action = "append",
         nargs  = "+",
-        help   = "object name text, supports multiple arguments",
+        help   = "object name text, repeatable, comma- or space-separated",
     )
     search_repo.add_argument("--by", "-by", action="append", help="author email/name text")
     search_repo.add_argument("--my", "-my", action="store_true", help="show only my commits")
@@ -99,7 +99,11 @@ def add_history_parsers(subparsers) -> None:
         dest   = "commit_refs",
         action = "append",
         nargs  = "+",
-        help   = "commit number/hash ref(s); N+ selects N and newer",
+        # Three spellings, all resolved by the shared `commit_ref_matches`
+        # (`shared/commit_discovery.py:310`) that `patch -commit` also uses, so
+        # both rows describe the same range syntax the same way (ADT #326).
+        help   = "commit number(s), hash prefix(es), or ranges MIN-MAX / MIN+, "
+                 "repeatable, comma- or space-separated",
     )
     search_repo.add_argument(
         "--hash",
@@ -116,7 +120,7 @@ def add_history_parsers(subparsers) -> None:
         # ONE parser shape across every module (the shared-argument-semantics
         # contract compares `repr(const)`). search_repo reads git history, which
         # has no export watermark, so it maps the sentinel back to 1 day at the
-        # edge — same shape, its own meaning.
+        # edge, same shape, its own meaning.
         const = BARE_RECENT,
         type  = int,
         help  = "only commits from recent DAYS (bare -recent = 1)",
@@ -154,10 +158,8 @@ def add_history_parsers(subparsers) -> None:
         nargs   = "*",
         default = None,
         metavar = "WORD",
-        help    = "list the remote branches (origin/*) without touching the cache, "
-                  "newest first. Bare '-reveal' shows the latest 10. Any words filter "
-                  "by name, AND-matched ('-reveal feat 4995' lists branches whose name "
-                  "contains both). Use -limit to change the row count",
+        help    = "list remote branches (origin/*) newest first, touching no cache; "
+                  "any WORDs filter the name, AND-matched",
     )
     rebuild.add_argument(
         "--limit",
@@ -165,31 +167,24 @@ def add_history_parsers(subparsers) -> None:
         type    = int,
         default = None,
         metavar = "N",
-        help    = "meaning depends on the mode. In reveal mode: max branches to "
-                  f"list (default {REVEAL_DEFAULT_LIMIT}; 0 = all), or with -switch "
-                  "the max commits to show for the switched branch (same default; "
-                  "0 = all). In normal rebuild mode: max commits to read per "
-                  "branch, running a full bounded window (default: incremental "
-                  "update since the last cached commit)",
+        help    = "max rows the mode produces: branches revealed, commits shown under "
+                  f"-switch, or commits read per branch when rebuilding "
+                  f"(default {REVEAL_DEFAULT_LIMIT}; 0 = all)",
     )
     rebuild.add_argument(
         "--since",
         "-since",
         metavar = "WHEN",
-        help    = "rebuild every commit since WHEN. WHEN is a YYYY-MM-DD date, or "
-                  "an integer number of days back (e.g. '7' = 7 days ago, converted "
-                  "to a date). In normal mode it bounds the rebuild window and shows "
-                  "'COMMITS | <count> SINCE <date>' in the header (mutually exclusive "
-                  "with -limit). In reveal mode it keeps only branches whose tip "
-                  "commit is on or after WHEN (composes with -limit)",
+        help    = "bound the run to WHEN onward, a YYYY-MM-DD date or a count of days "
+                  "back (7 = 7 days ago)",
     )
     rebuild.add_argument(
         "--my",
         "-my",
         dest   = "my",
         action = "store_true",
-        help   = "in reveal mode, limit to branches whose tip commit is yours "
-                 "(matched against 'git config user.email')",
+        help   = "in reveal mode, limit to branches whose tip commit is yours, matched "
+                 "against git config user.email",
     )
     rebuild.add_argument(
         "--switch",
@@ -199,9 +194,6 @@ def add_history_parsers(subparsers) -> None:
         const   = 1,
         default = None,
         metavar = "N",
-        help    = "in reveal mode, check the working tree out to the Nth branch "
-                  "in the filtered order (1-based; bare '-switch' = 1), then show "
-                  "BRANCH SWITCHED and that branch's recent COMMITS instead of the "
-                  "branch list. -limit caps the commits, -my keeps only yours. "
-                  "Skips all git ops when already on that branch",
+        help    = "in reveal mode, check out the Nth branch of the filtered list "
+                  "(1-based; bare -switch = 1) and show its recent commits instead",
     )

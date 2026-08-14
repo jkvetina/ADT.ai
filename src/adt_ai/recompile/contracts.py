@@ -34,7 +34,7 @@ from adt_ai.shared.db import QueryGateway
 GatewayFactory = Callable[[], QueryGateway]
 
 # Maps each still-invalid ``TYPE.NAME`` node to the invalid objects that depend on
-# it, read from ``config/dependencies.db``. The CLI injects one; the default
+# it, read from ``config/internal/dependencies.db``. The CLI injects one; the default
 # returns nothing, so a runner with no mirror (every unit test, any non-CLI
 # caller) ranks on error evidence alone instead of failing.
 DependentsProvider = Callable[[list[str]], dict[str, list[str]]]

@@ -97,6 +97,7 @@ from adt_ai.export_apex.watermarks import (
 from adt_ai.export_apex.writers import ApexCollectionWriterMixin, CollectionWriteResult
 from adt_ai.shared import text_files
 from adt_ai.shared.db import QueryGateway
+from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.progress import FixedWidthProgressPrinter
 from adt_ai.shared.recent_state import (
     RecentStore,
@@ -132,12 +133,12 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexAction
     def run(self, request: ApexExportRequest) -> None:
         base_resolver = ApexFileResolver.from_config(request.root, dict(request.config))
         reporter = request.reporter or ConsoleApexProgressReporter()
-        timers_file = request.timers_file or request.root / "config" / "apex_timers.yaml"
+        timers_file = request.timers_file or internal_path(request.root, "apex_timers.yaml")
         timers = load_yaml_mapping(timers_file)
-        developers_path = request.root / "config" / "apex_developers.yaml"
+        developers_path = internal_path(request.root, "apex_developers.yaml")
         if not request.recent_report_only:
             _store_application_metadata(
-                request.root / "config" / "apex_apps.yaml",
+                internal_path(request.root, "apex_apps.yaml"),
                 [
                     application
                     for schema in request.schemas
@@ -156,8 +157,8 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexAction
                 _store_workspace_developers(developers_path, developer_rows)
             applications = request.applications.get(schema, [])
             for index, application in enumerate(applications):
-                # `-rest` and `-files_ws` write workspace artifacts — paths with
-                # no app id in them — so they belong to the schema, not to an
+                # `-rest` and `-files_ws` write workspace artifacts, paths with
+                # no app id in them, so they belong to the schema, not to an
                 # application, and must run exactly once however many
                 # applications the schema has. The first one carries them, so
                 # the rows still read among that block's other export rows.
@@ -283,7 +284,7 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexAction
                 self._advance_watermarks(request, application, candidate)
             # A schema hosting no APEX application still owns its workspace
             # artifacts, and there is no application block for their rows to sit
-            # under — so this is the one case that keeps a `SCHEMA <name>,
+            # under, so this is the one case that keeps a `SCHEMA <name>,
             # EXPORTING:` header. Skipping the schema entirely here is what made
             # `-rest` finish printing nothing at all (ADT #190); `-files_ws` had
             # the same hole and never got that fix.
@@ -323,7 +324,7 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexAction
                 continue
             if skipped_by_apex_release(action, request.apex_version):
                 # The pre-26.1 `apexlang` miss is announced only to the user who
-                # named that format — the line answers "where is my APEXlang
+                # named that format, the line answers "where is my APEXlang
                 # export?", a question `-all` never asked, so under `-all` it was
                 # a notice about something nobody requested (ADT #235). The 26.1
                 # `readable` skip is silent always (Jan, 2026-07-27).

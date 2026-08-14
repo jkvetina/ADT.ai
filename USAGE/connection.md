@@ -26,7 +26,7 @@ adtai connection -add-schema -env DEV -schema REPORTS -go
 
 ## Passwords
 
-Passwords are never passed on the command line. When a password is needed it is collected interactively (hidden input) at apply time only — preview never prompts and never renders a secret.
+Passwords are never passed on the command line. When a password is needed it is collected interactively (hidden input) at apply time only, preview never prompts and never renders a secret.
 
 - `-create -go` prompts once for the schema password and, when `-wallet` is provided, once for the wallet password; leave either blank to skip writing that password.
 - `-add-schema -go` prompts once; leave it blank to add the schema without a password.
@@ -40,9 +40,9 @@ Use `-encrypt` to write OLD ADT-compatible encrypted values. The key comes from 
 
 `-create` is the OLD ADT-style bootstrap path. It creates the resolved connection YAML file when no candidate exists yet, or fills missing fields in the existing resolved file. Existing values are preserved; the command only adds missing environment/schema fields.
 
-For the `export:` filters (`-prefix`, `-ignore`) a **blank** entry counts as missing, not as a value: a connection file conventionally seeds the block as `ignore: ''` / `prefix: ''`, so treating a pre-seeded placeholder as "already set" would make both flags a permanent no-op on exactly the files that need them. A filter that actually holds a value is still never overwritten — change one by editing the YAML.
+For the `export:` filters (`-prefix`, `-ignore`) a **blank** entry counts as missing, not as a value: a connection file conventionally seeds the block as `ignore: ''` / `prefix: ''`, so treating a pre-seeded placeholder as "already set" would make both flags a permanent no-op on exactly the files that need them. A filter that actually holds a value is still never overwritten, change one by editing the YAML.
 
-There is no shipped connection template. `connections/*` is gitignored — a connection file holds credentials — and `doctor -init` writes only the `connections/.gitkeep` and `connections/wallets/.gitkeep` placeholders, never a YAML. A `connections/SAMPLE.yaml` in an ADT.ai checkout is a local, hand-maintained reference copy, not something you receive: bootstrap your first connection file with `connection -create`, which writes the whole structure for you.
+There is no shipped connection template. `connections/*` is gitignored, a connection file holds credentials, and `doctor -init` writes only the `connections/.gitkeep` and `connections/wallets/.gitkeep` placeholders, never a YAML. A `connections/SAMPLE.yaml` in an ADT.ai checkout is a local, hand-maintained reference copy, not something you receive: bootstrap your first connection file with `connection -create`, which writes the whole structure for you.
 
 ```bash
 adtai connection -create -env DEV -schema APP -user APP \
@@ -99,7 +99,7 @@ The environment must not already exist. From scratch it builds a `db` block (`-h
 adtai connection -add-env -env QA -host db.example.com -service QADB -go
 ```
 
-With `-like`, the new environment clones the source environment's `db` and `wallet` blocks (with any passwords stripped), then applies any `-host` / `-port` / `-service` overrides. The cloned environment starts with no schemas — add them with `-add-schema`.
+With `-like`, the new environment clones the source environment's `db` and `wallet` blocks (with any passwords stripped), then applies any `-host` / `-port` / `-service` overrides. The cloned environment starts with no schemas, add them with `-add-schema`.
 
 ```bash
 adtai connection -add-env -env QA -like DEV -go
@@ -107,7 +107,7 @@ adtai connection -add-env -env QA -like DEV -go
 
 ## Arguments
 
-Exactly one action flag — `-create`, `-add-env`, `-add-schema`, `-set-pwd`, or `-set-wallet-pwd` — is required; each names the further arguments it needs.
+Exactly one action flag, `-create`, `-add-env`, `-add-schema`, `-set-pwd`, or `-set-wallet-pwd`, is required; each names the further arguments it needs.
 
 | Argument | Repeatable | Default | Notes |
 | -------- | ---------- | ------- | ----- |
@@ -128,7 +128,7 @@ Exactly one action flag — `-create`, `-add-env`, `-add-schema`, `-set-pwd`, or
 | `-workspace`, `--workspace` | No | none | With `-create`, set schema APEX workspace. |
 | `-app`, `--app` | No | none | With `-create`, set schema APEX app scope. |
 | `-prefix`, `--prefix` | No | none | With `-create`, set schema export prefix filter. |
-| `-ignore`, `--ignore` | No | none | With `-create`, set schema export ignore filter — the SQL LIKE patterns `export_db` / `export_data` skip (`TMP_%,BIN$%`). Fills a blank or missing entry; never overwrites one that already holds a value. |
+| `-ignore`, `--ignore` | No | none | With `-create`, set schema export ignore filter, the SQL LIKE patterns `export_db` / `export_data` skip (`TMP_%,BIN$%`). Fills a blank or missing entry; never overwrites one that already holds a value. |
 | `-default`, `--default` | No | off | With `-create`, mark the schema as the default database or APEX schema. |
 | `-encrypt`, `--encrypt` | No | off | With password-writing actions, encrypt the stored value using `-key` or `ADT_KEY`. |
 | `-key`, `--key` | No | `ADT_KEY` | Encryption key value or path to a key file. |
@@ -143,14 +143,14 @@ Exactly one action flag — `-create`, `-add-env`, `-add-schema`, `-set-pwd`, or
 
 Every SQLcl script ADT generates (including REST export in `export_apex -rest`) connects through a **named SQLcl connection** instead of embedding the username, password, and wallet path in the script. The password lives in SQLcl's own connection store (OS secure storage via `connect -save … -savepwd`), so per-call scripts carry `connect -name ADT_…` and nothing else.
 
-- **Naming.** `ADT_` + the connection-file basename — `ADT_CORE23` for `connections/CORE23.yaml`. When the file defines more than one environment the name gains `_<ENV>`, and when that environment defines more than one schema it gains `_<SCHEMA>` (e.g. `ADT_TEAMDB_DEV_DA` for `connections/TEAMDB.yaml` with several environments and schemas), so every environment/schema pair maps to its own name. A project using the generic `connections.yaml` filename is named after its project folder instead.
-- **Transparency.** The first SQLcl call registers the connection and records the assigned name on the schema's `db:` block in the connection YAML (`sqlcl:`), together with a credential fingerprint (`sqlcl_sync:`). Edit `sqlcl:` by hand to pin a different name — a recorded name always wins over generation.
-- **A failed connect is an error, not an empty result.** Every generated `connect` runs under `WHENEVER SQLERROR EXIT FAILURE`, so a connection that could not be opened fails the command with the SQLcl/Oracle message rather than letting the script run on to its `exit;` and return `0`. That guard is also what makes the two recorded keys trustworthy: `sqlcl:` and `sqlcl_sync:` are written **only after the run that carried the registration actually succeeded**. If you see the export fail and the two keys stay absent, that is the intended behaviour — deleting them by hand and re-running is not a fix for a credential or network problem, it just re-attempts the registration.
+- **Naming.** `ADT_` + the connection-file basename, `ADT_CORE23` for `connections/CORE23.yaml`. When the file defines more than one environment the name gains `_<ENV>`, and when that environment defines more than one schema it gains `_<SCHEMA>` (e.g. `ADT_TEAMDB_DEV_DA` for `connections/TEAMDB.yaml` with several environments and schemas), so every environment/schema pair maps to its own name. A project using the generic `connections.yaml` filename is named after its project folder instead.
+- **Transparency.** The first SQLcl call registers the connection and records the assigned name on the schema's `db:` block in the connection YAML (`sqlcl:`), together with a credential fingerprint (`sqlcl_sync:`). Edit `sqlcl:` by hand to pin a different name, a recorded name always wins over generation.
+- **A failed connect is an error, not an empty result.** Every generated `connect` runs under `WHENEVER SQLERROR EXIT FAILURE`, so a connection that could not be opened fails the command with the SQLcl/Oracle message rather than letting the script run on to its `exit;` and return `0`. That guard is also what makes the two recorded keys trustworthy: `sqlcl:` and `sqlcl_sync:` are written **only after the run that carried the registration actually succeeded**. If you see the export fail and the two keys stay absent, that is the intended behaviour, deleting them by hand and re-running is not a fix for a credential or network problem, it just re-attempts the registration.
 - **Credential changes.** On every SQLcl call ADT recomputes the fingerprint over the username, password, host/service, wallet path, and wallet password. Any change (e.g. after `-set-pwd`) re-registers the named connection automatically on the next call.
 - **Machine moves.** The YAML travels with the project; SQLcl's store does not. When the store has no such name (new machine, cleared `~/.dbtools`), the call fails fast and ADT re-registers and retries automatically.
 - **Wallets.** Registration passes `-cloudconfig` with an absolute wallet path, so OCI wallet projects need nothing extra.
 - **Opt-out.** Set `sqlcl_named_connections: false` in project `config.yaml` to restore the old inline `connect user/"pwd"@service` scripts.
-- **Driver.** SQLcl is always launched on the JDBC **thin** driver: ADT starts it with `ORACLE_HOME` withheld from its environment, because SQLcl's launcher otherwise reads that variable as "use the OCI thick driver" and builds a `jdbc:oracle:oci8:` URL the JVM cannot satisfy on macOS (`no ocijdbc23 in java.library.path`, whatever the Instant Client version). Nothing else changes — `PATH` still finds the launcher, `TNS_ADMIN` still resolves aliases, wallet connects are unaffected — and ADT's own python-oracledb connection keeps thick mode, since only the SQLcl child is started without the variable.
+- **Driver.** SQLcl is always launched on the JDBC **thin** driver: ADT starts it with `ORACLE_HOME` withheld from its environment, because SQLcl's launcher otherwise reads that variable as "use the OCI thick driver" and builds a `jdbc:oracle:oci8:` URL the JVM cannot satisfy on macOS (`no ocijdbc23 in java.library.path`, whatever the Instant Client version). Nothing else changes, `PATH` still finds the launcher, `TNS_ADMIN` still resolves aliases, wallet connects are unaffected, and ADT's own python-oracledb connection keeps thick mode, since only the SQLcl child is started without the variable.
 
 ---
 

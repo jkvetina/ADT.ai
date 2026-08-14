@@ -134,7 +134,7 @@ def _flatten_compile_setting_groups(groups: list[list[str]] | None) -> list[str]
     ``-scope IDENTIFIERS STATEMENTS``, ``-scope IDENTIFIERS,STATEMENTS``,
     ``-scope IDENTIFIERS+STATEMENTS``, and a repeated ``-scope`` all yield the same
     list. Unlike ``-name``/``-type`` these are keyword tokens (case-insensitive
-    vocabulary), so ``+`` — invalid in an Oracle identifier — is a safe extra
+    vocabulary), so ``+`` (invalid in an Oracle identifier) is a safe extra
     separator and case is normalised.
     """
     if not groups:
@@ -206,8 +206,8 @@ def _apex_explicit_actions(args: argparse.Namespace) -> frozenset[str]:
     `_apex_actions` folds `-all` and the individual flags into one
     `dict[str, bool]`, which is the right shape for "export this" but loses
     *why* a format is selected. Some output is owed only to a format the user
-    asked for by name — the APEXlang pre-26.1 skip row is a notice about
-    something `-all` never requested (ADT #235) — so the distinction is carried
+    asked for by name, the APEXlang pre-26.1 skip row is a notice about
+    something `-all` never requested (ADT #235), so the distinction is carried
     rather than re-derived downstream. Empty under `-all`, by construction.
     """
     if getattr(args, "all_formats", False):

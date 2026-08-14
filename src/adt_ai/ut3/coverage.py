@@ -3,16 +3,16 @@
 Split from ``runner.py`` when the naming configuration pushed that module past
 the repo's 20 KB per-file context budget, along the seam the ``queries/`` folder
 already uses: ``suites`` is discovering and executing, ``coverage`` is measuring.
-The runner still owns the session — ``coverage_start`` and ``coverage_stop`` are
-its ``try``/``finally``, because instrumentation lives on the connection — and
+The runner still owns the session, ``coverage_start`` and ``coverage_stop`` are
+its ``try``/``finally``, because instrumentation lives on the connection, and
 calls in here once the suites have finished.
 
 **Coverage is run-scoped** since card `#291` (Jan's call): the report holds one
 record per package a discovered suite tests, and nothing else. Until then it
 listed every package in the schema, so that the removed ``NO CODE COVERAGE:``
 table could be a work list of untested code. With the figure folded into the
-run's own two tables there is no row for an untested package to sit on — every
-row of `SUMMARY:` and `MODULES:` is a suite that ran — so listing the rest of
+run's own two tables there is no row for an untested package to sit on, every
+row of `SUMMARY:` and `MODULES:` is a suite that ran, so listing the rest of
 the schema would fetch rows nothing can render.
 """
 
@@ -33,7 +33,7 @@ def build_coverage_report(
     """What the run measured about the packages its suites test.
 
     ``owner`` is the schema under test, never ``ut_owner``. Coverage measures the
-    code, and which schema holds the tests is a different question — reading the
+    code, and which schema holds the tests is a different question, reading the
     test schema here would report the coverage of the test packages.
 
     The selection is the run's own ``ut_match`` pairings, so ``-name`` needs no
@@ -42,7 +42,7 @@ def build_coverage_report(
     The dictionary listing leads and the coverage rows are joined onto it, never
     the other way round. Coverage data only describes packages something
     executed, so a coverage-first build would silently drop a target no test
-    reached — and a target that was supposed to be reached and was not is exactly
+    reached, and a target that was supposed to be reached and was not is exactly
     what a `0.0` in the column has to be able to say.
     """
     targets = _targets(packages)
@@ -59,8 +59,8 @@ def build_coverage_report(
 
     listed = []
     # The query excludes the test packages by the same `ut_pattern` that selects
-    # them — a suite whose `ut_match` pairs it to another suite would otherwise
-    # report the coverage of test code — and it does so in SQL, because a
+    # them, a suite whose `ut_match` pairs it to another suite would otherwise
+    # report the coverage of test code, and it does so in SQL, because a
     # schema's whole package list is exactly the fetch that exclusion avoids.
     # Narrowing to the targets themselves happens here rather than in a generated
     # IN-list: the row count is a schema's packages, not its rows, and a bind
@@ -95,7 +95,7 @@ def _targets(packages: tuple[SuitePackage, ...]) -> set[str]:
     earned.
 
     A suite `ut_match` could not pair has an empty target and contributes
-    nothing — the same honest silence its `COVERAGE` cell prints.
+    nothing, the same honest silence its `COVERAGE` cell prints.
     """
     return {
         package.target.upper()

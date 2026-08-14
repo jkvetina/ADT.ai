@@ -3,9 +3,14 @@ from __future__ import annotations
 from adt_ai.cli.constants import DEFAULT_ROW_LIMIT
 from adt_ai.cli.parser_common import add_connection_key_argument
 from adt_ai.shared.recent_state import BARE_RECENT
+from adt_ai.ut3.limits import GATE_FROM_CONFIG
 
 
 def add_database_parsers(subparsers) -> None:
+    # NOT "show debug info" (ADT #326), which was the one -debug row of eleven
+    # that named neither what is shown nor where it comes from. Both this flag
+    # and -verbose above append themselves to the SQLcl DIFF command
+    # (`diff/runner.py:79-82`), so the extra output is SQLcl's, not ADT.ai's.
     recompile = subparsers.add_parser(
         "recompile",
         description="recompile invalid database objects",
@@ -29,17 +34,17 @@ def add_database_parsers(subparsers) -> None:
         "-type",
         action = "append",
         nargs  = "+",
-        help   = "object type pattern(s) to recompile, supports multiple arguments and "
-                 "%% wildcards; Oracle type names, so PACKAGE means specs only "
-                 "(PACKAGE%% for both) and MVIEW/MATERIALIZED mean MATERIALIZED VIEW",
+        help   = "object type pattern(s) to recompile, repeatable, comma- or "
+                 "space-separated, supports %% wildcards; Oracle names, so PACKAGE is "
+                 "specs only",
     )
     recompile.add_argument(
         "--name",
         "-name",
         action = "append",
         nargs  = "+",
-        help   = "object name pattern(s) to recompile, supports multiple arguments and "
-                 "%% wildcards",
+        help   = "object name pattern(s) to recompile, repeatable, comma- or "
+                 "space-separated, supports %% wildcards",
     )
     recompile.add_argument(
         "--schema",
@@ -231,7 +236,7 @@ def add_database_parsers(subparsers) -> None:
         action="append",
         nargs="+",
         help=(
-            "owner schema(s) — repeatable, comma- or space-separated: refresh "
+            "owner schema(s), repeatable, comma- or space-separated: refresh "
             "scope with -refresh, else an offline owner filter for the query"
         ),
     )
@@ -241,9 +246,9 @@ def add_database_parsers(subparsers) -> None:
         action="append",
         nargs="+",
         help=(
-            "APEX application id(s) to refresh (only with -refresh) — repeat or "
-            "space-separate for multiple, or pass a range (MIN-MAX / MIN+) "
-            "resolved against discovered apps"
+            "APEX application id(s), or ranges MIN-MAX / MIN+ resolved against "
+            "discovered apps, to refresh (only with -refresh), repeatable, comma- "
+            "or space-separated"
         ),
     )
     add_connection_key_argument(dependencies)
@@ -311,8 +316,8 @@ def add_database_parsers(subparsers) -> None:
         "-name",
         action = "append",
         nargs  = "+",
-        help   = "name pattern(s), supports multiple arguments and %% wildcards; "
-                 "selects the suites to run, and names itself in the "
+        help   = "name pattern(s), repeatable, comma- or space-separated, supports "
+                 "%% wildcards; selects the suites to run, and names itself in the "
                  "SUMMARY FOR ...: header; no pattern means everything",
     )
     ut3.add_argument(
@@ -331,11 +336,29 @@ def add_database_parsers(subparsers) -> None:
                  "compiled since the last run is found",
     )
     ut3.add_argument(
+        "--gate",
+        "-gate",
+        nargs  = "?",
+        type   = float,
+        const  = GATE_FROM_CONFIG,
+        help   = "fail the run when a tested package's COVERAGE is below a "
+                 "threshold; with a number that number is the threshold, bare it "
+                 "comes from config ut_coverage_gate, absent nothing gates",
+    )
+    ut3.add_argument(
         "--silent",
         "-silent",
         action = "store_true",
-        help   = "suppress the suites roll-up and the per-test results; keep the "
-                 "summary, the errors and failures detail, and command chrome",
+        help   = "suppress the suites roll-up and the progress bar (the per-test "
+                 "results under -verbose); keep the summary, the errors and "
+                 "failures detail, and command chrome",
+    )
+    ut3.add_argument(
+        "--verbose",
+        "-verbose",
+        action = "store_true",
+        help   = "print TEST RESULTS: with a row per test instead of the RUNNING "
+                 "TESTS: progress bar; -silent outranks it",
     )
     ut3.add_argument(
         "--debug",
@@ -354,7 +377,7 @@ def add_database_parsers(subparsers) -> None:
         "-app",
         action = "append",
         nargs  = "+",
-        help   = "application id(s) — repeat or space-separate for multiple",
+        help   = "application id(s), repeatable, comma- or space-separated",
     )
     flow.add_argument(
         "--to",

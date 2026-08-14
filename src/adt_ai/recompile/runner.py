@@ -114,7 +114,7 @@ class RecompileRunner:
         # OBJECTS OVERVIEW, and the lock pass. It rewrites each flagged object in
         # place so the stored source matches what export_db writes, which is what
         # removes the diff noise. There is no preview mode: asking for -trailing is
-        # asking for the strip. The safety is structural, not a second flag — an
+        # asking for the strip. The safety is structural, not a second flag, an
         # object with nothing to strip is never touched (build_trailing_source_ddl
         # returns None), and stripping trailing whitespace cannot change behaviour.
         if request.trailing:
@@ -189,7 +189,7 @@ class RecompileRunner:
                 success  = True,
             )
 
-        # The invalid set as it stood before the first compile — the baseline the
+        # The invalid set as it stood before the first compile, the baseline the
         # VALIDATED column is measured against (#186). Without -force the todo list
         # already *is* that set, so nothing extra is read; -force sweeps valid
         # objects too, so the baseline is read on its own. It runs after the todo
@@ -266,7 +266,7 @@ class RecompileRunner:
     ) -> list[TrailingObject]:
         """Which in-scope views actually carry trailing whitespace (#122).
 
-        The user_source detection query cannot see views — they have no rows there —
+        The user_source detection query cannot see views, they have no rows there,
         and its SQL trailing test cannot run against user_views.text either, because
         that column is a LONG. So the sweep fetches each in-scope view's text and
         the test happens here, in Python, against the same rstrip() rule export_db
@@ -306,7 +306,7 @@ class RecompileRunner:
     ) -> list[TrailingAction]:
         """Rewrite each flagged object's source, one object at a time.
 
-        Strictly per object — fetch this object's source, rewrite this object, move
+        Strictly per object, fetch this object's source, rewrite this object, move
         on. Never fetch every object up front and write them all afterwards: the
         database is live, and a batch pass would happily clobber somebody else's
         change made in the window between the read and the write.
@@ -321,7 +321,7 @@ class RecompileRunner:
             try:
                 ddl = self._build_trailing_ddl(discovery, candidate)
             except Exception as exc:
-                # Rebuilding the DDL can refuse outright — a view whose column list
+                # Rebuilding the DDL can refuse outright, a view whose column list
                 # is not plainly quotable, say. That is one object's problem, so it
                 # is reported and the sweep carries on, exactly as a failed rewrite is.
                 if request.debug:

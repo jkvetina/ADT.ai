@@ -5,8 +5,8 @@ invalid, the trigger and the view that used *that* follow, and ``INVALID OBJECTS
 prints the whole crater as one flat list. Every row looks equally like a place to
 start, and all but a few are knock-ons.
 
-This module separates the two. :func:`analyse` is pure — no gateway, no SQLite, no
-console — so the ranking is unit-testable against fixture rows; :func:`rank_for_run`
+This module separates the two. :func:`analyse` is pure, no gateway, no SQLite, no
+console, so the ranking is unit-testable against fixture rows; :func:`rank_for_run`
 is the thin entry point the runner calls, and owns the two scoped reads that feed
 it. The three signals:
 
@@ -14,7 +14,7 @@ it. The three signals:
   culprit outright (``PLS-00905: object X is invalid``);
 * the **stored source** covers the errors that name nothing (``ORA-00942``), read
   at the error's own line/position;
-* the **dependency graph** (``config/dependencies.db``) connects invalids whose
+* the **dependency graph** (``config/internal/dependencies.db``) connects invalids whose
   error text points at nobody, and is what turns "these are roots" into "check
   this one first".
 
@@ -102,11 +102,11 @@ class RootCauseReport:
 
 
 def is_cascade_message(text: str) -> bool:
-    """Is this error row a cascade — a restatement of a failure reported elsewhere?
+    """Is this error row a cascade, a restatement of a failure reported elsewhere?
 
     Public because the console reporter asks the same question: a row that is not
     worth counting is not worth printing either. It used to keep its own literal
-    set, and the two drifted the moment one changed — `#212` added
+    set, and the two drifted the moment one changed, `#212` added
     `Compilation unit analysis terminated` here and left the reporter's copy
     alone, so the message was discounted from the ranking and printed anyway
     (`#213`). One predicate, both callers.
@@ -263,7 +263,7 @@ def analyse(
     """Split the invalid set into ranked roots and the knock-ons they explain.
 
     ``dependents`` maps an invalid object's ``TYPE.NAME`` node to the invalid
-    objects that depend on it (the caller reads it from ``config/dependencies.db``;
+    objects that depend on it (the caller reads it from ``config/internal/dependencies.db``;
     an absent mirror simply means the ranking runs on error evidence alone).
     ``source_lines`` maps ``(type, name, line)`` to that source line, for the
     errors that name nothing.
@@ -298,7 +298,7 @@ def analyse(
             if matching:
                 cause, culprit = candidate, matching[0][1]
                 break
-        # An error naming an invalid object is an edge the graph may not carry —
+        # An error naming an invalid object is an edge the graph may not carry,
         # a fresh compile failure predates the mirror's last refresh.
         for item_cause, _culprit, upstream in classified:
             if item_cause == "DERIVED" and upstream:

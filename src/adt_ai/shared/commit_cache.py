@@ -53,7 +53,7 @@ def load_history_cache(
     if not path.is_file():
         return {}
     # A hand-edited or truncated cache must degrade to "no cache" (the next
-    # rebuild rewrites it from git), not crash the caller — but never silently:
+    # rebuild rewrites it from git), not crash the caller, but never silently:
     # a partial cache resumed as-is could pin history to the wrong tip.
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}

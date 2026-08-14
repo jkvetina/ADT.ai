@@ -40,8 +40,8 @@ def _require_branches_exist(root: Path, branches: list[str]) -> None:
     names = ", ".join(f"'{b}'" for b in missing)
     label = "branch" if len(missing) == 1 else "branches"
     raise RebuildError(
-        f"{label} {names} not found in this repo "
-        "— run 'adtai rebuild -reveal' to list available branches"
+        f"{label} {names} not found in this repo, "
+        "run 'adtai rebuild -reveal' to list available branches"
     )
 
 def _branch_exists(root: Path, branch: str) -> bool:
@@ -57,7 +57,7 @@ def _build_records(
     branches: list[str],
     reporter: RebuildReporter,
 ) -> dict[str, dict[int, CommitRecord]]:
-    # Phase 1 — cheap counting pass: read commit metadata per branch (git log
+    # Phase 1, cheap counting pass: read commit metadata per branch (git log
     # only, no content hashing). Each branch keeps its own oldest-first commit
     # order; the unique set drives the progress total and dedupes hashing work.
     #
@@ -92,18 +92,18 @@ def _build_records(
 
     total = len(unique_order)
     # One `git rev-list --count` per branch, shared by the header display below
-    # and the absolute-numbering offsets in the assembly loop — computing it at
+    # and the absolute-numbering offsets in the assembly loop, computing it at
     # each use point doubled the subprocess cost per branch.
     branch_counts = {
         branch: _branch_commit_count(request.root, branch) for branch in branches
     }
     # Display total is the FULL branch history (unlimited). With a commit_limit
     # the window holds only the newest N, so len(unique_order) == limit, not the
-    # real branch size — recover the unlimited count for the header. In --update
+    # real branch size, recover the unlimited count for the header. In --update
     # mode that actually resumed from a cache, show both the full branch size and
     # the number of commits missing from the cache. When no branch had a usable
     # cache, update mode is really a full rebuild from scratch (the common first
-    # run, now the default) — show the plain total, like a non-update full run,
+    # run, now the default), show the plain total, like a non-update full run,
     # instead of a confusing "N + N".
     if request.update_only and resumed_any:
         display_total = max(branch_counts.values(), default=total)
@@ -117,7 +117,7 @@ def _build_records(
     header_limit = None if request.update_only else request.commit_limit
     reporter.on_count(display_total, len(branches), header_limit, missing_commits)
 
-    # Phase 2 — expensive pass: hash the changed files once per unique commit,
+    # Phase 2, expensive pass: hash the changed files once per unique commit,
     # reporting per-commit progress as we go. Shared commits are hashed once.
     file_data: dict[str, _CommitFiles] = {}
     for index, commit_hash in enumerate(unique_order, start=1):
@@ -125,7 +125,7 @@ def _build_records(
         file_data[commit_hash] = _commit_files(request, commit_hash)
         reporter.on_commit(index, total)
     if total == 0:
-        # No commits to process (e.g. -update already current) — still close the
+        # No commits to process (e.g. -update already current), still close the
         # progress bar at an instant 100% so the module matches the export style.
         reporter.on_commit(0, 0)
 
@@ -218,7 +218,7 @@ def _resume_point(
     # Returns (records to reuse verbatim, since-commit). For a normal rebuild,
     # or when the branch has no usable cache, returns ({}, None) so the branch
     # rebuilds from scratch. In --update mode it loads the existing cache and
-    # resumes from the highest-numbered (newest) cached commit — unless that
+    # resumes from the highest-numbered (newest) cached commit, unless that
     # commit no longer exists on the branch (rebase / force-push), in which case
     # the stale cache is discarded and the branch is rebuilt in full.
     if not request.update_only:
@@ -241,7 +241,7 @@ def _commit_in_history(root: Path, branch: str, commit: str) -> bool:
 
 def _branch_commit_count(root: Path, branch: str) -> int:
     # Total commits reachable from the branch tip, independent of any window
-    # limit — this is the absolute number of the newest commit.
+    # limit, this is the absolute number of the newest commit.
     return int(run_git(root, ["rev-list", "--count", branch]).strip() or "0")
 
 def _commit_lines(

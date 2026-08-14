@@ -1,10 +1,10 @@
 """What the export formats are called, and how one action is run and timed.
 
 Split out of `runner.py` (ADT #233), which crossed the 20 KB per-file context
-budget — the same split `recompile/results.py` already made for that cap, rather
+budget, the same split `recompile/results.py` already made for that cap, rather
 than taking an exception. `runner.py` keeps the orchestration: which schemas,
 which applications, which slices in which order. This module owns the two things
-that orchestration reaches for but does not decide — the format catalogue (with
+that orchestration reaches for but does not decide, the format catalogue (with
 the APEX-release gates that rule a format in or out) and the reporter/timer
 wrapper every action goes through.
 """
@@ -40,7 +40,7 @@ ACTION_HEADERS = {
     "files_ws": "  WORKSPACE FILES",
 }
 
-# `-rest` and `-files_ws` write workspace artifacts — paths carrying no app id —
+# `-rest` and `-files_ws` write workspace artifacts, paths carrying no app id,
 # so they belong to the schema and run exactly once however many applications it
 # has. `#190` established that for `-rest` alone; `-files_ws` kept re-exporting
 # the identical files once per application until ADT #233.
@@ -68,7 +68,7 @@ def print_apexlang_skip_row() -> None:
     """Say why the APEXlang format produced nothing, instead of failing the run.
 
     A pre-26.1 instance has no `APEXLANG` export type. The release the instance
-    is actually on is deliberately not repeated — the connection block a few
+    is actually on is deliberately not repeated, the connection block a few
     lines above already prints it, and the requirement is the only half the
     reader cannot get anywhere else (ADT #232). No dotted leader either: the
     dots exist to carry the eye across to a measured result, and this format

@@ -4,7 +4,7 @@ Split out of ``runner.py``, which had grown past the repo's 20 KB per-file
 context budget (``tests/contracts/test_context_file_size.py``). The seam is a
 real one rather than a size cut: everything here reads the reporter's document
 and knows nothing about gateways, discovery, or coverage, so ``runner`` calls it
-exactly once — from ``_run_suite``, on the rows one ``ut.run`` returned.
+exactly once, from ``_run_suite``, on the rows one ``ut.run`` returned.
 
 The recurring theme is that **the report is utPLSQL's, not a contract**. What it
 calls a test is a description as often as a name, and the order it emits cases in
@@ -77,7 +77,7 @@ def in_declaration_order(
 def unreported(package: SuitePackage, document: str) -> tuple[TestOutcome, ...]:
     """One ERROR outcome per discovered test when the run reported nothing.
 
-    A suite that produced no parsable result did not pass — it did not run. The
+    A suite that produced no parsable result did not pass, it did not run. The
     reporter's raw output rides along as the message, because that is where the
     real cause (an ORA on the producer side, a truncated document) shows up.
     """
@@ -119,8 +119,8 @@ def _known_test_name(package: SuitePackage, reported: str) -> str:
     """Resolve whatever the reporter called a test back to its procedure name.
 
     **A JUnit `testcase name` is not an identifier.** utPLSQL puts the `%test`
-    *description* there whenever the annotation carries one — `%test(fails on
-    purpose)` reports as `fails on purpose` — and falls back to the procedure
+    *description* there whenever the annotation carries one, `%test(fails on
+    purpose)` reports as `fails on purpose`, and falls back to the procedure
     name only for an undescribed test. Printing the reported value verbatim
     therefore prints prose in a column of identifiers, and prose that cannot be
     grepped for in the package source, which is the one thing a reader does

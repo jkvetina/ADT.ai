@@ -14,7 +14,7 @@ from decimal import ROUND_HALF_UP, Decimal
 # Skip reasons, in the order they are checked. **Neither reaches the console.**
 # A `_UT` package that did not compile and a `_UT` package utPLSQL never parsed
 # are both "not a runnable suite", and Jan's standing instruction is that `ut3`
-# ignores those completely — no table row, no problem stanza, no effect on the
+# ignores those completely, no table row, no problem stanza, no effect on the
 # verdict. They stay named rather than collapsing to a bare `runnable` flag
 # because `-debug` and any future diagnostic still needs to say which it was.
 SKIP_INVALID = "INVALID"
@@ -49,7 +49,7 @@ class SuitePackage:
 
     ``target`` and ``module`` are ``ut_match``'s and ``ut_module``'s first
     capture groups, both extracted by Oracle in the discovery query rather than
-    re-derived here — one regex engine, evaluating each expression once, against
+    re-derived here, one regex engine, evaluating each expression once, against
     the row it also selected.
 
     Either can be empty: an expression that does not parse this name yields
@@ -86,14 +86,14 @@ class TestOutcome:
 
 @dataclass(frozen=True)
 class SuiteTiming:
-    """How long one suite took, in seconds — the `SUMMARY:` `TIMER` column.
+    """How long one suite took, in seconds, the `SUMMARY:` `TIMER` column.
 
     **Wall clock around the `ut.run` call, not the sum of the reporter's own
     per-test `time` attributes.** The question the column answers is which suite
     makes a run slow, and what makes a suite slow is as often its `%beforeall`,
     its teardown and the round trip as the assertions themselves. Adding up
     `TestOutcome.seconds` would leave all of that out, so the column would not
-    account for the run the reader just sat through — and a timing column that
+    account for the run the reader just sat through, and a timing column that
     does not add up is worse than none.
     """
 
@@ -105,8 +105,8 @@ class SuiteTiming:
 class PackageCoverage:
     """One package under test, with what the run measured about it.
 
-    There is one of these per package a discovered suite **tests** — resolved
-    through ``ut_match`` — and none for anything else in the schema. Coverage is
+    There is one of these per package a discovered suite **tests**, resolved
+    through ``ut_match``, and none for anything else in the schema. Coverage is
     run-scoped since card `#291`: the figure describes the code this run
     exercised, not the schema it ran in.
 
@@ -115,7 +115,7 @@ class PackageCoverage:
     by: a measured 40-line package and an unmeasured 4000-line one do not
     contribute equally to the module row above them.
 
-    ``blocks_total`` already excludes ``not_feasible`` blocks — the exclusion
+    ``blocks_total`` already excludes ``not_feasible`` blocks, the exclusion
     happens in SQL, so every consumer of this record sees the same denominator.
     """
 
@@ -129,7 +129,7 @@ class PackageCoverage:
         """Did Oracle actually collect anything for this package?
 
         A package with no blocks was either never entered or could not be
-        instrumented — natively compiled code carries no instrumentation at all.
+        instrumented, natively compiled code carries no instrumentation at all.
         Both are an absent measurement, and an absent measurement renders blank.
         """
         return self.blocks_total > 0
@@ -150,7 +150,7 @@ class CoverageReport:
 
     There is no ``covered``/``uncovered`` split any more: the two tables that
     split on it went with `-coverage` (card `#291`), and a run-scoped report has
-    nothing to split — every package in it is one a suite tests.
+    nothing to split, every package in it is one a suite tests.
 
     An empty report is the honest state for a run that measured nothing, and it
     renders as blank `COVERAGE` cells rather than as a missing column.
@@ -175,7 +175,7 @@ class CoverageReport:
 
 
 def coverage_percent(packages: tuple[PackageCoverage, ...] | list[PackageCoverage]) -> float | None:
-    """How much of a set of packages is covered — the whole set, not its measured part.
+    """How much of a set of packages is covered, the whole set, not its measured part.
 
     Shared by every `MODULES:` group row and by the total under them, so a group
     and the total can never be two calculations that drift apart.
@@ -189,7 +189,7 @@ def coverage_percent(packages: tuple[PackageCoverage, ...] | list[PackageCoverag
     where `ICT_COM_INVOICE` is 224 well-tested lines and the group's other 1415
     lines had never executed (card `#250`).
 
-    So the pooled block figure is scaled by **reach** — the share of the set's
+    So the pooled block figure is scaled by **reach**, the share of the set's
     body lines Oracle measured at all. `LINES` is the only size every package
     has. A set every package of which was measured has reach 1 and is unchanged,
     so this can only ever move a figure that was over-claiming.
@@ -203,7 +203,7 @@ def coverage_percent(packages: tuple[PackageCoverage, ...] | list[PackageCoverag
       with genuinely nothing to be a percentage of.
 
     The measured set is everything Oracle collected blocks for, including a
-    package it measured at a real zero — a package instrumented and never
+    package it measured at a real zero, a package instrumented and never
     entered belongs on both sides of the fraction, not dropped from it.
     """
     measured = [package for package in packages if package.measured]
@@ -240,8 +240,8 @@ def _reach_percent(covered: int, total: int, lines_measured: int, lines_total: i
 def _percent(covered: int, total: int) -> float:
     """Half rounds up, not to even, and the ratio never touches a binary float.
 
-    `round()` would report 17 of 32 blocks as 53.12% where Oracle's own ROUND —
-    and the reader checking the division by hand — says 53.13, and an exact half
+    `round()` would report 17 of 32 blocks as 53.12% where Oracle's own ROUND,
+    and the reader checking the division by hand, says 53.13, and an exact half
     is precisely where someone bothers to check.
     """
     ratio = Decimal(covered) * 100 / Decimal(total)

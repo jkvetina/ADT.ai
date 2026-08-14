@@ -1,17 +1,17 @@
 """The configured naming convention: what is a test package, and what does it test.
 
-`ut3` used to hardcode `_UT` in five places — a SQL ``LIKE '%\\_UT'`` in four
-queries and a string slice in the runner — so a project whose test packages are
+`ut3` used to hardcode `_UT` in five places, a SQL ``LIKE '%\\_UT'`` in four
+queries and a string slice in the runner, so a project whose test packages are
 named anything else, or live in a schema of their own, simply could not use the
 command. Four config values replace all five:
 
-* ``ut_pattern`` — which packages are test packages (``'_UT$'``);
-* ``ut_match``   — capture group 1 pairs a test package back to the package it
+* ``ut_pattern``, which packages are test packages (``'_UT$'``);
+* ``ut_match``  , capture group 1 pairs a test package back to the package it
   tests (``'^(.+)_UT$'``), which is what the coverage report's verdict columns
   are built on;
-* ``ut_owner``   — the schema holding them; **the only one that defaults empty**,
+* ``ut_owner``  , the schema holding them; **the only one that defaults empty**,
   meaning the schema being tested;
-* ``ut_module``  — capture group 1 is the module a **suite** belongs to
+* ``ut_module`` , capture group 1 is the module a **suite** belongs to
   (``'^[^_]+_([^_]+)'``), which drives the ``MODULES:`` roll-up. It must not be
   anchored to anything that has to follow the module token, since a module whose
   whole implementation is one package (``ICT_VPD_UT``) ends there.
@@ -20,7 +20,7 @@ command. Four config values replace all five:
 Oracle.** ``REGEXP_LIKE`` selects the test packages inside the dictionary query,
 exactly where the old ``LIKE`` sat, and ``REGEXP_SUBSTR`` extracts the two
 capture groups in the same pass. Nothing is fetched to be discarded and no
-second regex engine is involved — a schema holds thousands of packages and a
+second regex engine is involved, a schema holds thousands of packages and a
 handful of suites, so filtering after the round trip would spend the round trip
 on rows nobody wants, on a command whose runtime already matters.
 
@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from typing import Any
 
 # The convention `ut3` shipped with, now expressed as configuration rather than
-# as a SQL literal — and shipped as real values, not blanks. Only `ut_owner`
+# as a SQL literal, and shipped as real values, not blanks. Only `ut_owner`
 # defaults empty, because "the schema being tested" is the only one of the four
 # that has a sensible absent state.
 DEFAULT_UT_PATTERN = "_UT$"
@@ -47,13 +47,13 @@ DEFAULT_UT_MATCH = "^(.+)_UT$"
 # three-token suite like `ICT_INT_UT` was unparseable and grouped blank despite
 # having run. Card `#247` dropped the anchor so the expression could also read a
 # package under test's own name, for the coverage roll-up that grouped the whole
-# schema; card `#291` removed that roll-up, and only suites are grouped now — but
+# schema; card `#291` removed that roll-up, and only suites are grouped now, but
 # the anchor stays off, because the suite half of the argument stands on its own.
 #
 # **It does not require a trailing `_` either** (card `#248`). Prefix plus module
 # and nothing after it is a real name: `ICT_VPD` is a module whose whole
-# implementation is one package, and demanding a third token put it — and only it
-# — in the unattributed group, immediately above the unnamed total row, where the
+# implementation is one package, and demanding a third token put it, and only it
+#, in the unattributed group, immediately above the unnamed total row, where the
 # two cannot be told apart. Measured by Jan on `ICT_OWNER@ORCLPDB1`: one package
 # of 58. The anchor never bounded anything the capture group did not already
 # bound, since `[^_]+` stops at the next underscore whether or not one is
@@ -62,7 +62,7 @@ DEFAULT_UT_MODULE = "^[^_]+_([^_]+)"
 
 # Every expression is matched case-insensitively. Oracle stores identifiers
 # upper case and a config file is hand-written, so a lower-case value that
-# selected nothing would present as an empty green run — the one failure mode
+# selected nothing would present as an empty green run, the one failure mode
 # this whole module exists to make loud.
 MATCH_PARAMETERS = "i"
 
@@ -87,7 +87,7 @@ class UtNaming:
             owner   = _text(config.get("ut_owner"), "").upper(),
             # The one value a project may legitimately blank: a project with no
             # module convention should not be shown a column of empty groups.
-            # Absent still means the default — only an explicit `ut_module: ''`
+            # Absent still means the default, only an explicit `ut_module: ''`
             # turns the roll-ups off.
             module  = _blankable(config.get("ut_module"), DEFAULT_UT_MODULE),
         )
@@ -103,7 +103,7 @@ class UtNaming:
 
     @property
     def module_bind(self) -> str | None:
-        """``ut_module`` as Oracle sees it — ``None`` when the roll-ups are off.
+        """``ut_module`` as Oracle sees it, ``None`` when the roll-ups are off.
 
         ``REGEXP_SUBSTR(name, NULL, ...)`` is NULL, so an unconfigured module
         column comes back empty without the query needing a second shape.

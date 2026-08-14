@@ -269,7 +269,7 @@ END;
 # names already arrive relative (`application.apx`, `pages/pNNNNN-<alias>.apx`)
 # with no `f<id>/` root prefix, and `p_split` does not change that. Static-file
 # payloads come back as `contents_blob` members under
-# `shared-components/static-files/` — including text ones such as `app.css`
+# `shared-components/static-files/`, including text ones such as `app.css`
 # (verified live on APEX 26.1.0, apps 800 and 808, 2026-07-27). They are dropped
 # here so `-files` stays the single static-file channel and the collection
 # round-trip stays CLOB-only; `shared-components/static-files.apx`, the text

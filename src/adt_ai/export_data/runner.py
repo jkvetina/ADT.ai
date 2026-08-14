@@ -218,7 +218,7 @@ def _write_sidecar_values(
         if isinstance(payload, bytes):
             file_path.write_bytes(payload)
         else:
-            # Raw LOB payload — byte-faithful: newline="" blocks the platform
+            # Raw LOB payload, byte-faithful: newline="" blocks the platform
             # translation so the sidecar mirrors the stored value exactly,
             # independent of the file_crlf setting.
             with file_path.open("w", encoding="utf-8", newline="") as handle:

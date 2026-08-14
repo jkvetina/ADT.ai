@@ -29,8 +29,8 @@ class ObjectOverview:
     missing_plscope_identifiers: int = 0
     missing_plscope_statements: int = 0
     # how many objects of this type were invalid before the run and are not any
-    # more (#186). The catalog cannot answer this — it only ever knows the state
-    # it is asked about — so the runner fills it in from the before/after invalid
+    # more (#186). The catalog cannot answer this, it only ever knows the state
+    # it is asked about, so the runner fills it in from the before/after invalid
     # sets and `overview()` always returns 0. Last field so every positional
     # construction of the catalog-sourced shape keeps working.
     validated: int = 0
@@ -66,7 +66,7 @@ class MaterializedView:
     # ROUND(86400 * (last_refresh_end_time - last_refresh_date)).
     last_timer: int | None
     # the MV's *configured* refresh method (FAST/COMPLETE/FORCE/NEVER), carried
-    # whole — stable across the tool's own refresh, unlike last_refresh_type. The
+    # whole, stable across the tool's own refresh, unlike last_refresh_type. The
     # report resolves it to F/C; the runner maps it to a DBMS_MVIEW.REFRESH code.
     refresh_method: str | None
     # whether a usable MV log backs a FAST/FORCE refresh (the LOG column, and what
@@ -108,7 +108,7 @@ class TrailingView:
     """One in-scope view and its stored defining text (#122).
 
     Carries the text because, unlike the user_source path, the trailing-whitespace
-    test cannot run in SQL against a LONG — so the text comes back with the row and
+    test cannot run in SQL against a LONG, so the text comes back with the row and
     the check happens in Python. Clean views arrive here too and are filtered out
     downstream.
     """
@@ -233,7 +233,7 @@ class RecompileDiscovery:
     def objects_missing_plscope(self) -> list[RecompileObject]:
         """VALID PL/SQL objects whose PL/Scope settings are not fully ALL.
 
-        Whole-schema scan with no binds — the dependencies refresh recompiles
+        Whole-schema scan with no binds, the dependencies refresh recompiles
         each returned object with ``scope=["ALL"]`` before pulling the
         identifier / statement mirror tables. Reuses the recompile module's
         catalog read; does not touch ``RecompileRunner`` or open a connection.
@@ -326,7 +326,7 @@ class RecompileDiscovery:
         prefix: str = "",
         ignore: str = "",
     ) -> list[MaterializedView]:
-        # The MV query binds only name/prefix/ignore — object_type is irrelevant
+        # The MV query binds only name/prefix/ignore, object_type is irrelevant
         # because -mviews opts materialized views in explicitly.
         binds = {
             "object_name"    : object_name,
@@ -355,7 +355,7 @@ class RecompileDiscovery:
         prefix: str = "",
         ignore: str = "",
     ) -> list[SynonymInfo]:
-        # Like the MV report, the synonyms report binds only name/prefix/ignore —
+        # Like the MV report, the synonyms report binds only name/prefix/ignore,
         # object_type is irrelevant because -synonyms opts synonyms in explicitly.
         binds = {
             "object_name"    : object_name,
@@ -439,7 +439,7 @@ class RecompileDiscovery:
     ) -> list[TrailingView]:
         """In-scope views with their stored defining text (#122).
 
-        Returns every in-scope view, clean or not — user_views.text is a LONG, so
+        Returns every in-scope view, clean or not, user_views.text is a LONG, so
         SQL cannot do the trailing-whitespace test the user_source query does. The
         caller decides what actually needs rewriting via build_trailing_view_ddl.
         """

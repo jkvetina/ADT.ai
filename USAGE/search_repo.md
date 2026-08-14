@@ -32,6 +32,7 @@ Filter by author, branch, commit refs, hash prefixes, and dates. Different flags
 ```bash
 adtai search_repo -by bob@example.com
 adtai search_repo -branch feature/search -commit 120+
+adtai search_repo -commit 12-40
 adtai search_repo -hash abc1234 def5678
 adtai search_repo -since 2026-06-01 -until 2026-06-10
 adtai search_repo -since 7 -until 1
@@ -66,7 +67,7 @@ When `-stage` matches more than one version for the same file, the newest matchi
 | `-name`, `--name` | Yes | none | Object name text derived from the filename stem. Accepts multiple arguments, like `-type`. |
 | `-by`, `--by` | Yes | none | Author email/name substring; repeatable. |
 | `-my`, `--my` | No | off | Keep commits whose author email equals `git config user.email`. |
-| `-commit`, `-commits`, `--commit`, `--commits` | Yes | none | Commit number/hash refs; supports `N+` for commit number N and newer. Multiple refs inside this flag are OR-matched. |
+| `-commit`, `-commits`, `--commit`, `--commits` | Yes | none | Commit number/hash refs. `N` is that commit, `N+` is that commit and everything newer, `N-M` is the inclusive span. A range needs digits on both sides, so a hash prefix is never read as one. Multiple refs inside this flag are OR-matched. |
 | `-hash`, `--hash` | Yes | none | Commit hash prefixes. Multiple hashes are OR-matched. If combined with `-commit`, both filters must match. |
 | `-recent [DAYS]`, `--recent [DAYS]` | No | none | Keep commits newer than today minus DAYS. Bare `-recent` means 1 day. |
 | `-since`, `--since` | No | none | Oldest commit date, `YYYY-MM-DD`, or number of days back. |

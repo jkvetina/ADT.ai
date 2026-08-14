@@ -143,7 +143,7 @@ def _append_job_arguments(
     replacement = f"    --\n{argument_lines}\n    --\n    DBMS_SCHEDULER.SET_ATTRIBUTE"
     if marker not in content:
         # The job HAS arguments but the DDL didn't render the expected
-        # SET_ATTRIBUTE block to anchor them — dropping them silently would
+        # SET_ATTRIBUTE block to anchor them, dropping them silently would
         # export a job that deploys without its arguments.
         label = f" for job {object_name}" if object_name else ""
         print(

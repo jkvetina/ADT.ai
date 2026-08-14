@@ -42,7 +42,7 @@ def render_result(
 
 
 def query_label(index: int, sql: str) -> str:
-    """Return the display label for a query — leading ``-- comment`` or ``Query N``."""
+    """Return the display label for a query, leading ``-- comment`` or ``Query N``."""
     for line in sql.splitlines():
         stripped = line.strip()
         if not stripped:

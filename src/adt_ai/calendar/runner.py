@@ -71,14 +71,14 @@ class CalendarRunner:
 
         month = request.month or _offset_month(date.today(), request.offset)
         prefix = (request.jira_prefix or "").strip() or None
-        # Default author is the configured git user — "my commits" is the baseline,
+        # Default author is the configured git user, "my commits" is the baseline,
         # so the calendar shows your own activity unless `-by` overrides it.
         terms = [t for t in (request.authors or [git_user_email(root)]) if t]
 
         # Source commits from the rebuild module's commit cache instead of walking
         # every branch live. Only the default branch and the prefix-named branches
         # are worth caching, so scope the (re)build to those, top the cache up, and
-        # read commit metadata back out of it — the same data, far less git work.
+        # read commit metadata back out of it, the same data, far less git work.
         selected = _select_branches(refs, default_short, prefix)
         _ensure_cache(root, selected, request.cache_file_template)
         commits = _commits_from_cache(
@@ -140,7 +140,7 @@ def _select_branches(
     """The branches the calendar caches and reads from.
 
     Always the default branch; every branch when no prefix is configured; and
-    only the prefix-named branches once a prefix is set — honoring "pull branches
+    only the prefix-named branches once a prefix is set, honoring "pull branches
     matching jira_prefix and store them there" without caching dead branches.
     """
     return [
@@ -300,7 +300,7 @@ def _calendar_date(value: str) -> date:
         return result
     # Weekend commits fold into the preceding Friday so they land on a weekday
     # column. At a month start (Sat the 1st, Sun the 1st/2nd) that Friday is in
-    # the previous month and the commit would vanish from the requested grid —
+    # the previous month and the commit would vanish from the requested grid,
     # fold forward to Monday instead, which stays inside the month.
     friday = result - timedelta(days=result.weekday() - 4)
     if friday.month == result.month:

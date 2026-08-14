@@ -2,7 +2,7 @@
 
 The report row formatting and the streaming materialized-view console reporter
 live here so a single source of truth feeds both the batch render
-(``print_adt_table``) and the live streamed render — they cannot drift. Mirrors
+(``print_adt_table``) and the live streamed render, they cannot drift. Mirrors
 the ``discovery/render.py`` split.
 """
 
@@ -138,7 +138,7 @@ class _TrailingRowFormatter:
 
     Same shape export_db uses for the objects it acts on
     (``export_db/render.py::export_object``): the type cell prints only when it
-    changes, so a run of one type reads as a group. Stateful by design — it has to
+    changes, so a run of one type reads as a group. Stateful by design, it has to
     remember the previous type. The streamed reporter and the batch fallback each
     drive one of these, so the two renders cannot drift.
     """
@@ -156,7 +156,7 @@ class _TrailingRowFormatter:
 
 
 def _print_trailing_updated_header(total: int) -> None:
-    # Same shape as export_db's EXPORTING <n> OBJECTS: (ADT #237) — the count
+    # Same shape as export_db's EXPORTING <n> OBJECTS: (ADT #237), the count
     # belongs in the phrase, not parked after the colon.
     print_adt_header(f"UPDATED {total} OBJECTS:")
 
@@ -295,8 +295,8 @@ class _ConsoleMViewReporter(RecompileReporter):
     header; ``begin_mview`` prints just the OBJECT_NAME cell (no newline) so the
     refresh visibly runs against that view; ``end_mview`` completes the same line
     with the re-read STATUS / TYPE / LOG / date / TIMER. The pre-action widths are a
-    safe upper bound — OBJECT_NAME is stable, STATUS only shrinks (STALE→FRESH),
-    LAST_REFRESHED_AT is header-dominated, and TIMER is the final column — so the
+    safe upper bound, OBJECT_NAME is stable, STATUS only shrinks (STALE→FRESH),
+    LAST_REFRESHED_AT is header-dominated, and TIMER is the final column, so the
     streamed rows stay byte-aligned with the batch render.
 
     ``streamed`` lets the CLI fall back to the batch render when the runner never

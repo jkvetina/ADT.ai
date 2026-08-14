@@ -241,8 +241,8 @@ class DependencyStore:
     def used_by(self, node: str, owners: Iterable[str] | None = None) -> list[str]:
         """Direct internal objects that depend on ``node``.
 
-        ``owners`` narrows the referenced side (``d.REFERENCED_OWNER``) — the
-        owner of the queried object — to disambiguate same-named objects.
+        ``owners`` narrows the referenced side (``d.REFERENCED_OWNER``), the
+        owner of the queried object, to disambiguate same-named objects.
         Bare names (no ``TYPE.`` prefix) are resolved from ``USER_OBJECTS``.
         """
         type_, name = split_node(node)
@@ -440,7 +440,7 @@ class DependencyStore:
         return _edges.uses_edges(self.connection)
 
     def foreign_key_edges(self) -> dict[str, list[str]]:
-        """Forward FK map (``{TABLE.child: [TABLE.parent…]}``) — see `edges`."""
+        """Forward FK map (``{TABLE.child: [TABLE.parent…]}``), see `edges`."""
         return _edges.foreign_key_edges(self.connection)
 
     # --------------------------------------------------------------- lifecycle

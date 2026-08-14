@@ -9,14 +9,14 @@ The SQLcl half had no such point. ``OracleGateway.sqlcl_request`` composed one
 connect block and ``diff/runner.py`` composed another, and the two had drifted:
 only the first injected ``config/STARTUP.sql``. So ``adtai diff`` opened real
 sessions against source *and* target with no session setup and no
-``DBMS_SESSION.SET_IDENTIFIER`` — the ADT #177 failure, still live, on any
+``DBMS_SESSION.SET_IDENTIFIER``, the ADT #177 failure, still live, on any
 schema whose DDL trigger requires a client identifier.
 
 ``sqlcl_connect`` is that missing point. It owns everything between "here is a
 connection" and "the session is ready for my request": the connect line
 (credentialed, wallet, or by stored name), the re-registration dance when a
 saved credential has gone stale, the shared session settings, and the user's
-``STARTUP.sql``. ``startup_sql`` is a **required** keyword — the ADT #177
+``STARTUP.sql``. ``startup_sql`` is a **required** keyword, the ADT #177
 omission was possible because ``OracleGateway`` defaulted it to ``None``, which
 turned session setup into a per-call-site decision. Here it is a question the
 caller has to answer.
@@ -44,15 +44,28 @@ from adt_ai.shared.sqlcl_names import CONNMGR_DELETE_COMMAND, credential_fingerp
 # STARTUP.sql runs, so a STARTUP.sql keeps whatever feedback level it sets.
 SQLCL_SESSION_SETUP = f"SET FEEDBACK OFF\n{DDL_LOCK_TIMEOUT_STATEMENT};\nSET FEEDBACK ON"
 
+# Substitution is disabled before anything else in the script, the connect line
+# included (ADT #311). That line embeds the password verbatim
+# (``connect USER/"pw"@service``), so a `&` in a credential reads as a
+# substitution variable: SQLcl blocks prompting for a value on a stdin
+# ``run_sqlcl_script`` points at DEVNULL, and the run hangs with no ORA code for
+# ``WHENEVER SQLERROR`` to trap. ``SESSION_DEFAULT_DIRECTIVES`` carries the same
+# directive, but ``#254``/``#283`` put it in the *deploy payload*, a different
+# path, and one that only starts after the session is already open. So every
+# SQLcl-driven command (``export_apex -rest``, ``validate``, ``diff``, and the
+# deploy's own connect) was still exposed. Old ADT prefixed the whole request in
+# ``lib/wrapper.py::sqlcl_request``; contributed as a fix in jkvetina/ADT#3.
+SQLCL_DEFINE_OFF = "SET DEFINE OFF"
+
 # Every connect is guarded, and that is the whole point (ADT #188). SQLcl's
 # default is WHENEVER SQLERROR CONTINUE, so a script whose ``connect`` failed
-# runs on regardless and its trailing ``exit;`` still returns 0 — a dead session
+# runs on regardless and its trailing ``exit;`` still returns 0, a dead session
 # is indistinguishable from an empty result. ``export_apex -rest`` read that as
 # "this schema has no REST services": no files, no message. Worse, on the
 # registering path the gateway then recorded the SQLcl name and credential
 # fingerprint back into the connection YAML for a store entry that had never
 # been created, so the phantom survived every later run. That is the customer
-# report this constant exists for — ``sqlcl``/``sqlcl_sync`` deleted by hand,
+# report this constant exists for, ``sqlcl``/``sqlcl_sync`` deleted by hand,
 # written straight back by the next export, and still no connection.
 #
 # The guard is released again after the session setup, so errors from the user's
@@ -103,7 +116,7 @@ def sqlcl_connect(
     """Build the block that opens ``connection`` in a generated SQLcl script.
 
     ``save_as`` is the alias to register an unnamed connection under for the
-    duration of the script — ``diff`` needs one because SQLcl's ``DIFF`` command
+    duration of the script, ``diff`` needs one because SQLcl's ``DIFF`` command
     addresses its two sides by name. Left ``None``, an unnamed connection is
     opened with a plain credentialed ``connect`` and no cleanup, which is what
     every single-session caller wants.
@@ -128,7 +141,7 @@ def sqlcl_connect(
         )
 
     if not force_register and connection.sqlcl_sync == credential_fingerprint(connection):
-        # Connect by name only — no credentials in the script. A store that lost
+        # Connect by name only, no credentials in the script. A store that lost
         # the entry fails structurally and the caller re-registers.
         return _plan(
             f"connect -name {name}",
@@ -164,10 +177,13 @@ def _plan(
 ) -> SqlclConnect:
     """Assemble one connect block: optional preamble, guarded connect, setup.
 
-    The guard is unconditional — see ``SQLCL_CONNECT_GUARD``. ``pre`` is for
+    The guard is unconditional, see ``SQLCL_CONNECT_GUARD``. ``pre`` is for
     lines that must run *before* it and are allowed to fail.
     """
-    lines = [] if pre is None else [pre]
+    # SQLCL_DEFINE_OFF leads on every path, ahead of ``pre``: the CONNMGR DELETE
+    # that ``pre`` carries is allowed to fail, but the connect behind it is the
+    # line holding the credential.
+    lines = [SQLCL_DEFINE_OFF] if pre is None else [SQLCL_DEFINE_OFF, pre]
     lines += [
         SQLCL_CONNECT_GUARD,
         connect,
@@ -235,7 +251,7 @@ def resolve_wallet_path(wallet_path: str, project_root: Path | None) -> Path:
     root (``config/Wallet_X.zip``). A generated SQLcl ``connect -cloudconfig`` line
     runs from a throwaway script under ``config/temp/`` with ``cwd`` set to the
     export target, so a relative wallet path resolves from neither the script's
-    folder nor the cwd and SQLcl silently finds no wallet — ``export_apex -rest``
+    folder nor the cwd and SQLcl silently finds no wallet, ``export_apex -rest``
     then exports nothing (ADT #147). Anchor a relative path to the project root it
     is defined against, falling back to the process cwd when the root is unknown,
     so the connect line always carries an absolute wallet path. An already-absolute

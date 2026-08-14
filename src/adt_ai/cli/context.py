@@ -242,7 +242,7 @@ def _load_startup_sql(
 
     Two pieces, in this order: the automatic ``DBMS_SESSION.SET_IDENTIFIER``
     block driven by ``config/IDENTITY.yaml`` (``db_schema``) FIRST, then the
-    resolved ``STARTUP.sql`` content — the identifier runs before the startup
+    resolved ``STARTUP.sql`` content, the identifier runs before the startup
     file is processed, so a personal ``STARTUP.sql`` can still override it.
     Either piece may be absent; with neither, resolution stays ``None``.
 
@@ -290,9 +290,9 @@ def _load_startup_file(
     """Return ``STARTUP.sql`` content for the nearest project location.
 
     Resolution is nearest-wins so a project ``config/STARTUP.sql`` overrides a
-    repo-level copy; the repo-level file — the developer's gitignored copy of
-    ``config/STARTUP.sample.sql`` — is the last fallback and may be absent. The
-    first existing file with non-whitespace content wins — there is no
+    repo-level copy; the repo-level file, the developer's gitignored copy of
+    ``config/STARTUP.sample.sql``, is the last fallback and may be absent. The
+    first existing file with non-whitespace content wins, there is no
     concatenation, since session settings must run exactly once per connection.
     An empty (comment-only) file resolves to ``None``, and the committed sample
     itself is never read.
@@ -430,7 +430,7 @@ def _print_completion_timer(
     # Footer spacing is enforced here, in the shared layer, for every command:
     # exactly two empty lines before TIMER (...\n\n\nTIMER). Whatever trailing
     # newlines the previous section left are normalized away, so no module needs
-    # to tune its own blank-line count. Keep this knob-free — a per-call override
+    # to tune its own blank-line count. Keep this knob-free, a per-call override
     # is what let export_apex and update drift apart in the first place.
     elapsed = int(time.monotonic() - started_at + 0.5)
     output = stdout or sys.stdout

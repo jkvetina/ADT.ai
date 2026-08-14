@@ -1,6 +1,6 @@
 """The ut3 module's SQL home.
 
-A re-export shim over the topic modules — ``suites`` holds the discovery reads
+A re-export shim over the topic modules, ``suites`` holds the discovery reads
 (``_UT`` packages from the dictionary, suite/test items from utPLSQL's own
 annotation cache), the annotation-cache rebuild, and the ``ut.run`` call that
 executes a suite; ``coverage`` holds the utPLSQL coverage session and the

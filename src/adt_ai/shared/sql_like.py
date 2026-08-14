@@ -16,7 +16,7 @@ def matches_sql_like(value: str, pattern: str) -> bool:
 def sql_like_to_fnmatch(pattern: str) -> str:
     """Translate a SQL LIKE pattern to fnmatch syntax.
 
-    fnmatch metacharacters (`*?[]`) in the input match literally — the
+    fnmatch metacharacters (`*?[]`) in the input match literally, the
     pattern language is SQL LIKE, not glob. `\\` escapes the next character.
     """
     converted = []

@@ -33,8 +33,8 @@ __all__ = [
     "ADT_AI_GITHUB_LATEST_RELEASE_URL",
 ]
 
-# Doctor stays project-config-free by design — it must diagnose broken setups
-# before any config exists — so its network timeouts are constants, not keys.
+# Doctor stays project-config-free by design, it must diagnose broken setups
+# before any config exists, so its network timeouts are constants, not keys.
 _FETCH_TIMEOUT_SECONDS = 30
 _DOWNLOAD_TIMEOUT_SECONDS = 120
 
@@ -142,7 +142,7 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
 
         if not request.update:
             # Read-only run: the section exists to offer upgrades, so with
-            # nothing stale it is not an empty section — it is no section.
+            # nothing stale it is not an empty section, it is no section.
             action_lines = self._status_action_lines()
             if action_lines:
                 self._begin_actions_section(lines)
@@ -165,7 +165,7 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
         """Open `ACTIONS:` with the blank line that separates it from ENVIRONMENT.
 
         Header and separator move together so a run with nothing to offer leaves
-        neither behind — the shared timer footer then owns the trailing spacing.
+        neither behind, the shared timer footer then owns the trailing spacing.
         """
         self._add(lines, "")
         self._add(lines, "ACTIONS:")

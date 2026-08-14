@@ -6,7 +6,7 @@ tags: [SKILL, DEVOPS]
 ---
 # adt
 
-Operating cheat-sheet for the ADT.ai command line — export Oracle database objects and APEX applications, explore the database safely, query the dependency graph, and search Git history.
+Operating cheat-sheet for the ADT.ai command line, export Oracle database objects and APEX applications, explore the database safely, query the dependency graph, and search Git history.
 
 ## What it is and why you need it
 
@@ -22,7 +22,7 @@ Invoke with `/adt`. Full implementation in [SKILL.md](SKILL.md). Argument refere
 
 ## Related skills
 
-- [`adt-setup`](../adt-setup/) — install ADT.ai, configure connections/wallets, and run `doctor`.
+- [`adt-setup`](../adt-setup/), install ADT.ai, configure connections/wallets, and run `doctor`.
 
 ## Released
 

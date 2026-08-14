@@ -22,7 +22,7 @@ def audit_authors_query(
     ``:authors`` using the same APEX_STRING.SPLIT pattern as the other list binds.
 
     ``changed_at_column`` is the optional 4th ``audit:`` key. Without it a DDL log
-    carries no ordering, so the query can only answer *ever touched* — every object
+    carries no ordering, so the query can only answer *ever touched*, every object
     the author appears on, in any row. With it the query also reports each object's
     **latest** author (``LAST_CHANGED_BY``), which is what lets the caller mark an
     object someone else changed after you, and it accepts the same ``:recent_days``
@@ -46,7 +46,7 @@ WHERE UPPER({changed_by_column}) IN (
 """.strip()
     # The window is applied in the inner query, before the ranking. That is safe
     # rather than distorting: the window is a floor (``>= cutoff``), so no row can
-    # exist after it and be excluded — the last row inside the window is the last
+    # exist after it and be excluded, the last row inside the window is the last
     # row, full stop. The author tiebreak keeps the ranking deterministic when two
     # rows share a timestamp, which a per-second DDL log routinely produces.
     return f"""

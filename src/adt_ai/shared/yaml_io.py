@@ -15,7 +15,7 @@ def load_yaml_mapping(path: Path) -> dict[Any, Any]:
 
     The callers sit behind gitignored caches (recent watermarks, apex timers,
     apps metadata). A corrupt cache costs one warning and a rebuild on the next
-    refresh — never the whole command run.
+    refresh, never the whole command run.
     """
     if not path.is_file():
         return {}

@@ -38,7 +38,7 @@ class ApexWatermarkMixin:
 
         One listing feeds every requested format, so it must reach back as far as
         the least recently exported one. A format with no watermark yet makes the
-        listing unbounded — over-export is harmless, a missed component is not.
+        listing unbounded, over-export is harmless, a missed component is not.
         """
         if not is_bare_recent(request.recent) or request.environment is None:
             return None

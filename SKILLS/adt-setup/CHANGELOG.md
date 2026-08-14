@@ -1,4 +1,4 @@
-# Changelog — adt-setup
+# Changelog, adt-setup
 
 ## Unreleased
 

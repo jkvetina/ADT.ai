@@ -111,7 +111,7 @@ def reject_unresolved_placeholders(
     """Return ``template``, or raise when it still holds an old-ADT `{$NAME}` token.
 
     A path template is turned straight into folder names, so an unresolved token
-    does not fail — it exports into a directory named after the placeholder.
+    does not fail, it exports into a directory named after the placeholder.
     Old ADT ships ``#path_objects : '{$INFO_SCHEMA}/database/'`` as a commented
     example, so this is the copy-paste every migrating project makes; the
     failure has to be loud rather than a real folder called ``{$INFO_SCHEMA}``

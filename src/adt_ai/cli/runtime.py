@@ -4,6 +4,7 @@ import argparse
 import sys
 import time
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import TextIO
 
 from adt_ai import __version__
@@ -46,6 +47,7 @@ from adt_ai.cli.parser import (
     build_parser,
 )
 from adt_ai.shared.env_bootstrap import hydrate_environment
+from adt_ai.shared.internal_paths import migrate_internal_files
 from adt_ai.shared.sqlcl_script import SqlclScriptError
 
 
@@ -184,6 +186,13 @@ def main(
         print(f"ADT.ai {__version__}")
         return 0
 
+    # Second hook for every module, same reason as hydrate_environment(): the
+    # generated data files belong under config/internal/, and a project root
+    # written by an older ADT.ai still has them loose in config/. Relocating
+    # here rather than per command is what makes it hold for all sixteen. It
+    # runs before the banner, so it neither prints nor raises (internal_paths).
+    _migrate_internal_files(args)
+
     if args.command in {"dependencies", "depends"}:
         dependencies_error = _dependencies_argument_error(args)
         if dependencies_error is not None:
@@ -256,7 +265,7 @@ def main(
     finally:
         # A completed multi-schema run (run_schema_sections) already printed
         # its own per-segment TIMER footers and set this latch on loop
-        # completion only — a mid-loop failure leaves it unset, so the shared
+        # completion only, a mid-loop failure leaves it unset, so the shared
         # footer below still covers that case exactly as before.
         if getattr(tracked_stdout, "final_timer_emitted", False):
             _notify_completion(args, exit_code)
@@ -279,6 +288,18 @@ def main(
         sys.stderr = original_stderr
 
     return exit_code
+
+
+def _migrate_internal_files(args: argparse.Namespace) -> None:
+    """Sweep an older layout's ``config/`` data files into ``config/internal/``.
+
+    ``-root`` is declared by every module with a project root; the handful that
+    carry none (a bare screen never reaches here) simply have nothing to sweep.
+    """
+    root = getattr(args, "root", None)
+    if root is None:
+        return
+    migrate_internal_files(Path(root).expanduser())
 
 
 def _is_unknown_command(value: str) -> bool:

@@ -1,3 +1,12 @@
+"""Scanning git history into commit records, and narrowing them to a selection.
+
+Reading a patch FOLDER back off disk is the other half and lives in
+`patch_folders.py` since ADT #309 split this file at the 20 KB context guard.
+Everything there is re-exported below, so an importer that reached for
+`PatchFolder`, `patch_id`, `discover_patch_folders` or `parse_patch_folder` here
+still finds them.
+"""
+
 from __future__ import annotations
 
 import re
@@ -7,11 +16,22 @@ from pathlib import Path
 import yaml
 
 from adt_ai.shared import text_files
-from adt_ai.shared.deploy_status import latest_deploy_status, target_status
 from adt_ai.shared.git_files import ChangedFile, changed_files, run_git
+from adt_ai.shared.internal_paths import internal_path
+from adt_ai.shared.patch_folders import (  # noqa: F401  (re-exported for existing importers)
+    PATCH_FOLDER_RE,
+    PatchFolder,
+    _patch_file_references,
+    _patch_script_commits,
+    _patch_script_files,
+    _read_lines,
+    _repo_relative_reference,
+    discover_patch_folders,
+    parse_patch_folder,
+    patch_id,
+)
 
 FIELD_SEPARATOR = "\x1f"
-PATCH_FOLDER_RE = re.compile(r"^(?P<day>\d{6})-(?P<sequence>\d+)-(?P<code>.+)$")
 
 
 @dataclass(frozen=True)
@@ -20,7 +40,7 @@ class PatchRequest:
     commit_limit: int
     patch_code: str | None = None
     # Hash mode picks its commits by which file HASHES moved, so the patch code
-    # must not also narrow them by subject — old ADT replaced the filtered list
+    # must not also narrow them by subject, old ADT replaced the filtered list
     # outright in that mode (`filtered_commits = self.hash_commits`,
     # patch.py:417).
     hash_mode: bool = False
@@ -31,6 +51,15 @@ class PatchRequest:
     ignore_commits: list[str] | None = None
     files_only: bool = False
     include_full_exports: bool = False
+    # `patch_commit_pattern`, a regex a commit SUMMARY must match to be
+    # selected at all (old ADT config.yaml:113, patch.py:1012-1017). Empty or
+    # `None` is the shipped default and filters nothing.
+    commit_pattern: str | None = None
+    # The branch to scan, or `None` for whatever is checked out (ADT #309,
+    # was #275). Old ADT's `-branch` overrode the active branch (patch.py:70);
+    # here it stays a read-only selector, it changes which commits are
+    # scanned, never which branch the working tree is on.
+    branch: str | None = None
 
 
 @dataclass(frozen=True)
@@ -46,7 +75,7 @@ class CommitRecord:
     # Git's per-file status letter for this commit (`A`/`M`/`D`/...), kept so the
     # install script can split its file list into NEW / DELETED / MODIFIED the way
     # old ADT did (patch.py:1766-1780). Never serialized into
-    # `patch_commits.yaml` -- that payload stays on old ADT's field set.
+    # `patch_commits.yaml`, that payload stays on old ADT's field set.
     statuses: dict[str, str] | None = None
 
     @property
@@ -78,121 +107,27 @@ class CommitRecord:
         }
 
 
-@dataclass(frozen=True)
-class PatchFolder:
-    folder: str
-    path: Path
-    patch_code: str
-    driving_sql: str | None
-    commits: list[str]
-    files: list[str]
-    target_status: dict[str, str]
-    # The single newest deploy log in the folder, as `<TARGET>:<OUTCOME>` --
-    # `None` for a patch nobody has deployed (ADT #268). `target_status` above
-    # answers a different question (has THIS target succeeded) and is what the
-    # deploy skip-guard reads; this one is what the listing shows.
-    latest_status: str | None = None
-
-
-def patch_id(patch_code: str) -> str | None:
-    """The ticket/card number a patch code carries, or ``None``.
-
-    Jan, 2026-08-10: "ID should be number from the ticket/card. For ivory 65 it
-    should be 65, for SASDSG-5566 it should be 5566."
-
-    The number lives in the FIRST underscore-separated segment -- the ticket
-    reference -- and everything after it is the human label. Scanning the whole
-    code would read `66_LAYER0_FIX` as `660`, because the `0` of `LAYER0` is not
-    part of any card id. Within that segment the LAST digit run wins, so a
-    project-prefixed reference (`SASDSG-5566`, `IVORY67`) yields the number
-    rather than a fragment of the prefix.
-    """
-    numbers = re.findall(r"\d+", patch_code.split("_", 1)[0])
-    return numbers[-1] if numbers else None
-
-
-def discover_patch_folders(patch_root: Path, *, ref: str | None = None) -> list[PatchFolder]:
-    if not patch_root.exists():
-        return []
-    folders = [
-        parse_patch_folder(path)
-        for path in sorted(patch_root.iterdir(), key=lambda item: item.name, reverse=True)
-        if path.is_dir()
-    ]
-    if ref:
-        needle = ref.upper()
-        if needle.isdigit():
-            # An all-digit ref is an ID lookup, compared against the parsed card
-            # number EXACTLY -- the substring path would match `67` inside
-            # `260809-1-66_LAYER67_FIX`, and inside the `yymmdd-seq-` prefix of
-            # every folder created that day (ADT #268).
-            folders = [
-                folder
-                for folder in folders
-                if (found := patch_id(folder.patch_code)) is not None
-                and int(found) == int(needle)
-            ]
-        else:
-            folders = [
-                folder
-                for folder in folders
-                if needle in folder.folder.upper() or needle in folder.patch_code.upper()
-            ]
-    return folders
-
-
-def parse_patch_folder(path: Path) -> PatchFolder:
-    """Read a patch folder back from the only artifact that gets deployed.
-
-    Old ADT recovered both lists from the generated install script —
-    ``get_file_references`` (patch.py:1028-1037) off the ``@"..."`` lines,
-    ``get_file_commits`` (patch.py:1041-1056) off the ``-- COMMITS:`` block. The
-    ``files.txt`` / ``commits.txt`` sidecars ADT.ai wrote instead were never an
-    old-ADT artifact (Jan, 2026-08-09: "Looks like shit I never asked for"), and
-    unioning ``files.txt`` with the link lines double-counted every file: the
-    sidecar spelled it repo-relative, the link line under ``snapshots/`` (ADT
-    #259). Old folders that still carry the sidecars keep parsing, so a patch
-    built before this change stays deployable.
-    """
-    match = PATCH_FOLDER_RE.match(path.name)
-    patch_code = match.group("code") if match else path.name
-    sql_files = sorted(path.glob("*.sql"))
-    # Both halves are needed and neither is a superset: a DELETED file is named
-    # in the header but has no `@` line to link, and a file injected without a
-    # commit behind it (a grant script) is linked but carries no change status.
-    files = [*_patch_file_references(sql_files), *_patch_script_files(sql_files)]
-    files = files or _read_lines(path / "files.txt")
-    commits = _patch_script_commits(sql_files) or _read_lines(path / "commits.txt")
-    return PatchFolder(
-        folder        = path.name,
-        path          = path,
-        patch_code    = patch_code,
-        driving_sql   = sql_files[0].name if sql_files else None,
-        commits       = commits,
-        files         = sorted(set(files)),
-        target_status = target_status(path),
-        latest_status = latest_deploy_status(path),
-    )
-
 
 class GitCommitCache:
     def build(self, request: PatchRequest) -> list[CommitRecord]:
         return _filter_records(self.scan(request), request)
 
     def scan(self, request: PatchRequest) -> list[CommitRecord]:
-        """Every commit in the ``-commits N`` window, before any filter runs.
+        """Every commit in the ``-window N`` window, before any filter runs.
 
         ``build`` is this narrowed to what the patch selects. Both halves are
         needed: the selection is what gets patched, and the full window is what
-        `#277` compares it against -- a newer commit dropped by the patch-code or
+        `#277` compares it against, a newer commit dropped by the patch-code or
         author filter is exactly the one worth warning about, because nothing else
         in the run mentions it (old ADT scanned `self.all_files`, everything it
         had cached, patch.py:1636).
         """
+        revision = request.branch or "HEAD"
         commit_lines = run_git(
             request.root,
             [
                 "log",
+                revision,
                 f"-n{request.commit_limit}",
                 "--reverse",
                 f"--format=%H{FIELD_SEPARATOR}%ae{FIELD_SEPARATOR}%aI{FIELD_SEPARATOR}%s",
@@ -202,7 +137,7 @@ class GitCommitCache:
         # carries the full HEAD commit count and older commits descend from it.
         # With a commit_limit the window holds only the newest N commits, so the
         # oldest in the window is (total - N + 1), not 1.
-        offset = self._head_commit_count(request.root) - len(commit_lines)
+        offset = self._head_commit_count(request.root, revision) - len(commit_lines)
         records: list[CommitRecord] = []
         for number, line in enumerate(commit_lines, start=offset + 1):
             commit_hash, author, date, summary = line.split(FIELD_SEPARATOR, 3)
@@ -230,7 +165,14 @@ class GitCommitCache:
         return records
 
     def write(self, root: Path, records: list[CommitRecord]) -> Path:
-        cache_path = root / ".adt-ai" / "patch_commits.yaml"
+        # Generated data goes through the one accessor (`#316`), never a path
+        # this call site composes for itself. For two and a half months this
+        # line joined a hidden folder onto `root`, and `-root` defaults to `"."`
+        # while `adt`/`adtai` are installed globally, so every commit-scanning
+        # run left an untracked dot-folder in whatever directory it was invoked
+        # from. The old location is named once, in `internal_paths`, which is
+        # what sweeps the roots that still carry one (`#319`).
+        cache_path = internal_path(root, "patch_commits.yaml")
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         text_files.write_text(
             cache_path,
@@ -273,10 +215,13 @@ class GitCommitCache:
                     entry["newer_committed"] = True
         return history
 
-    def _head_commit_count(self, root: Path) -> int:
-        # Total commits reachable from HEAD, independent of the window limit —
-        # the absolute number of the newest commit.
-        return int(run_git(root, ["rev-list", "--count", "HEAD"]).strip() or "0")
+    def _head_commit_count(self, root: Path, revision: str = "HEAD") -> int:
+        # Total commits reachable from the scanned revision, independent of the
+        # window limit, the absolute number of the newest commit. It must count
+        # the SAME revision the log walked (ADT #309): counting HEAD while
+        # logging `-branch feature` numbers the window off a history the rows
+        # do not come from.
+        return int(run_git(root, ["rev-list", "--count", revision]).strip() or "0")
 
     def _changed_files(self, root: Path, commit_hash: str) -> list[ChangedFile]:
         return changed_files(root, commit_hash)
@@ -289,92 +234,6 @@ def _detected_patch(changed_files: list[ChangedFile]) -> str | None:
             return parts[1]
     return None
 
-
-def _read_lines(path: Path) -> list[str]:
-    if not path.exists():
-        return []
-    return [
-        line.strip()
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-
-
-
-# `@"./snapshots/<path>";` — the repo-relative path is what every consumer wants,
-# so the snapshot prefix the link line carries is stripped here, once.
-_FILE_LINK_RE = re.compile(r'@\s*"?\.?/([^";\s]+)"?')
-
-# `--   <number>) <summary>` inside the `-- COMMITS:` header block (old ADT
-# patch.py:1764, read back at patch.py:1053).
-_COMMIT_ROW_RE = re.compile(r"^--\s+(\d+\)\s.*\S)\s*$")
-
-# `-- NEW FILES:` / `-- DELETED FILES:` / `-- MODIFIED FILES:` (old ADT
-# patch.py:1768-1779).
-_FILE_SECTION_RE = re.compile(r"^-- (NEW|DELETED|MODIFIED) FILES:\s*$")
-
-
-def _patch_file_references(sql_files: list[Path]) -> list[str]:
-    references: list[str] = []
-    for sql_file in sql_files:
-        text = sql_file.read_text(encoding="utf-8", errors="replace")
-        for match in _FILE_LINK_RE.finditer(text):
-            reference = match.group(1)
-            references.append(_repo_relative_reference(reference))
-    return references
-
-
-def _repo_relative_reference(reference: str) -> str:
-    """A link line's path as every consumer wants it: relative to the repo root.
-
-    Two spellings reach here, and both are climbs out of the patch folder in
-    different clothes. An exported object is snapshotted, so its link carries a
-    `snapshots/` prefix. A template or per-patch script is linked where it already
-    lives (ADT #288), so its link carries leading `../` segments — the patch folder
-    always sits under the root, so stripping them yields the root-relative path by
-    construction, whatever depth `patch_root` puts it at.
-    """
-    reference = reference.split("snapshots/", 1)[-1]
-    parts = [part for part in reference.split("/")]
-    while parts and parts[0] in ("..", "."):
-        parts.pop(0)
-    return "/".join(parts)
-
-
-def _patch_script_files(sql_files: list[Path]) -> list[str]:
-    """Paths listed under the header's NEW / DELETED / MODIFIED sections."""
-    paths: list[str] = []
-    for sql_file in sql_files:
-        section = False
-        for line in sql_file.read_text(encoding="utf-8", errors="replace").splitlines():
-            if _FILE_SECTION_RE.match(line):
-                section = True
-                continue
-            if not section:
-                continue
-            if not line.startswith("--   "):
-                section = False
-                continue
-            paths.append(line[5:].strip())
-    return [path for path in paths if path]
-
-
-def _patch_script_commits(sql_files: list[Path]) -> list[str]:
-    commits: list[str] = []
-    for sql_file in sql_files:
-        extracting = False
-        for line in sql_file.read_text(encoding="utf-8", errors="replace").splitlines():
-            if line.startswith("-- COMMITS:"):
-                extracting = True
-                continue
-            if not extracting:
-                continue
-            if line.strip() == "--":
-                break
-            row = _COMMIT_ROW_RE.match(line)
-            if row and row.group(1) not in commits:
-                commits.append(row.group(1))
-    return commits
 
 
 def _filter_records(records: list[CommitRecord], request: PatchRequest) -> list[CommitRecord]:
@@ -408,27 +267,76 @@ def _filter_records(records: list[CommitRecord], request: PatchRequest) -> list[
             if all(_record_contains(record, term) for term in terms)
         ]
     elif request.patch_code and not request.commit_refs and not request.hash_mode:
-        # With no explicit `-search`, the patch code IS the search term — old ADT
+        # With no explicit `-search`, the patch code IS the search term, old ADT
         # patch.py:147, matched against the commit SUMMARY only (patch.py:1005),
         # never the file paths. Without this, `-patch 65` listed every recent
         # commit and left the operator to spot theirs (ADT #257).
         #
         # The one deliberate divergence: an explicit `-commit <n>` bypasses it.
         # Old ADT filtered those too, so a named commit whose subject missed the
-        # code was dropped silently — and `-patch <name> -create -commit <n>` is
+        # code was dropped silently, and `-patch <name> -create -commit <n>` is
         # the documented IVORY build sequence, where that would build an empty
         # patch and still report success.
         needle = request.patch_code.lower()
         filtered = [record for record in filtered if needle in record.summary.lower()]
+    if request.commit_pattern and not request.search_terms and not request.commit_refs:
+        # `patch_commit_pattern`, a project whose commits all carry a ticket
+        # reference declares the shape once and gets every stray `wip` commit
+        # kept out of every patch (old ADT config.yaml:113, patch.py:1012-1017).
+        #
+        # Two exemptions, and old ADT only had the first. It skipped the pattern
+        # when `-search` was given (patch.py:1013), because an explicit search IS
+        # the filter. `-commit` is exempted here as well: old ADT applied the
+        # pattern to commits the user had NAMED (the check runs after the
+        # `add_commits` gate at :979), so `-commit 12` on a commit whose subject
+        # missed the pattern built an empty patch and still reported success.
+        # That is the same failure `#257` fixed for the patch-code filter, and it
+        # gets the same answer, a commit you named is an instruction.
+        pattern = re.compile(request.commit_pattern)
+        filtered = [record for record in filtered if pattern.search(record.summary)]
     if request.files_only:
         filtered = [record for record in filtered if record.usable_files or record.deleted_files]
     return filtered
 
 
+# `12-40`, an inclusive commit-number range. Both sides must be digits: that is
+# what keeps a hash prefix from ever being read as a range, whatever characters it
+# happens to carry.
+_COMMIT_RANGE_RE = re.compile(r"^(?P<start>\d+)-(?P<stop>\d+)$")
+# `12+`, that commit and everything newer.
+_COMMIT_FROM_RE = re.compile(r"^(?P<start>\d+)\+$")
+
+
+def commit_ref_matches(number: int, commit_hash: str, ref: str) -> bool:
+    """Does one `-commit` / `-ignore` argument select this commit?
+
+    Three spellings, all old ADT's (`util.ranged_str`, util.py:755-767, resolved
+    by `get_search_full`, patch.py:1073-1082):
+
+    * `12`     , that commit number, or a hash prefix
+    * `12+`    , commit 12 and everything newer
+    * `12-40`  , the inclusive span
+
+    Shared by `patch` and `search_repo` rather than written twice: they are one
+    concept at two call sites, and `search_repo` already understood `N+` while
+    `patch` understood neither, so `USAGE/patch.md`'s documented "commit numbers
+    or ranges" selected nothing at all, silently (ADT #309, was #15).
+    """
+    value = str(ref).strip().lower()
+    if not value:
+        return False
+    span = _COMMIT_RANGE_RE.match(value)
+    if span:
+        return int(span.group("start")) <= number <= int(span.group("stop"))
+    onward = _COMMIT_FROM_RE.match(value)
+    if onward:
+        return number >= int(onward.group("start"))
+    return value == str(number) or commit_hash.lower().startswith(value)
+
+
 def _matches_any_ref(record: CommitRecord, refs: set[str]) -> bool:
     return any(
-        ref == str(record.number)
-        or record.commit_hash.lower().startswith(ref)
+        commit_ref_matches(record.number, record.commit_hash, ref)
         for ref in refs
     )
 

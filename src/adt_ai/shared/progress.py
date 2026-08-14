@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import sys
 
 DROPBOX_PATH_RE = re.compile(r"/Users/[^/]+/Library/CloudStorage/Dropbox/")
 
@@ -14,9 +15,9 @@ def print_adt_header(message: str, append: str = "", file=None) -> None:
 def schema_label(schema: object) -> str:
     """Render a schema name for the console: an Oracle identifier is uppercase.
 
-    A schema reaches a header with whatever casing it was spelled — a connection
+    A schema reaches a header with whatever casing it was spelled, a connection
     file keyed ``ict_owner`` and a ``-schema ict_owner`` argument both survive to
-    the screen verbatim — while the dictionary they name is uppercase. ``#237``
+    the screen verbatim, while the dictionary they name is uppercase. ``#237``
     uppercased the ``REFRESHING`` header inline and left the four others raw, so
     one run printed both casings a dozen lines apart (ADT #240).
 
@@ -48,7 +49,7 @@ def module_banner(title: str = "") -> str:
 def print_module_banner(title: str = "", file=None) -> None:
     """Print the command H1 through the one shared renderer.
 
-    Underlined across its full width — unlike the ``append`` form, where the rule
+    Underlined across its full width, unlike the ``append`` form, where the rule
     covers only the message. The title is one unit here, not a label plus a value.
     """
     print_adt_header(module_banner(title), file=file)
@@ -57,20 +58,71 @@ def print_module_banner(title: str = "", file=None) -> None:
 FAILED_STATUS = "FAILED"
 
 
+def _commit_line() -> None:
+    """Put a finished row's terminating newline on the stream now, not later.
+
+    The runtime's ``_StdoutTracker`` holds trailing newlines back so the shared
+    ``TIMER`` footer can still retract them, correct at the end of a command,
+    and the reason ``print_adt_table`` already commits its own. Applied to a
+    progress row it meant a row that had *finished* stayed unterminated on
+    screen until the next action's first frame flushed the newline for it,
+    including across the ``apex_timers.yaml`` write that sits between two
+    export actions. A row that is done is done: closing it here removes the
+    window in which anything else can land on its line (ADT #323).
+    """
+    commit = getattr(sys.stdout, "commit_pending", None)
+    if callable(commit):
+        commit()
+
+
 class DottedProgressBar:
     def __init__(self, line_width: int = 78) -> None:
         self.line_width = line_width
+        # Header of the row being redrawn right now, nothing has closed it yet
+        #, or None once a row closed itself. Read by _row_break.
+        self._open_row: str | None = None
 
     def print_failed(self, header: str) -> None:
         """Complete an abandoned crawling row with FAILED, and end the line.
 
         The crawling row is rewritten in place with ``\\r`` and no trailing
-        newline. Leaving it that way meant whatever printed next — for an
-        uncaught failure, the error banner's own leading blank line — was spent
+        newline. Leaving it that way meant whatever printed next, for an
+        uncaught failure, the error banner's own leading blank line, was spent
         terminating it instead, so the banner landed flush against the progress
         bar (ADT #232).
         """
-        print(f"\r{self.failed_text(header)}", flush=True)
+        print(f"{self._row_break(header)}\r{self.failed_text(header)}", flush=True)
+        self._open_row = None
+        _commit_line()
+
+    def _row_break(self, header: str) -> str:
+        """The newline that keeps a new row off a line another row still owns.
+
+        A redrawn row carries **no** newline for as long as it crawls, so the
+        only thing separating it from the row after it is that row's own leading
+        ``\\r``. The separation is therefore a property of the stream arriving
+        intact, not of anything this process did, and when it doesn't arrive
+        intact (a resized window, a dropped chunk, a consumer that renders
+        ``\\r`` as nothing) the two rows weld into a single 125-character line,
+        the second starting at column 46 of the first::
+
+            READABLE COMPONENTS ......  EMBEDDED CODE REPORT ....... 100%  0:00:06
+
+        Jan hit that twice on APP 133/DA-DOCS on 2026-08-13, on two different
+        rows of the same export, and it reads as the first row having failed
+        when both had in fact succeeded (ADT #323). The bar is the only place
+        that knows a row is still open, so it is the only place that can refuse
+        to start another one on top of it: worst case now degrades to a row
+        frozen at a stale percentage, never two rows on one line.
+
+        Keyed on the header changing, so one row's own in-place redraws, and
+        the single-header bars in ``rebuild``/``ut3``, never trip it. On a
+        healthy sequence every row closes itself, this returns ``""``, and the
+        bytes are identical to what the bar has always emitted.
+        """
+        if self._open_row is None or self._open_row == header:
+            return ""
+        return "\n"
 
     def failed_text(self, header: str) -> str:
         # Padded to the crawling row's exact width: ``\r`` returns the cursor
@@ -90,7 +142,10 @@ class DottedProgressBar:
     ) -> None:
         line = self.line_text(header, percent, seconds)
         end = "\n" if close else ""
-        print(f"\r{line}", end=end, flush=True)
+        print(f"{self._row_break(header)}\r{line}", end=end, flush=True)
+        self._open_row = None if close else header
+        if close:
+            _commit_line()
 
     def line_text(self, header: str, percent: int, seconds: int) -> str:
         max_dots = progress_dot_capacity(header, self.line_width)

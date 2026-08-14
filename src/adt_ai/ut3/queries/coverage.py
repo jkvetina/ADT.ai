@@ -1,9 +1,9 @@
 """Code-coverage SQL for the ut3 module.
 
 **Two Oracle APIs measure coverage, and they measure different things.**
-``DBMS_PROFILER`` is line-level — "was this source line executed", keyed by
-``plsql_profiler_data.line#``. ``DBMS_PLSQL_CODE_COVERAGE`` is basic-block level
-— "was this single-entry single-exit block executed", keyed by
+``DBMS_PROFILER`` is line-level, "was this source line executed", keyed by
+``plsql_profiler_data.line#``. ``DBMS_PLSQL_CODE_COVERAGE`` is basic-block level,
+"was this single-entry single-exit block executed", keyed by
 ``dbmspcc_blocks.line`` **and** ``col``. One source line holds several blocks
 and one block spans several lines, so the two row sets cannot agree and neither
 is wrong. A report that compares a profiler line count to a block count is
@@ -11,7 +11,7 @@ comparing different units of measure.
 
 **utPLSQL already runs both and pairs them**, on 12.2 and above, recording the
 two ids against one logical run in ``ut_coverage_runs (coverage_run_id RAW,
-line_coverage_id, block_coverage_id)`` — the profiler runid beside the block
+line_coverage_id, block_coverage_id)``, the profiler runid beside the block
 run_id. So this module does not start its own collection or reconcile the two
 sources by hand: it calls ``ut_runner.coverage_start`` / ``coverage_stop`` and
 reads the result through that mapping. Hand-rolling the combination would
@@ -25,7 +25,7 @@ Reachability, verified against the install rather than assumed: ``dbmspcc_units`
 and ``dbmspcc_blocks`` have public synonyms; ``ut_coverage_runs`` has **no**
 synonym but **is** granted SELECT to PUBLIC, so it is reached as
 ``ut3.ut_coverage_runs``. Everything else reads ``ALL_*`` scoped by an explicit
-``:owner`` bind — never ``DBA_*``, never a dynamic performance view — matching
+``:owner`` bind (never ``DBA_*``, never a dynamic performance view) matching
 the contract in ``queries/suites.py``. ``ALL_*`` rather than ``USER_*`` because
 ``ut_owner`` made the schema a parameter and ``USER_*`` can only ever see the
 connected one; the bind here is always the schema **under test**, never
@@ -61,7 +61,7 @@ END;
 # `not_feasible = 1` rows are EXCLUDED, and that is a deliberate disagreement
 # with utPLSQL's own HTML percentage. A block marked through the COVERAGE pragma
 # (NOT_FEASIBLE / NOT_FEASIBLE_START / NOT_FEASIBLE_END) is still written to
-# dbmspcc_blocks with the flag set — Oracle flags it, it does not drop it, and
+# dbmspcc_blocks with the flag set, Oracle flags it, it does not drop it, and
 # subtracting it is the reporter's job. utPLSQL has an open defect that leaves
 # pragma-excluded lines in its metrics, so a figure that honours the pragma
 # reads higher than utPLSQL's. That is intended: the pragma exists precisely so
@@ -72,8 +72,8 @@ END;
 # it as a flag, but a CASE is correct whether it is a flag or a hit count, and
 # the difference would otherwise surface as a coverage percentage above 100.
 #
-# A LINES_COVERED aggregate sat beside them — the distinct `b.line` values
-# carrying a covered block — feeding the `COVERED` column of the roll-up
+# A LINES_COVERED aggregate sat beside them, the distinct `b.line` values
+# carrying a covered block, feeding the `COVERED` column of the roll-up
 # `-coverage` closed with. Card `#291` removed that table and nothing renders an
 # executed-line count now, so the aggregate went with it rather than staying as a
 # figure every run computes and no run prints.
@@ -97,7 +97,7 @@ GROUP BY u.name
 ORDER BY u.name
 """
 
-# The schema's packages with the size of each body — the half of the measurement
+# The schema's packages with the size of each body, the half of the measurement
 # coverage data cannot supply.
 #
 # Coverage rows only ever describe packages something executed, so a package a
@@ -108,16 +108,16 @@ ORDER BY u.name
 #
 # Test packages are excluded here, by the same `ut_pattern` that selects them in
 # `queries/suites.py`, in SQL where the `NOT LIKE '%\\_UT'` used to be. Narrowing
-# further — to the packages this run's suites actually test — happens in
+# further (to the packages this run's suites actually test) happens in
 # `ut3.coverage`, because the target set is a property of the run and a bind list
 # built per run cannot be a stored constant the way every statement here is.
 #
-# LINES counts the **body**, and the body of the listed package — never its test
+# LINES counts the **body**, and the body of the listed package, never its test
 # partner's, and never the spec, since a count of declarations is not a measure
 # of code. It is a scalar subquery rather than a join so a package with a spec
 # and no body still gets its row, reading 0.
 #
-# `:owner` is the schema under test — never `ut_owner`. Coverage measures the
+# `:owner` is the schema under test, never `ut_owner`. Coverage measures the
 # code, and the two schemas are different questions.
 #
 # A MODULE_NAME column sat here until card `#291`, deriving `ut_module` group 1
@@ -145,14 +145,14 @@ ORDER BY o.object_name
 
 # A PACKAGE_COMPILE_SETTINGS_QUERY sat here until card `#291`. It read
 # ALL_PLSQL_OBJECT_SETTINGS for `PLSQL_CODE_TYPE = NATIVE`, the one compile-time
-# setting that explains an absent measurement — natively compiled code carries no
+# setting that explains an absent measurement, natively compiled code carries no
 # PL/SQL instrumentation, so it produces no `dbmspcc_blocks` row and looked
 # exactly like untested code. The `NATIVE` cell that named the cause went with
 # the removed `-coverage` tables, leaving a query every run paid for and no
 # surface rendered.
 #
 # If a reason for a blank `COVERAGE` cell is ever wanted back, that is the query
-# to restore — and `PLSQL_OPTIMIZE_LEVEL` is not to be restored with it. It was
+# to restore, and `PLSQL_OPTIMIZE_LEVEL` is not to be restored with it. It was
 # selected alongside until 2026-08-06 to flag anything above level 1; measured on
 # ICT_OWNER@ORCLPDB1, every one of the 78 package bodies is at level 2 (Oracle's
 # default) and `dbmspcc_blocks` still recorded 36 of them, so the flag suppressed
