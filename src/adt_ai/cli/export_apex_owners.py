@@ -9,8 +9,21 @@ from adt_ai.cli.constants import (
     ConnectionConfigError,
     ConnectionResult,
 )
-from adt_ai.shared.internal_paths import internal_path
-from adt_ai.shared.yaml_io import load_yaml_mapping
+from adt_ai.shared.apex_store import ApexStore
+
+
+def listed_applications(discovery, schemas: list[str], app_ids=None) -> list:
+    """Every application across `schemas`, flattened in schema order.
+
+    `#360` wrapped this in a `READING THE APEX INVENTORY:` section with a row
+    per schema; `#372` removed the furniture and kept the helper, because the
+    one thing worth having here was `dependencies` and `flow` sharing a single
+    listing path instead of two copies of the same loop.
+    """
+    found = []
+    for schema in schemas:
+        found.extend(discovery.applications(owner=schema, app_ids=app_ids))
+    return found
 
 
 def _apex_reveal_connection_schema(
@@ -40,31 +53,33 @@ def _resolve_apex_metadata_owners(
 ) -> dict[str, list[str]]:
     """Map requested app ids to a recorded *non-default* owner schema.
 
-    Reads the cached ``config/internal/apex_apps.yaml`` (written by
-    ``export_apex/metadata._store_application_metadata``, keyed by ``app_id``
-    with an ``owner`` field) so the command can connect straight to an app's
-    owner schema and skip the wasted default-schema connection + live
-    owner-discovery round-trip. Apps absent from the file, recorded against the
-    default schema, or whose owner is not a configured schema are left out so the
-    caller falls back to the previous discover-then-resolve behavior. Returns an
-    empty mapping when there are no app ids or the file is missing.
+    Reads the cached ``config/internal/apex.db`` (written by
+    ``export_apex/metadata._store_application_metadata``, one row per ``app_id``
+    carrying an ``owner``) so the command can connect straight to an app's owner
+    schema and skip the wasted default-schema connection + live owner-discovery
+    round-trip. Apps absent from the store, recorded against the default schema,
+    or whose owner is not a configured schema are left out so the caller falls
+    back to the previous discover-then-resolve behavior. Returns an empty mapping
+    when there are no app ids or the store knows none of them.
+
+    One lookup per requested id, never a whole-cache load: the answer is wanted
+    for the handful of apps on the command line, and a project that has been
+    exporting for a year should not pay for all of them to route three.
     """
     if not app_ids:
         return {}
-    app_metadata = load_yaml_mapping(internal_path(root, "apex_apps.yaml"))
-    if not app_metadata:
-        return {}
     schema_lookup = {name.upper(): name for name in schema_names}
     routes: dict[str, list[str]] = {}
-    for app_id in app_ids:
-        entry = app_metadata.get(_apex_app_id_value(app_id))
-        if not isinstance(entry, Mapping):
-            continue
-        owner = str(entry.get("owner") or "")
-        owner_schema = schema_lookup.get(owner.upper())
-        if owner_schema is None or owner_schema == default_schema:
-            continue
-        routes.setdefault(owner_schema, []).append(app_id)
+    with ApexStore.load(root) as store:
+        for app_id in app_ids:
+            entry = store.application(_apex_app_id_value(app_id))
+            if not isinstance(entry, Mapping):
+                continue
+            owner = str(entry.get("owner") or "")
+            owner_schema = schema_lookup.get(owner.upper())
+            if owner_schema is None or owner_schema == default_schema:
+                continue
+            routes.setdefault(owner_schema, []).append(app_id)
     return routes
 
 
@@ -111,7 +126,7 @@ def resolve_apex_owner_routes(
 
     `export_apex` and `dependencies -refresh` both answer the same question
     before they connect (*which schema owns each requested app?*) and both
-    answer it from the same cached `config/internal/apex_apps.yaml`. They differ only in
+    answer it from the same cached `config/internal/apex.db`. They differ only in
     what they do with the answer, so the derivation (default schema, configured
     schema names, routed vs. left-over app ids) lives here once and each handler
     applies its own policy to the result.

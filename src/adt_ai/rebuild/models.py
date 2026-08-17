@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from adt_ai.shared.commit_cache import DEFAULT_COMMITS_TEMPLATE
+
 
 class RebuildError(Exception):
     """Rebuild failed for a reason worth showing the user verbatim (no traceback)."""
@@ -26,13 +28,21 @@ class RebuildRequest:
     root: Path
     commit_limit: int | None = None
     branches: list[str] | None = None
-    include_full_exports: bool = False
-    cache_file_template: str = "./config/commits/#BRANCH#.yaml"
+    # `include_full_exports` used to sit here and was never set by anything, so
+    # a `patch -fullapp` run reading the cache lost `apex/<app>/f<id>.sql`
+    # silently. The store keeps every changed file and the reading run applies
+    # its own policy, which is where a per-run flag belongs.
+    cache_file_template: str = DEFAULT_COMMITS_TEMPLATE
     update_only: bool = False
     # Resolved ISO date (YYYY-MM-DD) bounding the window for `-since`. When set,
     # the per-branch window is "every commit since this date" instead of a fixed
     # commit count; runs a full bounded rebuild like commit_limit (never update).
     since_date: str | None = None
+    # `patch_history_bottom_days` from project config: where history starts on a
+    # branch that has no cache yet. Unlike `since_date` this is a floor, not a
+    # mode, so it never turns an incremental run into a bounded one, and an
+    # explicit `-limit`/`-since` outranks it. None means the whole history.
+    history_bottom_days: int | None = None
 
 @dataclass(frozen=True)
 class RebuildResult:

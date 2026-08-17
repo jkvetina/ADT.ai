@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from adt_ai.cli.constants import REVEAL_DEFAULT_LIMIT
+from adt_ai.shared.dates import recent_window
 from adt_ai.shared.recent_state import BARE_RECENT
 
 
@@ -30,9 +31,15 @@ def add_history_parsers(subparsers) -> None:
         "--by",
         "-by",
         action = "append",
-        help   = "author email/name text; default is your own git user.email",
+        help   = "limit to commits by AUTHOR, matched on name or email, repeatable; "
+                 "defaults to your own git config user.email",
     )
-    calendar.add_argument("--list", "-list", action="store_true", help="show day rows")
+    # `-list` was declared here until ADT #345 withdrew it. It reached
+    # `CalendarRequest.list_mode` and was read by nothing: the task-centric
+    # report replaced the day-row format outright, so the flag had nothing left
+    # to switch. `USAGE/calendar.md` documented it as accepted but inert, which
+    # is the accepted-but-unused compatibility flag SOP §Command surface
+    # forbids, not an exemption from it.
     search_repo = subparsers.add_parser(
         "search_repo",
         description="search cached Git commit history",
@@ -89,8 +96,18 @@ def add_history_parsers(subparsers) -> None:
         nargs  = "+",
         help   = "object name text, repeatable, comma- or space-separated",
     )
-    search_repo.add_argument("--by", "-by", action="append", help="author email/name text")
-    search_repo.add_argument("--my", "-my", action="store_true", help="show only my commits")
+    search_repo.add_argument(
+        "--by",
+        "-by",
+        action = "append",
+        help   = "limit to commits by AUTHOR, matched on name or email, repeatable",
+    )
+    search_repo.add_argument(
+        "--my",
+        "-my",
+        action = "store_true",
+        help   = "limit to commits by you, matched against git config user.email",
+    )
     search_repo.add_argument(
         "--commit",
         "--commits",
@@ -122,8 +139,9 @@ def add_history_parsers(subparsers) -> None:
         # has no export watermark, so it maps the sentinel back to 1 day at the
         # edge, same shape, its own meaning.
         const = BARE_RECENT,
-        type  = int,
-        help  = "only commits from recent DAYS (bare -recent = 1)",
+        type  = recent_window,
+        help  = "only commits from recent DAYS or a fraction of a day, "
+                "1/24 = past hour (bare -recent = 1)",
     )
     search_repo.add_argument("--since", "-since", help="oldest commit date, YYYY-MM-DD")
     search_repo.add_argument("--until", "-until", help="newest commit date, YYYY-MM-DD")
@@ -183,8 +201,8 @@ def add_history_parsers(subparsers) -> None:
         "-my",
         dest   = "my",
         action = "store_true",
-        help   = "in reveal mode, limit to branches whose tip commit is yours, matched "
-                 "against git config user.email",
+        help   = "in reveal mode, limit to branches whose tip commit is yours, "
+                 "matched against git config user.email",
     )
     rebuild.add_argument(
         "--switch",
@@ -196,4 +214,10 @@ def add_history_parsers(subparsers) -> None:
         metavar = "N",
         help    = "in reveal mode, check out the Nth branch of the filtered list "
                   "(1-based; bare -switch = 1) and show its recent commits instead",
+    )
+    rebuild.add_argument(
+        "--verify",
+        "-verify",
+        action = "store_true",
+        help   = "report each branch store's commit numbering without changing it",
     )

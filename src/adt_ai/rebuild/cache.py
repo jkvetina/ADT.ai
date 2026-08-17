@@ -1,12 +1,24 @@
+"""Scanning a branch into the store, and letting the store do the numbering.
+
+The line this file used to carry, `offset = branch_counts[branch] - len(lines)`,
+was the defect: it DERIVED a commit's number from its position in `git log`, so
+anything that moved a position moved a number that had already been handed out.
+A merge of an older-dated branch does exactly that. Numbering now happens in
+`CommitStore`, once per commit, and this module's job is only to say which
+commits it found and in what order.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+# Aliased: `date` is a loop variable in the assembly loop below, and a bare
+# `from datetime import date` shadows it (ruff F402).
+from datetime import date as date_type
+from datetime import timedelta
 from pathlib import Path
 
-import yaml
-
 from adt_ai.rebuild.models import RebuildError, RebuildReporter, RebuildRequest
-from adt_ai.shared import text_files
 from adt_ai.shared.commit_cache import (
     cache_path as history_cache_path,
 )
@@ -14,14 +26,16 @@ from adt_ai.shared.commit_cache import (
     current_branch as history_current_branch,
 )
 from adt_ai.shared.commit_cache import (
-    load_history_cache,
+    open_store,
+    store_path,
 )
 from adt_ai.shared.commit_discovery import (
     FIELD_SEPARATOR,
     CommitRecord,
-    _classify_file,
     _detected_patch,
 )
+from adt_ai.shared.commit_store import CommitStore, StoredCommit
+from adt_ai.shared.commit_window import position_of
 from adt_ai.shared.git_files import changed_files, git_is_ancestor, git_ref_exists, run_git
 
 
@@ -56,35 +70,58 @@ def _build_records(
     request: RebuildRequest,
     branches: list[str],
     reporter: RebuildReporter,
-) -> dict[str, dict[int, CommitRecord]]:
+) -> tuple[dict[str, dict[int, CommitRecord]], dict[str, Path]]:
     # Phase 1, cheap counting pass: read commit metadata per branch (git log
     # only, no content hashing). Each branch keeps its own oldest-first commit
     # order; the unique set drives the progress total and dedupes hashing work.
     #
-    # In --update mode each branch resumes from its cached tip: existing records
-    # are reused as-is (never re-hashed) and only commits after the last cached
-    # id are fetched. A branch with no usable cache falls back to a full window.
+    # In --update mode each branch resumes from its stored tip: existing records
+    # are reused as-is (never re-hashed) and only commits after the last stored
+    # id are fetched. A branch with no usable store falls back to a full window.
     branch_lines: dict[str, list[tuple[str, str, str, str]]] = {}
-    existing_records: dict[str, dict[int, CommitRecord]] = {}
+    stores: dict[str, CommitStore] = {}
+    store_paths: dict[str, Path] = {}
+    seeds: dict[str, int] = {}
     unique_order: list[str] = []
     seen_hashes: set[str] = set()
     resumed_any = False
 
     for branch in branches:
-        existing, since = _resume_point(request, branch)
-        existing_records[branch] = existing
+        store = open_store(request.root, branch, request.cache_file_template)
+        stores[branch] = store
+        store_paths[branch] = store_path(request.root, request.cache_file_template, branch)
+        since = _resume_point(request, store, branch)
         if since is not None:
             resumed_any = True
         # --update ignores any commit_limit: the window is "everything new".
         commit_limit = None if request.update_only else request.commit_limit
+        # `patch_history_bottom_days` applies only where there is nothing to
+        # resume from, which is exactly "building this branch from scratch". A
+        # run that resumed already has its floor: the cache below the tip, and
+        # re-flooring it would drop commits the store already numbered. An
+        # explicit -limit or -since outranks the project default, because a
+        # window the operator typed is the more specific instruction.
+        since_date = request.since_date
+        if since is None and commit_limit is None and since_date is None:
+            since_date = _history_floor_date(request.history_bottom_days)
         lines = _commit_lines(
             request.root,
             branch,
             commit_limit,
             since=since,
-            since_date=request.since_date,
+            since_date=since_date,
         )
         branch_lines[branch] = lines
+        # The seed is read once, while the branch is empty, and it is what makes
+        # a bounded first build safe: numbering the newest N from 1 would leave
+        # no room underneath, so widening the window later could only renumber.
+        # Starting the oldest commit IN THE WINDOW at its true position in
+        # history reserves everything below it for a backfill.
+        seeds[branch] = (
+            position_of(request.root, lines[0][0])
+            if lines and not store.numbers(branch)
+            else 1
+        )
         for commit_hash, _author, _date, _summary in lines:
             if commit_hash not in seen_hashes:
                 seen_hashes.add(commit_hash)
@@ -129,112 +166,137 @@ def _build_records(
         # progress bar at an instant 100% so the module matches the export style.
         reporter.on_commit(0, 0)
 
-    # Assemble one numbered record set per branch. Numbers are ABSOLUTE
-    # positions in the branch history: the newest commit is numbered with the
-    # branch's full commit count, descending to older commits. With a
-    # commit_limit the window holds only the newest N commits, so the oldest in
-    # the window is (total - N + 1), not 1. Without a limit the window is the
-    # full history and the oldest commit is 1 (matches old ADT).
+    # Hand each branch's scan to its store and read the numbered result back.
+    # Nothing here computes a number: `allocate` mints above the tip, `backfill`
+    # mints below the floor, and a commit that already has one keeps it.
     branch_records: dict[str, dict[int, CommitRecord]] = {}
     for branch, lines in branch_lines.items():
-        offset = branch_counts[branch] - len(lines)
-        # In --update mode the previously cached records are kept verbatim and
-        # the new commits append onto them with continuing absolute numbers.
-        numbered: dict[int, CommitRecord] = dict(existing_records[branch])
-        for number, (commit_hash, author, date, summary) in enumerate(lines, start=offset + 1):
-            data = file_data[commit_hash]
-            numbered[number] = CommitRecord(
-                number  = number,
-                id      = commit_hash,
-                summary = summary,
-                author  = author,
-                date    = date,
-                files   = data.files,
-                deleted = data.deleted,
-                patch   = data.patch,
-            )
-        branch_records[branch] = numbered
+        store = stores[branch]
+        _allocate(
+            store,
+            branch,
+            [
+                StoredCommit(
+                    id       = commit_hash,
+                    summary  = summary,
+                    author   = author,
+                    date     = date,
+                    files    = file_data[commit_hash].files,
+                    deleted  = file_data[commit_hash].deleted,
+                    statuses = file_data[commit_hash].statuses,
+                    patch    = file_data[commit_hash].patch,
+                )
+                for commit_hash, author, date, summary in lines
+            ],
+            seeds[branch],
+        )
+        branch_records[branch] = {
+            stored.number: _as_commit_record(stored) for stored in store.records(branch)
+        }
+        store.close()
 
-    return branch_records
+    return branch_records, store_paths
+
+
+def _allocate(
+    store: CommitStore, branch: str, records: list[StoredCommit], seed: int
+) -> None:
+    """Give every scanned commit a number, each one exactly once.
+
+    The walk is oldest first, so an unknown commit that sits BEFORE the first
+    one the store recognises is older history a widened window pulled in, and it
+    needs a number below the floor. Everything else unknown is new to the branch
+    and goes above the tip, merged-in commits included: they interleave by date
+    in `git log`, and taking a number in the middle is precisely the renumbering
+    this store exists to prevent.
+    """
+    if not records:
+        return
+    existing = store.numbers(branch)
+    if not existing:
+        store.allocate(branch, records, seed=seed)
+        return
+    first_known = next(
+        (index for index, record in enumerate(records) if record.id in existing), None
+    )
+    if first_known is None:
+        # The window overlaps nothing stored, so there is no floor to sit under.
+        # These are newer commits (a bounded scan that outran the stored tip),
+        # and appending is the only reading that cannot renumber.
+        store.allocate(branch, records)
+        return
+    if first_known:
+        store.backfill(branch, records[:first_known])
+    store.allocate(branch, records[first_known:])
+
+
+def _as_commit_record(stored: StoredCommit) -> CommitRecord:
+    return CommitRecord(
+        number   = stored.number,
+        id       = stored.id,
+        summary  = stored.summary,
+        author   = stored.author,
+        date     = stored.date,
+        files    = stored.files,
+        deleted  = stored.deleted,
+        patch    = stored.patch,
+        statuses = stored.statuses,
+    )
+
 
 @dataclass(frozen=True)
 class _CommitFiles:
     files: dict[str, str]
     deleted: list[str]
+    statuses: dict[str, str]
     patch: str | None
 
 def _commit_files(request: RebuildRequest, commit_hash: str) -> _CommitFiles:
     changed = changed_files(request.root, commit_hash)
-    files: dict[str, str] = {}
-    for item in changed:
-        file_class = _classify_file(
-            item.path,
-            include_full_exports=request.include_full_exports,
-        )
-        if item.content_hash is not None and file_class is not None:
-            files[item.path] = item.content_hash
     return _CommitFiles(
-        files   = files,
-        deleted = [i.path for i in changed if i.status == "D"],
-        patch   = _detected_patch(changed),
+        # The store holds git's answer unfiltered. `include_full_exports` is a
+        # per-run reading policy (`patch -fullapp`), not a property of history,
+        # and a store that dropped `apex/<app>/f<id>.sql` at write time could
+        # never serve the run that wanted it: nothing ever set the flag, so
+        # `-fullapp` reading the cache lost those files silently. Store the data,
+        # classify at read time, where the policy is actually known.
+        files    = {i.path: i.content_hash for i in changed if i.content_hash is not None},
+        deleted  = [i.path for i in changed if i.status == "D"],
+        # Git's own status letter per file, which the YAML payload never carried.
+        # `patch/summary.py` needs it to split NEW/DELETED/MODIFIED, and
+        # `search_repo` was guessing it from whether a path had been seen before.
+        statuses = {i.path: i.status for i in changed},
+        patch    = _detected_patch(changed),
     )
-
-def _write_caches(
-    root: Path,
-    branch_records: dict[str, dict[int, CommitRecord]],
-    cache_file_template: str = "./config/commits/#BRANCH#.yaml",
-) -> dict[str, Path]:
-    paths: dict[str, Path] = {}
-    for branch, numbered in branch_records.items():
-        cache_path = _cache_path(root, cache_file_template, branch)
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            number: {
-                "id":      record.id,
-                "summary": record.summary,
-                "author":  record.author,
-                "date":    record.date,
-                "files":   record.files,
-                "deleted": record.deleted,
-                **({"patch": record.patch} if record.patch else {}),
-            }
-            for number, record in sorted(numbered.items())
-        }
-        text = yaml.safe_dump(payload, sort_keys=False)
-        # `-update` with nothing new reproduces the file byte-for-byte; skip the
-        # write so the mtime doesn't churn (these caches live under Dropbox and
-        # every touch re-syncs them).
-        if not (cache_path.exists() and cache_path.read_text(encoding="utf-8") == text):
-            text_files.write_text(cache_path, text)
-        paths[branch] = cache_path
-    return paths
 
 def _cache_path(root: Path, cache_file_template: str, branch: str) -> Path:
     return history_cache_path(root, cache_file_template, branch)
 
-def _resume_point(
-    request: RebuildRequest, branch: str
-) -> tuple[dict[int, CommitRecord], str | None]:
-    # Returns (records to reuse verbatim, since-commit). For a normal rebuild,
-    # or when the branch has no usable cache, returns ({}, None) so the branch
-    # rebuilds from scratch. In --update mode it loads the existing cache and
-    # resumes from the highest-numbered (newest) cached commit, unless that
-    # commit no longer exists on the branch (rebase / force-push), in which case
-    # the stale cache is discarded and the branch is rebuilt in full.
-    if not request.update_only:
-        return {}, None
-    existing = _load_cache(request.root, request.cache_file_template, branch)
-    if not existing:
-        return {}, None
-    last_id = existing[max(existing)].id
-    if not _commit_in_history(request.root, branch, last_id):
-        return {}, None
-    return existing, last_id
 
-def _load_cache(
-    root: Path, cache_file_template: str, branch: str
-) -> dict[int, CommitRecord]:
-    return load_history_cache(root, branch, cache_file_template)
+def _history_floor_date(bottom_days: int | None) -> str | None:
+    """`patch_history_bottom_days` as the ISO date `git log --since` wants."""
+    if not bottom_days or bottom_days <= 0:
+        return None
+    return (date_type.today() - timedelta(days=bottom_days)).isoformat()
+
+def _resume_point(request: RebuildRequest, store: CommitStore, branch: str) -> str | None:
+    # The commit to resume after, or None to walk the window from its bottom.
+    # Records already in the store are never re-hashed and never re-numbered, so
+    # a resume is purely about which commits git is asked for.
+    #
+    # Rewritten history is the one case that drops rows: when the stored tip is
+    # no longer an ancestor of the branch, the numbers describe commits that do
+    # not exist, so the branch is reset and rebuilt. That is not a renumbering,
+    # it is the only honest answer to a force-push.
+    if not request.update_only:
+        return None
+    tip = store.tip(branch)
+    if tip is None:
+        return None
+    if not _commit_in_history(request.root, branch, tip.id):
+        store.reset(branch)
+        return None
+    return tip.id
 
 def _commit_in_history(root: Path, branch: str, commit: str) -> bool:
     return git_is_ancestor(root, commit, branch)

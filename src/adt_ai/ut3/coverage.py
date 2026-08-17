@@ -12,7 +12,7 @@ record per package a discovered suite tests, and nothing else. Until then it
 listed every package in the schema, so that the removed ``NO CODE COVERAGE:``
 table could be a work list of untested code. With the figure folded into the
 run's own two tables there is no row for an untested package to sit on, every
-row of `SUMMARY:` and `MODULES:` is a suite that ran, so listing the rest of
+row of `SUMMARY PER SUITE:` and `SUMMARY PER MODULE:` is a suite that ran, so listing the rest of
 the schema would fetch rows nothing can render.
 """
 

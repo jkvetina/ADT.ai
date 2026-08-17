@@ -30,6 +30,7 @@ from adt_ai.cli.context import (
     _parse_apex_app_selection,
     _print_connection_block,
 )
+from adt_ai.cli.export_apex_owners import listed_applications
 from adt_ai.cli.gateways import build_gateway
 from adt_ai.shared.internal_paths import internal_path
 
@@ -141,11 +142,10 @@ def _refresh_flow(
         discovery = ApexDiscovery(flow_gateway_factory(lookup_schema))
         seen: set[int] = set()
         app_ids: list[int] = []
-        for schema in configured_schemas:
-            for app in discovery.applications(owner=schema, app_ids=None):
-                if _app_in_selection(app.app_id, selection) and app.app_id not in seen:
-                    seen.add(app.app_id)
-                    app_ids.append(app.app_id)
+        for app in listed_applications(discovery, configured_schemas):
+            if _app_in_selection(app.app_id, selection) and app.app_id not in seen:
+                seen.add(app.app_id)
+                app_ids.append(app.app_id)
         if not app_ids:
             print("flow: -app range matched no applications.", file=sys.stderr)
             return 1
@@ -155,24 +155,41 @@ def _refresh_flow(
     connection_block_printed: set[str] = set()
     any_error = False
 
+    # **Every owner lookup happens here, before the first thing is printed**
+    # (`#372`). One dictionary read per application, and interleaved with the
+    # loop below the second one onwards landed under the previous application's
+    # finished table with the screen saying nothing. Up here they run under the
+    # module banner, which is still the newest thing on the terminal.
+    owner_schemas: dict[int, str] = {}
+    for app_id in app_ids:
+        try:
+            owner_schemas[app_id] = resolve_configured_apex_owner_schema(
+                ApexDiscovery(flow_gateway_factory(lookup_schema)),
+                app_id=app_id,
+                configured_schemas=configured_schemas,
+            ).schema
+        except ApexOwnerResolutionError as error:
+            print(str(error), file=sys.stderr)
+            any_error = True
+
     with ApexFlowStore.open(db_path) as store:
         for app_id in app_ids:
-            try:
-                resolution = resolve_configured_apex_owner_schema(
-                    ApexDiscovery(flow_gateway_factory(lookup_schema)),
-                    app_id=app_id,
-                    configured_schemas=configured_schemas,
-                )
-            except ApexOwnerResolutionError as error:
-                print(str(error), file=sys.stderr)
-                any_error = True
+            schema = owner_schemas.get(app_id)
+            if schema is None:
                 continue
 
-            schema = resolution.schema
             connection = connection_for(schema)
             if schema not in connection_block_printed:
                 _print_connection_block(flow_gateway_factory(schema), connection, debug=args.debug)
                 connection_block_printed.add(schema)
+
+            # The refresh reads the application, its pages and its navigation
+            # edges, and prints nothing until all three are back, so it used to
+            # run behind the connection block's closing blank. This is the
+            # header `dependencies -refresh` already prints in front of the same
+            # per-application dictionary scan, so the string is one the console
+            # surface already carries and the wait now sits under its own name.
+            print_adt_header(f"APP {app_id}, REFRESHING:")
 
             try:
                 result = ApexFlowRefreshRunner(flow_gateway_factory).refresh(

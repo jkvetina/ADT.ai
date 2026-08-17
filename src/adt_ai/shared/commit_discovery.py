@@ -13,11 +13,13 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-import yaml
-
-from adt_ai.shared import text_files
-from adt_ai.shared.git_files import ChangedFile, changed_files, run_git
-from adt_ai.shared.internal_paths import internal_path
+from adt_ai.shared.commit_cache import (
+    DEFAULT_COMMITS_TEMPLATE,
+    current_branch,
+    open_store,
+)
+from adt_ai.shared.commit_store import StoredCommit
+from adt_ai.shared.git_files import ChangedFile
 from adt_ai.shared.patch_folders import (  # noqa: F401  (re-exported for existing importers)
     PATCH_FOLDER_RE,
     PatchFolder,
@@ -27,11 +29,51 @@ from adt_ai.shared.patch_folders import (  # noqa: F401  (re-exported for existi
     _read_lines,
     _repo_relative_reference,
     discover_patch_folders,
+    matches_patch_selector,
     parse_patch_folder,
+    patch_folder_match_targets,
     patch_id,
 )
 
 FIELD_SEPARATOR = "\x1f"
+
+
+def ensure_commit_store_current(
+    root: Path,
+    *,
+    branch: str,
+    cache_file_template: str = DEFAULT_COMMITS_TEMPLATE,
+    history_bottom_days: int | None = None,
+    reporter: object | None = None,
+) -> str:
+    """Bring one branch's commit store level with git, and say which branch.
+
+    `patch` reads commit NUMBERS out of this store and writes them into a patch
+    folder, so a store short of `HEAD` does not merely miss a commit: it hands
+    out a window that disagrees with the repository the operator is looking at,
+    and `-commit 41` means one thing in the console and another in the folder.
+    Jan, 2026-08-15: *"before running anything it must check that commits .db for
+    requested branch is up to date"*.
+
+    Update-only, so it costs a bounded walk from the stored tip rather than a
+    rebuild, and it allocates nothing that already carries a number. Returns the
+    branch it worked on so a caller that passed ``None`` learns the resolved name
+    without asking git twice.
+    """
+    from adt_ai.rebuild.models import RebuildRequest
+    from adt_ai.rebuild.runner import RebuildRunner
+
+    RebuildRunner().run(
+        RebuildRequest(
+            root                = root,
+            branches            = [branch],
+            cache_file_template = cache_file_template,
+            update_only         = True,
+            history_bottom_days = history_bottom_days,
+        ),
+        reporter = reporter,
+    )
+    return branch
 
 
 @dataclass(frozen=True)
@@ -44,7 +86,8 @@ class PatchRequest:
     # outright in that mode (`filtered_commits = self.hash_commits`,
     # patch.py:417).
     hash_mode: bool = False
-    rebuild: bool = False
+    # `rebuild` sat here until ADT #345. Nothing ever read it, so `patch
+    # -rebuild` filled it and the run carried on unchanged.
     search_terms: list[str] | None = None
     authors: list[str] | None = None
     commit_refs: list[str] | None = None
@@ -60,6 +103,15 @@ class PatchRequest:
     # here it stays a read-only selector, it changes which commits are
     # scanned, never which branch the working tree is on.
     branch: str | None = None
+    # Where the branch's commit store lives (`repo_commits_file`). `patch` reads
+    # the SAME store `rebuild` writes rather than keeping a private copy: Jan,
+    # 2026-08-15, *"Dependencies are reused, the commits should be reused too.
+    # If your source data (commits cache) is not up to speed, you should refresh
+    # the shared commits file, not to create a fucking copy!"*
+    cache_file_template: str = DEFAULT_COMMITS_TEMPLATE
+    # `patch_history_bottom_days`, forwarded to the top-up so the store `patch`
+    # builds on first use is bounded the same way `rebuild` would build it.
+    history_bottom_days: int | None = None
 
 
 @dataclass(frozen=True)
@@ -74,8 +126,9 @@ class CommitRecord:
     patch: str | None = None
     # Git's per-file status letter for this commit (`A`/`M`/`D`/...), kept so the
     # install script can split its file list into NEW / DELETED / MODIFIED the way
-    # old ADT did (patch.py:1766-1780). Never serialized into
-    # `patch_commits.yaml`, that payload stays on old ADT's field set.
+    # old ADT did (patch.py:1766-1780). The text cache could not carry it, which
+    # is what left `search_repo` guessing; the store does, so `#358` made it a
+    # real field rather than one that survived only inside a single run.
     statuses: dict[str, str] | None = None
 
     @property
@@ -109,11 +162,33 @@ class CommitRecord:
 
 
 class GitCommitCache:
-    def build(self, request: PatchRequest) -> list[CommitRecord]:
-        return _filter_records(self.scan(request), request)
+    """`patch`'s view of history: the shared commit store, topped up on read.
 
-    def scan(self, request: PatchRequest) -> list[CommitRecord]:
-        """Every commit in the ``-window N`` window, before any filter runs.
+    It used to walk git itself and number what it found by position, which made
+    it a second, differently-numbered copy of the cache `rebuild` maintains, and
+    the YAML it wrote back had no reader anywhere in the package. Now there is
+    one store per branch and both commands use it.
+    """
+
+    def build(
+        self,
+        request: PatchRequest,
+        *,
+        reporter: object | None = None,
+        top_up: bool = True,
+    ) -> list[CommitRecord]:
+        return _filter_records(
+            self.scan(request, reporter=reporter, top_up=top_up), request
+        )
+
+    def scan(
+        self,
+        request: PatchRequest,
+        *,
+        reporter: object | None = None,
+        top_up: bool = True,
+    ) -> list[CommitRecord]:
+        """Every commit in the scanned window, before any filter runs.
 
         ``build`` is this narrowed to what the patch selects. Both halves are
         needed: the selection is what gets patched, and the full window is what
@@ -121,79 +196,37 @@ class GitCommitCache:
         author filter is exactly the one worth warning about, because nothing else
         in the run mentions it (old ADT scanned `self.all_files`, everything it
         had cached, patch.py:1636).
-        """
-        revision = request.branch or "HEAD"
-        commit_lines = run_git(
-            request.root,
-            [
-                "log",
-                revision,
-                f"-n{request.commit_limit}",
-                "--reverse",
-                f"--format=%H{FIELD_SEPARATOR}%ae{FIELD_SEPARATOR}%aI{FIELD_SEPARATOR}%s",
-            ],
-        ).splitlines()
-        # Number commits by ABSOLUTE position in history: the newest commit
-        # carries the full HEAD commit count and older commits descend from it.
-        # With a commit_limit the window holds only the newest N commits, so the
-        # oldest in the window is (total - N + 1), not 1.
-        offset = self._head_commit_count(request.root, revision) - len(commit_lines)
-        records: list[CommitRecord] = []
-        for number, line in enumerate(commit_lines, start=offset + 1):
-            commit_hash, author, date, summary = line.split(FIELD_SEPARATOR, 3)
-            changed_files = self._changed_files(request.root, commit_hash)
-            usable_files: dict[str, str] = {}
-            for item in changed_files:
-                file_class = _classify_file(
-                    item.path, include_full_exports=request.include_full_exports
-                )
-                if item.content_hash is not None and file_class is not None:
-                    usable_files[item.path] = item.content_hash
-            records.append(
-                CommitRecord(
-                    number  = number,
-                    id      = commit_hash,
-                    summary = summary,
-                    author  = author,
-                    date    = date,
-                    files   = usable_files,
-                    deleted = [item.path for item in changed_files if item.status == "D"],
-                    patch   = _detected_patch(changed_files),
-                    statuses= {item.path: item.status for item in changed_files},
-                )
-            )
-        return records
 
-    def write(self, root: Path, records: list[CommitRecord]) -> Path:
-        # Generated data goes through the one accessor (`#316`), never a path
-        # this call site composes for itself. For two and a half months this
-        # line joined a hidden folder onto `root`, and `-root` defaults to `"."`
-        # while `adt`/`adtai` are installed globally, so every commit-scanning
-        # run left an untracked dot-folder in whatever directory it was invoked
-        # from. The old location is named once, in `internal_paths`, which is
-        # what sweeps the roots that still carry one (`#319`).
-        cache_path = internal_path(root, "patch_commits.yaml")
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        text_files.write_text(
-            cache_path,
-            yaml.safe_dump(
-                [
-                    {
-                        "number": record.number,
-                        "id": record.id,
-                        "summary": record.summary,
-                        "author": record.author,
-                        "date": record.date,
-                        "files": record.files,
-                        "deleted": record.deleted,
-                        **({"patch": record.patch} if record.patch else {}),
-                    }
-                    for record in records
-                ],
-                sort_keys = False,
-            ),
+        The window (`patch_scan_commits`) bounds the READ, never the numbering:
+        the numbers come out of the store, which allocated them once, so a wider
+        or narrower scan reports the same commit under the same number.
+
+        ``top_up=False`` says the caller has already brought the store level with
+        git this run. `#367` moved that call to the front of the `patch` command
+        so the deploy-only, `-install` and `-archive` paths, all of which return
+        before this scan, get a current store too; passing the flag here keeps
+        that from walking the branch a second time.
+        """
+        branch = request.branch or current_branch(request.root)
+        if top_up:
+            self._top_up(request, branch, reporter=reporter)
+        with open_store(request.root, branch, request.cache_file_template) as store:
+            # `recent` is an indexed lookup, newest first, and never materialises
+            # the branch: reading forty rows off the end of an 85,000-commit
+            # history is the query this store exists for. Reversed here because
+            # every consumer downstream expects oldest first.
+            stored = store.recent(branch, request.commit_limit)
+        return [_as_record(item, request) for item in reversed(stored)]
+
+    @staticmethod
+    def _top_up(request: PatchRequest, branch: str, *, reporter: object | None) -> None:
+        ensure_commit_store_current(
+            request.root,
+            branch              = branch,
+            cache_file_template = request.cache_file_template,
+            history_bottom_days = request.history_bottom_days,
+            reporter            = reporter,
         )
-        return cache_path
 
     @staticmethod
     def file_history(records: list[CommitRecord]) -> dict[str, dict[str, object]]:
@@ -215,16 +248,30 @@ class GitCommitCache:
                     entry["newer_committed"] = True
         return history
 
-    def _head_commit_count(self, root: Path, revision: str = "HEAD") -> int:
-        # Total commits reachable from the scanned revision, independent of the
-        # window limit, the absolute number of the newest commit. It must count
-        # the SAME revision the log walked (ADT #309): counting HEAD while
-        # logging `-branch feature` numbers the window off a history the rows
-        # do not come from.
-        return int(run_git(root, ["rev-list", "--count", revision]).strip() or "0")
 
-    def _changed_files(self, root: Path, commit_hash: str) -> list[ChangedFile]:
-        return changed_files(root, commit_hash)
+def _as_record(stored: StoredCommit, request: PatchRequest) -> CommitRecord:
+    """One stored commit as `patch` reads it, with this run's file policy applied.
+
+    The store holds every changed file, because what a commit touched is a fact
+    about history. Whether `apex/<app>/f<id>.sql` counts is a fact about the run
+    (`-fullapp`), so it is decided here, on the way out, and the same store
+    serves a run that wants it and one that does not.
+    """
+    return CommitRecord(
+        number   = stored.number,
+        id       = stored.id,
+        summary  = stored.summary,
+        author   = stored.author,
+        date     = stored.date,
+        files    = {
+            path: file_hash
+            for path, file_hash in stored.files.items()
+            if _classify_file(path, include_full_exports=request.include_full_exports) is not None
+        },
+        deleted  = stored.deleted,
+        patch    = stored.patch,
+        statuses = stored.statuses,
+    )
 
 
 def _detected_patch(changed_files: list[ChangedFile]) -> str | None:

@@ -7,6 +7,7 @@ from pathlib import Path
 from adt_ai.export_apex.filters import ApexComponentFilter, ApexPageSelection
 from adt_ai.export_apex.inventory import ApexApplication
 from adt_ai.export_apex.progress import ApexProgressReporter
+from adt_ai.shared.apex_store import ApexStore
 from adt_ai.shared.recent_state import recent_days
 
 
@@ -23,9 +24,9 @@ class ApexExportRequest:
     # #235). Defaults to "nothing was named", so the quiet path is the default.
     explicit_actions: frozenset[str] = frozenset()
     release     : str | None = None
-    # None (no recent filter), an int day window, or BARE_RECENT (since the last
-    # export of this app+format).
-    recent      : int | object | None = None
+    # None (no recent filter), a day window (an int, or a float below a day), or
+    # BARE_RECENT (since the last export of this app+format).
+    recent      : int | float | object | None = None
     environment : str | None = None
     changed_by  : str | None = None
     my_changes  : bool = False
@@ -39,12 +40,23 @@ class ApexExportRequest:
     # 26.1 format gates (`apexlang` needs it, `readable` is gone by then);
     # ``None`` means the probe missed and nothing is gated.
     apex_version: str | None = None
+    # `-compact`: replace the per-application blocks and their action rows with
+    # one bar for the whole schema segment. The per-action rows are old-ADT
+    # parity output and stay the default, so the flag is the bar (`#376`, the
+    # polarity `export_db -compact` settled in `#373`).
+    compact     : bool = False
     reporter    : ApexProgressReporter | None = None
-    timers_file : Path | None = None
+    # `timers_file` lived here until `#369`. The rolling ETA it pointed at is a
+    # table in `config/internal/apex.db` now, resolved from `root` like every
+    # other fact this run caches, so a caller had nothing left to override.
+    apex_store  : ApexStore | None = None
 
     @property
-    def recent_days(self) -> int | None:
-        """The N-day window, or ``None`` for no filter and for watermark mode."""
+    def recent_days(self) -> int | float | None:
+        """The day window, or ``None`` for no filter and for watermark mode.
+
+        A float when the window is shorter than a day (`-recent 1/24`).
+        """
         return recent_days(self.recent)
 
     @property

@@ -21,7 +21,7 @@ SKIP_INVALID = "INVALID"
 SKIP_NOT_A_SUITE = "NOT A SUITE"
 
 # The four status words, and they are the *printed* words: one constant is both
-# the header of a `SUMMARY:` verdict column and the value in a `TEST RESULTS:`
+# the header of a `SUMMARY PER SUITE:` verdict column and the value in a `TEST RESULTS:`
 # row, so a row can never read one spelling under a header that reads another.
 # Jan's 2026-08-11 call is the short form everywhere. A failed expectation and a
 # raised exception stay counted apart, but all four fit the same fixed-width
@@ -86,7 +86,7 @@ class TestOutcome:
 
 @dataclass(frozen=True)
 class SuiteTiming:
-    """How long one suite took, in seconds, the `SUMMARY:` `TIMER` column.
+    """How long one suite took, in seconds, the `SUMMARY PER SUITE:` `TIMER` column.
 
     **Wall clock around the `ut.run` call, not the sum of the reporter's own
     per-test `time` attributes.** The question the column answers is which suite
@@ -177,7 +177,7 @@ class CoverageReport:
 def coverage_percent(packages: tuple[PackageCoverage, ...] | list[PackageCoverage]) -> float | None:
     """How much of a set of packages is covered, the whole set, not its measured part.
 
-    Shared by every `MODULES:` group row and by the total under them, so a group
+    Shared by every `SUMMARY PER MODULE:` group row and by the total under them, so a group
     and the total can never be two calculations that drift apart.
 
     **Two halves, because code no test enters is invisible to Oracle.** Block

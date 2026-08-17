@@ -120,6 +120,15 @@ class RecompileReporter:
     pause sits on the object being worked on), and ``end_trailing`` closes it.
     """
 
+    def reading_mviews(self) -> None:
+        """The section title, before the read that fills its table (`#372`).
+
+        Split off ``begin_mviews`` because the two halves need different
+        things: the title needs nothing, the column widths need the rows.
+        Printing both after the read left the listing running under the
+        connection block's closing blank, with the screen saying nothing.
+        """
+
     def begin_mviews(self, mviews: list[MaterializedView]) -> None: ...
 
     def begin_mview(self, mview: MaterializedView) -> None: ...

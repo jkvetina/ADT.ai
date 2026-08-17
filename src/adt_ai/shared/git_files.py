@@ -161,6 +161,39 @@ def git_is_ancestor(root: Path, commit: str, branch: str) -> bool:
     return result.returncode == 0
 
 
+def git_show(root: Path, ref: str, path: str) -> bytes | None:
+    """Raw bytes of ``path`` at ``ref``, or ``None`` when it does not resolve."""
+    result = subprocess.run(
+        ["git", "show", f"{ref}:{path}"],
+        cwd            = root,
+        check          = False,
+        capture_output = True,
+    )
+    return result.stdout if result.returncode == 0 else None
+
+
+def git_blob_exists(root: Path, ref: str, path: str) -> bool:
+    """True when ``path`` resolves to a blob at ``ref``."""
+    result = subprocess.run(
+        ["git", "cat-file", "-e", f"{ref}:{path}"],
+        cwd=root,
+        capture_output=True,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def git_status_porcelain(root: Path, path: str) -> str:
+    """Raw ``git status --porcelain`` output scoped to ``path``."""
+    return subprocess.run(
+        ["git", "status", "--porcelain", "--", path],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+
+
 def git_checkout(root: Path, name: str) -> None:
     """Check out ``name``, raising with git's own stderr when it refuses."""
     result = subprocess.run(

@@ -134,6 +134,9 @@ class RecompileRunner:
         if request.mview:
             gateway = self.gateway_factory()  # fresh connection for the MV action pass
             discovery = RecompileDiscovery(gateway)
+            # Title first, listing second: the table fills in behind a header
+            # that is already on screen (`#372`).
+            self.reporter.reading_mviews()
             mviews = discovery.materialized_views(**name_scope)
             self.reporter.begin_mviews(mviews)
             # Stream one materialized view at a time: announce the view, act on it,

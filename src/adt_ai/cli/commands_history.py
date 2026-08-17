@@ -9,10 +9,9 @@ from pathlib import Path
 # The month-grid renderer lives in the calendar package; aliased here so the
 # `_print_calendar_grid` call site and its tests keep their existing name.
 from adt_ai.calendar.render import render_calendar_grid as _print_calendar_grid
+from adt_ai.cli.commands_history_reveal import _run_rebuild_reveal
 from adt_ai.cli.constants import (
     _current_branch,
-    branch_commits,
-    BranchInfo,
     CalendarError,
     CalendarRequest,
     CalendarRunner,
@@ -21,15 +20,14 @@ from adt_ai.cli.constants import (
     print_module_banner,
     RebuildRequest,
     RebuildRunner,
-    reveal_branches,
-    REVEAL_DEFAULT_LIMIT,
     SearchRepoError,
     SearchRepoRequest,
     SearchRepoRunner,
-    switch_to_branch,
 )
 from adt_ai.cli.context import _config_search_paths, _display, _flatten_arg_groups, _repo_root
 from adt_ai.rebuild.render import ConsoleRebuildReporter
+from adt_ai.shared.commit_cache import DEFAULT_COMMITS_TEMPLATE, open_store
+from adt_ai.shared.commit_window import resolve_history_floor
 from adt_ai.shared.dates import resolve_since
 from adt_ai.shared.recent_state import is_bare_recent
 
@@ -61,6 +59,9 @@ def _run_rebuild(args: argparse.Namespace) -> int:
         print()
         return 1
 
+    if getattr(args, "verify", False):
+        return _run_rebuild_verify(args, root)
+
     if since_date is not None and args.limit is not None:
         print("Error: -since and -limit cannot be combined")
         print()
@@ -71,7 +72,7 @@ def _run_rebuild(args: argparse.Namespace) -> int:
             _config_search_paths(getattr(args, "config_dir", None), root, _repo_root())
         ).load().data
         cache_file_template = str(
-            config.get("repo_commits_file") or "./config/commits/#BRANCH#.yaml"
+            config.get("repo_commits_file") or DEFAULT_COMMITS_TEMPLATE
         )
         branches = _flatten_arg_groups(args.branch)
         branch_label = _rebuild_branch_label(root, branches)
@@ -82,6 +83,14 @@ def _run_rebuild(args: argparse.Namespace) -> int:
         # A `-since` window is a full bounded rebuild, never an incremental
         # update (same as an explicit -limit).
         update_only = args.limit is None and since_date is None
+        # `patch_history_bottom_days` is where history starts when a branch has
+        # no cache yet. It is a floor on the walk, not a mode: an incremental run
+        # still resumes from the cached tip, and an explicit `-limit`/`-since`
+        # still wins, because a window the operator typed is more specific than
+        # a project default. Without it a first build on a real root walks every
+        # commit it has, and the expensive half of that walk is one file scan per
+        # commit (APEXDEV_JANK: 85,108 on HEAD).
+        history_floor = resolve_history_floor(config)
         request = RebuildRequest(
             root               = root,
             commit_limit       = args.limit,
@@ -89,6 +98,7 @@ def _run_rebuild(args: argparse.Namespace) -> int:
             cache_file_template= cache_file_template,
             update_only        = update_only,
             since_date         = since_date,
+            history_bottom_days= history_floor,
         )
         RebuildRunner().run(
             request,
@@ -102,14 +112,67 @@ def _run_rebuild(args: argparse.Namespace) -> int:
     return 0
 
 
+# `-verify` prints one row per branch, capped like every other report line here
+# so a long branch name cannot wrap the row onto a second line.
+VERIFY_LINE_WIDTH = 78
+
+# The branch column is what gives way when the row is too wide. A 40-wide column
+# put `build/JANK  9451 commits, 75522-84972, CONTIGUOUS` at 83 characters and
+# the cap took the verdict off the end, printing `CONTI`: the row's whole answer,
+# clipped, on the one command whose job is to report it. Real numbers are what
+# showed it, on a store whose floor is 75522 because the history window seeded it
+# there; a fixture branch on a five-commit repo can never be wide enough.
+VERIFY_BRANCH_WIDTH = 30
+
+
+def _run_rebuild_verify(args: argparse.Namespace, root: Path) -> int:
+    """Report each branch store's numbering, read-only.
+
+    Contiguity is checkable precisely because allocation is additive: floor to
+    ceiling with no gap is the only shape `allocate` and `backfill` can produce.
+    So a gap is not a rounding error, it means something outside the store wrote
+    it, or history was rewritten under it, and either way the operator wants to
+    know before a patch cites a number that is not there.
+    """
+    branches = _flatten_arg_groups(args.branch) or [_current_branch(root)]
+    template = _commits_template(args, root)
+    problems: list[str] = []
+    print_adt_header("COMMIT STORES:")
+    print()
+    for branch in branches:
+        with open_store(root, branch, template) as store:
+            found = store.verify(branch)
+            floor, ceiling = store.floor(branch), store.ceiling(branch)
+            count = len(store.numbers(branch))
+        label = f"{branch[:VERIFY_BRANCH_WIDTH]:<{VERIFY_BRANCH_WIDTH}}"
+        if count == 0:
+            print(f"  {label} EMPTY"[:VERIFY_LINE_WIDTH])
+            continue
+        state = "CONTIGUOUS" if not found else "BROKEN"
+        row = f"  {label} {count:>7} commits, {floor}-{ceiling}, {state}"
+        print(row[:VERIFY_LINE_WIDTH])
+        problems.extend(found)
+    print()
+    if problems:
+        print_adt_header("PROBLEMS:")
+        print()
+        for problem in problems:
+            print(f"  - {problem}"[:VERIFY_LINE_WIDTH])
+        print()
+        return 1
+    return 0
+
+
 def _run_search_repo(args: argparse.Namespace) -> int:
     print_module_banner("SEARCH_REPO")
     try:
         file_limit = _search_repo_file_limit(args)
+        root = Path(args.root).resolve()
         result = SearchRepoRunner().run(
             SearchRepoRequest(
-                root          = Path(args.root).resolve(),
+                root          = root,
                 branch        = args.branch,
+                cache_file_template = _commits_template(args, root),
                 commit_limit  = None if args.limit == 0 else args.limit,
                 show_files    = file_limit > 0,
                 file_limit    = file_limit,
@@ -180,7 +243,7 @@ def _run_calendar(args: argparse.Namespace) -> int:
         print(f"Warning: could not read config ({exc}); using defaults", file=sys.stderr)
         config = {}
     jira_prefix = config.get("jira_prefix") or None
-    cache_file_template = config.get("repo_commits_file") or "./config/commits/#BRANCH#.yaml"
+    cache_file_template = config.get("repo_commits_file") or DEFAULT_COMMITS_TEMPLATE
     try:
         result = CalendarRunner().run(
             CalendarRequest(
@@ -190,7 +253,6 @@ def _run_calendar(args: argparse.Namespace) -> int:
                 offset              = args.calendar_offset or 0,
                 authors             = args.by or [],
                 jira_prefix         = jira_prefix,
-                list_mode           = args.list,
                 cache_file_template = cache_file_template,
             )
         )
@@ -226,6 +288,22 @@ def _resolve_calendar_month(value: str) -> str:
     return value
 
 
+def _commits_template(args: argparse.Namespace, root: Path) -> str:
+    """`repo_commits_file`, or the shipped default when there is no config.
+
+    Reading history must never fail because the project has no config file:
+    `rebuild` already falls back to the default, so a reader that raised here
+    would disagree with the writer about where the store is.
+    """
+    try:
+        config = ConfigLoader(
+            _config_search_paths(getattr(args, "config_dir", None), root, _repo_root())
+        ).load().data
+    except Exception:
+        return DEFAULT_COMMITS_TEMPLATE
+    return str(config.get("repo_commits_file") or DEFAULT_COMMITS_TEMPLATE)
+
+
 def _search_repo_file_limit(args: argparse.Namespace) -> int:
     if args.files is not None:
         return args.files
@@ -249,145 +327,5 @@ def _rebuild_branch_label(root: Path, branches: list[str]) -> str:
         return ", ".join(branches)
     return _current_branch(root)
 
-
-def _run_rebuild_reveal(
-    args: argparse.Namespace, root: Path, since_date: str | None = None
-) -> int:
-    # Read-only branch inspector: lists branches, never touches the cache.
-    # `-reveal` carries the filter words (AND-matched); `-limit` caps the rows;
-    # `-since` keeps only branches whose tip commit is on or after the cutoff.
-    # The shared `-limit` default is None (so normal mode can detect "absent" for
-    # incremental rebuilds), so resolve the reveal default here: absent -> 10,
-    # 0 -> all.
-    patterns = list(args.reveal or [])
-    mine = bool(getattr(args, "my", False))
-
-    # `-switch` takes over the whole report: instead of listing branches it checks
-    # one out and shows that branch's recent commits. There `-limit` caps the
-    # commit list, so the branch selection runs against the full filtered list.
-    switch = getattr(args, "switch", None)
-    if switch is not None:
-        return _run_rebuild_switch(args, root, since_date, patterns, mine, switch)
-
-    count = getattr(args, "limit", None)
-    if count is None:
-        count = REVEAL_DEFAULT_LIMIT
-    limit = count if count and count > 0 else None
-    try:
-        result = reveal_branches(
-            root, patterns=patterns, mine=mine, since=since_date, limit=limit
-        )
-    except Exception as exc:
-        print(f"Error: {exc}")
-        print()
-        return 1
-
-    # `-since` is rendered as a trailing ` SINCE <date>` on whichever title the
-    # word/`-my` filters produced.
-    since_part = f" SINCE {result.since}" if result.since else ""
-    if result.patterns:
-        mine_suffix = " (mine)" if result.mine else ""
-        title = f"BRANCHES MATCHING {' '.join(result.patterns)}{mine_suffix}{since_part}"
-    else:
-        mine_prefix = "MY " if result.mine else ""
-        title = f"{mine_prefix}RECENT BRANCHES{since_part}"
-    _print_reveal_list(title, result.branches, result.total)
-    return 0
-
-
-def _run_rebuild_switch(
-    args: argparse.Namespace,
-    root: Path,
-    since_date: str | None,
-    patterns: list[str],
-    mine: bool,
-    switch: int,
-) -> int:
-    # Select the branch against the FULL filtered list (no row cap) so the rank
-    # resolves regardless of `-limit`, which here caps the COMMITS section, not
-    # the branch list. The list itself is not printed; the switched branch and its
-    # commits are.
-    try:
-        result = reveal_branches(
-            root, patterns=patterns, mine=mine, since=since_date, limit=None
-        )
-    except Exception as exc:
-        print(f"Error: {exc}")
-        print()
-        return 1
-
-    if switch < 1 or switch > len(result.branches):
-        upper = len(result.branches)
-        print(f"Error: -switch {switch} is out of range (1..{upper})")
-        print()
-        return 1
-    target = result.branches[switch - 1]
-
-    # Skip the checkout entirely when we're already on the branch, no git ops,
-    # so in-flight WiP is left exactly where it is.
-    if _current_branch(root) != target.name:
-        try:
-            switch_to_branch(root, target.name)
-        except Exception as exc:
-            print(f"Error: {exc}")
-            print()
-            return 1
-
-    print_adt_header("BRANCH SWITCHED:")
-    print()
-    print(f"  {target.name}"[:SWITCH_LINE_WIDTH])
-
-    count = getattr(args, "limit", None)
-    if count is None:
-        count = REVEAL_DEFAULT_LIMIT
-    commit_limit = count if count and count > 0 else None
-    commits = branch_commits(root, target.name, limit=commit_limit, mine=mine)
-    print()  # second blank line above the header, print_adt_header adds one, we want two
-    print_adt_header("COMMITS:")
-    print()
-    if not commits:
-        print("(none)")
-        print()
-        return 0
-    for when, subject in commits:
-        print(f"  {when} | {subject}"[:SWITCH_LINE_WIDTH])
-    print()
-    return 0
-
-
-# `-reveal` shows branch names only, clipped to this width so long feature
-# branch names don't wrap the report.
-REVEAL_NAME_WIDTH = 78
-
-# `-switch` prints the branch name and each commit line flush-left, every line
-# capped at this width so a long branch name or commit subject can't wrap.
-SWITCH_LINE_WIDTH = 78
-
-
-def _print_reveal_list(
-    title: str,
-    branches: list[BranchInfo],
-    total: int,
-) -> None:
-    # The count rides in the header: `(<shown>/<total>)` when the list is capped,
-    # otherwise just `(<total>)`. No separate "showing N of M" trailer line.
-    shown = len(branches)
-    if total and shown < total:
-        count = f"({shown}/{total})"
-    elif total:
-        count = f"({total})"
-    else:
-        count = ""
-    print_adt_header(f"{title}:", count)
-    print()
-    if not branches:
-        print("  (none)")
-        print()
-        return
-    # Print branch names directly (no `BRANCH` column header / dashed rule),
-    # two-space-indented to match the switch output. Same for -my and non-my.
-    for branch in branches:
-        print(f"  {branch.name}"[:REVEAL_NAME_WIDTH])
-    print()
 
 __all__ = [name for name in globals() if not name.startswith("__")]

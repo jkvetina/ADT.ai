@@ -6,7 +6,11 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from adt_ai.rebuild.runner import REVEAL_DEFAULT_LIMIT
-from adt_ai.shared.commit_cache import current_branch, load_history_cache
+from adt_ai.shared.commit_cache import (
+    DEFAULT_COMMITS_TEMPLATE,
+    current_branch,
+    open_store,
+)
 from adt_ai.shared.commit_discovery import commit_ref_matches
 from adt_ai.shared.git_files import git_user_email, run_git, run_git_bytes
 
@@ -37,6 +41,10 @@ class SearchRepoRequest:
     my: bool = False
     restore: bool = False
     stage: bool = False
+    # Where the stores live. `search_repo` used to hardcode the default, so a
+    # project that had configured `repo_commits_file` could rebuild happily and
+    # then be told its cache did not exist.
+    cache_file_template: str = DEFAULT_COMMITS_TEMPLATE
 
 
 @dataclass(frozen=True)
@@ -97,24 +105,30 @@ class SearchRepoRunner:
 
     def _commits(self, request: SearchRepoRequest, root: Path) -> list[_Commit]:
         branch = request.branch or current_branch(root)
-        records = load_history_cache(root, branch)
+        with open_store(root, branch, request.cache_file_template) as store:
+            records = store.records(branch)
         if not records:
             raise SearchRepoError(
-                f"commit cache not found or empty for branch '{branch}', run adtai rebuild first"
+                f"commit store not found or empty for branch '{branch}', run adtai rebuild first"
             )
         existing_paths: set[str] = set()
         commits: list[_Commit] = []
-        for number, record in sorted(records.items()):
-            file_statuses: dict[str, str] = {}
+        for record in records:
             files = [path for path in record.files if path]
             deleted = [path for path in record.deleted if path]
+            # Git's own letters, which the store carries because `rebuild` no
+            # longer throws them away. The fallback below is only for rows
+            # imported from a YAML cache that never held them: there, A and M
+            # are genuinely indistinguishable, so the old approximation is the
+            # honest answer rather than a letter invented to look precise.
+            file_statuses = {path: status for path, status in record.statuses.items() if path}
             for path in files:
-                file_statuses[path] = "M" if path in existing_paths else "A"
+                file_statuses.setdefault(path, "M" if path in existing_paths else "A")
             for path in deleted:
                 file_statuses[path] = "D"
             commits.append(
                 _Commit(
-                    number        = number,
+                    number        = record.number,
                     id            = record.id,
                     author        = record.author,
                     date          = record.date,
@@ -219,14 +233,21 @@ def _matches_ref(commit: _Commit, ref: str) -> bool:
 
 
 def _matches_date(commit_date: str, request: SearchRepoRequest) -> bool:
-    value = datetime.fromisoformat(commit_date).date()
+    moment = datetime.fromisoformat(commit_date)
+    value = moment.date()
     if request.since and value < date.fromisoformat(request.since):
         return False
     if request.until and value > date.fromisoformat(request.until):
         return False
     if request.recent is not None:
-        cutoff = datetime.now().date() - timedelta(days=request.recent)
-        if value < cutoff:
+        if float(request.recent).is_integer():
+            # A whole-day window keeps its date-level meaning: `-recent 1` holds
+            # a commit made at 23:00 yesterday whatever time the search runs.
+            if value < datetime.now().date() - timedelta(days=int(request.recent)):
+                return False
+        elif moment < datetime.now() - timedelta(days=request.recent):
+            # Below a day both sides have to keep their time, or every commit
+            # made earlier today survives an "in the past hour" window.
             return False
     return True
 

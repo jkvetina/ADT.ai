@@ -7,6 +7,7 @@ from typing import Any
 
 from adt_ai.export_db import queries
 from adt_ai.shared.db import QueryGateway
+from adt_ai.shared.diff_tables import is_diff_table
 from adt_ai.shared.sql_like import matches_sql_like
 
 
@@ -46,7 +47,7 @@ class ObjectDiscovery:
         names: Iterable[str] | None = None,
         prefix: str | None = None,
         ignore: Iterable[str] | None = None,
-        recent_days: int | None = None,
+        recent_days: int | float | None = None,
         changed_since: str | None = None,
         prefer_exact_names: bool = True,
     ) -> list[DatabaseObject]:
@@ -89,7 +90,7 @@ class ObjectDiscovery:
         self,
         schema: str,
         filters: _ObjectFilters,
-        recent_days: int | None,
+        recent_days: int | float | None,
         changed_since: str | None,
         exact_names: bool,
     ) -> list[dict[str, Any]]:
@@ -160,7 +161,7 @@ class ObjectDiscovery:
         self,
         schema: str,
         filters: _ObjectFilters,
-        recent_days: int | None,
+        recent_days: int | float | None,
         changed_since: str | None = None,
     ) -> list[DatabaseObject]:
         rows = self.gateway.fetch_all(
@@ -208,7 +209,7 @@ class ObjectDiscovery:
         self,
         audit: Any,
         authors: Iterable[str],
-        recent_days: int | None = None,
+        recent_days: int | float | None = None,
         changed_since: str | None = None,
     ) -> dict[str, str | None]:
         """Map each object ``authors`` touched to the author who changed it **last**.
@@ -446,6 +447,12 @@ def _is_old_adt_system_generated_object(object_name: str) -> bool:
         or name.startswith("ISEQ$$_")
         or name.startswith("BIN$")
         or (name.startswith("ST") and name.endswith("="))
+        # A SQLcl DIFF leftover is machine-made scaffolding like the rest of this
+        # list, and it must never reach the repo (ADT #356). The sweep that drops
+        # them is not enough on its own: an export reading the dictionary in the
+        # same second would still write the file, and a committed `%$1` table is
+        # permanent in a way the table itself is not.
+        or is_diff_table(name)
     )
 
 

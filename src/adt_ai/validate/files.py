@@ -1,6 +1,6 @@
 """Decide which APEXlang folders a ``validate`` run covers, entirely offline.
 
-``config/internal/apex_apps.yaml`` already records ``owner``/``app_alias`` per app id
+``config/internal/apex.db`` already records ``owner``/``app_alias`` per app id
 (written by ``export_apex``), and ``ApexFileResolver.apexlang_root()`` already
 knows where an APEXlang tree lives, so ``-app 800`` resolves to a path with no
 database round-trip. That is what keeps ``validate`` connectionless.
@@ -15,11 +15,10 @@ from typing import Any
 
 from adt_ai.export_apex.files import ApexFileResolver
 from adt_ai.export_apex.inventory import ApexApplication
-from adt_ai.shared.internal_paths import internal_path
-from adt_ai.shared.yaml_io import load_yaml_mapping
+from adt_ai.shared.apex_store import ApexStore
 
 APEXLANG_DIR = "apexlang"
-APPS_METADATA = "config/internal/apex_apps.yaml"
+APPS_METADATA = "config/internal/apex.db"
 
 
 @dataclass(frozen=True)
@@ -82,29 +81,29 @@ def _targets_for_apps(
     config  : Mapping[str, Any],
     app_ids : list[str],
 ) -> tuple[list[ValidateTarget], list[str]]:
-    metadata = load_yaml_mapping(internal_path(root, "apex_apps.yaml"))
     resolver = ApexFileResolver.from_config(root, dict(config))
     targets: list[ValidateTarget] = []
     notes: list[str] = []
-    for raw_id in app_ids:
-        entry = metadata.get(_app_key(raw_id))
-        if not isinstance(entry, Mapping):
-            notes.append(
-                f"app {raw_id}: not recorded in {APPS_METADATA} "
-                f"- run `adtai export_apex -app {raw_id}` first."
+    with ApexStore.load(root) as store:
+        for raw_id in app_ids:
+            entry = store.application(raw_id)
+            if not isinstance(entry, Mapping):
+                notes.append(
+                    f"app {raw_id}: not recorded in {APPS_METADATA} "
+                    f"- run `adtai export_apex -app {raw_id}` first."
+                )
+                continue
+            application = _application(entry, raw_id)
+            folder = resolver.for_schema(application.owner).apexlang_root(application)
+            if not folder.is_dir():
+                notes.append(
+                    f"app {raw_id}: nothing to validate, no export at {_label(folder, root)} "
+                    f"- run `adtai export_apex -app {raw_id} -apexlang` first."
+                )
+                continue
+            targets.append(
+                ValidateTarget(folder, _label(folder, root), application.app_id, stageable=True)
             )
-            continue
-        application = _application(entry, raw_id)
-        folder = resolver.for_schema(application.owner).apexlang_root(application)
-        if not folder.is_dir():
-            notes.append(
-                f"app {raw_id}: nothing to validate, no export at {_label(folder, root)} "
-                f"- run `adtai export_apex -app {raw_id} -apexlang` first."
-            )
-            continue
-        targets.append(
-            ValidateTarget(folder, _label(folder, root), application.app_id, stageable=True)
-        )
     return targets, notes
 
 
@@ -120,11 +119,6 @@ def _application(entry: Mapping[str, Any], raw_id: str) -> ApexApplication:
         pages        = entry.get("pages"),
         updated_at   = str(entry.get("updated_at") or ""),
     )
-
-
-def _app_key(raw_id: str) -> str | int:
-    text = str(raw_id).strip()
-    return int(text) if text.isdigit() else text
 
 
 def _discovery_root(root: Path, config: Mapping[str, Any]) -> Path:

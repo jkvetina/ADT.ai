@@ -308,13 +308,21 @@ class _ConsoleMViewReporter(RecompileReporter):
         self.streamed = False
         self._layout = None
 
+    def reading_mviews(self) -> None:
+        # The title goes up before the listing query, so the wait sits under the
+        # name of the thing being listed instead of under the connection block's
+        # closing blank (`#372`). The rest of the table opening cannot come with
+        # it: the column widths are measured from rows this read has not
+        # returned yet.
+        print_adt_header("MATERIALIZED VIEWS:")
+
     def begin_mviews(self, mviews) -> None:
         self.streamed = True
         rows = [_mview_row_cells(mview) for mview in mviews]
         self._layout = _compute_adt_layout(rows, list(_MVIEW_COLUMNS), {})
-        # Mirror print_adt_table's opening exactly: header_adt prints the section
-        # title, then a leading blank, the column header, and the separator.
-        print_adt_header("MATERIALIZED VIEWS:")
+        # Mirror print_adt_table's opening exactly: header_adt printed the
+        # section title above, then a leading blank, the column header, and the
+        # separator.
         print()
         print(self._layout.header_line())
         print(self._layout.separator_line())

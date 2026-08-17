@@ -3,10 +3,17 @@
 ``-recent N`` keeps its day-window meaning everywhere. **Bare** ``-recent`` means
 "everything changed since my last covering export of this scope", so repeated
 refreshes stop re-exporting the whole schema. The cutoff for that mode is a
-timestamp this module stores per scope in ``config/internal/recent.yaml``,
-generated runtime metadata that lives next to ``config/internal/dependencies.db``
-and is gitignored for the same reason: it describes one checkout's export
-history, not the project.
+timestamp stored per scope, generated runtime metadata that lives next to
+``config/internal/dependencies.db`` and is gitignored for the same reason: it
+describes one checkout's export history, not the project.
+
+Where it is stored depends on what it describes. ``export_db``'s watermarks are
+in ``config/internal/recent.yaml``, which is what :class:`RecentStore` below
+reads and writes. ``export_apex``'s went into ``config/internal/apex.db`` with
+`#369`, beside the other facts ADT caches about an application, and are reached
+through ``shared/apex_store.ApexStore``. The rules in this module are shared by
+both: :func:`may_advance` decides whether a pass earns a stamp regardless of
+which store holds it.
 
 Two rules keep the watermark honest, and both are the reason this is a shared
 module rather than per-command bookkeeping:
@@ -81,11 +88,16 @@ def is_bare_recent(value: object) -> bool:
     return isinstance(value, _BareRecent)
 
 
-def recent_days(value: object) -> int | None:
-    """The day window for ``value``; ``None`` for bare ``-recent`` and for absent."""
+def recent_days(value: object) -> int | float | None:
+    """The day window for ``value``; ``None`` for bare ``-recent`` and for absent.
+
+    The window is handed back exactly as the parser produced it. It used to be
+    cast to ``int`` here, which floored every sub-day window to ``0`` on its way
+    to the ``:recent_days`` bind, and ``SYSDATE - 0`` selects nothing at all.
+    """
     if value is None or is_bare_recent(value):
         return None
-    return int(value)  # type: ignore[arg-type]
+    return value  # type: ignore[return-value]
 
 
 def recent_state_path(root: Path) -> Path:
@@ -138,10 +150,14 @@ def may_advance(
 class RecentStore:
     """Read/modify/write access to ``config/internal/recent.yaml``.
 
-    Scope keys are nested mappings, ``export_db`` → env → schema, ``export_apex``
-    → env → app_id → format, so the file stays readable and one module's scopes
-    can never collide with another's. Every key is stored as a string so a
-    numeric APEX app id round-trips through YAML unchanged.
+    Scope keys are nested mappings, ``export_db`` to env to schema, so the file
+    stays readable and one module's scopes can never collide with another's.
+    Every key is stored as a string, which is what let ``export_apex`` share the
+    file while it lived here.
+
+    ``export_db`` is the only module left in it. The generic shape stays: it
+    costs nothing, and a second file-backed watermark scope would otherwise
+    arrive to find a store hard-coded to one module.
     """
 
     def __init__(self, path: Path, data: dict[str, Any] | None = None) -> None:
@@ -161,6 +177,21 @@ class RecentStore:
                 return None
             node = node.get(str(key))
         return str(node) if isinstance(node, str) else None
+
+    def keys(self, module: str, keys: Sequence[Any] = ()) -> list[str]:
+        """The child keys under a scope, or an empty list when it holds no map.
+
+        A watermark is read by a caller that already knows its environment and
+        schema. `export_db_timers` is the other shape: the per-object-type rates
+        under one schema are read all at once, and which types are in there is
+        the answer rather than the question (`#377`).
+        """
+        node: Any = self._data.get(module)
+        for key in keys:
+            if not isinstance(node, dict):
+                return []
+            node = node.get(str(key))
+        return sorted(node) if isinstance(node, dict) else []
 
     def set(self, module: str, keys: Sequence[Any], timestamp: str) -> None:
         if not keys:

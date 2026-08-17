@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from adt_ai.cli.context_debug import DebugQueryGateway
+from adt_ai.shared.announce import AnnouncedGateway, strict_mode
 from adt_ai.shared.db import OracleGateway, QueryGateway
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle guard, typing only
@@ -56,4 +57,8 @@ def build_gateway(
         startup_sql  = startup.startup_sql,
         config       = startup.config,
     )
-    return DebugQueryGateway(gateway) if debug else gateway
+    wired = DebugQueryGateway(gateway) if debug else gateway
+    # Outermost, so the console guard sees the call before -debug renders it.
+    # This is the real path; the injected-factory path is wrapped in
+    # cli.runtime.main, and between the two every command is covered.
+    return AnnouncedGateway(wired) if strict_mode() else wired

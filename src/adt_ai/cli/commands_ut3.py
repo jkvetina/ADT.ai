@@ -20,14 +20,12 @@ from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.ut3.grouping import gated_packages
 from adt_ai.ut3.limits import error_limit, packages_below, resolve_gate
 from adt_ai.ut3.naming import UtNaming
-from adt_ai.ut3.problems import print_problems
 from adt_ai.ut3.render import (
-    ConsoleUt3Reporter,
     print_coverage_gate,
     print_module_summary,
-    print_results,
-    print_summary,
+    print_summary_rows,
 )
+from adt_ai.ut3.reporter import ConsoleUt3Reporter
 from adt_ai.ut3.runner import Ut3Request, Ut3Runner
 from adt_ai.ut3.timers import previous_seconds, record_seconds, timers_path, variant_key
 
@@ -99,9 +97,13 @@ def _run_ut3_for_schema(
     timers_file = timers_path(startup.root)
     variant = variant_key(names)
 
-    # The reporter prints the suites roll-up the moment discovery returns, then
-    # the mode's own section: the dotted bar by default, the per-test rows under
-    # `-verbose`, neither under `-silent`.
+    # The reporter owns the screen from the first thing that blocks to the
+    # summary heading: the mode's own header ahead of discovery, the dotted bar
+    # or the per-test rows through the suites, then the problem stanzas and
+    # `SUMMARY PER SUITE:` ahead of the coverage read (`#379`). `names` reaches
+    # it because that first heading is where the run states its filter,
+    # `RUNNING TESTS FOR <PATTERNS>:`, and `error_limit` because the stanzas it
+    # prints are capped.
     #
     # `started_at` is taken here rather than inside the bar so the countdown and
     # the figure recorded below are measured from one origin, the run the bar
@@ -110,21 +112,33 @@ def _run_ut3_for_schema(
     reporter = ConsoleUt3Reporter(
         silent           = args.silent,
         verbose          = args.verbose,
+        names            = names,
         previous_seconds = previous_seconds(timers_file, owner, variant),
         started_at       = started_at,
+        error_limit      = error_limit(startup.config),
     )
-    result = Ut3Runner(gateway, reporter=reporter).run(
-        Ut3Request(
-            owner   = owner,
-            names   = names,
-            refresh = args.refresh,
-            naming  = naming or UtNaming(),
+    try:
+        result = Ut3Runner(gateway, reporter=reporter).run(
+            Ut3Request(
+                owner   = owner,
+                names   = names,
+                refresh = args.refresh,
+                naming  = naming or UtNaming(),
+            )
         )
-    )
+    except BaseException:
+        # **A row the run left open is completed before the error banner, not
+        # after.** The banner starts with its own blank line, which on a bare
+        # label is spent terminating that label instead of spacing the banner,
+        # so the failure lands welded to a row that still reads as running
+        # (`#232`). The close is idempotent, which is why the happy path below
+        # can call it too.
+        reporter.close()
+        raise
 
-    # The streamed section closes here, not inside the loop: the bar is one row
-    # for the whole run, so the newline that ends it, and the blank that
-    # separates the section from the next header, are owed once, at the end.
+    # Idempotent, and normally already done: `measuring_coverage` ends the bar
+    # the moment the last suite returns. This is what closes it on a run that
+    # never got that far.
     reporter.close()
 
     if result.timings:
@@ -133,25 +147,12 @@ def _run_ut3_for_schema(
         # that would seed `0:00:00` into the next real run's countdown.
         record_seconds(timers_file, owner, variant, time.monotonic() - started_at)
 
-    if args.verbose and not args.silent and not reporter.streamed:
-        # Nothing ran, so nothing streamed. The section still prints, empty: a
-        # run that found no suite reports it in the same shape as one that did,
-        # and the exit code below carries the failure. It belongs to the
-        # `-verbose` section, so it follows that section rather than printing a
-        # `TEST RESULTS:` header the default mode has no other use for.
-        print_results(result)
-
-    # `-silent` never takes out the problem stanzas: it exists to make a green
-    # run quiet, not to make a red one unreadable, and a `FAIL` count whose
-    # message is reachable only by re-running is not a report. It is capped
-    # instead: a schema with hundreds of failing tests printed three thousand
-    # lines here and pushed the tables below off the terminal's scrollback.
-    print_problems(result, limit=error_limit(startup.config))
-
-    # The run closes on its roll-up, per-suite first, then per module when
-    # `ut_module` is configured. `names` reaches the renderer because the header
-    # says what the table covers: `SUMMARY FOR <PATTERNS>:` under `-name`.
-    print_summary(result, names)
+    # The rows under the heading the reporter laid down before the coverage
+    # read, which is the one part of the report that had to wait for it. Then
+    # the same run grouped per module when `ut_module` is configured. Neither
+    # heading carries `names`: they say what they group, and the section the run
+    # happened under said what it covered.
+    print_summary_rows(result)
     if result.modules:
         print_module_summary(result)
 

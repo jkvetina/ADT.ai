@@ -30,7 +30,7 @@ A package is run when **both** are true:
 
 The two facts come from two different places, and `ut3` reads both because neither is sufficient on its own. The data dictionary (`ALL_OBJECTS`) is the only place an **INVALID** test package is visible at all; utPLSQL's own metadata (`ut_runner.get_suites_info`) is the only place the annotations have been parsed.
 
-A matched package that satisfies only the first half, it exists, but did not compile, or utPLSQL parsed no `%test` for it, is **ignored**. It is not a suite, and `ut3` reports suites: no row in `UNIT TESTS SUITES:` or `SUMMARY:`, no stanza under `ERRORS & FAILURES:`, and no effect on the exit code. A section headed `ERRORS & FAILURES:` is a list of tests that ran badly, and a package that never ran is not one of them.
+A matched package that satisfies only the first half, it exists, but did not compile, or utPLSQL parsed no `%test` for it, is **ignored**. It is not a suite, and `ut3` reports suites: no row in `SUMMARY PER SUITE:` or in `-verbose`'s `UNIT TESTS SUITES:`, no stanza under `ERRORS & FAILURES:`, and no effect on the exit code. A section headed `ERRORS & FAILURES:` is a list of tests that ran badly, and a package that never ran is not one of them.
 
 The vanished-suite case is still caught, by the zero-test rule below rather than by name: a run that executed no test is a failure, so a schema whose only test package stopped compiling exits non-zero anyway.
 
@@ -43,7 +43,7 @@ Four config values describe how a project names its test packages. All four are 
 | `ut_pattern` | `'_UT$'` | Which packages are test packages. Nothing else is ever run. |
 | `ut_match` | `'^(.+)_UT$'` | Which package a test package tests, capture group 1. |
 | `ut_owner` | `''` | Which schema holds the test packages. Empty means the schema being tested. |
-| `ut_module` | `'^[^_]+_([^_]+)'` | Which module a suite belongs to, capture group 1, read off the suite's own name in the query that already selected it. Anchor it to nothing that has to follow the module token: an expression ending `_` cannot read `ICT_VPD_UT`, a module whose whole implementation is one package. Set it to `''` to print no `MODULES:` table. |
+| `ut_module` | `'^[^_]+_([^_]+)'` | Which module a suite belongs to, capture group 1, read off the suite's own name in the query that already selected it. Anchor it to nothing that has to follow the module token: an expression ending `_` cannot read `ICT_VPD_UT`, a module whose whole implementation is one package. Set it to `''` to print no `SUMMARY PER MODULE:` table. |
 
 A project whose suites are `TEST_ABC` rather than `ABC_UT` configures `ut_pattern: '^TEST_'` and `ut_match: '^TEST_(.+)$'`, and everything else, discovery, the `COVERAGE` column's pairing, the exclusion of test packages from the coverage listing, follows.
 
@@ -96,7 +96,15 @@ adtai recompile && adtai ut3
 
 It worked differently until 2026-08-07, when there was a second mode to disagree with: `-coverage` dropped the patterns before discovery and applied them to the printed rows alone, so `-coverage -name ICT_INT%` ran the whole schema's suites and cost the same 38 seconds as `-name ICT%` while looking like it filtered. The reasoning was sound, coverage of a package comes from whatever executed it, so narrowing the run can under-report, and it lost anyway: a flag that silently means two things depending on a second flag is the worse defect. See §Code coverage for what the change costs.
 
-**The section header names the filter.** With `-name` passed, `SUMMARY:` reads `SUMMARY FOR <PATTERNS>:`, upper-cased, several patterns joined with commas, so a roll-up over part of a schema says so in its own heading rather than leaving the reader to remember the command they typed. Case carries no meaning in a LIKE pattern against Oracle identifiers, so `-name ict_sec%` and `-name ICT_SEC%` print one heading, not two. `MODULES:` keeps its own header: it is one section further down and the filter has already been stated.
+**The run's own section names the filter.** With `-name` passed, `RUNNING TESTS:` reads `RUNNING TESTS FOR <PATTERNS>:`, upper-cased, several patterns joined with commas, so the one line on screen for the length of the run says which part of the schema is running rather than leaving the reader to remember the command they typed. Case carries no meaning in a LIKE pattern against Oracle identifiers, so `-name ict_sec%` and `-name ICT_SEC%` print one heading, not two.
+
+```text
+RUNNING TESTS FOR ICT_INT%:
+---------------------------
+  66 TESTS ................ 31%                                        0:01:38
+```
+
+**The two tables below keep their own headings**, `SUMMARY PER SUITE:` and `SUMMARY PER MODULE:`, in every mode. They carry the same columns over the same run and differ only in how the rows are cut, so what a heading is for down there is saying which of the two you are looking at; the filter has already been stated one section up, and a table that shows only what ran would be restating it.
 
 ```bash
 adtai ut3 -name %COMMODITY%
@@ -118,19 +126,42 @@ utPLSQL discovers suites by parsing the `%suite` / `%test` annotations out of pa
 adtai ut3 -refresh
 ```
 
-It is not the default because a rebuild re-parses the schema's source and there is no reason to pay for it on every run. Use it right after deploying or recompiling a test package, and it is the first thing to try when a suite you know exists is **missing from `UNIT TESTS SUITES:`**. An unparsed package is ignored silently, so its absence from that list is the only signal there is.
+It is not the default because a rebuild re-parses the schema's source and there is no reason to pay for it on every run. Use it right after deploying or recompiling a test package, and it is the first thing to try when a suite you know exists is **missing from `ut3 -verbose`'s `UNIT TESTS SUITES:`**. An unparsed package is ignored silently, so its absence from that list is the only signal there is.
+
+The rebuild is the slowest thing this command can be asked to do, and it runs under the connection block above it. It prints no section of its own.
 
 ## Output
 
-The matched suites are rolled up **before** anything runs. What follows depends on the mode, and there are three with one section each:
+Between the connection block and `SUMMARY PER SUITE:` the output belongs to the mode, and there are three:
 
-| Mode | Second section | What it is for |
-| ---- | -------------- | -------------- |
+| Mode | What prints there | What it is for |
+| ---- | ----------------- | -------------- |
 | default | `RUNNING TESTS:` | One dotted bar: how big the run is, how much of it is done, and roughly how long is left. |
-| `-verbose` | `TEST RESULTS:` | A verdict per test, grouped under its package. |
-| `-silent` | none | Neither listing; a green run is four lines and a table. |
+| `-verbose` | `UNIT TESTS SUITES:` then `TEST RESULTS:` | The suites that matched, rolled up before anything runs, then a verdict per test grouped under its package. |
+| `-silent` | none | Neither listing and no bar; a green run is four lines and a table. |
 
-Everything below that section, `ERRORS & FAILURES:`, `SUMMARY:`, `MODULES:`, the coverage gate and the `TIMER` footer, is identical in all three.
+Everything below, `ERRORS & FAILURES:`, `SUMMARY PER SUITE:`, `SUMMARY PER MODULE:`, the coverage gate and the `TIMER` footer, is identical in all three.
+
+**The suites roll-up is verbose output** (card `#348`). It answers "what is about to run", and the bar's own `N TESTS` label carries that in one line, so on a schema of ninety suites the table was ninety rows standing between the connection block and the report. The mode that asks for a row per test is the mode that wants the list of what will produce them.
+
+### Where the waits sit
+
+A run reaches the database in four stretches, and each one sits under the heading of the section it belongs to, printed above its own first read. **`ut3` mints no string for any of them:**
+
+| Wait | What is on screen through it |
+| ---- | ---------------------------- |
+| `-refresh` annotation rebuild | `RUNNING TESTS FOR <PATTERNS>:`, or `UNIT TESTS SUITES:` under `-verbose` |
+| discovery | the same heading |
+| each suite | the dotted bar, or the package heading under `TEST RESULTS:` |
+| coverage read | `SUMMARY PER SUITE:`, the table the read fills |
+
+`#359` gave the first, second and fourth a heading and a row each, `REFRESHING THE ANNOTATION CACHE:`, `DISCOVERING SUITES:` and `MEASURING COVERAGE:`. Jan, 2026-08-16, reading two of them: *"WHAT IS THIS SHIT in UT3 MODULE? ... I DID NOT FUCKING ASKED FOR EATHER OF THIS SHIT!"* What he had asked for on `#359` was the cursor to stop parking on a finished row, and the fix for that is to move existing structure, not to mint three strings.
+
+**Every heading in that table is one the run was going to print anyway; only its position moved** (`#379`). The reply to `#359` had been to leave the bar open through the coverage read, on the reasoning that an open line announces. It does, of the work that will **close** it, and this row's work was over: measured on `adtai ut3 -name ICT_INT%` against `ICT_OWNER`, the bar reached `100%  0:00:00` at 9.4 s and the screen did not move again until 19.3 s, when the heading and every row printed together. Jan: *"you are waiting on the progress line and only after you fetch summaries you print header and data."* The same reading was hiding the discovery wait behind the last row of a finished connection block, 2.05 s of the same run.
+
+So the bar now closes when the last suite returns and `SUMMARY PER SUITE:` goes up before the profiler is stopped and read, and the run's own heading goes up before discovery. `tests/contracts/test_no_silent_blocking_phase.py` holds the general rule, and `tests/cli/test_ut3_phase_sections.py` pins both halves together: the three invented strings absent, and each wait's heading on screen at the moment its query runs.
+
+One consequence worth stating: the bar's closing time is now the suites' own, not the whole run's. The `TIMER` footer is what reports the run.
 
 ### The default run
 
@@ -144,36 +175,27 @@ CONNECTING TO SCHEMA ICT_OWNER, DEV:
           DATABASE | 23.26.2.0.0 | ORCLPDB1
              THICK | 23.3
 
-UNIT TESTS SUITES:
-------------------
-
-  SUITE PACKAGE          TESTS
-  --------------------   -----
-  ICT_ADM_NUMBERING_UT      19
-  ICT_BKG_VESSEL_UT         39
-  ICT_SEC_RETENTION_UT       8
-
 
 RUNNING TESTS:
 --------------
   66 TESTS ................ 31%                                        0:01:38
 
 
-SUMMARY:
---------
+SUMMARY PER SUITE:
+------------------
 ```
 
-**The label is the tests the run targets; the bar is bumped by finished suites.** The two units are different on purpose. A test is the unit a run is sized in and it is knowable before anything runs, so it is what the row says out loud, the sum of the `TESTS` column in the table directly above, which is what makes `-name` narrow the label and the axis together. A suite is the only unit utPLSQL reports back, so it is the only thing that can move a bar honestly. The row is indented two spaces and labelled exactly like an `export_apex` action row, and it opens on the line directly under the dashed rule, for the same reason: one bar, not two dialects of one.
+**The label is the tests the run targets; the bar is bumped by finished suites.** The two units are different on purpose. A test is the unit a run is sized in and it is knowable before anything runs, so it is what the row says out loud, the sum of the `TESTS` column `-verbose` tabulates, which is what makes `-name` narrow the label and the axis together. In this mode the label is the only place that count appears. A suite is the only unit utPLSQL reports back, so it is the only thing that can move a bar honestly. The row is indented two spaces and labelled exactly like an `export_apex` action row, and it opens on the line directly under the dashed rule, for the same reason: one bar, not two dialects of one.
 
 **The bar is bumped by finished suites, never by a clock.** The percentage is the suites completed so far, so it moves when a suite returns and at no other moment, nothing animates in between. That is not a rendering preference: utPLSQL buffers a run's whole reporter output until `ut.run` returns (measured 2026-08-13, a 12-test suite's `post-test` events all reached the client in a 0.5 s burst 22 s after `execute()`), so a suite is the smallest unit of progress that exists to report. A per-suite elapsed-seconds ticker shipped for one release under `#301` and Jan rejected it the same day: *"You will print the package name, when you have a result you will print the rest. There is nothing in between."*
 
 **The time on the right is what is left, not what has passed.** Before the first suite returns the only thing the command knows is what the last run of this schema and `-name` variant cost, see §Estimating The Time Left. From the first return onward the run measures its own rate, and the two are blended by the completed fraction: early the history knows more, and by the last suite the sample *is* the run. The closing row is the exception, at 100% it shows the run's real elapsed time, because there is nothing left to estimate.
 
-**A run that matched nothing prints no bar.** `UNIT TESTS SUITES:` still prints its header and column row, because an empty table reports the same fact in the same shape as a full one. A bar has no such empty form: every percentage it could show beside no work would be a claim rather than a report.
+**A run that matched nothing prints the heading and no bar.** A bar has no empty form: every percentage it could show beside no work would be a claim rather than a report. The heading is a different thing and it is already on screen by then, because it is what discovery blocked under (`#379`): it says what was looked for, under the filter that was used. What says what was *found* is the empty `SUMMARY PER SUITE:` and the exit code, which is what carried it all along.
 
 ### The verbose run
 
-`-verbose` replaces the bar with the per-test section, one block per suite, opened by the package name as that suite starts and completed by its test rows as it finishes:
+`-verbose` prints the suites roll-up, then replaces the bar with the per-test section, one block per suite, opened by the package name as that suite starts and completed by its test rows as it finishes:
 
 ```text
 APEX DEPLOYMENT TOOL - UT3
@@ -184,6 +206,7 @@ CONNECTING TO SCHEMA ICT_OWNER, DEV:
               APEX | 26.1.0
           DATABASE | 23.26.2.0.0 | ORCLPDB1
              THICK | 23.3
+
 
 UNIT TESTS SUITES:
 ------------------
@@ -221,8 +244,8 @@ ERRORS & FAILURES:
     ORA-06512: at "ICT_OWNER.ADT_FIXTURE_UT", line 32
 
 
-SUMMARY:
---------
+SUMMARY PER SUITE:
+------------------
 
   SUITE PACKAGE         PASS   FAIL   ERROR   TIMER   COVERAGE
   -------------------   ----   ----   -----   -----   --------
@@ -239,7 +262,7 @@ That listing is a real run against `ICT_OWNER@ORCLPDB1`, trimmed only by droppin
 
 **The four status words are `PASS`, `FAIL`, `ERROR` and `SKIP`**, and each is a single constant that is both the header of the column that counts it and, for `FAIL`/`ERROR`/`SKIP`, the word a result row prints. A row can therefore never read one spelling under a header that reads another. They were `PASSED` / `FAILED` / `ERRORED` / `SKIPPED` until 2026-08-11 (card `#291`).
 
-**`UNIT TESTS SUITES:` is a per-suite roll-up, and it always prints.** Two columns, the suite package and how many tests it holds, so the section answers "what is about to run" at a glance rather than scrolling a row per test. The header and the column row print even when the list is empty: a run that matched nothing reports it in the same shape as a run that matched ten, and the failure is carried by the exit code, not by a block of troubleshooting advice. **Only runnable suites are listed**, and a package that is not one is listed nowhere else either.
+**`UNIT TESTS SUITES:` is a per-suite roll-up, and inside this mode it always prints.** Two columns, the suite package and how many tests it holds, so the section answers "what is about to run" at a glance rather than scrolling a row per test. The header and the column row print even when the list is empty: a run that matched nothing reports it in the same shape as a run that matched ten, and the failure is carried by the exit code, not by a block of troubleshooting advice. **Only runnable suites are listed**, and a package that is not one is listed nowhere else either.
 
 **Order is fixed and not the reporter's.** Packages print A-Z. Tests print in the order the **package specification** declares them, `ALL_PROCEDURES.SUBPROGRAM_ID`, not alphabetically and not in the order utPLSQL happened to walk its suite tree, so a results block reads down the same way the source does. The results, the stanzas, and the counts all follow that one order.
 
@@ -253,17 +276,17 @@ That listing is a real run against `ICT_OWNER@ORCLPDB1`, trimmed only by droppin
 
 **The status leads the heading**, `ERROR > ADT_FIXTURE_UT.TEST_LABELS#LOOKUP_RAISES`, not the name with the verdict trailing. A reader scanning this section is looking for which ones errored, and a status word parked behind a package-qualified identifier is behind the longest and most variable part of the line. A raised exception reads `ERROR`; a refused expectation reads `FAIL`.
 
-**The section is capped at `ut_limit_errors`, and the header says when the cap bit.** With more problems than the limit the heading reads `FIRST 20 ERRORS & FAILURES:`; with fewer it stays plain, the same rule `SUMMARY FOR <PATTERNS>:` follows one section down. This exists because of a measured run: `ICT_OWNER@ORCLPDB1` on 2026-08-11 printed 397 stanzas over 3 060 lines and pushed `SUMMARY:`, header, column row, separator and all, off the terminal's scrollback, so a correct report was unreadable and read like a renderer that had dropped its own headers. **The cap never touches the counts:** `SUMMARY:` and `MODULES:` report every failure and error, so the two disagreeing is the signal that there is more detail than the screen. Set `ut_limit_errors: 0` to print every stanza.
+**The section is capped at `ut_limit_errors`, and the header says when the cap bit.** With more problems than the limit the heading reads `FIRST 20 ERRORS & FAILURES:`; with fewer it stays plain, the same rule `RUNNING TESTS FOR <PATTERNS>:` follows one section up. This exists because of a measured run: `ICT_OWNER@ORCLPDB1` on 2026-08-11 printed 397 stanzas over 3 060 lines and pushed `SUMMARY PER SUITE:`, header, column row, separator and all, off the terminal's scrollback, so a correct report was unreadable and read like a renderer that had dropped its own headers. **The cap never touches the counts:** `SUMMARY PER SUITE:` and `SUMMARY PER MODULE:` report every failure and error, so the two disagreeing is the signal that there is more detail than the screen. Set `ut_limit_errors: 0` to print every stanza.
 
-**`SUMMARY:` is the suites table again, with what each suite's tests did.** The same first column, so the two sections read as before-and-after of one list, plus `PASS` / `FAIL` / `ERROR`. **A zero renders as an empty cell**, a column of `0`s competes for the eye with the counts that matter, and the row a reader scans for is the one that is not all-passed.
+**`SUMMARY PER SUITE:` is the suites table again, with what each suite's tests did.** The same first column, so under `-verbose` the two sections read as before-and-after of one list, plus `PASS` / `FAIL` / `ERROR`. **A zero renders as an empty cell**, a column of `0`s competes for the eye with the counts that matter, and the row a reader scans for is the one that is not all-passed.
 
-**There is no `TESTS` column here.** Every test lands in exactly one verdict, so the total was a fourth number derivable from the other three, and `UNIT TESTS SUITES:` above already carries the count. The one thing it said alone was that a `%disabled` test exists, it appears in no verdict column, and that test's own result row still reads `SKIP`, so a suite quietly disabled wholesale shows up as a package with rows and no counts.
+**There is no `TESTS` column here.** Every test lands in exactly one verdict, so the total is a fourth number derivable from the other three. The one thing it would carry alone is the `%disabled` test, which appears in no verdict column and whose own result row still reads `SKIP`, so a suite quietly disabled wholesale shows up as a package with rows and no counts.
 
 **`TIMER` carries that suite's own seconds**, right-aligned, one decimal always present, and no unit, the header names it once. It is wall clock around the suite's `ut.run` call, not the sum of utPLSQL's per-test `time` attributes: a suite spends as much of its time in `%beforeall`, teardown and the round trip as in its assertions, and a column that left those out would not account for the total printed at the bottom of the run. **It is one of the two columns a zero does not blank out of**, a suite that finished inside a tenth of a second reads `0.0`, because it was measured, where an empty cell would claim it was not. Only a suite that never ran has nothing to print. The shared `TIMER: 2s` footer below the table is a different thing: the whole command, including connecting and discovery.
 
 **`COVERAGE` closes the row** with how much of the code that suite tests actually ran. See §Code coverage below for what the figure is and when it blanks.
 
-**`-silent` drops both listings and nothing else.** `UNIT TESTS SUITES:` is suppressed along with whichever second section the mode chose, the bar, or `TEST RESULTS:` under `-verbose`. The banner, the connection block, `SUMMARY:`, and the timer stay, and so does `ERRORS & FAILURES:` whenever a run has something to put in it. A green run is then four lines and a table. A red one still says which test failed and why, the flag makes a passing run quiet, not a failing run unreadable, and a `FAIL` count whose message is reachable only by re-running without the flag is not a report. `ERRORS & FAILURES:` prints under `-silent` on exactly the same condition as without it: at least one test failed or errored.
+**`-silent` drops whatever the mode would have printed there and nothing else.** The bar on a default run, and both listings under `-verbose`. The banner, the connection block, `SUMMARY PER SUITE:`, and the timer stay, and so does `ERRORS & FAILURES:` whenever a run has something to put in it. A green run is then four lines and a table. A red one still says which test failed and why, the flag makes a passing run quiet, not a failing run unreadable, and a `FAIL` count whose message is reachable only by re-running without the flag is not a report. `ERRORS & FAILURES:` prints under `-silent` on exactly the same condition as without it: at least one test failed or errored.
 
 **`-silent` outranks `-verbose`**, so `-silent -verbose` is `-silent`. Two flags about one region of the screen, and the one that removes it wins, otherwise the quiet flag would print the largest section the command has.
 
@@ -279,19 +302,19 @@ ICT_OWNER:
 
 **The key is the schema and the `-name` variant together**, because `-name` selects the suites that *run*, not just the rows that print, so a filtered run is a genuinely smaller job. Keying on the schema alone would let an eight-second `-name ICT_SEC%` run seed the countdown of a two-minute full run and vice versa. The patterns are upper-cased and sorted into the key, so `-name ict_sec% ict_com%` and `-name ICT_COM% ICT_SEC%`, which select exactly the same suites, accumulate one history rather than two. An unfiltered run keys on `%`.
 
-The stored figure is a rolling `(this run + previous) / 2`, the same average `apex_timers.yaml` uses for the APEX export bar: a plain overwrite would make the estimate as noisy as the noisiest run, and a mean over all history would stop tracking a suite that genuinely got slower.
+The stored figure is a rolling `(this run + previous) / 2`, the same average `apex.db` uses for the APEX export bar: a plain overwrite would make the estimate as noisy as the noisiest run, and a mean over all history would stop tracking a suite that genuinely got slower.
 
 **Every mode records, and a run that executed nothing records nothing.** `-verbose` and `-silent` measure the same work the bar does, so a reader who normally runs quiet still has a history the one run they want the estimate for can read. A schema whose suites all stopped compiling, on the other hand, finishes in no time at all, storing that would seed `0:00:00` into the next real run.
 
 `config/internal/` is where ADT.ai keeps everything it writes about a project, the APEX metadata caches, the `-recent` watermark, the dependency and flow stores, separated from the `config/` files a human edits. It is gitignored by the shipped `.gitignore`. Deleting the timers file costs one run's worth of estimate: the next run counts down from `0:00:00` until its first suite returns, then measures itself.
 
-### The MODULES table, the same run, grouped
+### The per-module table, the same run, grouped
 
-A second table follows `SUMMARY:` whenever `ut_module` is set, which it is by default:
+A second table follows `SUMMARY PER SUITE:` whenever `ut_module` is set, which it is by default:
 
 ```text
-MODULES:
---------
+SUMMARY PER MODULE:
+-------------------
 
   MODULE NAME   PACKAGES   LINES   PASS   FAIL   ERROR   TIMER   COVERAGE
   -----------   --------   -----   ----   ----   -----   -----   --------
@@ -303,9 +326,9 @@ MODULES:
 
 That block is rendered through the real renderer from constructed figures, it is a shape, not a measurement.
 
-**It answers a different question from the table above it.** `SUMMARY:` says which suite is red; this says which *area* is. On a schema with ninety suites the per-suite table is a list you scroll and this is the one you read.
+**It answers a different question from the table above it.** `SUMMARY PER SUITE:` says which suite is red; this says which *area* is. On a schema with ninety suites the per-suite table is a list you scroll and this is the one you read.
 
-**`MODULE NAME` replaces `SUITE PACKAGE`, and `PACKAGES` and `LINES` are the two new columns**, the group's size in suites and in code, and together they are what make the rest honest: four failures spread over nine suites and four in one are not the same news, and neither are ninety percent of forty lines and ninety percent of four thousand. Every other column is `SUMMARY:`'s own over the group: the verdicts and `TIMER` summed, `COVERAGE` recomputed rather than averaged (see §Code coverage).
+**`MODULE NAME` replaces `SUITE PACKAGE`, and `PACKAGES` and `LINES` are the two new columns**, the group's size in suites and in code, and together they are what make the rest honest: four failures spread over nine suites and four in one are not the same news, and neither are ninety percent of forty lines and ninety percent of four thousand. Every other column is `SUMMARY PER SUITE:`'s own over the group: the verdicts and `TIMER` summed, `COVERAGE` recomputed rather than averaged (see §Code coverage).
 
 **`LINES` counts the packages the group's suites test, not the suites**, and counts each package once however many suites name it, the same deduplicated set `COVERAGE` beside it is computed over, so the two columns can never describe two different bodies of code. It is the denominator the group's coverage is scaled by, printed rather than left to be inferred. A group whose suites pair to nothing has no lines to count and blanks, exactly where its `COVERAGE` blanks too.
 
@@ -313,15 +336,15 @@ That block is rendered through the real renderer from constructed figures, it is
 
 ## Code coverage
 
-**Every run measures coverage**, and the figure lands as the `COVERAGE` column of `SUMMARY:` and `MODULES:`, immediately after `TIMER`. There is no flag: `-coverage` was a mode until 2026-08-11 (card `#291`), it replaced the run report with a `CODE COVERAGE:` / `NO CODE COVERAGE:` pair and a roll-up of its own, and Jan folded the figure into the run's own tables.
+**Every run measures coverage**, and the figure lands as the `COVERAGE` column of `SUMMARY PER SUITE:` and `SUMMARY PER MODULE:`, immediately after `TIMER`. There is no flag: `-coverage` was a mode until 2026-08-11 (card `#291`), it replaced the run report with a `CODE COVERAGE:` / `NO CODE COVERAGE:` pair and a roll-up of its own, and Jan folded the figure into the run's own tables.
 
 ```bash
 adtai ut3
 ```
 
 ```text
-SUMMARY:
---------
+SUMMARY PER SUITE:
+------------------
 
   SUITE PACKAGE            PASS   FAIL   ERROR   TIMER   COVERAGE
   ----------------------   ----   ----   -----   -----   --------
@@ -332,8 +355,8 @@ SUMMARY:
   ICT_VPD_POLICY_UT           6                    1.7
 
 
-MODULES:
---------
+SUMMARY PER MODULE:
+-------------------
 
   MODULE NAME   PACKAGES   PASS   FAIL   ERROR   TIMER   COVERAGE
   -----------   --------   ----   ----   -----   -----   --------
@@ -363,7 +386,7 @@ A `NATIVE` marker named that last case until card `#291`; it lived in the remove
 
 ### The module figure covers the whole group, not its measured part
 
-**A `MODULES:` row is not the average of the rows above it.** It is the group's own figure: covered blocks over measured blocks across the group's target packages, scaled by the share of the group's body lines Oracle measured at all. A group every target of which was measured has a share of 1 and is unchanged, so the scaling can only move a figure that was over-claiming.
+**A `SUMMARY PER MODULE:` row is not the average of the rows above it.** It is the group's own figure: covered blocks over measured blocks across the group's target packages, scaled by the share of the group's body lines Oracle measured at all. A group every target of which was measured has a share of 1 and is unchanged, so the scaling can only move a figure that was over-claiming.
 
 The scaling exists because unreached code is invisible to Oracle. A package a suite is supposed to test and never enters produces no `dbmspcc` rows, so it has no denominator to contribute, and pooling the measured blocks alone described the reached part of a group as if it were the group. Jan's run on 2026-08-09 read `COM 3 1639 21 88.0` where `ICT_COM_INVOICE` is 224 well-tested lines and the group's other 1415 had never executed (card `#250`). `LINES`, the `PACKAGE BODY` row count from `ALL_SOURCE`, never the spec and never the test partner's, is the only size every package has, so it is what the scaling uses.
 
@@ -393,7 +416,7 @@ adtai ut3 -gate          # the threshold is config ut_coverage_gate (ships at 80
 adtai ut3                # nothing gates; the run behaves exactly as it did before the flag
 ```
 
-**The report prints in full first, and the gate closes it.** A gate that replaced the numbers with a verdict would be unusable, the reason a package is under the bar is in the tables above it, so `SUMMARY:` and `MODULES:` are untouched and a failing run adds one section:
+**The report prints in full first, and the gate closes it.** A gate that replaced the numbers with a verdict would be unusable, the reason a package is under the bar is in the tables above it, so `SUMMARY PER SUITE:` and `SUMMARY PER MODULE:` are untouched and a failing run adds one section:
 
 ```text
 COVERAGE BELOW 80.0:
@@ -407,7 +430,7 @@ COVERAGE BELOW 80.0:
 
 **One package under the bar fails the whole run**, non-zero exit, error chime, and it fails a run whose tests all passed. Worst first, then A-Z, because the list is a work queue.
 
-**`PACKAGE` names the code, not the suite.** The figure is a property of the package: two suites testing one package are two `SUMMARY:` rows and one row here, and the package is what has to be covered.
+**`PACKAGE` names the code, not the suite.** The figure is a property of the package: two suites testing one package are two `SUMMARY PER SUITE:` rows and one row here, and the package is what has to be covered.
 
 **Only a package with a measured figure is compared.** A blank `COVERAGE` cell has nothing to compare, `ut_match` paired the suite to nothing, or the target carries no instrumentation, and gating a blank would fail every real schema permanently from the first run. **A `0.0` does gate**: that is a measurement, of a package Oracle instrumented and nothing entered.
 
@@ -433,12 +456,12 @@ COVERAGE BELOW 80.0:
 | `-root`, `--root` | No | `.` | Project root folder used for config and connection lookup. |
 | `-config-dir`, `--config-dir` | Yes | none | Folder containing project config YAML. ADT.ai always loads repo defaults first, then overlays these project configs. |
 | `-env`, `--env` | No | the configured default environment | Connection environment to test against. |
-| `-name`, `--name` | Yes | everything | Name pattern(s), comma- or space-separated, with `%` and `_` LIKE wildcards. Selects the suites to run, and names itself in the `SUMMARY FOR <PATTERNS>:` header. LIKE wildcards, not regex, `ut_pattern` is what uses regular expressions. |
+| `-name`, `--name` | Yes | everything | Name pattern(s), comma- or space-separated, with `%` and `_` LIKE wildcards. Selects the suites to run, and names itself in the `RUNNING TESTS FOR <PATTERNS>:` header. LIKE wildcards, not regex, `ut_pattern` is what uses regular expressions. |
 | `-schema`, `--schema` | Yes | every configured default schema | Schema(s) to test; repeatable, comma- or space-separated, `%` patterns expanded against the configured schemas. Each schema runs as its own console segment with its own timer. |
 | `-refresh`, `--refresh` | No | off | Rebuild utPLSQL's annotation cache for the schema before discovery, so a suite compiled since the last run is found. |
 | `-gate [N]`, `--gate [N]` | No | off | Fail the run when a tested package's `COVERAGE` is below a threshold. With a number that number is the threshold; bare it comes from `ut_coverage_gate`; absent nothing gates. Only measured figures are compared, and a package exactly on the threshold passes. |
-| `-silent`, `--silent` | No | off | Suppress `UNIT TESTS SUITES:` and the second section, `RUNNING TESTS:`, or `TEST RESULTS:` under `-verbose`; keep the banner, connection block, `ERRORS & FAILURES:` when a run has any, `SUMMARY:`, and the timer. Outranks `-verbose`. |
-| `-verbose`, `--verbose` | No | off | Print `TEST RESULTS:`, a row per test under its package heading, instead of the `RUNNING TESTS:` progress bar. The heading is streamed before the suite runs and its rows land once the verdict is known. Every section below is unchanged. Ignored under `-silent`, which removes the section outright. |
+| `-silent`, `--silent` | No | off | Suppress whatever the mode prints between the connection block and `SUMMARY PER SUITE:`, the `RUNNING TESTS:` bar, or `UNIT TESTS SUITES:` and `TEST RESULTS:` under `-verbose`; keep the banner, connection block, `ERRORS & FAILURES:` when a run has any, `SUMMARY PER SUITE:`, and the timer. Outranks `-verbose`. |
+| `-verbose`, `--verbose` | No | off | Print `UNIT TESTS SUITES:`, the matched suites and their test counts, then `TEST RESULTS:`, a row per test under its package heading, instead of the `RUNNING TESTS:` progress bar. The heading is streamed before the suite runs and its rows land once the verdict is known. Every section below is unchanged. Ignored under `-silent`, which removes both outright. |
 | `-debug`, `--debug` | No | off | Show input parameters and every SQL statement with its bind values, and keep Python tracebacks for troubleshooting. |
 | `-key`, `--key` | No | none | Encryption key, or path to a key file, for encrypted connection passwords. |
 | `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |
@@ -447,7 +470,7 @@ COVERAGE BELOW 80.0:
 ## Notes
 
 - One `ut.run` call per suite, not one per test: the fixtures run once each, and the per-suite call is what lets the progress row stream.
-- A **skipped** test (`%disabled`) neither passes nor fails the run. Its row reads `SKIP`, and it lands in no `SUMMARY:` verdict column, so a suite quietly disabled wholesale shows up as a package with test rows and no counts rather than as green.
+- A **skipped** test (`%disabled`) neither passes nor fails the run. Its row reads `SKIP`, and it lands in no `SUMMARY PER SUITE:` verdict column, so a suite quietly disabled wholesale shows up as a package with test rows and no counts rather than as green.
 - Installing test packages is out of scope. `ut3` reads the schema and runs what is there; deploying a suite is the project's own deployment path.
 - The naming configuration is per-project, not per-run: there is no flag for `ut_pattern`, `ut_match`, `ut_owner` or `ut_module`. A convention is a property of the codebase, and one that could be overridden per run would make two runs of the same schema disagree about which packages are tests.
 - The expressions must be valid **Oracle** regular expressions, since Oracle is what runs them. That is the dialect every Oracle developer already knows, and it is what lets the selection be a predicate in the dictionary query rather than a filter over a fetched schema, on a schema with thousands of packages and a handful of suites, that difference is the round trip.

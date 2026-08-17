@@ -1,9 +1,9 @@
 """How a single ut3 table cell renders.
 
-Four rules, each of which the run's two tables have to agree on: `SUMMARY:` and
-`MODULES:` carry the same columns (the verdicts, `TIMER`, `COVERAGE`) over
-different groupings, and a count that blanks in one and prints `0` in the other
-would be a visible inconsistency inside one report.
+Four rules, each of which the run's two tables have to agree on: `SUMMARY PER
+SUITE:` and `SUMMARY PER MODULE:` carry the same columns (the verdicts, `TIMER`,
+`COVERAGE`) over different groupings, and a count that blanks in one and prints
+`0` in the other would be a visible inconsistency inside one report.
 
 They stay out of ``render.py`` because that module is close to the repo's 20 KB
 per-file context budget, and because a rendering rule is a fact about the value

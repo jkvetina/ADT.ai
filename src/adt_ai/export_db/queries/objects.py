@@ -117,6 +117,12 @@ AND NOT REGEXP_LIKE(object_name, '^DEPSCAN\\$[[:digit:]]+#[[:digit:]]+$')
 ORDER BY object_type, object_name
 """.strip()
 
+# `last_analyzed` is a statistics timestamp, so the window is day-aligned: from
+# tomorrow midnight backwards, which is what makes `-recent 1` mean "analyzed
+# today". A window shorter than a day has no day to align to, and the aligned
+# cutoff would land in the future (`TRUNC(SYSDATE) + 1 - 1/24` is 23:00 tonight)
+# and select nothing, so a sub-day window measures from now like the object
+# listing does.
 INDEXES_QUERY = """
 SELECT 'INDEX' AS object_type, t.index_name AS object_name, t.table_name,
        t.generated, t.constraint_index, c.constraint_name
@@ -126,7 +132,10 @@ LEFT JOIN user_constraints c
     AND c.constraint_name = t.index_name
     AND c.constraint_type IN ('P', 'U')
 WHERE (:schema IS NOT NULL)
-AND (:recent_days IS NULL OR t.last_analyzed >= TRUNC(SYSDATE) + 1 - :recent_days)
+AND (:recent_days IS NULL OR t.last_analyzed >= CASE
+    WHEN :recent_days >= 1 THEN TRUNC(SYSDATE) + 1 - :recent_days
+    ELSE SYSDATE - :recent_days
+END)
 AND (
     :changed_since IS NULL
     OR t.last_analyzed >= TO_DATE(:changed_since, 'YYYY-MM-DD HH24:MI:SS')

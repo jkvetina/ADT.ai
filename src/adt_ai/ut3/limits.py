@@ -22,7 +22,7 @@ from adt_ai.ut3.inventory import PackageCoverage
 # fallback: a project with no `ut_limit_errors` at all gets the shipped 20, the
 # same number `config/config.yaml` seeds. The alternative, absent means
 # unlimited, would leave exactly the schema this cap was written for printing
-# 3 000 lines of stanzas and pushing `SUMMARY:` out of the terminal's scrollback.
+# 3 000 lines of stanzas and pushing `SUMMARY PER SUITE:` out of the terminal's scrollback.
 DEFAULT_ERROR_LIMIT = 20
 
 # The gate's own default, used when `-gate` is passed bare. It gates nothing on

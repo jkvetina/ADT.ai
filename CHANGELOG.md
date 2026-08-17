@@ -2,6 +2,25 @@
 
 All notable changes to the public ADT.ai release are recorded here, newest first.
 
+## 0.9.0 - 2026-08-17
+
+- **`export_db -compact` replaces the per-object rows with one progress bar per schema.** The overview table, connection block and timer stay. The countdown is seeded from what the last export of that schema cost, and the bar labels the object type it is working through.
+- **`export_apex -compact` draws one progress bar per schema across every requested application and format.** Its budget comes from the times previous runs recorded, so the countdown reflects what this export usually costs rather than a count of actions.
+- **`export_db` shows its `GRANT` exports on screen.** Grants made, grants received, user privileges and directories were always written and never announced. They now run under their own heading, with a row each, and the four files land as before.
+- **Every command prints the heading for the work it is about to do, before it blocks.** A run no longer sits on a finished row or a completed progress bar while the database is read. `export_db`, `export_apex`, `dependencies`, `recompile`, `flow` and `ut3` all gained the flush.
+- **Breaking: the four APEX caches become one store at `config/internal/apex.db`.** The YAML files are converted on the next run and deleted. `validate` resolves `-app` through the store, still offline. Anything reading those files directly needs the store instead.
+- **Breaking: `export_apex -checksum` is withdrawn and the checksum becomes cached metadata.** Every run records it in the APEX store, and `apex/<app>/checksum.txt` is no longer written or kept. Nothing has to ask for it.
+- **Breaking: `calendar` loses `-list`.** The flag was declared, forwarded and read by nothing, so it parsed and did nothing. A flag that cannot act is now rejected by the parser rather than accepted in silence.
+- **Breaking: `rebuild` writes one commit store per branch, `config/commits/#BRANCH#.db`.** The YAML cache is replaced by SQLite, a commit's number is allocated once and never re-derived, and a branch name carrying `/` now writes a file rather than a folder.
+- **`rebuild -verify` reports each branch store read-only.** It prints the commit count, the number range and `CONTIGUOUS` or `BROKEN`, exiting 1 on a problem. A from-scratch rebuild now reaches one year back by default rather than walking a branch's whole history.
+- **`search_repo` reads the configured `repo_commits_file` instead of the default path.** A project that had configured the key could rebuild happily and then be told its cache did not exist. Its per-file status letter now comes from git rather than a guess.
+- **`export_apex -rest` puts workspace roles and privileges in `__enable_schema.sql`, and both artifacts compile.** The splitter dropped ORDS roles entirely and duplicated a privilege naming several modules, so a service that exported cleanly could fail to install.
+- **`-recent` takes a fraction of a day, so an export can ask for the past hour.** `1/24` and `5/1440` are accepted wherever a whole number was, and the sub-day header reads the database clock rather than the machine's.
+- **`ut3` names the run and what each table groups: `RUNNING TESTS FOR <patterns>:`, `SUMMARY PER SUITE:` and `SUMMARY PER MODULE:`.** The suites roll-up moves behind `-verbose`, so a default run goes from the connection block straight to the progress bar.
+- **`dependencies` with no query refreshes the mirror.** The four line hint listing the flags is gone: the one invocation that needs no arguments to describe it was the one invocation that did nothing.
+- **A superseded `db_dependencies.yaml` is deleted once its store has replaced it.** Nothing reads the flattened report any more, so `dependencies` removes it on the conversion and on every run after it.
+- **`-by` and `-my` read the same on every screen that carries them.** The rows had five unrelated wordings and two different orders. Both are now declared in one order with one caption, wherever they appear.
+
 ## 0.8.7 - 2026-08-14
 
 - **The data ADT.ai writes about a project moves into `config/internal/`.** The APEX metadata caches, the recent-export watermark and the stores behind `dependencies` and `flow` leave `config/`, which is for configuration you edit. Every run relocates what it finds, so nothing needs a command.

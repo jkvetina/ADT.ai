@@ -111,6 +111,16 @@ Export objects changed in the last 7 days:
 adtai export_db -recent 7
 ```
 
+Export objects changed in the past hour, or the past 5 minutes. Oracle counts a DATE in days, so a fraction of a day is a shorter window: the query asks for `SYSDATE - 1/24` and `SYSDATE - 5/1440`:
+
+```bash
+adtai export_db -recent 1/24
+```
+
+```bash
+adtai export_db -recent 5/1440
+```
+
 Export only what changed since your last export of each schema (per-schema watermark in `config/internal/recent.yaml`; a schema with no recorded export yet is exported in full and the watermark is seeded):
 
 ```bash
@@ -227,6 +237,46 @@ Run without per-object output, useful when an LLM or agent drives the export and
 adtai export_db -silent
 ```
 
+## Watching a long export
+
+The default screen prints a row per exported object, which is what you want while you are watching a handful of them. On a whole schema it is hundreds of rows, and the `OBJECTS OVERVIEW:` table that opened the run has left the terminal's scrollback long before the export ends.
+
+`-compact` keeps the overview and replaces the rows with one line that moves:
+
+```bash
+adtai export_db -compact
+```
+
+```text
+OBJECTS OVERVIEW:
+-----------------
+
+  OBJECT TYPE          COUNT
+  -------------------  -----
+  PACKAGE                 34
+  TABLE                   19
+  VIEW                     8
+  GRANT
+
+EXPORTING 61 OBJECTS:
+--------------------
+  PACKAGES .................................... 43%  0:00:07
+```
+
+**The row names the type in the plural**, `PACKAGES`, `MATERIALIZED VIEWS`, `PACKAGE BODIES`, `INDEXES`, because it heads the whole batch of them rather than naming the one object in flight. Only the label reads that way: `-type` still takes Oracle's own singular spelling, the `OBJECTS OVERVIEW:` table above lists singular values under its `OBJECT TYPE` heading, and the exported files land in the folders that spelling maps to.
+
+The bar advances when an object's DDL comes back, not on a clock, and the time on the right is what is left rather than what has passed. A multi-schema export draws one bar per schema, inside that schema's own section, and a failed DDL pull completes the row with `FAILED` before the error is reported.
+
+**`GRANT` is in the overview and not in the header count**, and the difference is deliberate (`#382`). The four grant artifacts, grants made, grants received, user privileges and directories, are exported under the `GRANT` object type like any other file, so the type belongs in the listing; but they are not schema objects and have no `USER_OBJECTS` row, so counting them would make `EXPORTING <n> OBJECTS:` disagree with the dictionary. Its count is blank for the same reason it is honest: `grants_received` writes one file per owner, and how many that is cannot be known until the reads run, which happens after the table prints.
+
+They run at the end of a schema's export, after the last object, and **`-compact` is where you see them**: the bar takes `GRANTS` as its label while they read, and counts them as one more unit, so the row cannot reach 100% while they are still in flight. The default row-per-object screen lists nothing for them at all (Jan's call, 2026-08-16), which is why the overview row is where that mode says the type exists. A run narrowed past them, `-type VIEW`, names the type in neither place.
+
+**The countdown is seeded by what your last export of that schema cost.** Every run, `-compact` or not, records how long an object of each type took, per environment and schema, in `config/internal/recent.yaml` beside the `-recent` watermarks. The next run prices itself from those rates for the objects it actually selected, so the figure opens on something real instead of swinging while the run collects its first samples, and the rate this run is measuring is blended in as it proceeds. The unit is per object **type** on purpose: a sequence costs a fiftieth of what a table with constraint blocks costs, so one average across types would be wrong for both, and a `-type SEQUENCE` run would otherwise teach the store something false about a full export.
+
+A first export of a schema, or a run with no environment to key one by, has no history: the row reads `0:00:00` until the first object returns and then projects from the measured rate alone. Deleting `config/internal/recent.yaml` resets the rates and the watermarks together.
+
+`-silent` outranks `-compact`: it removes the very rows the bar stands in for, so passing both gives you the quieter of the two.
+
 ## Object groups
 
 `-groups` is a **move action**, not an export modifier. When you pass it, `export_db` does **not** connect or export anything, it scans the object files you have already exported under `database/<object_type>/` and reorganizes the matching ones into per-group subfolders (`<object_type>/<group>/PREFIX_...`) so a large object-type folder stays navigable. Group folder names are always uppercased.
@@ -289,7 +339,7 @@ Unresolved placeholder in config path_objects: {$INFO_SCHEMA}
   Fix path_objects in config.yaml (e.g. '<schema>/database/<object_type>/').
 ```
 
-The run stops before writing anything, and the same rejection applies to every command that renders the template, `export_db` and `export_data`, so a guarded command cannot leave an unguarded one exporting into the placeholder folder. Until this guard the export simply created a directory named `{$INFO_SCHEMA}` and reported success.
+The run stops before writing anything, and the same rejection applies to every command that renders the template, `export_db`, `export_data`, and `patch -install`, so a guarded command cannot leave an unguarded one exporting into the placeholder folder. Until this guard the export simply created a directory named `{$INFO_SCHEMA}` and reported success.
 
 If an earlier run already built such a folder, it is left on disk untouched: delete it yourself once you have confirmed nothing you need is only in there.
 
@@ -303,13 +353,14 @@ If an earlier run already built such a folder, it is left on disk untouched: del
 | `-schema`, `--schema` | Yes | environment default schema | Schema(s) to export, one pass each. Pass multiple times, space-separate (`-schema DA GSN`), use comma lists, or use `%` patterns such as `CORE%`. |
 | `-type`, `--type` | Yes | configured object types | Object type pattern or patterns to export. Supports old ADT SQL-like `%` and `_` wildcards plus comma lists, for example `PACKAGE%,VIEW`. Oracle type names, resolved exactly as on `recompile`: a bare `PACKAGE` exports specifications only, `PACKAGE BODY` (quoted or not) bodies only, `PACKAGE SPEC` the specification, and `MVIEW`/`MATERIALIZED` both mean `MATERIALIZED VIEW`. See [recompile → Object types](recompile.md#object-types). |
 | `-name`, `--name` | Yes | all names | Object name pattern or patterns to export. Supports old ADT SQL-like `%` and `_` wildcards plus comma lists, for example `APP_%,TMP_%`. |
-| `-recent [DAYS]`, `--recent [DAYS]` | No | all objects | Export objects changed in the last DAYS days. Bare `-recent` exports everything changed since that schema's last successful covering export, the per-schema watermark in `config/internal/recent.yaml`, shown as `CHANGED SINCE LAST EXPORT AT <timestamp>`; a schema with no watermark yet is exported in full and seeded, with a visible `NO PREVIOUS EXPORT RECORDED:` note. Narrowed runs (`-name`/`-type`/`-by`/`-my`) and `-dry-run` never advance the watermark. Do not combine with `-type JOB`. |
+| `-recent [DAYS]`, `--recent [DAYS]` | No | all objects | Export objects changed in the last DAYS days. DAYS may be a fraction of a day for a shorter window, `1/24` for the past hour and `5/1440` for the past 5 minutes: the window reaches the query as `SYSDATE - DAYS`, and Oracle counts a DATE in days. A whole-day window keeps its `CHANGED SINCE <date>` header; a shorter one reports the instant it starts at, read off the database clock rather than yours, so the header names the cutoff the query actually used even when the server keeps a different timezone. Bare `-recent` exports everything changed since that schema's last successful covering export, the per-schema watermark in `config/internal/recent.yaml`, shown as `CHANGED SINCE LAST EXPORT AT <timestamp>`; a schema with no watermark yet is exported in full and seeded, with a visible `NO PREVIOUS EXPORT RECORDED:` note. Narrowed runs (`-name`/`-type`/`-by`/`-my`) and `-dry-run` never advance the watermark. Do not combine with `-type JOB`. |
 | `-by`, `--by` | No | all authors | Export only objects `AUTHOR` (a db user/schema) has changed, resolved by joining the export set against the project's configured `audit:` source. Lets a shared schema worked by several developers via proxy users still resolve authorship. Requires an `audit:` block (`source`/`object_name`/`changed_by`) in `config.yaml`. With the optional `audit.changed_at` column configured, an object someone else changed *after* the author is marked `[OTHER_AUTHOR]` on its export row, and `-recent` narrows the audit source as well as `user_objects`. |
 | `-my`, `--my` | No | off | Export only objects the current user has changed, taking the db schema from the gitignored `config/IDENTITY.yaml` (`db_schema`). Same audit resolution as `-by`; requires both the `audit:` block and `config/IDENTITY.yaml`. |
 | `-groups`, `--groups` | No | off | Move action: reorganize already-exported files into `<object_type>/<group>/` subfolders. Never connects or exports. Bare `-groups` auto-detects groups by prefix (cluster ≥ `groups_min`, default `5`); `-groups PREFIX ...` takes a space- and/or comma-separated prefix list and moves only those. Group folder names are uppercased. Previews then prompts for confirmation; with `-dry-run` it previews only. Aborts on per-object-type filename collisions. |
 | `-dry-run`, `--dry-run` | No | off | Build the export plan without writing files. |
 | `-delete`, `--delete` | No | off | Delete existing object files before export, excluding `DATA`. |
 | `-silent`, `--silent` | No | off | Suppress per-object names and per-object progress callbacks while keeping the standard banner, connection block, overview, export header, and final timer. Use it when calling `export_db` from an LLM or agent to avoid flooding the console. |
+| `-compact`, `--compact` | No | off | Replace the per-object rows with one dotted progress bar per schema, drawn under the export header, labelled with the plural of the object type being pulled right now (`PACKAGES`, `MATERIALIZED VIEWS`), and advanced as each object's DDL comes back. Everything else, banner, connection block, overview, deleted-object and duplicate reporting, and the timer, is unchanged. `-silent` outranks it. See [Watching a long export](#watching-a-long-export). |
 | `-debug`, `--debug` | No | off | Show input parameters and SQL queries with bind values. |
 | `-key`, `--key` | No | `ADT_KEY` | Encryption key value or path to a key file for encrypted connection passwords. |
 | `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |

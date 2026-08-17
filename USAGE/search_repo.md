@@ -1,6 +1,8 @@
 # Search Repository History (adtai search_repo)
 
-`search_repo` searches the `adtai rebuild` commit cache for ADT-style database/APEX project files. It does not connect to Oracle, and normal search/filtering does not scan live Git history; run `adtai rebuild` first so `config/commits/<branch>.yaml` exists. Restore mode still uses Git only to read the selected historical file payloads.
+`search_repo` searches the shared `adtai rebuild` commit store for ADT-style database/APEX project files. It does not connect to Oracle, and normal search/filtering does not scan live Git history; run `adtai rebuild` first so the branch store at `repo_commits_file` (default `config/commits/<branch>.db`) exists. Restore mode still uses Git only to read the selected historical file payloads.
+
+The `A`/`M`/`D` letter beside each changed file is **git's own**, stored per commit since `#358`. It used to be inferred here (`M` when the path had been seen in an older commit, otherwise `A`) because the text cache could not carry the real one. A commit imported from a pre-`#358` YAML cache has no letter stored, so those rows keep the old approximation until a rebuild reaches them again.
 
 ## Examples
 
@@ -58,7 +60,7 @@ When `-stage` matches more than one version for the same file, the newest matchi
 | Argument | Repeatable | Default | Notes |
 | -------- | ---------- | ------- | ----- |
 | `-root`, `--root` | No | `.` | Git repository root to search. |
-| `-branch`, `--branch` | No | current branch | Branch cache file to search under `config/commits/<branch>.yaml`. |
+| `-branch`, `--branch` | No | current branch | Branch store to search, at the `repo_commits_file` path (default `config/commits/<branch>.db`). |
 | `-limit`, `--limit` | No | `20` | Max commits to print, newest first. `0` prints all matching commits. |
 | `-files [N]`, `--files [N]` | No | auto with file selectors | Print changed-file rows. `-file`, `-type`, or `-name` prints the first 20 matching files per commit automatically; bare `-files` also prints the first 20; `-files 50` prints the first 50; `-files 0` prints none. Rows use `D`, `A`, or `M` as delete/add/modify markers. |
 | `-summary`, `--summary` | No | none | Commit-summary terms; all provided words must match. |
@@ -69,7 +71,7 @@ When `-stage` matches more than one version for the same file, the newest matchi
 | `-my`, `--my` | No | off | Keep commits whose author email equals `git config user.email`. |
 | `-commit`, `-commits`, `--commit`, `--commits` | Yes | none | Commit number/hash refs. `N` is that commit, `N+` is that commit and everything newer, `N-M` is the inclusive span. A range needs digits on both sides, so a hash prefix is never read as one. Multiple refs inside this flag are OR-matched. |
 | `-hash`, `--hash` | Yes | none | Commit hash prefixes. Multiple hashes are OR-matched. If combined with `-commit`, both filters must match. |
-| `-recent [DAYS]`, `--recent [DAYS]` | No | none | Keep commits newer than today minus DAYS. Bare `-recent` means 1 day. |
+| `-recent [DAYS]`, `--recent [DAYS]` | No | none | Keep commits newer than today minus DAYS. DAYS may be a fraction of a day, `1/24` for the past hour and `5/1440` for the past 5 minutes. A whole-day window compares dates, so `-recent 1` keeps a commit made at 23:00 yesterday whatever time you run it; a shorter window compares the commit's own timestamp, since every commit made earlier today shares today's date. Bare `-recent` means 1 day. |
 | `-since`, `--since` | No | none | Oldest commit date, `YYYY-MM-DD`, or number of days back. |
 | `-until`, `--until` | No | none | Newest commit date, `YYYY-MM-DD`, or number of days back. |
 | `-restore`, `--restore` | No | off | Write matched historical file versions. |
