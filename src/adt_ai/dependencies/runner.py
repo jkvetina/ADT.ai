@@ -31,7 +31,7 @@ from adt_ai.export_db.render import print_adt_header
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.progress import fixed_width_count_line, fixed_width_status_line
-from adt_ai.shared.recent_state import is_bare_recent
+from adt_ai.shared.recent_state import is_bare_recent, recent_days
 
 
 @dataclass(frozen=True)
@@ -108,7 +108,11 @@ class DependencyIndexRunner:
                     else:
                         recent_params = {
                             "changed_since": stamp,
-                            "recent_days": None if stamp is not None else int(request.recent),
+                            # Not `int(...)`: a sub-day window (`-recent 1/24`)
+                            # floors to 0, and `SYSDATE - 0` selects nothing.
+                            "recent_days": (
+                                None if stamp is not None else recent_days(request.recent)
+                            ),
                         }
                 recent_names: list[str] | None = None
                 scope_names = refresh_names
@@ -164,6 +168,12 @@ class DependencyIndexRunner:
                     store.record_refresh("schema", schema, refreshed_at)
                     continue
                 if id(gateway) not in prepared:
+                    # No row of its own (`#372`). The refresh header above says
+                    # what is happening and stands for every call in the
+                    # section, and "objects recompiled" is not the mirrored-row
+                    # count the dictionary rows beside it report, so a `0` there
+                    # read as a table that returned nothing. Skips still print:
+                    # a locked object is news.
                     plscope.ensure_plscope(
                         gateway,
                         candidates=changed_objects,

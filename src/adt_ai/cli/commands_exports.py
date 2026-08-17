@@ -145,7 +145,10 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
                 environment   = environment,
                 clean         = args.delete,
                 dry_run       = args.dry_run,
-                reporter      = ConsoleExportDbReporter(silent=args.silent),
+                reporter      = ConsoleExportDbReporter(
+                    silent  = args.silent,
+                    compact = args.compact,
+                ),
                 group_rules   = group_rules,
                 changed_by    = changed_by,
                 my_changes    = my_changes,
@@ -301,6 +304,10 @@ def _run_export_apex(
             schema_connections[connection_schema],
             debug=args.debug,
         )
+        # The first of the three tables opens its section before any of them is
+        # read, so the screen names the inventory being gathered instead of
+        # parking on the connection block (`#372`).
+        reporter.begin_workspaces()
         for schema in schemas:
             discovery = ApexDiscovery(export_apex_gateway_factory(schema))
             scope = schema_scope[schema]
@@ -331,12 +338,15 @@ def _run_export_apex(
         all_workspaces = discovery.workspaces(
             workspace=workspace, schemas=schema_filter, max_app_id=args.max_app_id
         )
+        owner_filter = None if args.owners else schemas
+        all_owner_counts = discovery.owner_app_counts(owner_filter, max_app_id=args.max_app_id)
+        # Every read first, then every table: reporting between two reads put a
+        # row under a header it had nothing to do with (`#360`, live run). The
+        # rows those two reads grew are gone (`#372`); this ordering is the fix.
         reporter.workspaces(
             [w for w in all_workspaces if w.workspace in active_workspaces]
             if (is_filtered and active_workspaces) else all_workspaces
         )
-        owner_filter = None if args.owners else schemas
-        all_owner_counts = discovery.owner_app_counts(owner_filter, max_app_id=args.max_app_id)
         active_owners = {s for s, apps in applications_by_schema.items() if apps}
         reporter.owner_counts(
             [oc for oc in all_owner_counts if oc.owner in active_owners]
@@ -445,6 +455,7 @@ def _run_export_apex(
                         # Already probed by the connection block above, the 26.1
                         # format gates read it rather than asking the DB again.
                         apex_version=versions.get("APEX"),
+                        compact=args.compact,
                     )
                 )
             except ApexDeepFilterError as exc:

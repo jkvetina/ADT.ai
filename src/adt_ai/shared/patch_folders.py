@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from adt_ai.shared.deploy_status import latest_deploy_status, target_status
+from adt_ai.shared.sql_like import matches_sql_like
 
 PATCH_FOLDER_RE = re.compile(r"^(?P<day>\d{6})-(?P<sequence>\d+)-(?P<code>.+)$")
 
@@ -53,6 +55,59 @@ def patch_id(patch_code: str) -> str | None:
     """
     numbers = re.findall(r"\d+", patch_code.split("_", 1)[0])
     return numbers[-1] if numbers else None
+
+
+def matches_patch_selector(folder: PatchFolder, selector: str) -> bool:
+    """Does ``selector`` name this folder: an id, or a SQL LIKE pattern?
+
+    Jan asked for `patch -archive 202608%` (2026-08-15), so the selector grew a
+    second shape beside the card id `#268` gave it. An all-digit selector stays
+    an id lookup, exactly as before, which is what keeps the documented
+    `-archive 66 67` working; anything else is read as a pattern.
+
+    The pattern goes through `shared/sql_like.matches_sql_like`, the one
+    client-side mirror of Oracle's own LIKE, so `%` and `_` mean here what they
+    mean in every other filter this tool takes. Hand-rolling a second wildcard
+    dialect is what that helper exists to prevent.
+    """
+    selector = selector.strip()
+    if not selector:
+        return False
+    if selector.isdigit():
+        found = patch_id(folder.patch_code)
+        return found is not None and int(found) == int(selector)
+    return any(
+        matches_sql_like(candidate, selector)
+        for candidate in patch_folder_match_targets(folder)
+    )
+
+
+def patch_folder_match_targets(folder: PatchFolder) -> list[str]:
+    """Every spelling of a folder that a LIKE pattern is compared against.
+
+    Three, and the third is the one that is not obvious. A folder is
+    ``yymmdd-seq-CODE``, so ``260813-13-IVORY123_NTF_SPINE`` carries its date
+    with a TWO-digit year, while Jan's own example pattern is ``202608%`` --
+    which matches that name nowhere. The day is therefore also offered in its
+    ``YYYYMMDD`` spelling, so a pattern written the way a person writes a month
+    selects the patches from it. The two-digit form still works: the literal
+    folder name is the first target and is never rewritten.
+
+    The century comes from ``strptime``'s ``%y`` rule rather than a hardcoded
+    ``20`` prefix, so the name is read back the same way ``strftime("%y%m%d")``
+    wrote it. A name that does not parse contributes no third target.
+    """
+    targets = [folder.folder, folder.patch_code]
+    match = PATCH_FOLDER_RE.match(folder.folder)
+    if not match:
+        return targets
+    day = match.group("day")
+    try:
+        parsed = datetime.strptime(day, "%y%m%d")
+    except ValueError:
+        return targets
+    targets.append(f"{parsed:%Y%m%d}{folder.folder[len(day):]}")
+    return targets
 
 
 def discover_patch_folders(patch_root: Path, *, ref: str | None = None) -> list[PatchFolder]:

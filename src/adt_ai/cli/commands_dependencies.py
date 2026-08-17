@@ -27,18 +27,18 @@ from adt_ai.cli.context import (
     _repo_root,
 )
 from adt_ai.cli.dependencies_reporters import (
-    _print_dependencies_hint,
     _print_dependency_age,
     _print_dependency_impact,
     _print_dependency_list,
     _print_foreign_key_tree,
 )
-from adt_ai.cli.export_apex_owners import resolve_apex_owner_routes
+from adt_ai.cli.export_apex_owners import listed_applications, resolve_apex_owner_routes
 from adt_ai.cli.export_reporters import ConsoleApexRevealReporter
 from adt_ai.cli.gateways import build_gateway
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.dependencies.store import DEFAULT_MAX_DEPTH
 from adt_ai.export_apex.inventory import ApexApplication, ApexDiscovery
+from adt_ai.shared.apex_store import ApexStore
 from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.progress import FixedWidthProgressPrinter, schema_label
 
@@ -47,13 +47,34 @@ _NO_DEPENDENCY_INDEX_MESSAGE = (
 )
 
 
+def _query_requested(args: argparse.Namespace) -> bool:
+    """True when the invocation names a query mode, so it reads the mirror offline.
+
+    The one question the command asks of its own arguments, and the reason it is
+    a named helper rather than an inline chain: the dispatcher's argument check
+    and the command body both decide refresh against query, and a second spelling
+    of the same list is how two such decisions drift apart.
+    """
+    return bool(
+        args.uses
+        or args.used_by
+        or args.impact
+        or args.tree
+        or getattr(args, "age", False)
+    )
+
+
 def _dependencies_argument_error(args: argparse.Namespace) -> str | None:
-    """Reject ``-app``/``-force`` outside ``-refresh`` and bad ``-app`` ids.
+    """Reject the refresh options beside a query, and reject bad ``-app`` ids.
 
     Returned (non-``None``) by the dispatcher before the command runs, so misuse
     surfaces as a parser-style error screen, never a silently-accepted flag.
-    ``-schema`` is allowed without ``-refresh``: in a query mode it acts as an
-    offline owner disambiguator (see ``_resolve_query_schemas``).
+    ``-app``/``-force``/``-recent`` steer the refresh, so they are refused only
+    when the invocation also asked a question; on their own they now describe a
+    refresh, which is what a query-less invocation means. ``-schema`` is accepted
+    either way and reads as whichever mode it landed in: an offline owner
+    disambiguator beside a query (see ``_resolve_query_schemas``), the refresh
+    scope without one.
     """
     offenders = [
         flag
@@ -64,9 +85,8 @@ def _dependencies_argument_error(args: argparse.Namespace) -> str | None:
         )
         if present
     ]
-    refresh_requested = args.refresh is not None
-    if offenders and not refresh_requested:
-        return f"{' / '.join(offenders)} can only be used with -refresh"
+    if offenders and _query_requested(args):
+        return f"{' / '.join(offenders)} steers -refresh and cannot be combined with a query"
     # Delegate -app validation to the shared APEX selection parser so ranges
     # (MIN-MAX / MIN+) are accepted exactly as export_apex/flow accept them; a
     # malformed range surfaces as the parser-style error screen. Explicit ids
@@ -113,11 +133,10 @@ def _resolve_refresh_app_ids(
     discovery = ApexDiscovery(gateway_factory(lookup_schema))
     seen: set[int] = set()
     app_ids: list[int] = []
-    for schema in configured_schemas:
-        for app in discovery.applications(owner=schema, app_ids=None):
-            if _app_in_selection(app.app_id, selection) and app.app_id not in seen:
-                seen.add(app.app_id)
-                app_ids.append(app.app_id)
+    for app in listed_applications(discovery, configured_schemas):
+        if _app_in_selection(app.app_id, selection) and app.app_id not in seen:
+            seen.add(app.app_id)
+            app_ids.append(app.app_id)
     return app_ids
 
 
@@ -135,9 +154,11 @@ def _resolve_refresh_names(raw: list[str] | None) -> list[str]:
 def _resolve_query_schemas(raw: list[str] | None) -> list[str]:
     """Flatten ``-schema`` into a unique uppercase owner list for query modes.
 
-    Offline only: a literal, case-insensitive, comma-separated list of owner
-    names parsed locally with no DB connection. Empty/whitespace values are
-    dropped, so an all-blank ``-schema`` behaves as if it were absent.
+    Reached only from a query mode, so it is offline by construction: a literal,
+    case-insensitive, comma-separated list of owner names parsed locally with no
+    DB connection. Empty/whitespace values are dropped, so an all-blank
+    ``-schema`` behaves as if it were absent. The same flag with no query beside
+    it is the refresh scope instead and never arrives here.
     """
     return _resolve_refresh_names(raw)
 
@@ -155,7 +176,12 @@ def _run_dependencies(
     root    = Path(args.root).expanduser().resolve()
     db_path = internal_path(root, "dependencies.db")
 
-    if args.refresh is not None:
+    # Refresh is the default, and a query is the thing you opt into. Rebuilding
+    # the mirror is the one job here that needs no argument to describe it, so an
+    # invocation carrying no question is that job; -refresh stays as its explicit
+    # spelling. What used to sit here was a four line usage hint, which made the
+    # zero-argument run the only run that did nothing.
+    if args.refresh is not None or not _query_requested(args):
         return _refresh_dependency_index(args, root, gateway_factory)
 
     if not db_path.exists():
@@ -197,15 +223,14 @@ def _run_dependencies(
                 store.affected_columns(args.impact),
                 store.apex_callers(args.impact),
             )
-        elif args.tree:
+        else:
+            # -tree is the last query mode, and the only one left: a query-less
+            # invocation refreshed above and never reaches this block.
             exit_code = _print_foreign_key_tree(
                 args.tree,
                 store.foreign_key_tree(args.tree),
                 args.format,
             )
-        else:
-            _print_dependencies_hint()
-            exit_code = 0
 
     return exit_code
 
@@ -224,9 +249,9 @@ def _refresh_dependency_index(
     config = startup.config
     connections = startup.connections
     environment = args.env or connections.default_environment
-    # Two independent refresh axes (both only with -refresh): -schema drives the
-    # USER_* mirror, -app the APEX_* mirror. Bare -refresh keeps the old default
-    # (every default schema); -app alone refreshes only the APEX axis.
+    # Two independent refresh axes: -schema drives the USER_* mirror, -app the
+    # APEX_* mirror. A refresh naming neither keeps the old default (every
+    # default schema); -app alone refreshes only the APEX axis.
     refresh_names = _resolve_refresh_names(args.refresh)
     if args.schema:
         schemas = connections.expand_schemas(
@@ -298,19 +323,32 @@ def _refresh_dependency_index(
         segments.append(app_schema)
 
     def run_one(schema: str) -> int:
+        is_schema_segment = schema in schemas
+        is_app_segment = schema == app_schema and bool(apps)
+        # **The application rows are read before the connection block, not
+        # after it** (`#372`). Both headers they feed name them, `REFRESHING
+        # <SCHEMA> SCHEMA AND APEX APP <label>:` and the workspace in
+        # `APEX APPLICATIONS: <workspace> | <SCHEMA>`, so neither can lead the
+        # read; up here the module banner is still the newest thing on screen
+        # and the read is accounted for. Jan, 2026-08-16: *"You can resolve the
+        # schema/workspace from apex.db, if it is missing, you can do extra
+        # query."* The store answers first and costs no round trip at all.
+        discovered_apps: list[ApexApplication] = []
+        if is_app_segment:
+            discovered_apps = _stored_apex_applications(root, apps)
+            if not discovered_apps:
+                discovered_apps = _discover_apex_applications(
+                    selected_gateway_factory(app_schema), app_schema, apps
+                )
+
         versions = _print_connection_block(
             selected_gateway_factory(schema), connection_for(schema), debug=debug
         )
         segment_apex_versions = {schema: versions["APEX"]} if versions.get("APEX") else {}
 
-        is_schema_segment = schema in schemas
-        is_app_segment = schema == app_schema and bool(apps)
         segment_app_labels: dict[int, str] = {}
 
         if is_app_segment:
-            discovered_apps = _discover_apex_applications(
-                selected_gateway_factory(app_schema), app_schema, apps
-            )
             labels = _apex_app_labels(apps, discovered_apps)
             segment_app_labels = dict(zip(apps, labels, strict=True))
             if is_schema_segment:
@@ -352,6 +390,38 @@ def _refresh_dependency_index(
     )
 
 
+def _stored_apex_applications(root: Path, apps: list[int]) -> list[ApexApplication]:
+    """``apps`` as ``apex.db`` already knows them, or ``[]`` if it knows none.
+
+    Every application ADT.ai has exported is in that store, workspace and alias
+    included, which is the whole of what the two headers below need. All or
+    nothing on purpose: a partial answer would label some applications and leave
+    the rest as bare ids, which reads as a discovery failure rather than a cache
+    miss, and the query it saves is one round trip.
+    """
+    try:
+        with ApexStore.load(root) as store:
+            rows = [store.application(app) for app in apps]
+    except Exception:
+        return []
+    if not all(rows):
+        return []
+    return [
+        ApexApplication(
+            owner        = str(row.get("owner") or ""),
+            workspace    = str(row.get("workspace") or ""),
+            workspace_id = None,
+            app_group    = str(row.get("app_group") or ""),
+            app_id       = app,
+            app_alias    = str(row.get("app_alias") or ""),
+            app_name     = str(row.get("app_name") or ""),
+            pages        = None,
+            updated_at   = str(row.get("updated_at") or ""),
+        )
+        for app, row in zip(apps, rows, strict=True)
+    ]
+
+
 def _discover_apex_applications(
     gateway: QueryGateway | None,
     owner: str | None,
@@ -360,7 +430,9 @@ def _discover_apex_applications(
     """Full discovered rows for ``apps``, in ``apps`` order; ``[]`` when offline."""
     if gateway is None or owner is None:
         return []
-    discovered = ApexDiscovery(gateway).applications(owner=owner, app_ids=apps)
+    # `-refresh -app` reads the application rows before it can label anything,
+    # and that read sat behind the connection block (`#360`).
+    discovered = listed_applications(ApexDiscovery(gateway), [owner], app_ids=apps)
     by_id = {application.app_id: application for application in discovered}
     return [by_id[app] for app in apps if app in by_id]
 

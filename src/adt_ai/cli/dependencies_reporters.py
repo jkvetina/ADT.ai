@@ -237,13 +237,4 @@ def _print_dependency_age(
     return 0
 
 
-def _print_dependencies_hint() -> None:
-    print("Specify a query: -from OBJ, -to OBJ, -impact OBJ, or -tree CONSTRAINT.")
-    print(
-        "Add -schema OWNER[,OWNER] to a query to disambiguate by owner "
-        "(offline, all tracked owners if omitted)."
-    )
-    print("Use -age to list when each schema/app scope was last refreshed (offline).")
-    print("Use -refresh (with -schema and/or -app) to rebuild the database from the dictionary.")
-
 __all__ = [name for name in globals() if not name.startswith("__")]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from adt_ai.cli.parser_common import add_connection_key_argument
+from adt_ai.shared.dates import recent_window
 from adt_ai.shared.recent_state import BARE_RECENT
 
 
@@ -47,8 +48,9 @@ def add_export_parsers(subparsers) -> None:
         "-recent",
         nargs = "?",
         const = BARE_RECENT,
-        type  = int,
-        help  = "export objects changed in the last DAYS days "
+        type  = recent_window,
+        help  = "export objects changed in the last DAYS days or a fraction of a day, "
+                "1/24 = past hour "
                 "(bare -recent = since the last export of that schema)",
     )
     export_db.add_argument(
@@ -69,6 +71,17 @@ def add_export_parsers(subparsers) -> None:
         action = "store_true",
         help   = "suppress per-object progress; keep overview, chrome, and timer",
     )
+    # The polarity is the reverse of `ut3 -verbose`, deliberately and on Jan's
+    # call (2026-08-16): there the bar is the default and the listing is the
+    # flag, here the per-object listing is old-ADT parity output and stays the
+    # default, so the flag is the bar. Both spellings mean one thing wherever
+    # they appear, which is what the shared-argument contract binds.
+    export_db.add_argument(
+        "--compact",
+        "-compact",
+        action = "store_true",
+        help   = "replace the per-object rows with one progress bar; -silent outranks it",
+    )
     export_db.add_argument(
         "--debug",
         "-debug",
@@ -85,20 +98,24 @@ def add_export_parsers(subparsers) -> None:
                  "then confirming and never connecting; PREFIX names group only those, "
                  "bare -groups auto-detects by prefix",
     )
+    # `-by` then `-my`, worded off the one pattern every module shares since
+    # ADT #364: "limit to <what this module acts on> by <whom>". Each row names
+    # its OWN identity source, because that genuinely differs per module and a
+    # shared sentence hiding the difference would be consistent and wrong.
     export_db.add_argument(
         "--by",
         "-by",
         nargs = "?",
         const = "",
-        help  = "export only objects changed by AUTHOR (db user/schema), "
-                "resolved via the project's configured audit source",
+        help  = "limit to objects changed by AUTHOR, a database user, resolved "
+                "through the project's configured audit source",
     )
     export_db.add_argument(
         "--my",
         "-my",
         action = "store_true",
-        help   = "export only objects changed by the current user "
-                 "(db schema from config/IDENTITY.yaml)",
+        help   = "limit to objects changed by you, the database user in "
+                 "config/IDENTITY.yaml",
     )
     add_connection_key_argument(export_db)
 
@@ -207,8 +224,9 @@ def add_export_parsers(subparsers) -> None:
         "-recent",
         nargs = "?",
         const = BARE_RECENT,
-        type  = int,
-        help  = "show components changed in the last DAYS days "
+        type  = recent_window,
+        help  = "show components changed in the last DAYS days or a fraction of a day, "
+                "1/24 = past hour "
                 "(bare -recent = since the last export of that app/format)",
     )
     export_apex.add_argument(
@@ -216,13 +234,13 @@ def add_export_parsers(subparsers) -> None:
         "-by",
         nargs = "?",
         const = "",
-        help  = "show components changed by developer",
+        help  = "limit to components changed by DEVELOPER, an APEX workspace user",
     )
     export_apex.add_argument(
         "--my",
         "-my",
         action = "store_true",
-        help   = "show components changed by the current git user",
+        help   = "limit to components changed by you, matched against your git user",
     )
     export_apex.add_argument("--release", "-release", help="override APEX release in SQL exports")
     export_apex.add_argument(
@@ -267,12 +285,6 @@ def add_export_parsers(subparsers) -> None:
         dest   = "apexlang",
         help   = "export APEXlang (.apx) source, whole app (APEX 26.1+)",
     )
-    export_apex.add_argument(
-        "--checksum",
-        "-checksum",
-        action = "store_true",
-        help   = "export the ID-independent SHA-256 application checksum",
-    )
     export_apex.add_argument("--rest", "-rest", action="store_true", help="export REST services")
     export_apex.add_argument(
         "--files", "-files", action="store_true", help="export application files"
@@ -284,6 +296,16 @@ def add_export_parsers(subparsers) -> None:
         action="store_true",
         dest="files_ws",
         help="export workspace files",
+    )
+    # Same polarity as `export_db -compact` (`#373`, Jan's call 2026-08-16): the
+    # per-application blocks and their action rows are old-ADT parity output and
+    # stay the default, so the flag is the bar. Unlike `export_db` there is no
+    # `-silent` on this command for it to rank against.
+    export_apex.add_argument(
+        "--compact",
+        "-compact",
+        action = "store_true",
+        help   = "replace the per-action rows with one progress bar per schema",
     )
     export_apex.add_argument(
         "--debug",

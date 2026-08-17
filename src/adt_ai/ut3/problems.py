@@ -34,7 +34,7 @@ def print_problems(result: Ut3Result, limit: int | None = None) -> None:
 
     **The section is capped, and the cap is why the tables below it are legible.**
     Jan's 2026-08-11 run on `ICT_OWNER` produced 397 stanzas over 3 060 lines, so
-    `SUMMARY:` came off the bottom of a terminal whose scrollback could not hold
+    the roll-up came off the bottom of a terminal whose scrollback could not hold
     them, the header, the column row and the separator were all printed and all
     gone, which reads exactly like a renderer that dropped them. Nothing here was
     broken; the section was simply longer than the screen it prints on.
@@ -72,13 +72,13 @@ def _problems_header(shown: int, total: int) -> str:
     """`ERRORS & FAILURES:`, or `FIRST <n> ERRORS & FAILURES:` when the cap bit.
 
     **The header names the cap only when there is one to name**, the rule
-    `_summary_header` already follows for `SUMMARY FOR <PATTERNS>:` one section
-    below. A run with three failures under a cap of twenty is not showing the
-    first twenty of anything, and a heading that says it is would be the only
-    untrue line in the report.
+    `progress.section_title` already follows for `RUNNING TESTS FOR <PATTERNS>:`
+    one section above. A run with three failures under a cap of twenty is not
+    showing the first twenty of anything, and a heading that says it is would be
+    the only untrue line in the report.
 
-    The suppressed stanzas are never silently gone: `SUMMARY:` and `MODULES:`
-    carry the real `FAIL` and `ERROR` counts for every suite, uncapped, which is
+    The suppressed stanzas are never silently gone: `SUMMARY PER SUITE:` and
+    `SUMMARY PER MODULE:` carry the real `FAIL` and `ERROR` counts, uncapped, which is
     what the header points the reader at when the two disagree.
     """
     if shown >= total:

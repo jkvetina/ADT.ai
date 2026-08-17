@@ -11,7 +11,7 @@ cd ~/Dropbox/PROJECTS/www.jankvetina.cz
 adtai validate
 ```
 
-Validate one application by id, resolved offline through `config/internal/apex_apps.yaml`, with no database round-trip:
+Validate one application by id, resolved offline through `config/internal/apex.db`, with no database round-trip:
 
 ```bash
 adtai validate -app 800
@@ -118,7 +118,7 @@ A folder that also produced warnings prints a `WARNINGS:` section above its erro
 Targets are collected in this order, and `-input` and `-app` can be combined:
 
 - `-input PATH`, an explicit folder, a zip, or a single `.apx` file, passed through to SQLcl untouched. This mode reads no project config at all.
-- `-app ID`, resolved offline: `config/internal/apex_apps.yaml` gives the owner and alias, which locate `apex/<owner>/<id>_<alias>/apexlang/` under the configured `path_apex`. An app with no export on disk produces a `NOTES:` row naming the path where one was expected, never a traceback.
+- `-app ID`, resolved offline: `config/internal/apex.db` gives the owner and alias, which locate `apex/<owner>/<id>_<alias>/apexlang/` under the configured `path_apex`. An app with no export on disk produces a `NOTES:` row naming the path where one was expected, never a traceback.
 - Neither, every `apexlang/` folder under the configured APEX root, sorted, skipping hidden folders. This is what makes `adtai validate` after an `-all` export a single obvious command.
 
 ## Arguments
@@ -128,7 +128,7 @@ Targets are collected in this order, and `-input` and `-app` can be combined:
 | `-root`, `--root` | No | `.` | Project root folder used for config lookup and for resolving `-app` exports. |
 | `-config-dir`, `--config-dir` | Yes | none | Folder containing project config YAML. ADT.ai always loads repo defaults first, then overlays these project configs. |
 | `-input`, `--input` | Yes | every exported `apexlang/` folder | APEXlang folder(s) or zip(s) to validate; comma- or space-separated, repeatable. |
-| `-app`, `--app` | Yes | none | Application id(s) whose exported `apexlang/` folder to validate, resolved offline through `config/internal/apex_apps.yaml`. |
+| `-app`, `--app` | Yes | none | Application id(s) whose exported `apexlang/` folder to validate, resolved offline through `config/internal/apex.db`. |
 | `-silent`, `--silent` | No | off | Suppress per-folder progress rows; keep the banner, error tables, and timer. |
 | `-debug`, `--debug` | No | off | Show the generated SQLcl script and keep Python tracebacks for troubleshooting. |
 | `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |

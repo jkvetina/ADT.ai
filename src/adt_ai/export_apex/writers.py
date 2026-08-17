@@ -33,6 +33,7 @@ from adt_ai.export_apex.rest import (
     _rest_export_error,
     _rest_module_name,
     _rest_prefixes,
+    _schema_block,
     _schema_definition,
     _split_rest_modules,
     rest_timeout_seconds,
@@ -196,7 +197,7 @@ class ApexCollectionWriterMixin:
             timeout_seconds = rest_timeout_seconds(config),
         )
         lines = _cleanup_sqlcl(output)
-        first, modules = _split_rest_modules(lines)
+        preamble, modules, trailer = _split_rest_modules(lines)
         if not modules:
             error = _rest_export_error(lines)
             if error:
@@ -218,4 +219,6 @@ class ApexCollectionWriterMixin:
         if modules:
             target = resolver.rest_export("__enable_schema")
             target.parent.mkdir(parents=True, exist_ok=True)
-            text_files.write_text(target, _plsql_block(_schema_definition(first)))
+            text_files.write_text(
+                target, _schema_block(_schema_definition(preamble, trailer))
+            )

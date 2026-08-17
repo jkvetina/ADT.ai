@@ -89,6 +89,21 @@ def _run_recompile(
     return run_schema_sections(schemas, run_one, first_started_at=handler_started_at)
 
 
+def _is_focused_run(request: RecompileRequest) -> bool:
+    """Is this one of the report-only passes that skips the objects overview?
+
+    Named because the answer is now needed twice, once before the run to put
+    the overview header up and once after it to render the table under it.
+    """
+    return bool(
+        request.mview
+        or request.synonyms
+        or request.disabled
+        or request.jobs
+        or request.trailing
+    )
+
+
 def _invalid_dependents_provider(args: argparse.Namespace, schema: str):
     """Reverse edges among the still-invalid objects, read from the local mirror.
 
@@ -199,6 +214,18 @@ def _run_recompile_for_schema(
     # than opened by the runner so the recompile module stays free of SQLite, and
     # so a project with no mirror simply ranks on error evidence.
     runner.dependents_for = _invalid_dependents_provider(args, schema)
+    # **The overview header goes up before the run, not after it** (`#372`).
+    # Everything a default recompile does is silent, the object survey, the
+    # to-do selection, the compiles themselves and the re-read, so the run used
+    # to sit under the connection block's closing blank with the screen saying
+    # nothing, which is exactly what Jan reported: *"Most of the time you stop
+    # on the last line of previous block, for example when you connect to
+    # database."* The table below is the same table, filled in behind a header
+    # that is already on screen. No new string: this is the header the report
+    # already printed, moved.
+    reports_overview = not silent and not _is_focused_run(request)
+    if reports_overview:
+        print_adt_header("OBJECTS OVERVIEW:")
     result = runner.run(request)
 
     if request.trailing:
@@ -215,14 +242,8 @@ def _run_recompile_for_schema(
         # runs: skip the objects overview, invalid-object summary, and compile-error
         # report (no object recompile ran), keeping only their specific report
         # sections below.
-        if not (
-            request.mview
-            or request.synonyms
-            or request.disabled
-            or request.jobs
-            or request.trailing
-        ):
-            print_adt_header("OBJECTS OVERVIEW:")
+        if not _is_focused_run(request):
+            # The header for this table went up before the run, see above.
             _print_recompile_overview_table(result.overview)
             if result.invalid:
                 print_adt_header("INVALID OBJECTS:")

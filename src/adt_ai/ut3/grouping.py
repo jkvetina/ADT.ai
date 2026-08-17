@@ -78,7 +78,7 @@ def target_packages(rows: list[ModuleRow]) -> list[PackageCoverage]:
     """The packages a set of suites tests, each counted once.
 
     **Deduplicated by name**, because two suites testing one package are two rows
-    in `SUMMARY:` and one body of code here. Left as-is, that package's lines and
+    in `SUMMARY PER SUITE:` and one body of code here. Left as-is, that package's lines and
     blocks would be counted twice, `LINES` would over-report the group's size and
     `COVERAGE` would skew its reach scaling toward whichever package happens to
     carry the most suites.
@@ -108,10 +108,10 @@ def flatten(grouped: list[tuple[str, list[ModuleRow]]]) -> list[ModuleRow]:
 def gated_packages(result) -> tuple[PackageCoverage, ...]:
     """Every package this run's suites test, deduplicated, what `-gate` judges.
 
-    The same set the `MODULES:` total is computed over, so a figure that gates is
+    The same set the `SUMMARY PER MODULE:` total is computed over, so a figure that gates is
     a figure the reader can find in the report above it. A suite that could not
     run contributes nothing, and a suite ``ut_match`` paired to nothing
-    contributes nothing either: both are absent from `SUMMARY:` for the same
+    contributes nothing either: both are absent from `SUMMARY PER SUITE:` for the same
     reason, and a gate that judged what the report does not show would be
     unarguable.
     """

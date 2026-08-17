@@ -4,4 +4,4 @@
 # public builder refuses a `--version` that disagrees with it, and `doctor`
 # reports it, suffixed with a WIP marker when it is running from a checkout,
 # which carries commits this release never shipped.
-__version__ = "0.8.7"
+__version__ = "0.9.0"

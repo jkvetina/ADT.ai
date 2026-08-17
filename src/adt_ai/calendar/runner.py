@@ -8,7 +8,7 @@ from pathlib import Path
 
 from adt_ai.rebuild.models import RebuildRequest
 from adt_ai.rebuild.runner import RebuildRunner
-from adt_ai.shared.commit_cache import load_history_cache
+from adt_ai.shared.commit_cache import open_store
 from adt_ai.shared.git_files import default_branch_ref, fetch_origin, git_user_email, run_git
 
 
@@ -24,7 +24,8 @@ class CalendarRequest:
     offset: int = 0
     authors: list[str] = field(default_factory=list)
     jira_prefix: str | None = None
-    list_mode: bool = False
+    # `list_mode` sat here until ADT #345. Nothing ever read it, so `calendar
+    # -list` filled it and the report rendered the same either way.
     fetch: bool = True
     # Where the rebuild module stores its per-branch commit cache. The calendar
     # reads commit metadata from this cache instead of re-walking every branch
@@ -181,15 +182,12 @@ def _commits_from_cache(
     # skip those shas when reading the feature branches.
     default_shas: set[str] = set()
     if default_ref:
-        default_shas = {
-            record.id
-            for record in load_history_cache(root, default_ref, template).values()
-        }
+        default_shas = {record.id for record in _branch_records(root, default_ref, template)}
 
     commits: dict[str, _Commit] = {}
     for short, ref in selected:
         is_default = short == default_short and ref == default_ref
-        for record in load_history_cache(root, ref, template).values():
+        for record in _branch_records(root, ref, template):
             if not is_default and record.id in default_shas:
                 continue
             commit = commits.get(record.id)
@@ -205,6 +203,11 @@ def _commits_from_cache(
                 commits[record.id] = commit
             commit.branches.add(short)
     return commits
+
+
+def _branch_records(root: Path, branch: str, template: str) -> list:
+    with open_store(root, branch, template) as store:
+        return store.records(branch)
 
 
 def extract_ticket(text: str, prefix: str | None) -> str | None:

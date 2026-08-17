@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.sql_like import matches_sql_like
@@ -130,11 +130,55 @@ class Ut3Result:
 
 
 class Ut3Reporter:
-    """Streaming hooks so the console can print a suite's row before it blocks.
+    """Streaming hooks so the console can print a phase's label before it blocks.
 
     The no-op base keeps non-console callers (and every test that does not care)
     unchanged; the CLI swaps in a console reporter.
+
+    **Every hook that opens something has a partner that closes it**, and the
+    pairs exist because what sits between them blocks. A run reaches the
+    database in four waits, the annotation cache rebuild, discovery, each suite,
+    and the coverage measurement, and the reader is entitled to know which one
+    they are in. `#359` was the coverage one: it spent 7.4 seconds of a 14
+    second run behind the last test row with nothing on screen at all.
     """
+
+    def refreshing(self, owner: str) -> None:
+        """`-refresh` only: utPLSQL is about to reparse the schema's annotations.
+
+        The slowest thing this command can be asked to do, and opt-in, so it
+        owns a section a normal run never prints.
+        """
+        return None
+
+    def refreshed(self) -> None:
+        return None
+
+    def discovering(self, owner: str) -> None:
+        """The dictionary and the annotation cache are about to be read.
+
+        The one wait that is the same in every mode, and each mode announces it
+        with the header it was going to print anyway: `UNIT TESTS SUITES:` under
+        `-verbose`, `RUNNING TESTS FOR <PATTERNS>:` by default. Neither needs
+        anything discovery returns (only the rows under them do), so the header
+        leads and the table or the bar fills in behind it (`#379`).
+        """
+        return None
+
+    def measuring_coverage(self, result: Ut3Result) -> None:
+        """The suites are done and the run is about to read what they reached.
+
+        It carries the finished run because the console's answer is to lay down
+        everything it can already render, the problem stanzas and the
+        `SUMMARY PER SUITE:` header, so the read happens under the header of the
+        table it fills. Until `#379` the bar was simply left open through it,
+        which is a row reading `100%  0:00:00` standing in for a wait that had
+        not started: 9.9 seconds of a 19.3 second run.
+        """
+        return None
+
+    def coverage_measured(self, coverage: CoverageReport) -> None:
+        return None
 
     def discovered(self, packages: tuple[SuitePackage, ...]) -> None:
         """Every matched suite, before the first one runs.
@@ -170,10 +214,12 @@ class Ut3Runner:
         # not a narrower run, it is a run that finds nothing.
         ut_owner = naming.owner_for(owner)
         if request.refresh:
+            self.reporter.refreshing(ut_owner)
             self.gateway.execute(
                 queries.REBUILD_ANNOTATION_CACHE_STATEMENT,
                 {"owner": ut_owner},
             )
+            self.reporter.refreshed()
 
         # **`-name` selects the suites to run.** It narrows the run itself, not
         # just the printed rows, and the coverage figures follow from whatever
@@ -183,20 +229,39 @@ class Ut3Runner:
         # silently means two different things is the worse defect, and the
         # symptom was `-coverage -name ICT_INT%` running the whole schema and
         # taking the same 38 seconds as `-name ICT%` while appearing to filter.
+        self.reporter.discovering(ut_owner)
         packages = self._discover(ut_owner, request.names, naming)
-        self.reporter.discovered(packages)
 
+        # **A run with nothing to execute measures nothing**, so it starts no
+        # profiler and stops none (`#372`). Coverage is scoped to the packages
+        # the run's suites test, and a run whose every suite is unrunnable has
+        # no target, so `build_coverage_report` already returned an empty report
+        # from those two round trips. They were also the only work such a run
+        # did after discovery, with a screen that had nothing left to say, which
+        # is what the console guard reported: the honest fix is not to announce
+        # them but not to make them.
+        measures = any(package.runnable for package in packages)
         # The run id is generated here, not read back from the database, because
         # `coverage_start` takes it as an IN parameter. Reading back "the newest
         # coverage run" instead would pick up a concurrent session's rows.
         coverage_run_id = uuid.uuid4().hex.upper()
-        self.gateway.execute(
-            queries.COVERAGE_START_STATEMENT,
-            {"coverage_run_id": coverage_run_id},
-        )
+        if measures:
+            self.gateway.execute(
+                queries.COVERAGE_START_STATEMENT,
+                {"coverage_run_id": coverage_run_id},
+            )
+        # **Instrumentation starts inside the discovery phase, and the phase
+        # closes after it.** The two are one wait from the reader's side, and a
+        # run that matched no suite draws no bar, so closing the phase first
+        # would leave this call behind a blank line with nothing on screen, the
+        # `#359` defect in its smallest form.
+        self.reporter.discovered(packages)
 
         outcomes: list[TestOutcome] = []
         timings: list[SuiteTiming] = []
+        # The run so far, so the `finally` below can hand the reporter something
+        # renderable even when a suite raised on the way here.
+        result = Ut3Result(packages=packages, modules=naming.modules_enabled)
         try:
             for package in packages:
                 if not package.runnable:
@@ -211,11 +276,21 @@ class Ut3Runner:
                 )
                 outcomes.extend(suite_outcomes)
                 self.reporter.suite_end(package, suite_outcomes)
+            result = replace(result, outcomes=tuple(outcomes), timings=tuple(timings))
+            # **Everything the run can already say is said before the three
+            # round trips that end and read the profiler.** They are one wait
+            # from the reader's side and the console announces it with the
+            # header of the table it produces, so this call is inside the `try`
+            # rather than the `finally`: on the way out through an exception the
+            # error screen is what the reader gets, and a report header standing
+            # above it would be a table that never arrives (`#379`).
+            self.reporter.measuring_coverage(result)
         finally:
             # Coverage instrumentation lives on the session, not on the call, so
             # an exception between start and stop would keep profiling every
             # later statement this connection runs.
-            self.gateway.execute(queries.COVERAGE_STOP_STATEMENT)
+            if measures:
+                self.gateway.execute(queries.COVERAGE_STOP_STATEMENT)
 
         # `owner`, not `ut_owner`: coverage measures the code under test, and the
         # schema holding the suites is a separate question.
@@ -226,13 +301,8 @@ class Ut3Runner:
             packages,
             naming.pattern,
         )
-        return Ut3Result(
-            packages = packages,
-            outcomes = tuple(outcomes),
-            coverage = coverage,
-            timings  = tuple(timings),
-            modules  = naming.modules_enabled,
-        )
+        self.reporter.coverage_measured(coverage)
+        return replace(result, coverage=coverage)
 
     def _discover(
         self,

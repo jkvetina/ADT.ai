@@ -6,7 +6,7 @@ tags: [SKILL, DEVOPS]
 ---
 # adt
 
-Operating cheat-sheet for the ADT.ai command line, export Oracle database objects and APEX applications, explore the database safely, query the dependency graph, and search Git history.
+Operating cheat-sheet for the ADT.ai command line, export Oracle database objects and APEX applications, explore the database safely, query the dependency graph, and build and deploy patches.
 
 ## What it is and why you need it
 

@@ -43,8 +43,6 @@ def _target_path(
     relative = _strip_app_prefix(file_name, application)
     if action == "full":
         return resolver.full_export(application)
-    if action == "checksum":
-        return resolver.checksum_export(application)
     if action == "apexlang":
         # Before the `workspace/` diversion below: an APEXlang tree carries its
         # own `workspace-components/` folder and must stay whole under
@@ -86,10 +84,6 @@ def _payload_for(
         lines = payload.splitlines(keepends=True)
         embedded_payload = "".join(lines[10:]) if len(lines) > 10 else payload
         output = _normalize_text_line_endings(embedded_payload)
-    elif action == "checksum":
-        # The fingerprint is the whole file: one clean line, so `git diff` reports
-        # application changes rather than whitespace churn.
-        output = f"{_normalize_text_line_endings(payload).strip()}\n"
     elif action == "full" and relative.endswith(".sql"):
         output = _enrich_sql(payload, enrichments)
     elif action == "split" and relative.endswith(".sql"):
@@ -184,6 +178,21 @@ def _default_id_offset(payload: str) -> int:
 def _extract_first(pattern: str, text: str) -> str:
     match = re.search(pattern, text)
     return match.group(1) if match else ""
+
+def _checksum_value(rows: list[dict[str, Any]]) -> str:
+    """The fingerprint APEX returns, reduced to the value itself.
+
+    `CHECKSUM-SH256` comes back as a one-member collection whose payload is
+    file contents, so it carries whatever line endings produced it. It is
+    stored as a YAML scalar now rather than written to a file (ADT #343), and
+    a scalar carries none of that. APEX names the member itself, and there is
+    only ever one, so the name is not read.
+    """
+    for row in rows:
+        value = str(row_value(row, "CLOB_CONTENT") or "").strip()
+        if value:
+            return value
+    return ""
 
 def _enrichments(gateway: QueryGateway, application: ApexApplication) -> dict[int, str]:
     rows = gateway.fetch_all(queries.APEX_ID_NAMES_QUERY, {"app_id": application.app_id})

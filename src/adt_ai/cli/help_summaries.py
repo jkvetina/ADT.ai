@@ -40,8 +40,7 @@ COMMAND_SUMMARIES = {
     "calendar": (
         "Shows when you worked, drawn from the history of your repository.",
         "Use it to see the shape of a month at a glance (the busy stretches, the quiet "
-        "ones, the day you have forgotten about), or as a plain chronological list "
-        "when you would rather read it than scan it.",
+        "ones, the day you have forgotten about) and which tickets the work went to.",
         "It reports on work already recorded and changes nothing, so it is safe to run "
         "whenever the question comes up, including for someone else's month.",
     ),

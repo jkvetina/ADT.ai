@@ -15,14 +15,10 @@ ACTION_DESTS = {
     "apexlang",
     "archive",
     "calendar_offset",
-    "checksum",
-    "contents",
     "create",
     "delete",
     "disabled",
-    "deldiff",
     "deploy",
-    "dump",
     "embedded",
     "files",
     "files_ws",
@@ -33,15 +29,11 @@ ACTION_DESTS = {
     "init",
     "install",
     "jobs",
-    "list",
     "mviews",
     "offline",
     "owners",
     "readable",
-    "rebuild",
-    "rebuild_db",
     "refresh",
-    "remove",
     "restore",
     "rest",
     "reveal",
@@ -57,8 +49,19 @@ ACTION_DESTS = {
     "update",
     "used_by",
     "uses",
-    "with_plscope",
 }
+# Three dests left this set with ADT #345. `list` and `rebuild` went with the
+# flags themselves, which parsed and did nothing. `rebuild_db` was already
+# stale: `dependencies -rebuild-db` was retired when `-refresh` became the
+# update path, and its dest outlived it here. A dest naming no live flag is
+# inert, so nothing misrendered, which is exactly why it sat unnoticed.
+#
+# Five more left with `#362`, and the count is why that card stopped trusting
+# the sweep and wrote a guard. `contents` and `deldiff` were withdrawn by `#353`
+# and `#356` in the 2026-08-15 batch; `flow`'s `-dump` and `-remove` have been
+# on `REMOVED_COMPATIBILITY_FLAGS` since `#292`; `with_plscope` names a flag no
+# parser has ever declared. `test_help_sections.py` now fails on any dest here
+# that no command declares, so the next withdrawal cannot leave one behind.
 
 FILTER_DESTS = {
     "app",
@@ -104,10 +107,28 @@ FILTER_DESTS = {
 COMMAND_SECTION_OVERRIDES = {
 }
 
+# `HASH MODE` is one command's grouping living in a global order, which works
+# because an empty section is never printed: the key exists for every command
+# and only `patch` puts anything in it. Jan, 2026-08-15: "-rollout and -locked
+# were supose to be in dedicated help section", and "The section name was
+# supose to be HASH MODE" -- the name `USAGE/patch.md` has used since `#309`
+# renamed `-hash` to `-rollout`. `-target` stays in MODIFIERS even though
+# `-rollout` requires it, because it is also the deploy target and would follow
+# every `-deploy` run's help out of the section it belongs in.
+#
+# `#362` first placed it between FILTERS and MODIFIERS, reasoning that the two
+# flags select which files a patch carries. Jan moved it below MODIFIERS the same
+# night ("show section below MODIFIERS"), and the reading that survives is the
+# reader's rather than the taxonomy's: ACTIONS, FILTERS and MODIFIERS are the
+# three groups EVERY command's screen has, so they are the shape a reader has
+# already learned, and a section only `patch` owns was interrupting it. Below
+# MODIFIERS it reads as an appendix to the standard screen instead of a wedge
+# driven through the middle of one.
 SECTION_ORDER = (
     ("ACTIONS", "actions"),
     ("FILTERS", "filters"),
     ("MODIFIERS", "modifiers"),
+    ("HASH MODE", "hash"),
     ("COMMON OPTIONS", "common"),
 )
 
@@ -159,12 +180,7 @@ def _group_actions(
     actions: Sequence[argparse.Action],
     command: str | None = None,
 ) -> dict[str, list[argparse.Action]]:
-    grouped: dict[str, list[argparse.Action]] = {
-        "actions": [],
-        "filters": [],
-        "modifiers": [],
-        "common": [],
-    }
+    grouped: dict[str, list[argparse.Action]] = {key: [] for _title, key in SECTION_ORDER}
     overrides = COMMAND_SECTION_OVERRIDES.get(command or "", {})
     for action in actions:
         if not action.option_strings or isinstance(action, argparse._HelpAction):

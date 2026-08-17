@@ -5,44 +5,53 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.export_apex.inventory import ApexApplication
+from adt_ai.shared.apex_store import ApexStore
 from adt_ai.shared.row_values import row_value
-from adt_ai.shared.yaml_io import load_yaml_mapping, store_yaml_mapping
 
 
-def _store_application_metadata(path: Path, applications: list[ApexApplication]) -> None:
+def _store_application_metadata(root: Path, applications: list[ApexApplication]) -> None:
     if not applications:
         return
-    payload = load_yaml_mapping(path)
-    for application in applications:
-        payload[application.app_id] = {
-            "owner": application.owner,
-            "workspace": application.workspace,
-            "workspace_id": application.workspace_id,
-            "app_group": application.app_group,
-            "app_id": application.app_id,
-            "app_alias": application.app_alias,
-            "app_name": application.app_name,
-            "pages": application.pages,
-            "updated_at": application.updated_at,
-        }
-    store_yaml_mapping(path, payload)
+    with ApexStore.load(root) as store:
+        store.store_applications(
+            {
+                "owner": application.owner,
+                "workspace": application.workspace,
+                "workspace_id": application.workspace_id,
+                "app_group": application.app_group,
+                "app_id": application.app_id,
+                "app_alias": application.app_alias,
+                "app_name": application.app_name,
+                "pages": application.pages,
+                "updated_at": application.updated_at,
+            }
+            for application in applications
+        )
 
-def _store_workspace_developers(path: Path, rows: list[dict[str, Any]]) -> None:
+def _store_application_checksum(root: Path, app_id: int, checksum: str) -> None:
+    """Record one application's fingerprint beside the rest of its metadata.
+
+    The value used to be an export format of its own, one line in a
+    `checksum.txt` in the application folder (ADT #28). It describes the
+    application rather than the repository, so it belongs with the other facts
+    ADT already caches about the app, and a folder of exported source no longer
+    carries a file nothing there reads (ADT #343).
+
+    The row is normally already present, `_store_application_metadata` writes
+    every app in the run before the first one is exported, which is why the
+    fingerprint is merged in afterwards rather than stored first. Since `#369`
+    that merge is one `UPDATE` of one column instead of a whole-file rewrite.
+    """
+    if not checksum:
+        return
+    with ApexStore.load(root) as store:
+        store.store_checksum(app_id, checksum)
+
+def _store_workspace_developers(root: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
-    payload = load_yaml_mapping(path)
-    for row in rows:
-        workspace = str(row_value(row, "WORKSPACE") or "")
-        user_name = str(row_value(row, "USER_NAME") or "")
-        user_mail = str(row_value(row, "USER_MAIL") or "")
-        if not workspace or not user_name:
-            continue
-        workspace_developers = payload.get(workspace)
-        if not isinstance(workspace_developers, dict):
-            workspace_developers = {}
-            payload[workspace] = workspace_developers
-        workspace_developers[user_name] = user_mail
-    store_yaml_mapping(path, payload)
+    with ApexStore.load(root) as store:
+        store.store_developers(_workspace_developers_from_rows(rows))
 
 def _workspace_developers_from_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
     developers: dict[str, dict[str, str]] = {}

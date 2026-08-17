@@ -11,7 +11,6 @@ from adt_ai.rebuild.cache import (
     _current_branch,
     _require_branches_exist,
     _resolve_branches,
-    _write_caches,
 )
 from adt_ai.rebuild.models import (
     RebuildError,
@@ -50,7 +49,7 @@ def _build_records(
     request: RebuildRequest,
     branches: list[str],
     reporter: RebuildReporter,
-) -> dict[str, dict[int, object]]:
+) -> tuple[dict[str, dict[int, object]], dict[str, object]]:
     original_commit_files = _cache._commit_files
     _cache._commit_files = _commit_files
     try:
@@ -66,12 +65,10 @@ class RebuildRunner:
         _reporter = reporter or _NullReporter()
         branches = _resolve_branches(request)
         _require_branches_exist(request.root, branches)
-        branch_records = _build_records(request, branches, _reporter)
-        cache_paths = _write_caches(
-            request.root,
-            branch_records,
-            cache_file_template=request.cache_file_template,
-        )
+        # Scanning and writing are one step now: the store IS the write, because
+        # a number is assigned by inserting the row, never computed and then
+        # serialized.
+        branch_records, cache_paths = _build_records(request, branches, _reporter)
         return RebuildResult(
             cache_paths   = cache_paths,
             branches      = branches,

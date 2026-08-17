@@ -82,10 +82,29 @@ class ApexFileResolver:
         # `embedded_code/`.
         return self.apexlang_root(application) / _clean_relative(relative_path)
 
-    def checksum_export(self, application: ApexApplication) -> Path:
-        # One stable path per app, whatever name APEX gives the single checksum
-        # file, so a CI gate diffs the same file on every run.
-        return self.app_root(application) / "checksum.txt"
+    def stale_checksum_files(self) -> list[Path]:
+        """Every `checksum.txt` this schema's apex root still carries.
+
+        `-checksum` wrote one per application folder while it was an export
+        format (ADT #28). The fingerprint moved into
+        `config/internal/apex_apps.yaml` (ADT #343), so those files are stale
+        wherever they sit, including under applications the current run does
+        not touch and in a repository a colleague exported. That is why the
+        search covers the whole tree rather than the run's own app list.
+
+        Static files are the one channel that can legitimately produce a file
+        by that name, `-files` writes whatever the application stores, so
+        anything inside the configured static-files folder is left alone.
+        """
+        root = self.apex_root()
+        if not root.is_dir():
+            return []
+        files_parts = _clean_relative(self.path_files).parts
+        return [
+            path
+            for path in sorted(root.rglob("checksum.txt"))
+            if not _contains_run(path.parent.relative_to(root).parts, files_parts)
+        ]
 
     def rest_export(self, module_name: str) -> Path:
         name = module_name.strip("/")
@@ -119,6 +138,21 @@ def _render_app_folder(template: str, application: ApexApplication) -> Path:
     for token, value in replacements.items():
         rendered = rendered.replace(token, value or "")
     return _clean_relative(rendered)
+
+
+def _contains_run(parts: tuple[str, ...], run: tuple[str, ...]) -> bool:
+    """Whether `run` appears as a consecutive stretch of `parts`.
+
+    A configured folder is a path, not a name, so `static/files` has to match
+    those two components side by side and never a stray `files` somewhere else
+    in the tree.
+    """
+    if not run:
+        return False
+    return any(
+        parts[start:start + len(run)] == run
+        for start in range(len(parts) - len(run) + 1)
+    )
 
 
 def _clean_relative(path: str | Path) -> Path:

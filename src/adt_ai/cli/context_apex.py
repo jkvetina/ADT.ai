@@ -219,7 +219,7 @@ def _apex_explicit_actions(args: argparse.Namespace) -> frozenset[str]:
 def _apex_recent_report_only(
     args: argparse.Namespace,
     actions: Mapping[str, bool],
-    recent_days: int | None,
+    recent_days: int | float | None,
 ) -> bool:
     return (
         not getattr(args, "reveal", False)
@@ -244,7 +244,7 @@ def _split_config_values(value: object) -> list[str] | None:
     ]
     return normalized or None
 
-def _has_job_recent_conflict(recent_days: int | None, object_types: list[str]) -> bool:
+def _has_job_recent_conflict(recent_days: int | float | None, object_types: list[str]) -> bool:
     if recent_days is None:
         return False
     return any(matches_sql_like("JOB", object_type) for object_type in object_types)

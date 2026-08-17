@@ -5,6 +5,7 @@ from pathlib import Path
 
 from adt_ai.cli.constants import QueryGateway
 from adt_ai.cli.context_errors import _display
+from adt_ai.shared.announce import mark_announced
 
 
 class DebugQueryGateway:
@@ -20,6 +21,10 @@ class DebugQueryGateway:
         print("QUERY:")
         print(_debug_sql(sql, params or {}))
         print()
+        # Under -debug the statement itself is the announcement, and a better
+        # one than any header: it says exactly what the wait is. It ends its own
+        # line, so the cursor cannot tell, and it has to say so (`#360`).
+        mark_announced()
         return self.wrapped.fetch_all(sql, params)
 
     def execute(
@@ -31,6 +36,10 @@ class DebugQueryGateway:
         print("QUERY:")
         print(_debug_sql(sql, params or {}))
         print()
+        # Under -debug the statement itself is the announcement, and a better
+        # one than any header: it says exactly what the wait is. It ends its own
+        # line, so the cursor cannot tell, and it has to say so (`#360`).
+        mark_announced()
         self.wrapped.execute(sql, params)
 
     def sqlcl_request(self, request: str, root: Path) -> str:
@@ -38,6 +47,7 @@ class DebugQueryGateway:
         print("SQLCL REQUEST:")
         print(request)
         print()
+        mark_announced()
         return self.wrapped.sqlcl_request(request, root)
 
 def _print_startup_debug(context) -> None:

@@ -65,7 +65,7 @@ Bootstrap a project skeleton:
 adtai doctor -init
 ```
 
-`doctor -init` writes the project override config, copies the current ADT.ai root `.gitignore` verbatim, and writes the safe `connections/.gitkeep` / `connections/wallets/.gitkeep` placeholders. It does not create generated-cache folders, APEX credentials folders, connection YAML files, or wallet contents. Existing generated files are skipped; use `-force` to overwrite them:
+`doctor -init` writes the project override config, copies the current ADT.ai root `.gitignore` and the `config/patch_template/` scaffold verbatim, and writes the safe `connections/.gitkeep` / `connections/wallets/.gitkeep` placeholders. It does not create generated-cache folders, APEX credentials folders, connection YAML files, or wallet contents. Existing generated files are skipped; use `-force` to overwrite them:
 
 ```bash
 adtai doctor -init -force
@@ -77,6 +77,9 @@ To initialize a different folder:
 adtai doctor -init -root /path/to/project
 ```
 
+The patch templates are scaffolded because `patch -create` reads them from the **project** root, so a folder that only ships with ADT.ai is a folder nobody has. All eight files land verbatim, see [patch → Templates](patch.md#templates) for the slots and what each file does. **Read `db_end/` before your first deploy:** those three refresh every materialized view, gather schema stats and run every enabled daily job with a 60-second wait, and the APEX pair carries `<APEX_WORKSPACE>` / `<APEX_APP_ID>` / `<APEX_VERSION>` placeholders you fill in once. Delete what your deploy should not do.
+
+Patch *scripts* are still not scaffolded, `patch_scripts/` is per-patch-code and generated per patch, so there is nothing fixed to seed.
 
 `adtai update` and `adtai upgrade` are not public commands. They print the generic ADT.ai error banner and guide users to `adtai doctor -update` or `adtai doctor -sqlcl`.
 
@@ -89,7 +92,7 @@ adtai doctor -init -root /path/to/project
 | `-offline` | No | off | Skip online update metadata checks and show local versions only. |
 | `-update` | No | off | Run the full ADT.ai, Python requirements, and SQLcl update workflow. Cannot be combined with `-sqlcl`. |
 | `-sqlcl` | No | off | Upgrade SQLcl only. Runs immediately without `-update`; cannot be combined with `-update`. |
-| `-init` | No | off | Scaffold project config, copy ADT.ai's current root `.gitignore`, and add safe local connection/wallet placeholders. |
+| `-init` | No | off | Scaffold project config, copy ADT.ai's current root `.gitignore` and `config/patch_template/`, and add safe local connection/wallet placeholders. |
 | `-root`, `--root` | No | `.` | Project root folder for `-init`. |
 | `-force`, `--force` | No | off | With `-init`, overwrite generated template files that already exist. |
 | `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |

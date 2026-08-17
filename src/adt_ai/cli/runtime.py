@@ -46,6 +46,7 @@ from adt_ai.cli.parser import (
     _removed_compatibility_args,
     build_parser,
 )
+from adt_ai.shared.announce import announced_factory, strict_mode
 from adt_ai.shared.env_bootstrap import hydrate_environment
 from adt_ai.shared.internal_paths import migrate_internal_files
 from adt_ai.shared.sqlcl_script import SqlclScriptError
@@ -212,6 +213,11 @@ def main(
     )
     sys.stdout = tracked_stdout
     sys.stderr = tracked_stderr
+    if gateway_factory is not None and strict_mode():
+        # The one place every command's injected gateway passes through, so the
+        # console guard is armed for all of them from here rather than enrolled
+        # per command. The real gateway is wrapped in cli.gateways.build_gateway.
+        gateway_factory = announced_factory(gateway_factory)
     started_at = time.monotonic()
     timer_stdout = _command_timer_stdout(args, tracked_stdout)
     exit_code = 0

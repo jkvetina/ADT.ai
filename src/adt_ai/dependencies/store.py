@@ -106,7 +106,7 @@ class DependencyStore:
         *,
         force: bool = False,
     ) -> dict[str, int]:
-        """Update one owner's ``USER_*`` rows without wiping unchanged objects."""
+        """Patch one owner's ``USER_*`` rows without wiping unchanged objects."""
         return refresh.refresh_schema_incremental(
             self.connection, owner, object_rows, tables, force=force
         )
@@ -160,7 +160,7 @@ class DependencyStore:
         *,
         force: bool = False,
     ) -> dict[str, int]:
-        """Update one app's ``APEX_*`` rows without wiping unchanged rows."""
+        """Patch one app's ``APEX_*`` rows without wiping unchanged rows."""
         return refresh.refresh_app_incremental(self.connection, app_id, tables, force=force)
 
     def record_refresh(self, scope_type: str, scope_name: str, timestamp: str) -> None:

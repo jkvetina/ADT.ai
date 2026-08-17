@@ -8,10 +8,10 @@ from adt_ai.shared.progress import DottedProgressBar
 
 
 class ConsoleRebuildReporter:
-    # Standardized progress header: the 2-space indent every export_apex header
-    # carries (export_apex ACTION_HEADERS -> "  FULL APP EXPORT") so the rebuild
-    # bar aligns with the export progress lines instead of sitting flush-left.
-    PROGRESS_HEADER = "  REBUILDING"
+    # The label alone. `shared/progress.row_left_margin` prepends the two-space
+    # indent every streamed row carries, so this string stopped spelling its own
+    # (`#380`) and the printed row is byte-identical to what it always was.
+    PROGRESS_HEADER = "REBUILDING"
 
     def __init__(self, branch_label: str, since_label: str | None = None) -> None:
         self.branch_label = branch_label

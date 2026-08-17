@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+# The `-recent` window is day-aligned, from tomorrow midnight backwards, which
+# is what makes `-recent 1` mean "changed today". A window shorter than a day
+# has no day to align to and that cutoff would sit in the future
+# (`TRUNC(SYSDATE) + 1 - 1/24` is 23:00 tonight), reporting nothing changed, so
+# a sub-day window measures from now instead.
 APPLICATIONS_QUERY = """
 SELECT
     a.owner,
@@ -18,7 +23,10 @@ WHERE 1 = 1
     AND (a.application_group    = :group_id     OR :group_id IS NULL)
     AND ('|' || :app_id || '|' LIKE '%|' || a.application_id || '|%' OR :app_id IS NULL)
     AND (a.application_id < :max_app_id OR :max_app_id IS NULL)
-    AND (:recent IS NULL OR a.last_updated_on >= TRUNC(SYSDATE) + 1 - :recent)
+    AND (:recent IS NULL OR a.last_updated_on >= CASE
+        WHEN :recent >= 1 THEN TRUNC(SYSDATE) + 1 - :recent
+        ELSE SYSDATE - :recent
+    END)
 ORDER BY
     a.application_id
 """.strip()
@@ -319,7 +327,10 @@ SELECT
     a.used_on_pages
 FROM apex_appl_export_comps a
 WHERE a.application_id      = :app_id
-    AND (a.last_updated_on  >= TRUNC(SYSDATE) + 1 - :recent OR :recent IS NULL)
+    AND (a.last_updated_on  >= CASE
+            WHEN :recent >= 1 THEN TRUNC(SYSDATE) + 1 - :recent
+            ELSE SYSDATE - :recent
+        END OR :recent IS NULL)
     AND (
         :changed_since IS NULL
         OR a.last_updated_on >= TO_DATE(:changed_since, 'YYYY-MM-DD HH24:MI:SS')

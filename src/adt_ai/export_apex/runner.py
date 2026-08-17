@@ -12,7 +12,9 @@ from adt_ai.export_apex import queries
 from adt_ai.export_apex.actions import (
     ACTION_HEADERS,
     APEXLANG_MIN_APEX_RELEASE,
+    TEXT_ACTIONS,
     ApexActionTimingMixin,
+    open_segment_bar,
     print_apexlang_skip_row,
     skipped_by_apex_release,
 )
@@ -28,6 +30,7 @@ from adt_ai.export_apex.metadata import (
     _merge_app_groups,
     _parse_app_group_blocks,
     _render_app_group_blocks,
+    _store_application_checksum,
     _store_application_metadata,
     _store_workspace_developers,
     _workspace_developers_from_rows,
@@ -41,6 +44,7 @@ from adt_ai.export_apex.partial import (
 from adt_ai.export_apex.postprocess import (
     _bind_params,
     _blob_bytes,
+    _checksum_value,
     _clean_page_author,
     _clean_split_sql,
     _default_id_offset,
@@ -63,14 +67,18 @@ from adt_ai.export_apex.progress import (
 )
 from adt_ai.export_apex.recent import (
     RecentComponentFilter,
+    _changes_since_label,
     _page_id_from_export_path,
     _print_application_export_header,
-    _print_recent_changes_header,
     _print_recent_components,
     _print_schema_export_header,
     _recent_component_filter,
     _recent_since,
+    _reports_recent_changes,
     _used_on_pages,
+    open_application_section,
+    print_recent_changes,
+    recent_components,
 )
 from adt_ai.export_apex.recent_authors import (
     dedupe_recent_rows,
@@ -86,6 +94,7 @@ from adt_ai.export_apex.rest import (
     _plsql_block,
     _rest_module_name,
     _rest_prefixes,
+    _schema_block,
     _schema_definition,
     _split_rest_modules,
 )
@@ -96,17 +105,16 @@ from adt_ai.export_apex.watermarks import (
 )
 from adt_ai.export_apex.writers import ApexCollectionWriterMixin, CollectionWriteResult
 from adt_ai.shared import text_files
+from adt_ai.shared.apex_store import ApexStore
+from adt_ai.shared.dates import is_sub_day_window
 from adt_ai.shared.db import QueryGateway
-from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.progress import FixedWidthProgressPrinter
 from adt_ai.shared.recent_state import (
-    RecentStore,
     is_bare_recent,
     may_advance,
     read_db_now,
 )
 from adt_ai.shared.row_values import row_value
-from adt_ai.shared.yaml_io import load_yaml_mapping, store_yaml_mapping
 
 GatewayFactory = Callable[[str], QueryGateway]
 
@@ -133,12 +141,15 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexAction
     def run(self, request: ApexExportRequest) -> None:
         base_resolver = ApexFileResolver.from_config(request.root, dict(request.config))
         reporter = request.reporter or ConsoleApexProgressReporter()
-        timers_file = request.timers_file or internal_path(request.root, "apex_timers.yaml")
-        timers = load_yaml_mapping(timers_file)
-        developers_path = internal_path(request.root, "apex_developers.yaml")
+        # One store for the whole run: every ETA read, every ETA write and the
+        # developer merge below all address `config/internal/apex.db`, and
+        # reopening it per action would pay the connect cost once per exported
+        # format per application.
+        store = request.apex_store or ApexStore.load(request.root)
+        timers = store.timers()
         if not request.recent_report_only:
             _store_application_metadata(
-                internal_path(request.root, "apex_apps.yaml"),
+                request.root,
                 [
                     application
                     for schema in request.schemas
@@ -147,15 +158,37 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexAction
             )
         for schema in request.schemas:
             resolver = base_resolver.for_schema(schema)
-            gateway = self.gateway_factory(schema)
-            developer_rows = gateway.fetch_all(self.WORKSPACE_DEVELOPERS_QUERY)
-            developers = merge_workspace_developers(
-                workspace_developers_from_mapping(load_yaml_mapping(developers_path)),
-                _workspace_developers_from_rows(developer_rows),
-            )
             if not request.recent_report_only:
-                _store_workspace_developers(developers_path, developer_rows)
+                for stale in resolver.stale_checksum_files():
+                    stale.unlink()
+            gateway = self.gateway_factory(schema)
+            # **Read on first use, which is under an application's own header**
+            # (`#372`). Read eagerly it was the run's first silent wait, a
+            # schema-level query with nothing above it but the connection
+            # block's closing blank. Every consumer sits in the loop below, so
+            # first use lands after that application's section title. A schema
+            # with no application reaches none, and exports nothing either.
+            cached_developers: dict[str, Mapping[str, str]] | None = None
+
+            def workspace_developers(
+                gateway: QueryGateway = gateway,
+            ) -> Mapping[str, Mapping[str, str]]:
+                nonlocal cached_developers
+                if cached_developers is None:
+                    developer_rows = gateway.fetch_all(self.WORKSPACE_DEVELOPERS_QUERY)
+                    cached_developers = merge_workspace_developers(
+                        workspace_developers_from_mapping(store.developers()),
+                        _workspace_developers_from_rows(developer_rows),
+                    )
+                    if not request.recent_report_only:
+                        _store_workspace_developers(request.root, developer_rows)
+                return cached_developers
+
             applications = request.applications.get(schema, [])
+            # `-compact`: one bar for this whole schema segment, budgeted from
+            # the stored time of every pair it is about to run.
+            segment_bar = open_segment_bar(request, applications, timers, schema)
+            segment_reporter = segment_bar or reporter
             for index, application in enumerate(applications):
                 # `-rest` and `-files_ws` write workspace artifacts, paths with
                 # no app id in them, so they belong to the schema, not to an
@@ -164,25 +197,44 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexAction
                 # the rows still read among that block's other export rows.
                 schema_slice = index == 0
                 cutoff = self._listing_cutoff(request, application)
+                # A sub-day window's title carries the instant it starts at, and
+                # that instant belongs to the database clock (`#340`), so this
+                # one `SELECT ... FROM dual` is the only read that has to come
+                # before the header rather than under it. Every other window
+                # knows its title from the request alone.
+                sub_day = is_sub_day_window(request.recent_days)
+                header_now = read_db_now(gateway) if sub_day else None
+                # **The application's first section title goes up before its
+                # first read** (`#372`); which title that is, and the one run
+                # that can open on neither, are in `open_application_section`.
+                opened = open_application_section(
+                    request,
+                    application,
+                    cutoff,
+                    header_now,
+                    exporting_header = segment_bar is None,
+                )
                 # Database clock BEFORE the component listing: anything changed
-                # mid-export stays at or after it and is re-selected next run.
+                # mid-export stays at or after it and is re-selected next run. A
+                # sub-day run already asked above, so the round trip happens once.
                 candidate = (
-                    read_db_now(gateway)
+                    (header_now if sub_day else read_db_now(gateway))
                     if is_watermarking(request)
                     else None
                 )
                 if request.recent_report_only:
-                    recent_components = self._recent_components(
-                        gateway, application, request, developers, cutoff
+                    recent_rows = recent_components(
+                        gateway, application, request, workspace_developers(), cutoff
                     )
-                    if recent_components is not None:
-                        self._print_recent_changes(
+                    if recent_rows is not None:
+                        print_recent_changes(
                             application,
-                            developers,
                             request.recent_days,
                             recent_author_label(request),
-                            recent_components,
+                            recent_rows,
                             cutoff,
+                            header_now,
+                            header_printed = opened == "changes",
                         )
                     continue
                 component_filters = request.component_filters
@@ -201,10 +253,10 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexAction
                     )
                 gateway.execute(self.EXPORT_START_QUERY, {"app_id": application.app_id})
                 enrichments = _enrichments(gateway, application)
-                recent_components = self._recent_components(
-                    gateway, application, request, developers, cutoff
+                recent_rows = recent_components(
+                    gateway, application, request, workspace_developers(), cutoff
                 )
-                recent_filter = _recent_component_filter(recent_components)
+                recent_filter = _recent_component_filter(recent_rows)
                 explicit_filter = ApexExplicitFilter(
                     request.page_selection,
                     component_filters,
@@ -217,16 +269,24 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexAction
                     recent_filter,
                     explicit_filter,
                 )
-                if recent_components is not None:
-                    self._print_recent_changes(
+                if recent_rows is not None:
+                    print_recent_changes(
                         application,
-                        developers,
                         request.recent_days,
                         recent_author_label(request),
-                        recent_components,
+                        recent_rows,
                         cutoff,
+                        header_now,
+                        header_printed = opened == "changes",
                     )
-                if any(request.actions.values()):
+                # The segment bar already covers every application, so a block
+                # here would be the rows `-compact` exists to replace; and
+                # `opened` says the title already went up ahead of the reads.
+                if (
+                    any(request.actions.values())
+                    and segment_bar is None
+                    and opened != "exporting"
+                ):
                     _print_application_export_header(application)
                 self._run_text_actions(
                     gateway,
@@ -234,10 +294,10 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexAction
                     application,
                     request,
                     enrichments,
-                    developers,
-                    reporter,
+                    workspace_developers(),
+                    segment_reporter,
                     timers,
-                    timers_file,
+                    store,
                     recent_filter,
                     explicit_filter,
                     page_names,
@@ -245,9 +305,9 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexAction
                 )
                 if request.actions.get("files"):
                     self._run_action(
-                        reporter,
+                        segment_reporter,
                         timers,
-                        timers_file,
+                        store,
                         application,
                         "files",
                         lambda gateway=gateway, application=application, resolver=resolver: (
@@ -261,9 +321,9 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexAction
                     )
                 if request.actions.get("files_ws") and schema_slice:
                     self._run_schema_action(
-                        reporter,
+                        segment_reporter,
                         timers,
-                        timers_file,
+                        store,
                         "files_ws",
                         lambda gateway=gateway, application=application, resolver=resolver: (
                             self._write_static_files(gateway, resolver, application, 0)
@@ -271,14 +331,15 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexAction
                     )
                 if request.actions.get("rest") and schema_slice:
                     self._run_schema_action(
-                        reporter,
+                        segment_reporter,
                         timers,
-                        timers_file,
+                        store,
                         "rest",
                         lambda gateway=gateway, resolver=resolver: self._write_rest_export(
                             gateway, resolver, request.config
                         ),
                     )
+                self._store_checksum(gateway, request, application)
                 # Reached only when every requested format wrote successfully, so
                 # an app that raised mid-export keeps its previous watermarks.
                 self._advance_watermarks(request, application, candidate)
@@ -289,12 +350,16 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexAction
             # `-rest` finish printing nothing at all (ADT #190); `-files_ws` had
             # the same hole and never got that fix.
             schema_only = self._schema_only_actions(request, applications, gateway, resolver)
-            if schema_only:
+            if schema_only and segment_bar is None:
                 _print_schema_export_header(schema)
             for action, operation in schema_only:
                 self._run_schema_action(
-                    reporter, timers, timers_file, action, operation
+                    segment_reporter, timers, store, action, operation
                 )
+            # Only where every action wrote: one that raised already completed
+            # its row with `FAILED`, and a 100% redraw would overwrite it.
+            if segment_bar is not None:
+                segment_bar.close()
 
     def _run_text_actions(
         self,
@@ -306,20 +371,16 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexAction
         developers: Mapping[str, Mapping[str, str]],
         reporter: ApexProgressReporter,
         timers: dict[Any, Any],
-        timers_file: Path,
+        store: ApexStore,
         recent_filter: RecentComponentFilter,
         explicit_filter: ApexExplicitFilter,
         page_names: dict[int, str],
         deep_rows: list[dict[str, Any]],
     ) -> None:
-        for action, sql in (
-            ("full", self.EXPORT_FULL_QUERY),
-            ("split", self.EXPORT_SPLIT_QUERY),
-            ("readable", self.EXPORT_READABLE_QUERY),
-            ("embedded", self.EXPORT_EMBEDDED_QUERY),
-            ("apexlang", self.EXPORT_APEXLANG_QUERY),
-            ("checksum", self.EXPORT_CHECKSUM_QUERY),
-        ):
+        # Shared `TEXT_ACTIONS` order, never a second list here: the compact
+        # bar's budget walks the same tuple (see `actions.planned_actions`).
+        for action in TEXT_ACTIONS:
+            sql = getattr(self, f"EXPORT_{action.upper()}_QUERY")
             if not request.actions.get(action):
                 continue
             if skipped_by_apex_release(action, request.apex_version):
@@ -367,65 +428,35 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexAction
                 self._run_action(
                     reporter,
                     timers,
-                    timers_file,
+                    store,
                     application,
                     action,
                     operation,
                 )
 
-    def _print_recent_changes(
-        self,
-        application: ApexApplication,
-        developers: Mapping[str, Mapping[str, str]],
-        recent_days: int | None,
-        author_label: str | None,
-        rows: list[dict[str, Any]],
-        changed_since: str | None = None,
-    ) -> None:
-        if recent_days is None and changed_since is None:
-            return
-        if author_label and not rows:
-            return
-        # Watermark mode shows the stored instant verbatim; -recent N keeps the
-        # day-count arithmetic it has always used.
-        since = changed_since if changed_since is not None else _recent_since(recent_days)
-        _print_recent_changes_header(application, since, author_label or "")
-        _print_recent_components(rows)
-
-    def _recent_components(
+    def _store_checksum(
         self,
         gateway: QueryGateway,
-        application: ApexApplication,
         request: ApexExportRequest,
-        developers: Mapping[str, Mapping[str, str]],
-        changed_since: str | None = None,
-    ) -> list[dict[str, Any]] | None:
-        if request.recent is None:
-            return None
-        if changed_since is None and (not request.recent_days or request.recent_days <= 0):
-            # Bare -recent with no watermark for any requested format: nothing to
-            # narrow by, so the export covers the whole app (and may then seed).
-            return None
-        binds = {
-            "app_id": application.app_id,
-            "recent": request.recent_days,
-            "changed_since": changed_since,
-        }
-        authors = recent_authors(application, developers, request)
-        if not authors:
-            return gateway.fetch_all(
-                self.RECENT_COMPONENTS_QUERY,
-                {**binds, "author": None},
-            )
-        rows: list[dict[str, Any]] = []
-        for author in authors:
-            rows.extend(
-                gateway.fetch_all(
-                    self.RECENT_COMPONENTS_QUERY,
-                    {**binds, "author": author},
-                )
-            )
-        return dedupe_recent_rows(rows)
+        application: ApexApplication,
+    ) -> None:
+        """Cache the application's ID-independent SHA-256 fingerprint.
+
+        APEX computes it over the whole application, so nothing about the run
+        narrows it: a `-page` or `-recent` export records the same value a full
+        one does. It is collected rather than exported, so it prints no row of
+        its own, the same way the workspace developer list and the rest of the
+        application metadata are read (ADT #343).
+
+        `#360` gave it a row and `#372` took it back: `#343` had dropped that
+        row deliberately, so restoring it was a regression wearing a fix.
+        """
+        gateway.execute(self.EXPORT_CHECKSUM_QUERY, {"app_id": application.app_id})
+        _store_application_checksum(
+            request.root,
+            application.app_id,
+            _checksum_value(gateway.fetch_all(self.FETCH_FILES_QUERY)),
+        )
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

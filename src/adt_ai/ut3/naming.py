@@ -12,7 +12,7 @@ command. Four config values replace all five:
 * ``ut_owner``  , the schema holding them; **the only one that defaults empty**,
   meaning the schema being tested;
 * ``ut_module`` , capture group 1 is the module a **suite** belongs to
-  (``'^[^_]+_([^_]+)'``), which drives the ``MODULES:`` roll-up. It must not be
+  (``'^[^_]+_([^_]+)'``), which drives the ``SUMMARY PER MODULE:`` roll-up. It must not be
   anchored to anything that has to follow the module token, since a module whose
   whole implementation is one package (``ICT_VPD_UT``) ends there.
 

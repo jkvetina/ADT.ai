@@ -1,9 +1,13 @@
 """`RUNNING TESTS:`, the dotted bar a default `ut3` run watches.
 
+Under `-name` the heading names the patterns, `RUNNING TESTS FOR ICT_INT%:`, so
+the one line on screen while the suites run says which part of the schema is
+running. See `section_title`.
+
 The section it replaced printed a status row per test, which on Jan's
-`ICT_OWNER` is 1156 rows: `SUMMARY:` landed past the end of the terminal's
+`ICT_OWNER` is 1156 rows: `SUMMARY PER SUITE:` landed past the end of the terminal's
 scrollback and the report was correct and unreadable. `-dense` answered that
-with 35 counted lines, and those counts turned out to be `SUMMARY:` again, one
+with 35 counted lines, and those counts turned out to be `SUMMARY PER SUITE:` again, one
 section early. So the whole axis moved (Jan, 2026-08-13): the per-test listing
 became `-verbose`, and what a default run watches is one line that moves.
 
@@ -30,8 +34,10 @@ the module it was meant to match (2026-08-13). The label counts *tests* while
 the bar counts *suites*, deliberately: a suite is the only unit utPLSQL reports,
 so it is the only thing that can move a bar honestly, while a test is the unit a
 run is sized in and it is knowable before anything runs. Both figures come from
-the one discovery the `UNIT TESTS SUITES:` table above prints, which is what
-keeps them in step under `-name` with no second query to maintain.
+the one discovery `UNIT TESTS SUITES:` tabulates under `-verbose`, which is what
+keeps them in step under `-name` with no second query to maintain. On a default
+run the label is the only place that count appears, which is card `#348`'s whole
+argument for taking the table out of this mode.
 """
 
 from __future__ import annotations
@@ -39,20 +45,68 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
+from adt_ai.shared.progress import ROW_INDENT as _ROW_INDENT
 from adt_ai.shared.progress import DottedProgressBar, print_adt_header
 
 SECTION_TITLE = "RUNNING TESTS:"
 
-# The two spaces every `export_apex` action row carries (`export_apex/actions.py`
-# `ACTION_HEADERS`), and the word the suites table heads its count column with,
-# so the label reads as that column's total rather than a second vocabulary.
-ROW_INDENT = "  "
+# The word the suites table heads its count column with, so the label reads as
+# that column's total rather than as a second vocabulary. Re-exported from the
+# shared module rather than spelled again here: `#380` made the renderer prepend
+# the indent, and a second literal is how the two drift apart.
+ROW_INDENT = _ROW_INDENT
 ROW_UNIT = "TESTS"
 
 
+def section_title(names: tuple[str, ...] = ()) -> str:
+    """`RUNNING TESTS:`, or `RUNNING TESTS FOR <PATTERNS>:` under `-name`.
+
+    **The run is the section that owes the filter.** It is the first thing on
+    screen that `-name` changed, and it stays there for as long as the suites
+    take, so a bar crawling over part of a schema says which part in its own
+    heading rather than leaving the reader to remember the command they typed.
+    The two tables below then carry no filter of their own: they say what they
+    group, and this line has already said what the run covered.
+
+    Upper-cased because every other word in an ADT section header is, and the
+    patterns are Oracle identifiers-with-wildcards where case carries no meaning:
+    `-name ict_int%` and `-name ICT_INT%` select the same suites, so they must
+    not print two different headings.
+
+    `-name` is repeatable and multi-value, so the heading joins what was passed
+    rather than naming the first pattern and silently dropping the rest.
+    """
+    if not names:
+        return SECTION_TITLE
+    return f"RUNNING TESTS FOR {', '.join(name.upper() for name in names)}:"
+
+
+def print_section_header(names: tuple[str, ...] = ()) -> None:
+    """The run's heading, printed before discovery rather than after it.
+
+    It is built from `-name` alone, so nothing the dictionary returns is needed
+    to write it, while the row underneath needs the suite and test counts only
+    discovery can supply. Splitting the two there is what puts the discovery
+    wait under a heading instead of under the finished connection block, and it
+    costs no string: this is the line the bar used to print itself, one read
+    earlier (`#379`).
+
+    A run that matches nothing therefore prints the heading and no row. That is
+    the honest shape rather than a regression: the command did go looking, under
+    exactly this filter, and the empty `SUMMARY PER SUITE:` below says what it
+    found.
+    """
+    print_adt_header(section_title(names))
+
+
 def row_header(tests: int) -> str:
-    """``  1145 TESTS``, the label the bar crawls under for the whole run."""
-    return f"{ROW_INDENT}{max(0, int(tests))} {ROW_UNIT}"
+    """``1145 TESTS``, the label the bar crawls under for the whole run.
+
+    The two-space margin is not in here: `row_left_margin` prepends it to every
+    labelled row, so the printed line is unchanged and the indent has one owner
+    (`#380`).
+    """
+    return f"{max(0, int(tests))} {ROW_UNIT}"
 
 
 class SuiteProgressBar:
@@ -63,6 +117,7 @@ class SuiteProgressBar:
         total: int,
         *,
         tests: int = 0,
+        names: tuple[str, ...] = (),
         previous_seconds: float = 0.0,
         clock: Callable[[], float] = time.monotonic,
         started_at: float | None = None,
@@ -70,8 +125,11 @@ class SuiteProgressBar:
     ) -> None:
         self._total = max(0, int(total))
         # Rendered once: the label is fixed for the run, and rebuilding it on
-        # every redraw would invite a later edit to make it move.
+        # every redraw would invite a later edit to make it move. `names` is
+        # still taken, and still only for the heading, which `print_section_header`
+        # now prints ahead of discovery, so the bar draws the row and no more.
         self._header = row_header(tests)
+        self._names = tuple(names)
         self._previous = max(0.0, float(previous_seconds))
         self._clock = clock
         # The run began before this bar did, discovery has already happened by
@@ -88,17 +146,17 @@ class SuiteProgressBar:
         return max(0.0, self._clock() - self._started_at)
 
     def begin(self) -> None:
-        """The section header, then the row at 0%, before the first suite runs.
+        """The row at 0%, before the first suite runs.
 
         A bar that appeared only once something had finished would leave the
         longest silence of the run, the first suite, with nothing on screen.
 
-        The row opens on the line directly under the dashed rule, which is where
-        `export_apex` opens its first action row: `print_adt_header` already
-        prints this section's own blank line above the title, so a second one
-        here spaced the section against nothing.
+        The heading above it belongs to the section rather than to the row, and
+        `print_section_header` printed it one read earlier so that discovery had
+        something to block under (`#379`). The row opens on the line directly
+        under the dashed rule, which is where `export_apex` opens its first
+        action row.
         """
-        print_adt_header(SECTION_TITLE)
         self._draw()
 
     def advance(self) -> None:

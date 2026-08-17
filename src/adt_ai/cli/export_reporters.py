@@ -12,8 +12,19 @@ from adt_ai.shared.progress import FixedWidthProgressPrinter, schema_label
 
 
 class ConsoleApexRevealReporter:
-    def workspaces(self, workspaces: list[ApexWorkspace]) -> None:
+    def begin_workspaces(self) -> None:
+        """The first title on a `-reveal` screen, before the inventory reads.
+
+        `-reveal` reads every schema's applications, then the workspaces, then
+        the owner counts, and only then prints its three tables, deliberately:
+        reporting between two reads put a row under a header it had nothing to
+        do with (`#360`). That batching left all of it running behind the
+        connection block's closing blank, so the title it will print first goes
+        up in front of the reads instead (`#372`).
+        """
         print_adt_header("WORKSPACES:")
+
+    def workspaces(self, workspaces: list[ApexWorkspace]) -> None:
         print_adt_table(
             [
                 {

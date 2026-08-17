@@ -2,9 +2,10 @@
 
 Four sections, in the order a run produces them: the suites that matched, what
 the run is doing while it does it, the detail for anything that did not pass,
-and the per-suite tally. The second of those has two shapes and a mode chooses
-between them, one dotted progress bar by default (`progress.py`), or the
-per-test verdicts under `-verbose`.
+and the per-suite tally. The first two belong to a mode. `-verbose` prints the
+suites roll-up and then a verdict per test; a default run prints neither and
+watches one dotted progress bar instead (`progress.py`); `-silent` prints none
+of them. The last two print in every mode.
 
 Three shapes carry all four. The suites roll-up and the tally are tables because
 every value in them is bounded, a package name and counts. The verdicts are
@@ -13,6 +14,12 @@ block per suite as that suite completes and a table cannot be emitted in
 pieces. The third shape, everything free-text a run produces, as a status-led
 per-record stanza, is `problems.py`, split out at the 20 KB context budget:
 tables and rows here, stanzas there.
+
+**Nothing here knows what time it is.** Every function below turns a finished
+value into text, so a caller can render the same run twice and get the same
+bytes. What speaks *while* the run is still working, the phase labels and the
+streaming reporter that lays them down before each blocking call, is
+`reporter.py`, split out at the same budget and along that seam.
 
 A test package that cannot run (INVALID, or holding no parsed `%test`) is in
 none of the four sections. It is not a suite, and `ut3` reports suites.
@@ -25,6 +32,7 @@ sections lay text on are `layout.py`, so they cannot drift apart.
 from __future__ import annotations
 
 from adt_ai.export_db.runner import print_adt_header, print_adt_table
+from adt_ai.shared.announce import mark_announced
 from adt_ai.shared.progress import FixedWidthProgressPrinter
 from adt_ai.ut3.cells import (
     SUMMARY_NUMERIC,
@@ -53,10 +61,18 @@ from adt_ai.ut3.inventory import (
     coverage_percent,
 )
 from adt_ai.ut3.layout import DETAIL_INDENT, HEADING_INDENT
-from adt_ai.ut3.progress import SuiteProgressBar
-from adt_ai.ut3.runner import Ut3Reporter, Ut3Result
+from adt_ai.ut3.runner import Ut3Result
 
 _SUITE_COLUMNS = ("SUITE_PACKAGE", "TESTS")
+
+# **The two roll-ups are one pair, named for what each groups.** They carry the
+# same columns over the same run and differ only in how the rows are cut, so the
+# headings are what tell them apart, and a heading that named the run's `-name`
+# filter instead would leave that difference to be worked out from a column. The
+# filter is stated once, by the section the run happened under (`progress.py`).
+SUITES_TITLE = "UNIT TESTS SUITES:"
+SUMMARY_TITLE = "SUMMARY PER SUITE:"
+MODULE_SUMMARY_TITLE = "SUMMARY PER MODULE:"
 
 # **`COVERAGE` closes the row, after `TIMER`.** Jan's 2026-08-11 shape: the
 # verdicts say whether the suite is green, `TIMER` what it cost, and `COVERAGE`
@@ -64,7 +80,7 @@ _SUITE_COLUMNS = ("SUITE_PACKAGE", "TESTS")
 # reader asks them.
 _SUMMARY_COLUMNS = ("SUITE_PACKAGE", "PASS", "FAIL", "ERROR", "TIMER", "COVERAGE")
 
-# `SUMMARY:` again, one row per `ut_module` group instead of per suite package.
+# `SUMMARY PER SUITE:` again, one row per `ut_module` group instead of per suite package.
 # `PACKAGES` and `LINES` are the two columns the per-suite table does not have,
 # and they are the pair that makes the rest honest: a group of one and a group of
 # nine are the same row without the count, and forty lines and four thousand are
@@ -85,12 +101,18 @@ _MODULE_COLUMNS = (
 def print_suites(packages: tuple[SuitePackage, ...]) -> None:
     """The matched suites, one row each, printed before anything runs.
 
-    **The header and the column row always print, even with nothing to list.**
-    An empty table is a complete answer, it says the command looked and found
-    no suite, and it says it in the same shape as a run that found ten. The
-    section this replaced printed a four-line troubleshooting lecture instead,
-    which buried the one fact the reader wanted behind advice they had not
-    asked for. The failure is still carried, by the exit code and by `SUMMARY:`.
+    **`-verbose` output only** (Jan, card `#348`): a default run watches the bar
+    and this table said, at ninety rows on `ICT_OWNER`, what the bar's `N TESTS`
+    label says in one. The mode that asks for a row per test is the mode that
+    wants the list of what will produce them.
+
+    **Within that mode the header and the column row always print, even with
+    nothing to list.** An empty table is a complete answer, it says the command
+    looked and found no suite, and it says it in the same shape as a run that
+    found ten. The section this replaced printed a four-line troubleshooting
+    lecture instead, which buried the one fact the reader wanted behind advice
+    they had not asked for. The failure is still carried, by the exit code and by
+    `SUMMARY PER SUITE:`, which is what carries it on a default run.
 
     **Only runnable suites are listed.** A package that is INVALID, or that
     utPLSQL parsed no test for, contributes no row and no stanza anywhere else
@@ -101,8 +123,22 @@ def print_suites(packages: tuple[SuitePackage, ...]) -> None:
 
     Packages print in the dictionary's A-Z order, which the discovery query
     already imposes.
+
+    **The header and the rows are separable**, because the header is what the
+    reader looks at while discovery blocks and the rows are what discovery
+    returns (`#379`). The streaming reporter prints the two halves either side
+    of that read; this pair is what every other caller wants.
     """
-    print_adt_header("UNIT TESTS SUITES:")
+    print_suites_header()
+    print_suites_rows(packages)
+
+
+def print_suites_header() -> None:
+    """`UNIT TESTS SUITES:` alone, so it can lead the read that fills it."""
+    print_adt_header(SUITES_TITLE)
+
+
+def print_suites_rows(packages: tuple[SuitePackage, ...]) -> None:
     print_adt_table(
         [
             {
@@ -133,6 +169,10 @@ def print_package_heading(package: SuitePackage) -> None:
     the suite being run instead of on the section header above it.
     """
     print(f"{HEADING_INDENT}{package.name}", flush=True)
+    # It ends its own line, so the cursor cannot tell it apart from a result
+    # row, and it has to say what it is: this heading names the suite that is
+    # about to run and is the only thing on screen while it does (`#360`).
+    mark_announced()
 
 
 def print_package_results(package: SuitePackage, outcomes: tuple[TestOutcome, ...]) -> None:
@@ -141,12 +181,18 @@ def print_package_results(package: SuitePackage, outcomes: tuple[TestOutcome, ..
     print_test_rows(outcomes)
 
 
-def print_test_rows(outcomes: tuple[TestOutcome, ...]) -> None:
+def print_test_rows(outcomes: tuple[TestOutcome, ...], close_block: bool = True) -> None:
     """The one row builder both the streamed and the batch render go through.
 
     A passing row's right-hand text is its elapsed seconds, not the word
     `PASS`; `FAIL`/`ERROR`/`SKIP` still print their status word. See
     `cells.test_status_cell`.
+
+    ``close_block=False`` withholds the blank line that ends the suite's block,
+    for the streaming reporter, which owes that blank before the *next* package
+    heading and at the end of the run instead. Same bytes, later: the blank is
+    what retires the heading's claim on the screen, and the coverage read runs
+    after the last block (`#372`, `#359`).
     """
     printer = FixedWidthProgressPrinter(indent=DETAIL_INDENT)
     for outcome in outcomes:
@@ -154,7 +200,8 @@ def print_test_rows(outcomes: tuple[TestOutcome, ...]) -> None:
         # pair is the only way to get a labelled fixed-width line.
         printer.begin(outcome.test)
         printer.status(outcome.test, test_status_cell(outcome))
-    print()
+    if close_block:
+        print()
 
 
 def print_results(result: Ut3Result) -> None:
@@ -182,7 +229,7 @@ def print_coverage_gate(packages: tuple[PackageCoverage, ...], threshold: float)
 
     `PACKAGE` names the code, not the suite that tests it. The figure is a
     property of the package, two suites testing one package print one row here
-    and two in `SUMMARY:`, and the package is what the reader has to go and
+    and two in `SUMMARY PER SUITE:`, and the package is what the reader has to go and
     cover.
     """
     if not packages:
@@ -198,18 +245,18 @@ def print_coverage_gate(packages: tuple[PackageCoverage, ...], threshold: float)
     )
 
 
-def print_summary(result: Ut3Result, names: tuple[str, ...] = ()) -> None:
+def print_summary(result: Ut3Result) -> None:
     """The suites table again, with what each suite's tests actually did.
 
-    Same first column as `UNIT TESTS SUITES:` so the two read as before and
-    after of one list, then a column per verdict. **A zero renders blank**: a
-    column of `0`s competes for the eye with the counts that matter, and the
-    thing a reader scans this table for is the row that is not all-passed.
+    Same first column as `UNIT TESTS SUITES:` so that under `-verbose` the two
+    read as before and after of one list, then a column per verdict. **A zero
+    renders blank**: a column of `0`s competes for the eye with the counts that
+    matter, and the thing a reader scans this table for is the row that is not
+    all-passed.
 
     **There is no `TESTS` column.** Every test lands in exactly one verdict, so
-    the total was a fourth number derivable from the other three, and the count
-    the reader wanted was already on the `UNIT TESTS SUITES:` row above. The one
-    thing it carried alone was the `%disabled` test, which appears in no verdict
+    the total is a fourth number derivable from the other three. The one thing it
+    would carry alone is the `%disabled` test, which appears in no verdict
     column; its own result row still reads `SKIP`.
 
     **`TIMER` carries that suite's own seconds**, which is what turns the table
@@ -223,14 +270,31 @@ def print_summary(result: Ut3Result, names: tuple[str, ...] = ()) -> None:
     suites that test the same package therefore print the same figure, because
     block coverage records which blocks ran and never which test ran them.
 
-    **The header names the filter when there is one.** With `-name` passed the
-    section reads `SUMMARY FOR <PATTERNS>:`, upper-cased, several patterns joined
-    with commas, a roll-up over part of a schema should say so in its own
-    heading rather than leaving the reader to remember the command they typed.
-    `MODULES:` below keeps its own heading: it is one section down from this one
-    and the filter has already been stated.
+    **The header names what the table groups, never what the run covered.**
+    `SUMMARY PER SUITE:` is one row per suite, and `SUMMARY PER MODULE:` below it
+    is the same run grouped the other way, so the two headings read as one pair
+    and a reader who scrolled past the tables knows which is which. The `-name`
+    filter is stated once, by the `RUNNING TESTS FOR <PATTERNS>:` heading the run
+    happened under (`progress.py`); restating it on a table that shows only what
+    ran would be the second and worse telling of something already told.
+
+    **The header and the rows are separable**, and this is the pair `#379` was
+    filed on: the `COVERAGE` column is what the run reads Oracle's profiler for,
+    a wait Jan measured at 9.9 seconds of a 19.3 second run, and it used to
+    happen with the whole table still unprinted and the cursor parked on a
+    progress row reading `100%  0:00:00`. The header goes above the read now and
+    the rows fill in behind it.
     """
-    print_adt_header(_summary_header(names))
+    print_summary_header()
+    print_summary_rows(result)
+
+
+def print_summary_header() -> None:
+    """`SUMMARY PER SUITE:` alone, so it can lead the coverage read."""
+    print_adt_header(SUMMARY_TITLE)
+
+
+def print_summary_rows(result: Ut3Result) -> None:
     print_adt_table(
         [
             {
@@ -248,29 +312,16 @@ def print_summary(result: Ut3Result, names: tuple[str, ...] = ()) -> None:
     )
 
 
-def _summary_header(names: tuple[str, ...]) -> str:
-    """`SUMMARY:`, or `SUMMARY FOR <PATTERNS>:` when `-name` narrowed the run.
-
-    Upper-cased because every other word in an ADT section header is, and the
-    patterns are Oracle identifiers-with-wildcards where case carries no meaning:
-    `-name ict_sec%` and `-name ICT_SEC%` select the same suites, so they must
-    not print two different headings.
-
-    `-name` is repeatable and multi-value, so the heading joins what was passed
-    rather than naming the first pattern and silently dropping the rest.
-    """
-    if not names:
-        return "SUMMARY:"
-    return f"SUMMARY FOR {', '.join(name.upper() for name in names)}:"
-
-
 def print_module_summary(result: Ut3Result) -> None:
-    """`SUMMARY:` again, grouped by `ut_module`, the second table of a run.
+    """The same run grouped by `ut_module`, the second table of a run.
 
-    **It answers a different question from the table above it.** `SUMMARY:` says
-    which suite is red; this says which *area* is. On a schema with ninety suites
-    the per-suite table is a list you scroll and this is the one you read, which
-    is why it is a table of its own rather than a sort order on the first.
+    **It answers a different question from the table above it.** The per-suite
+    table says which suite is red; this says which *area* is. On a schema with
+    ninety suites the per-suite table is a list you scroll and this is the one
+    you read, which is why it is a table of its own rather than a sort order on
+    the first. The two headings are a matched pair for that reason, `SUMMARY PER
+    SUITE:` then `SUMMARY PER MODULE:`, so the difference between them is the
+    first thing on each screen rather than something to work out from a column.
 
     `PACKAGES` is the group size and `LINES` is how much code that adds up to,
     and together they are what make the rest honest: four failures spread over
@@ -302,7 +353,7 @@ def print_module_summary(result: Ut3Result) -> None:
     output it saw before this existed, not a table of empty groups.
     """
     grouped = by_module(outcomes_by_package(result), result)
-    print_adt_header("MODULES:")
+    print_adt_header(MODULE_SUMMARY_TITLE)
     print_adt_table(
         [_module_row(module_cell(module), rows) for module, rows in grouped]
         + [_module_row("", flatten(grouped))],
@@ -312,7 +363,7 @@ def print_module_summary(result: Ut3Result) -> None:
 
 
 def _module_row(name: str, rows: list[dict[str, object]]) -> dict[str, object]:
-    """One `MODULES:` row, a named group, or the unnamed total over every row.
+    """One `SUMMARY PER MODULE:` row, a named group, or the unnamed total over every row.
 
     The two go through one builder so the total can never be a different
     calculation from the rows it sits under. That was already true of `COVERAGE`,
@@ -331,95 +382,6 @@ def _module_row(name: str, rows: list[dict[str, object]]) -> dict[str, object]:
         "COVERAGE"    : percent_cell(coverage_percent(packages)),
     }
 
-
-class ConsoleUt3Reporter(Ut3Reporter):
-    """Prints the run as it proceeds, never as one dump at the end.
-
-    The suites roll-up lands the moment discovery returns. What follows it is the
-    mode's own section, and there are three modes with one section each:
-
-    * default   , `RUNNING TESTS:`, one dotted bar bumped by finished suites.
-    * ``verbose``, `TEST RESULTS:`, a package heading before each suite blocks
-      and a row per test once its verdict is known.
-    * ``silent`` , neither listing, and no bar.
-
-    `-silent` outranks `-verbose` for the reason it outranked `-dense`: two flags
-    about one region of the screen, and the one that removes it wins, or the
-    quiet flag would print a section it exists to suppress.
-    """
-
-    def __init__(
-        self,
-        silent: bool = False,
-        verbose: bool = False,
-        *,
-        previous_seconds: float = 0.0,
-        started_at: float | None = None,
-    ) -> None:
-        self._silent = silent
-        self._verbose = verbose
-        self._previous = previous_seconds
-        self._started_at = started_at
-        self._bar: SuiteProgressBar | None = None
-        self.streamed = False
-
-    def discovered(self, packages: tuple[SuitePackage, ...]) -> None:
-        if self._silent:
-            return
-        print_suites(packages)
-        if self._verbose:
-            return
-        # **A run that matched nothing gets no bar.** The empty roll-up above is
-        # already the complete answer; a bar over zero units would have to print
-        # some percentage beside no work, and every value it could print is a
-        # claim rather than a report. `UNIT TESTS SUITES:` still prints its
-        # header and column row, because an empty *table* says the same thing in
-        # the same shape as a full one, a bar has no such empty form.
-        runnable = [package for package in packages if package.runnable]
-        if not runnable:
-            return
-        # The bar moves in suites and is labelled in tests, and both totals are
-        # read off the discovery the table above just printed, so `-name`
-        # narrows the label and the axis together, and the label is the sum of
-        # the `TESTS` column the reader can see two lines up.
-        self._bar = SuiteProgressBar(
-            len(runnable),
-            tests            = sum(len(package.tests) for package in runnable),
-            previous_seconds = self._previous,
-            started_at       = self._started_at,
-        )
-        self._bar.begin()
-        self.streamed = True
-
-    def suite_begin(self, package: SuitePackage) -> None:
-        # Nothing to stream ahead of the work in bar mode: the bar is already on
-        # screen at 0%, and it moves on completion, not on start.
-        if self._silent or not self._verbose:
-            return
-        if not self.streamed:
-            print_results_header()
-            self.streamed = True
-        print_package_heading(package)
-
-    def suite_end(self, package: SuitePackage, outcomes: tuple[TestOutcome, ...]) -> None:
-        if self._silent:
-            return
-        if self._bar is not None:
-            self._bar.advance()
-            return
-        if self._verbose:
-            print_test_rows(outcomes)
-
-    def close(self) -> None:
-        """End the bar's row, once, after the last suite.
-
-        Only the bar owes this: a per-test block closes itself with its own blank
-        line, while the bar's row is rewritten with a carriage return and carries
-        no newline at all until something ends it.
-        """
-        if self._bar is None:
-            return
-        self._bar.close()
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

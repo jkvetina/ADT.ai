@@ -122,7 +122,7 @@ ORDER BY u.name
 #
 # A MODULE_NAME column sat here until card `#291`, deriving `ut_module` group 1
 # off the listed package so the removed coverage roll-up could group the whole
-# schema by module. `MODULES:` groups the run's **suites**, whose module the
+# schema by module. `SUMMARY PER MODULE:` groups the run's **suites**, whose module the
 # discovery query already derives, so nothing reads a package's own module now.
 SCHEMA_PACKAGES_QUERY = """
 SELECT

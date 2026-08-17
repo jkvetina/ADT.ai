@@ -94,7 +94,7 @@ class ApexDiscovery:
         workspace: str | None = None,
         group: str | None = None,
         app_ids: Iterable[str | int] | None = None,
-        recent_days: int | None = None,
+        recent_days: int | float | None = None,
         max_app_id: int | None = None,
     ) -> list[ApexApplication]:
         rows = self.gateway.fetch_all(

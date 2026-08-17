@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from adt_ai.cli.constants import DEFAULT_ROW_LIMIT
 from adt_ai.cli.parser_common import add_connection_key_argument
+from adt_ai.shared.dates import recent_window
 from adt_ai.shared.recent_state import BARE_RECENT
 from adt_ai.ut3.limits import GATE_FROM_CONFIG
 
@@ -153,7 +154,10 @@ def add_database_parsers(subparsers) -> None:
     add_connection_key_argument(recompile)
     dependencies = subparsers.add_parser(
         "dependencies",
-        description="query the committed dependency index or refresh it from the database",
+        description=(
+            "query the committed dependency index, or refresh it from the "
+            "database when no query is given"
+        ),
         help="query or refresh the dependency index",
     )
     dependencies.add_argument("--root", "-root", default=".", help="project root folder")
@@ -197,16 +201,20 @@ def add_database_parsers(subparsers) -> None:
         "-refresh",
         nargs="*",
         metavar="NAME",
-        help="rebuild the index from the database, optionally scoped to object names",
+        help=(
+            "rebuild the index from the database, optionally scoped to object "
+            "names (the default when no query is given)"
+        ),
     )
     dependencies.add_argument(
         "--recent",
         "-recent",
         nargs="?",
         const=BARE_RECENT,
-        type=int,
+        type=recent_window,
         help=(
-            "with -refresh, only reload objects changed in the last DAYS days "
+            "refresh only: reload just the objects changed in the last DAYS days "
+            "or a fraction of a day, 1/24 = past hour "
             "(bare -recent = since that scope's last refresh)"
         ),
     )
@@ -236,8 +244,8 @@ def add_database_parsers(subparsers) -> None:
         action="append",
         nargs="+",
         help=(
-            "owner schema(s), repeatable, comma- or space-separated: refresh "
-            "scope with -refresh, else an offline owner filter for the query"
+            "owner schema(s), repeatable, comma- or space-separated: an offline "
+            "owner filter beside a query, the refresh scope without one"
         ),
     )
     dependencies.add_argument(
@@ -247,7 +255,7 @@ def add_database_parsers(subparsers) -> None:
         nargs="+",
         help=(
             "APEX application id(s), or ranges MIN-MAX / MIN+ resolved against "
-            "discovered apps, to refresh (only with -refresh), repeatable, comma- "
+            "discovered apps, to refresh (refresh only), repeatable, comma- "
             "or space-separated"
         ),
     )
@@ -318,7 +326,7 @@ def add_database_parsers(subparsers) -> None:
         nargs  = "+",
         help   = "name pattern(s), repeatable, comma- or space-separated, supports "
                  "%% wildcards; selects the suites to run, and names itself in the "
-                 "SUMMARY FOR ...: header; no pattern means everything",
+                 "RUNNING TESTS FOR ...: header; no pattern means everything",
     )
     ut3.add_argument(
         "--schema",
@@ -349,16 +357,16 @@ def add_database_parsers(subparsers) -> None:
         "--silent",
         "-silent",
         action = "store_true",
-        help   = "suppress the suites roll-up and the progress bar (the per-test "
-                 "results under -verbose); keep the summary, the errors and "
-                 "failures detail, and command chrome",
+        help   = "suppress the progress bar, the phase sections, and the suites "
+                 "roll-up and per-test results under -verbose; keep the summary, "
+                 "the errors and failures detail, and command chrome",
     )
     ut3.add_argument(
         "--verbose",
         "-verbose",
         action = "store_true",
-        help   = "print TEST RESULTS: with a row per test instead of the RUNNING "
-                 "TESTS: progress bar; -silent outranks it",
+        help   = "print UNIT TESTS SUITES: and TEST RESULTS: with a row per test "
+                 "instead of the RUNNING TESTS: progress bar; -silent outranks it",
     )
     ut3.add_argument(
         "--debug",

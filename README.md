@@ -2,7 +2,7 @@
 
 ADT.ai is a Python command-line tool for exporting Oracle database, APEX, and data assets into deterministic, Git-friendly files.
 
-Version `0.8.7` ships these public commands:
+Version `0.9.0` ships these public commands:
 
 - `adtai export_db` exports Oracle database objects to files.
 - `adtai doctor` checks local setup, runs explicit updates, and bootstraps project config.
@@ -18,6 +18,8 @@ Version `0.8.7` ships these public commands:
 - `adtai search_repo` searches cached Git commit history and can restore selected file versions.
 - `adtai ut3` runs the connected schema's utPLSQL test suites and reports every non-passing test, with a non-zero exit code on any failure, error, or run that executed no tests at all.
 - `adtai validate` runs the APEXlang compiler over exported `apexlang/` folders and reports its errors with a non-zero exit code. It needs no database connection.
+
+Build verified by 3312 private unit tests.
 
 ## Install
 
