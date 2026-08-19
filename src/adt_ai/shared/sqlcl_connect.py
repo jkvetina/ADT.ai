@@ -126,6 +126,14 @@ def sqlcl_connect(
     connection YAML does, so a fresh fingerprint can still name an entry the
     local store has never seen; the caller retries once through this flag.
     """
+    # External authentication has no credential to write into a script and no
+    # name worth registering: SQLcl connects `/@alias` and the OCI client reads
+    # the wallet (ADT #395). It outranks the named-connection path below because
+    # there is nothing for that path to store.
+    if connection.external_auth:
+        alias = connection.tns or connection.service or ""
+        return _plan(f"connect /@{alias}", startup_sql)
+
     name = connection.sqlcl_name if named_connections else None
 
     if not name:
@@ -139,6 +147,16 @@ def sqlcl_connect(
             name      = save_as,
             ephemeral = True,
         )
+
+    # A connection file carrying no password cannot register anything, so
+    # registration is not a fallback for it: it is a way to write a broken entry
+    # and then connect with it. Connect by name and let the store answer, either
+    # it holds the entry or the run stops and says so. That is what lets
+    # `sqlcl_only` run from a file with no `pwd:` at all (ADT #396), and it is
+    # right on the ordinary path too, where the alternative was a connect line
+    # with an empty password.
+    if not connection.password:
+        return _plan(f"connect -name {name}", startup_sql, name=name)
 
     if not force_register and connection.sqlcl_sync == credential_fingerprint(connection):
         # Connect by name only, no credentials in the script. A store that lost
@@ -208,7 +226,7 @@ def _connect_line(
     savepwd: bool = False,
 ) -> str:
     username = connection.username
-    password = coerce_password(connection.password) or ""
+    password = connection.password.reveal() or ""
     service  = connection.service or connection.sid or ""
     if save_name is None:
         save = ""
@@ -231,17 +249,6 @@ def _connect_line(
     else:
         dsn = service
     return f'connect {save}{username}/"{password}"@{dsn}'
-
-
-def coerce_password(password: str | bytes | None) -> str | None:
-    """Decode a ``!!binary`` YAML password to text.
-
-    A ``pwd: !!binary`` value reaches us as ``bytes``; embedding it in a connect
-    string would write the literal ``b'secret'``.
-    """
-    if isinstance(password, bytes):
-        return password.decode("utf-8")
-    return password
 
 
 def resolve_wallet_path(wallet_path: str, project_root: Path | None) -> Path:

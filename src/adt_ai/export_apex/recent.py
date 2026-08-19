@@ -20,14 +20,19 @@ from adt_ai.shared.row_values import row_value
 
 
 def _print_application_export_header(application: ApexApplication) -> None:
-    print_adt_header(f"APP {application.app_id}/{application.app_alias}, EXPORTING:")
+    # Jan, 2026-08-17: the verb leads. `APP <id>/<alias>, EXPORTING:` became
+    # `EXPORTING APP <id>/<alias>:`; the `CHANGES SINCE` header beside it keeps
+    # its own wording, which he settled in the same turn.
+    print_adt_header(f"EXPORTING APP {application.app_id}/{application.app_alias}:")
 
 def _print_schema_export_header(schema: str) -> None:
     """Header for a schema-level export slice, above the per-application ones.
 
     `-rest` writes workspace artifacts, so it has no `APP <id>/<alias>` to sit
     under, and on a schema with no applications there is no header at all, which
-    is how a `-rest` run could finish printing nothing (ADT #190).
+    is how a `-rest` run could finish printing nothing (ADT #190). A run that
+    asks for nothing BUT those formats prints the bare header below instead, so
+    what is left here is the mixed run on an application-less schema.
     """
     print_adt_header(f"SCHEMA {schema_label(schema)}, EXPORTING:")
 

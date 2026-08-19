@@ -97,7 +97,7 @@ PUBLIC_MODULES = (
     ("rebuild", "rebuild the git commit cache", ()),
     ("recompile", "recompile invalid database objects", ()),
     ("search_repo", "search cached Git commit history", ()),
-    ("ut3", "run utPLSQL test suites", ()),
+    ("ut", "run utPLSQL test suites", ()),
     ("validate", "validate APEXlang application source", ()),
 )
 
@@ -147,7 +147,7 @@ REMOVED_COMPATIBILITY_FLAGS = {
     # ADT #345, the same withdrawal on the other command the audit caught.
     # `calendar -list` selected a day-row format the task-centric report had
     # already replaced, so it filled `CalendarRequest.list_mode` and changed
-    # nothing. `USAGE/calendar.md` called it inert and kept it, which is the
+    # nothing. `docs/calendar.md` called it inert and kept it, which is the
     # accepted-but-unused compatibility flag SOP §Command surface rules out.
     "calendar": ("-list", "--list"),
     # ADT #317 removed `-dense` outright: it restyled the rows of a section that
@@ -158,11 +158,11 @@ REMOVED_COMPATIBILITY_FLAGS = {
     #
     # Listed here rather than merely deleted for the reason `patch -full` proved:
     # a name is only reliably gone when the rejection happens on the raw argv.
-    # `-dense` is not a prefix of any surviving `ut3` flag, so argparse would
+    # `-dense` is not a prefix of any surviving `ut` flag, so argparse would
     # error on it today, but that is a property of today's flag set, and the
     # next flag added to this command could silently make an old name resolve
     # again.
-    "ut3": ("-dense", "--dense"),
+    "ut": ("-dense", "--dense"),
     # ADT #343 removed `-checksum`: the fingerprint is no longer something you
     # ask for, it is collected on every export and cached in
     # `config/internal/apex_apps.yaml`, so there is no successor flag either.
@@ -263,7 +263,7 @@ class _StdoutTracker:
         row that closed and then flushed would otherwise read as still open.
 
         **An open line announces the work that will CLOSE it.** A redrawable row
-        holds the cursor mid-line whatever it says, so `ut3` covered a 9.9 second
+        holds the cursor mid-line whatever it says, so `ut` covered a 9.9 second
         coverage read with a bar reading `100%  0:00:00` (`#379`, and see
         `shared/announce.py`). `mark_finished()` is how such a row says so.
         """

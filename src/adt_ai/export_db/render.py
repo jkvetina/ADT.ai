@@ -224,7 +224,7 @@ class ConsoleExportDbReporter(ExportDbReporter):
     def __init__(self, silent: bool = False, compact: bool = False) -> None:
         self._last_type_by_schema: dict[str, str] = {}
         self._silent = silent
-        # `-silent` outranks `-compact`, the precedence `ut3` already carries
+        # `-silent` outranks `-compact`, the precedence `ut` already carries
         # between `-silent` and `-verbose`: silent suppresses the very rows the
         # bar stands in for, so a run asking for both gets the quieter one and
         # no flag changes meaning depending on the flag beside it.

@@ -37,7 +37,7 @@ def add_history_parsers(subparsers) -> None:
     # `-list` was declared here until ADT #345 withdrew it. It reached
     # `CalendarRequest.list_mode` and was read by nothing: the task-centric
     # report replaced the day-row format outright, so the flag had nothing left
-    # to switch. `USAGE/calendar.md` documented it as accepted but inert, which
+    # to switch. `docs/calendar.md` documented it as accepted but inert, which
     # is the accepted-but-unused compatibility flag SOP §Command surface
     # forbids, not an exemption from it.
     search_repo = subparsers.add_parser(

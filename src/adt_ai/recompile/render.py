@@ -199,7 +199,7 @@ class _ConsoleTrailingReporter(RecompileReporter):
     matching export_db and the console contract (drop per-row detail, keep chrome).
 
     ``streamed`` lets the CLI skip its fallback render when the runner drove the
-    reporter; a dry run never drives it, so the dry-run table still prints.
+    reporter, so a path that never reaches the runner still gets its table.
     """
 
     def __init__(self, silent: bool = False) -> None:

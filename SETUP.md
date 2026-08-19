@@ -1,6 +1,6 @@
 # ADT.ai Setup
 
-`SETUP.md` is the install and environment reference for humans setting up a machine. It intentionally stays short: use `adtai doctor` to verify the machine, and use [USAGE/doctor.md](USAGE/doctor.md) for the detailed Doctor command contract.
+`SETUP.md` is the install and environment reference for humans setting up a machine. It intentionally stays short: use `adtai doctor` to verify the machine, and use [docs/doctor.md](docs/doctor.md) for the detailed Doctor command contract.
 
 ## Install
 
@@ -120,4 +120,4 @@ adtai doctor -update
 adtai doctor -sqlcl
 ```
 
-Full Doctor behavior, argument details, output sections, statuses, and project bootstrap rules live in [USAGE/doctor.md](USAGE/doctor.md).
+Full Doctor behavior, argument details, output sections, statuses, and project bootstrap rules live in [docs/doctor.md](docs/doctor.md).

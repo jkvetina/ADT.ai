@@ -25,10 +25,9 @@ module rather than per-command bookkeeping:
   re-selected next time, the overlap window shrinks from a day to the duration
   of the previous run instead of becoming a hole.
 * **The watermark advances only for a run that actually covered the scope**
-  (:func:`may_advance`). A ``-name``/``-type``/``-by``/``-my``-narrowed export, a
-  dry run, or a ``-recent N`` window too short to reach the stored watermark all
-  leave it untouched: a packages-only export must never claim the whole schema is
-  current.
+  (:func:`may_advance`). A ``-name``/``-type``/``-by``/``-my``-narrowed export, or
+  a ``-recent N`` window too short to reach the stored watermark, leaves it
+  untouched: a packages-only export must never claim the whole schema is current.
 """
 
 from __future__ import annotations
@@ -121,14 +120,13 @@ def may_advance(
     stored: str | None,
     db_now: str,
     narrowed: bool,
-    dry_run: bool,
 ) -> bool:
     """Whether a *successful* pass may stamp ``db_now`` as the scope's watermark.
 
     Callers own the success half of the gate (per-schema isolation: one broken
     schema must not stop or falsely stamp the others); this decides the rest.
     """
-    if dry_run or narrowed:
+    if narrowed:
         return False
     if recent is None or is_bare_recent(recent):
         # A full export always covers the scope. Bare -recent either resumed from

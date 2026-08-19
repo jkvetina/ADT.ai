@@ -40,7 +40,8 @@ def add_admin_parsers(subparsers) -> None:
     connection = subparsers.add_parser(
         "connection",
         description="edit the resolved connection file: create a connection, add an "
-                    "environment or schema, set a schema password, or set a wallet password",
+                    "environment or schema, set a schema or wallet password, or "
+                    "re-encrypt every stored secret under a new key",
         help="edit the connection file (add env/schema, set password)",
     )
     connection.add_argument(
@@ -67,6 +68,23 @@ def add_admin_parsers(subparsers) -> None:
         "-set-wallet-pwd",
         action="store_true",
         help="set a wallet password (requires -env; prompts interactively)",
+    )
+    connection.add_argument(
+        "-rekey",
+        action="store_true",
+        help="re-encrypt every encrypted secret in the file (requires -old-key and -new-key)",
+    )
+    connection.add_argument(
+        "--old-key",
+        "-old-key",
+        metavar = "VALUE|PATH",
+        help    = "with -rekey, the key the file's secrets are encrypted with today",
+    )
+    connection.add_argument(
+        "--new-key",
+        "-new-key",
+        metavar = "VALUE|PATH",
+        help    = "with -rekey, the key to re-encrypt them with",
     )
     connection.add_argument("--env", "-env", help="environment name")
     connection.add_argument("--schema", "-schema", help="schema name")

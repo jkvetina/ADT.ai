@@ -15,7 +15,7 @@ from adt_ai.cli.commands_exports import _run_export_apex, _run_export_db
 from adt_ai.cli.commands_flow import _run_flow
 from adt_ai.cli.commands_history import _run_calendar, _run_rebuild, _run_search_repo
 from adt_ai.cli.commands_recompile import _run_discovery, _run_doctor, _run_recompile
-from adt_ai.cli.commands_ut3 import _run_ut3
+from adt_ai.cli.commands_ut import _run_ut3
 from adt_ai.cli.commands_validate import _run_validate
 from adt_ai.cli.constants import (
     PUBLIC_COMMANDS,
@@ -246,7 +246,7 @@ def main(
             exit_code = _run_discovery(args, gateway_factory=gateway_factory)
         elif args.command == "connection":
             exit_code = _run_connection(args)
-        elif args.command == "ut3":
+        elif args.command == "ut":
             exit_code = _run_ut3(args, gateway_factory=gateway_factory)
         elif args.command == "validate":
             exit_code = _run_validate(args)

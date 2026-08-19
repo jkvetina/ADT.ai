@@ -4,6 +4,28 @@ import sys
 
 from adt_ai.cli.constants import DROPBOX_PATH_RE, print_adt_header
 from adt_ai.shared.config import InvalidConfigValueError
+from adt_ai.shared.connection_errors import (
+    ConnectFailedError,
+    CredentialUnavailableError,
+    InvalidConnectionError,
+)
+
+# The remedy for a configuration nothing could locate, and the line ADT #407 is
+# about: it is noise above every failure where the file WAS found and read.
+_PROJECT_FOLDER_REMEDY = (
+    "Run ADT.ai from a project folder that has a connection file, or pass "
+    "-config-dir / -root to point at one. See docs/README.md and `adtai doctor -init`."
+)
+
+# Header and remedy both branch on the error CLASS, so a raise site says which
+# screen it wants by choosing its exception and nothing here has to recognise a
+# message. Most specific first; a class matching no row is a configuration that
+# could not be located, the one case the remedy above is written for.
+_CONFIG_ERROR_SCREENS: tuple[tuple[type[Exception], str, str | None], ...] = (
+    (CredentialUnavailableError, "CREDENTIAL UNAVAILABLE:", None),
+    (InvalidConnectionError, "CONFIGURATION INVALID:", None),
+    (InvalidConfigValueError, "CONFIGURATION INVALID:", None),
+)
 
 
 def _is_user_database_error(error: Exception) -> bool:
@@ -14,6 +36,10 @@ def _is_user_database_error(error: Exception) -> bool:
     return module.startswith("oracledb")
 
 def _is_database_connection_error(error: Exception) -> bool:
+    # A connect attempt ADT.ai itself declared failed needs no message reading,
+    # and must not depend on one: the SQLcl transcript carries no ORA code.
+    if isinstance(error, ConnectFailedError):
+        return True
     text = str(error)
     connection_markers = (
         "DPY-",
@@ -59,25 +85,36 @@ def _print_database_error(error: Exception) -> None:
     print("Use -debug to show the Python traceback.", file=sys.stderr)
     print(file=sys.stderr)
 
+def _config_error_screen(error: Exception) -> tuple[str, str | None]:
+    for error_type, header, remedy in _CONFIG_ERROR_SCREENS:
+        if isinstance(error, error_type):
+            return header, remedy
+    return "CONFIGURATION NOT FOUND:", _PROJECT_FOLDER_REMEDY
+
+
 def _print_config_error(error: Exception) -> None:
-    # A config file that cannot be located and a config *value* that cannot be
-    # used are different failures: the "run from a project folder" remedy is
-    # noise on a bad value, and `CONFIGURATION NOT FOUND` above an unresolved
-    # `path_objects` placeholder sends the reader hunting for a missing file.
-    # Branching on the base class rather than on each subclass means a new
-    # invalid-value error (`ut_pattern`, `ut_match`, `ut_module`) is reported
-    # right without touching this file.
-    is_invalid_value = isinstance(error, InvalidConfigValueError)
-    header = "CONFIGURATION INVALID:" if is_invalid_value else "CONFIGURATION NOT FOUND:"
+    # A configuration that cannot be LOCATED and one that was found and read are
+    # different failures. ADT #182 split the first pair (a missing config file
+    # against a `path_objects` value ADT cannot use) and ADT #407 finished the
+    # job for connections, where every error still took the not-found screen:
+    # the "run from a project folder" remedy is noise when the file is sitting
+    # right there, and the header sent the reader hunting for one that was
+    # already read.
+    #
+    # Branching on classes rather than on each raise means a new error is
+    # reported right by inheriting the class whose screen it wants, without
+    # touching this file. A connect attempt that was actually made is not a
+    # configuration failure at all, so it goes to the shared database banner,
+    # whose wallet and credential advice is the remedy that fits it.
+    if isinstance(error, ConnectFailedError):
+        _print_database_error(error)
+        return
+    header, remedy = _config_error_screen(error)
     print_adt_header(header, file=sys.stderr)
     print(_display(error), file=sys.stderr)
     print(file=sys.stderr)
-    if not is_invalid_value:
-        print(
-            "Run ADT.ai from a project folder that has a connection file, or pass "
-            "-config-dir / -root to point at one. See USAGE.md and `adtai doctor -init`.",
-            file=sys.stderr,
-        )
+    if remedy is not None:
+        print(remedy, file=sys.stderr)
     print("Use -debug to show the Python traceback.", file=sys.stderr)
     print(file=sys.stderr)
 

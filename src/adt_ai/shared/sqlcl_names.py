@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 import yaml as pyyaml
 from ruamel.yaml import YAML
 
+from adt_ai.connection.stored_secrets import SECRET_SAFE_YAML_WIDTH
 from adt_ai.shared import text_files
 
 if TYPE_CHECKING:
@@ -72,17 +73,33 @@ def credential_fingerprint(connection: Connection) -> str:
     A mismatch against the recorded ``sqlcl_sync`` value means the credentials
     changed since registration and the named connection must be re-saved.
     """
+    # This is the third and last approved `Secret.reveal()` site (ADT #400), and
+    # it reveals rather than asking `Secret` for a digest of its own so the
+    # material stays byte-identical to what earlier versions hashed. A different
+    # derivation would mismatch every `sqlcl_sync` value already recorded in a
+    # user's connection file, re-registering every named connection and
+    # rewriting every file on the first run after an upgrade. Nothing leaves
+    # here but the 12 character digest below.
+    #
+    # One project shape does change, and it changes because it was wrong: an
+    # UNENCRYPTED `pwd: !!binary` value used to arrive here as `bytes`, so
+    # `str(part or "")` hashed Python's `b'secret'` repr rather than the
+    # password. `Secret` decodes at construction, so the material is now the
+    # text. Such a project re-registers once, which is the intended behaviour
+    # for a fingerprint that was never hashing the credential it named.
+    # Encrypted values are unaffected: they are decrypted to `str` before they
+    # ever reach a Connection.
     material = "\x00".join(
         str(part or "")
         for part in (
             connection.username,
-            connection.password,
+            connection.password.reveal(),
             connection.hostname,
             connection.port,
             connection.service,
             connection.sid,
             connection.wallet_path,
-            connection.wallet_password,
+            connection.wallet_password.reveal(),
         )
     )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:12]
@@ -111,6 +128,11 @@ def record_sqlcl_registration(
         yaml = YAML()
         yaml.preserve_quotes = True
         yaml.indent(mapping=2, sequence=4, offset=2)
+        # Same width as the connection editor. This writer rewrites the whole
+        # document to record two short keys, so at the default width of 80 it
+        # would reflow any encrypted `pwd:` in the file onto a continuation
+        # line, and the two writers would flip the layout back and forth.
+        yaml.width = SECRET_SAFE_YAML_WIDTH
         data = yaml.load(text)
         schema_node = _schema_node(data, environment, schema)
         if schema_node is None:

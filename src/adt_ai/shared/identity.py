@@ -3,7 +3,7 @@
 ``IDENTITY.yaml`` is gitignored and never committed, it holds the developer's
 personal identity (``db_schema``, ``apex_account``, ``email``) so a schema
 worked by several developers can still resolve who did what. There is
-deliberately no committed sample; the shape is documented in ``USAGE.md``.
+deliberately no committed sample; the shape is documented in ``docs/README.md``.
 
 Two consumers read it: ``export_db -my`` filters exports to objects last
 changed by ``db_schema``, and every new database connection sets

@@ -28,6 +28,24 @@ WHERE oracle_maintained = 'N'
   AND object_type != 'LOB'
 """.strip()
 
+# The DATABASE server's UTC offset, recorded once per refreshed scope.
+#
+# `LAST_DDL_TIME` is a DATE, a naive wall-clock reading taken on the database
+# host, and `patch -create` compares it against a repo file's mtime, which is
+# an absolute epoch taken on THIS host. Resolving the first in the second's
+# zone compares two readings that were never on the same clock, and the error
+# is exactly the offset between them (ADT #394).
+#
+# `SYSTIMESTAMP` is the reading to take, not `DBTIMEZONE` and not
+# `SESSIONTIMEZONE`. `SYSDATE` and `LAST_DDL_TIME` come from the database
+# host's own clock, which is the clock `SYSTIMESTAMP` carries the offset of;
+# `SESSIONTIMEZONE` is whatever python-oracledb set from THIS host, so reading
+# it would hand back the same bug wearing a database-side spelling.
+DB_UTC_OFFSET_QUERY = """
+SELECT TO_CHAR(SYSTIMESTAMP, 'TZH:TZM') AS DB_UTC_OFFSET
+FROM dual
+""".strip()
+
 # `-refresh -recent` narrowing: exactly one of the two binds is non-NULL, the
 # scope's stored `_meta` last-refresh stamp (bare -recent) or an N-day window
 # (-recent N). COALESCE picks whichever mode is active.

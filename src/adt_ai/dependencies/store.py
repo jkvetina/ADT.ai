@@ -163,16 +163,33 @@ class DependencyStore:
         """Patch one app's ``APEX_*`` rows without wiping unchanged rows."""
         return refresh.refresh_app_incremental(self.connection, app_id, tables, force=force)
 
-    def record_refresh(self, scope_type: str, scope_name: str, timestamp: str) -> None:
+    def record_refresh(
+        self,
+        scope_type: str,
+        scope_name: str,
+        timestamp: str,
+        *,
+        db_offset: str | None = None,
+    ) -> None:
         """Stamp one refreshed scope's completion time into ``_meta``.
 
         ``scope_type`` is ``"schema"`` or ``"app"``; the key is
         ``last_refresh:<type>:<name>`` so re-refreshing a scope replaces its
         stamp rather than duplicating it.
+
+        ``db_offset`` is that scope's DATABASE UTC offset (``+02:00``), under
+        the parallel ``db_utc_offset:`` key so `patch -create` reads a mirrored
+        ``LAST_DDL_TIME`` on the clock that produced it (ADT #394).
         """
-        key = f"{queries.META_LAST_REFRESH_PREFIX}{scope_type}:{scope_name}"
+        rows = [
+            (f"{queries.META_LAST_REFRESH_PREFIX}{scope_type}:{scope_name}", timestamp)
+        ]
+        if db_offset:
+            rows.append(
+                (f"{queries.META_DB_OFFSET_PREFIX}{scope_type}:{scope_name}", db_offset)
+            )
         with self.connection:
-            self.connection.execute(queries.META_UPSERT_QUERY, (key, timestamp))
+            self.connection.executemany(queries.META_UPSERT_QUERY, rows)
 
     def last_refreshes(self) -> list[dict[str, str]]:
         """Per-scope last-refresh stamps, schemas first then apps (offline).

@@ -1,8 +1,8 @@
 ---
 created: 2026-06-10
-updated: 2026-08-16
+updated: 2026-08-19
 name: adt
-version: 1.8.4
+version: 1.8.6
 tags: [oracle, apex, deployment, cli, database]
 description: "ADT.ai usage guide for Oracle/APEX work: export database objects, APEX apps and data, validate APEXlang source, run utPLSQL test suites, run read-only SQL discovery, search Git history, query the dependency graph, recompile, and build/deploy patches. Use for any ADT.ai command help."
 ---
@@ -10,7 +10,7 @@ description: "ADT.ai usage guide for Oracle/APEX work: export database objects, 
 
 ADT.ai is a Python CLI that exports, inspects, and deploys Oracle Database objects and APEX applications. It reads from config files, Git, and the database; it never stores its own metadata in the database. Exports work against any ordinary folder, a Git repository is useful but not required.
 
-The command is `adtai` (aliases: `adt`, `python -m adt_ai`). Full argument tables for every command live in per-command files under the repo's `USAGE/`; this skill is the operating cheat-sheet for the common commands, including the full `doctor` module. Lower-frequency commands (`connection`, `calendar`, `flow`) are not expanded here, see their pages under `USAGE/`. The repo-only `adt-setup` skill remains a deeper one-time setup checklist, not a daily runtime skill.
+The command is `adtai` (aliases: `adt`, `python -m adt_ai`). Full argument tables for every command live in per-command files under the repo's `docs/`; this skill is the operating cheat-sheet for the common commands, including the full `doctor` module. Lower-frequency commands (`connection`, `calendar`, `flow`) are not expanded here, see their pages under `docs/`. One `connection` action is worth knowing about from here because nothing else offers it: `adtai connection -rekey -old-key OLD -new-key NEW -go` re-encrypts every stored secret in the resolved connection file in one pass, previews without `-go`, and writes nothing at all unless it can rewrite all of them. Re-encrypting is not the same as rotating the database password, and after a suspected leak only the second one matters. The repo-only `adt-setup` skill remains a deeper one-time setup checklist, not a daily runtime skill.
 
 Run commands from the project root (the folder holding `config/` and the export output). Every command prints a standard banner, dashed section headers, and a final `TIMER: Ns` footer. `export_db`, `export_data`, `export_apex`, `recompile`, and `dependencies -refresh` accept a multi-schema `-schema A B` list; a multi-schema run prints the banner once, then executes schema by schema, connect, that schema's full output, its own `TIMER`, before moving to the next, so a `-schema A B` run reads as two single-schema runs back to back, not one interleaved pile.
 
@@ -39,7 +39,7 @@ Shorter than a day, `DAYS` takes a fraction, `1/24` for the past hour and `5/144
 adtai export_db -silent -recent 1/24
 ```
 
-Everything changed since your last export of each schema, bare `-recent` uses the per-schema watermark in the gitignored `config/internal/recent.yaml` (a schema with no recorded export yet exports in full and seeds it; narrowed or dry runs never advance it):
+Everything changed since your last export of each schema, bare `-recent` uses the per-schema watermark in the gitignored `config/internal/recent.yaml` (a schema with no recorded export yet exports in full and seeds it; a narrowed run never advances it):
 
 ```bash
 adtai export_db -silent -recent
@@ -80,13 +80,7 @@ Clean export (delete existing object files first, excluding `DATA`):
 adtai export_db -silent -recent 7 -delete
 ```
 
-Preview the write plan without touching files:
-
-```bash
-adtai export_db -silent -dry-run -recent 7
-```
-
-When the user wants to *watch* a long export rather than have it stay quiet, `-compact` keeps the `OBJECTS OVERVIEW:` table and replaces the per-object rows with one dotted bar per schema, drawn under `EXPORTING <n> OBJECTS:` and advanced as each object's DDL comes back, with the time still to run on the right. The polarity is the reverse of `ut3`, where the bar is the default and `-verbose` brings back the listing: here the listing is old-ADT parity output and stays the default. `-silent` outranks `-compact`, so pass one or the other:
+When the user wants to *watch* a long export rather than have it stay quiet, `-compact` keeps the `OBJECTS OVERVIEW:` table and replaces the per-object rows with one dotted bar per schema, drawn under `EXPORTING <n> OBJECTS:` and advanced as each object's DDL comes back, with the time still to run on the right. The polarity is the reverse of `ut`, where the bar is the default and `-verbose` brings back the listing: here the listing is old-ADT parity output and stays the default. `-silent` outranks `-compact`, so pass one or the other:
 
 ```bash
 adtai export_db -compact -recent 7
@@ -130,7 +124,7 @@ adtai export_apex -app 100 -apexlang
 adtai export_apex -app 100 -apx
 ```
 
-Exporting several apps in several formats is a block per app and a row per format, which scrolls the `APEX APPLICATIONS:` table away long before the run ends. `-compact` keeps that table and replaces everything under it with **one bar for the whole schema**, drawn under `SCHEMA <name>, EXPORTING:`. Same polarity as `export_db -compact`: the per-action rows are old-ADT parity output and stay the default, so the flag is the bar.
+Exporting several apps in several formats is a block per app, headed `EXPORTING APP <id>/<alias>:`, and a row per format, which scrolls the `APEX APPLICATIONS:` table away long before the run ends. `-compact` keeps that table and replaces everything under it with **one bar for the whole schema**, drawn under `EXPORTING <SCHEMA> APPS:`. Same polarity as `export_db -compact`: the per-action rows are old-ADT parity output and stay the default, so the flag is the bar.
 
 ```bash
 adtai export_apex -app 100,101,102 -full -split -rest -compact
@@ -147,7 +141,8 @@ The countdown opens on a real figure: the budget is the sum of what each app/for
 - `-recent N`, `-page`, and `-component TYPE:NAME%` filter split/readable/embedded component output. Bare `-recent` means "changed since the last export of this app in this format", a watermark keyed per environment/app/format in the gitignored `config/internal/apex.db`; each exported format advances its own key, report-only `-recent` never does. `-page` or `-component` without an explicit format defaults to `-split`. Add `-deep` only with `-page` when the export should include components recorded for those pages in `config/internal/dependencies.db`, such as LOVs, lists, and authorization schemes. Filtered component exports print affected rows instead of dotted progress and do not update `apex.db`. Full app SQL, REST services, app files, and workspace files stay broad. With `-reveal`, `-recent` filters the listed apps.
 - If apps don't appear, the connection's APEX schema likely doesn't match the owner, narrow or widen with `-schema`, or use `-owners` in reveal.
 - `-by NAME`/`-my` narrow the `-recent` report (and the split/readable/embedded output it filters) to components changed by one developer or by yourself, the same author filter `export_db -by`/`-my` uses.
-- `-rest` runs through SQLcl with a named `ADT_…` connection: registered automatically on first use (password in SQLcl's secure store, wallet included), recorded as `sqlcl:`/`sqlcl_sync:` in the connection YAML, re-registered automatically after a credential change. Opt out with `sqlcl_named_connections: false` in `config.yaml`. Details: `USAGE/connection.md` §Named SQLcl connections.
+- `-rest` runs through SQLcl with a named `ADT_…` connection: registered automatically on first use (password in SQLcl's secure store, wallet included), recorded as `sqlcl:`/`sqlcl_sync:` in the connection YAML, re-registered automatically after a credential change. Opt out with `sqlcl_named_connections: false` in `config.yaml`. Details: `docs/connection.md` §Named SQLcl connections.
+- **Asking only for `-rest` and/or `-files_ws` is its own shape.** Both write under `apex/workspace/`, a path with no app id, so a run that names nothing else exports no application: no `APEX APPLICATIONS:` table, no application block, one bare `EXPORTING:` header per schema segment with the progress rows under it, and no per-application work at all. One application is used silently for the workspace security context and never named. Add a per-application format (`-split -rest`) and the ordinary screen is back, with the schema-level row inside the first app's block. Details: `docs/export_apex.md` §Schema-level formats on their own.
 
 ## validate: check exported APEXlang source
 
@@ -341,19 +336,19 @@ adtai recompile -env DEV -trailing -type PACKAGE% -name APP%
 
 There is **no preview and no dry run**, asking for `-trailing` is asking for the strip, and `-trailing -fix` is a parser error rather than the old spelling. The safety is structural rather than a confirmation prompt: an object with nothing to strip is never touched, and removing trailing whitespace cannot change behaviour. Scope with `-type`/`-name` to narrow the blast radius. Covers `PACKAGE`, `PACKAGE BODY`, `PROCEDURE`, `FUNCTION`, `TRIGGER`, and `VIEW`; wrapped objects, editioning views, and views carrying `WITH READ ONLY` / `WITH CHECK OPTION` are skipped, since none of those survive the rebuild. `CREATE OR REPLACE` invalidates dependents, so follow a sweep with a plain `adtai recompile`.
 
-## ut3: run utPLSQL test suites
+## ut: run utPLSQL test suites
 
-Runs the utPLSQL (UT3) test suites installed in the connected schema. **The exit code is the deliverable**: utPLSQL does *not* raise when a test fails, `ut.run` reports it and returns normally, so a caller that only watches for an exception sees a clean run.
+Runs the utPLSQL (UT) test suites installed in the connected schema. **The exit code is the deliverable**: utPLSQL does *not* raise when a test fails, `ut.run` reports it and returns normally, so a caller that only watches for an exception sees a clean run.
 
 ```bash
-adtai ut3 -env DEV
-adtai ut3 -env DEV -name ICT_SEC%
-adtai ut3 -env DEV -name ICT_SEC% ICT_COM%
-adtai ut3 -env DEV -refresh
-adtai ut3 -env DEV -silent
-adtai ut3 -env DEV -verbose
-adtai ut3 -env DEV -gate
-adtai ut3 -env DEV -name ICT_SEC% -gate 90
+adtai ut -env DEV
+adtai ut -env DEV -name ICT_SEC%
+adtai ut -env DEV -name ICT_SEC% ICT_COM%
+adtai ut -env DEV -refresh
+adtai ut -env DEV -silent
+adtai ut -env DEV -verbose
+adtai ut -env DEV -gate
+adtai ut -env DEV -name ICT_SEC% -gate 90
 ```
 
 A package is run only when **both** are true: its name matches config `ut_pattern` (default `'_UT$'`), and utPLSQL has parsed it as a `%suite` with at least one `%test`. `ut_pattern` is the selection contract, so production code can never be swept in; `-name` takes repeatable Oracle `LIKE` patterns (`%`, `_`, `\` to escape) and narrows, never widens, it selects **the suites to run**, and names itself in the `RUNNING TESTS FOR <PATTERNS>:` header. No `-name` means everything. `-schema A B` tests several schemas as separate console segments.
@@ -365,15 +360,15 @@ Non-zero covers four cases, not just a failed assertion:
 - **nothing ran at all**, a zero-test run is a failure, not an empty pass, because that is exactly what a suite that stopped compiling looks like from outside;
 - a tested package is below the `-gate` threshold.
 
-A matched package that is `INVALID`, or that utPLSQL parsed no `%test` for, is **ignored**: no row in either table, no stanza, no effect on the exit code. It is not a suite, and `ut3` reports suites; the vanished-suite case is still caught by the zero-test rule.
+A matched package that is `INVALID`, or that utPLSQL parsed no `%test` for, is **ignored**: no row in either table, no stanza, no effect on the exit code. It is not a suite, and `ut` reports suites; the vanished-suite case is still caught by the zero-test rule.
 
 Output order is the point, and **no wait is spent on a finished screen** (`#359`), but the module opens **no section of its own** to say so (`#372`): the annotation rebuild and discovery run under the connection block's own header, and the coverage read runs with the dotted bar left open on screen, which is an announcement that costs no new string. Between the connection block and `SUMMARY PER SUITE:` the rest of the screen belongs to the mode, and since `#317` there are three: `RUNNING TESTS:` by default (a dotted progress bar, headed `RUNNING TESTS FOR <PATTERNS>:` when `-name` narrowed the run), `UNIT TESTS SUITES:` then `TEST RESULTS:` under `-verbose` (the roll-up, then a row per test), and nothing at all under `-silent`. Everything below is identical in all three. `UNIT TESTS SUITES:` rolls the **runnable** suites up *before* anything runs, two columns, the suite package and its test count, and inside `-verbose` it **always prints, empty list included**: a run that matched nothing reports it in the same shape as one that matched ten, and the exit code carries the failure. **It is `-verbose` output since `#348`**, because it answers "what is about to run" and the bar's own `  1145 TESTS` label answers that in one line, so on a schema of ninety suites the table was ninety rows in front of the report. `TEST RESULTS:` prints as the run proceeds, the package name lands before that suite blocks, its dotted rows once the verdict is known, and each row carries the test's **procedure name**, not the `%test` description utPLSQL reports as the JUnit `testcase name`. **A passing row's own right-hand text is its elapsed seconds, one decimal always present, not the word `PASS`**, since `#315`, `PASS` only ever restated that a row carried none of `FAIL`/`ERROR`/`SKIP`, where the timer is new information; `FAIL`/`ERROR`/`SKIP` still print their status word. Packages print A-Z; tests print in package-specification order (`ALL_PROCEDURES.SUBPROGRAM_ID`), never the reporter's. `ERRORS & FAILURES:` carries a wrapped stanza per non-passing test, headed `<STATUS> > <PACKAGE>.<TEST>`, status first, with a blank line above each (`FAIL` for a refused expectation, `ERROR` for a raised exception), **capped at config `ut_limit_errors` (20; `0` prints all)**, and past the cap the header itself reads `FIRST 20 ERRORS & FAILURES:`, an uncapped run on `ICT_OWNER` printed 397 stanzas over 3060 lines and pushed both tables off the terminal's scrollback, so the report was correct and unreadable. The counts are never capped, so the two disagreeing is the signal that there is more detail than the screen. The four status words are `PASS`, `FAIL`, `ERROR` and `SKIP`, and they are the same words the roll-up columns are headed with, but only `FAIL`/`ERROR`/`SKIP` still print in a result row, so a row can never read one of those three spellings under a header that reads another. `SUMMARY PER SUITE:` is the suites table again plus `PASS` / `FAIL` / `ERROR` / `TIMER` / `COVERAGE`, the verdicts blank wherever a count is zero and with no `TESTS` column, every test lands in exactly one verdict, so the total is derivable from the other three. Its header is a constant in every mode: the `-name` filter is stated once, one section up, by `RUNNING TESTS FOR <PATTERNS>:` (`#349`). `TIMER` is that suite's own wall clock to one decimal (`0.3`, `3.0`), fixtures and round trip included so the column accounts for the run's total, and it is one of the two columns a zero does not blank out of: `0.0` is a measurement, an empty cell would claim there was none. `-silent` drops whatever the mode would have printed there, the bar on a default run and both listings under `-verbose`, and keeps the banner, connection block, `SUMMARY PER SUITE:`, the timer, and `ERRORS & FAILURES:` whenever a run has any: it makes a green run quiet, not a red one unreadable. It **outranks `-verbose`**, so `-silent -verbose` is `-silent`: two flags about one region of the screen, and the one that removes it wins.
 
-**The default `RUNNING TESTS:` bar is one 78-column row, bumped by finished suites and by nothing else**, `  66 TESTS ................ 31%    0:01:38`, the same `DottedProgressBar` `export_apex` uses, opening on the line directly under the dashed rule and labelled and indented two spaces exactly like an `export_apex` action row (`#322`). **The label counts tests while the bar counts suites**, on purpose: a suite is the only unit utPLSQL reports back, so it is the only thing that can move the bar honestly, while a test is the unit a run is sized in and is knowable before anything runs. The number is the `TESTS` column of the table above, summed, so `-name` narrows the label and the axis together. The percentage is suites completed over suites matched, so it moves when a suite returns and never in between: `ut.run` buffers a run's whole reporter output until it returns (measured 2026-08-13, a 12-test suite's `post-test` events all reached the client in a 0.5 s burst 22 s after `execute()`), which makes a suite the smallest unit of progress that exists to report. A per-suite elapsed-seconds ticker shipped for one release under `#301` and Jan rejected it the same day: *"You will print the package name, when you have a result you will print the rest. There is nothing in between."* **The time on the right is what is left**, seeded from `config/internal/ut3_timers.yaml`, the previous run of this **schema and `-name` variant**, keyed together because `-name` selects the suites that run and so selects the job being timed, upper-cased and sorted so two spellings of one run share one history, `%` when unfiltered. Once suites have returned, the run's own rate is blended in by the completed fraction: early the stored figure knows more, by the last suite the sample *is* the run. The store is a rolling `(this run + previous) / 2`, the average `config/internal/apex.db` already uses, gitignored beside it; every mode records, and a run that executed nothing records nothing rather than seeding `0:00:00`. A run that matched no suite prints **no bar at all**, an empty table reports the same fact in the same shape as a full one, and a bar has no empty form.
+**The default `RUNNING TESTS:` bar is one 78-column row, bumped by finished suites and by nothing else**, `  66 TESTS ................ 31%    0:01:38`, the same `DottedProgressBar` `export_apex` uses, opening on the line directly under the dashed rule and labelled and indented two spaces exactly like an `export_apex` action row (`#322`). **The label counts tests while the bar counts suites**, on purpose: a suite is the only unit utPLSQL reports back, so it is the only thing that can move the bar honestly, while a test is the unit a run is sized in and is knowable before anything runs. The number is the `TESTS` column of the table above, summed, so `-name` narrows the label and the axis together. The percentage is suites completed over suites matched, so it moves when a suite returns and never in between: `ut.run` buffers a run's whole reporter output until it returns (measured 2026-08-13, a 12-test suite's `post-test` events all reached the client in a 0.5 s burst 22 s after `execute()`), which makes a suite the smallest unit of progress that exists to report. A per-suite elapsed-seconds ticker shipped for one release under `#301` and Jan rejected it the same day: *"You will print the package name, when you have a result you will print the rest. There is nothing in between."* **The time on the right is what is left**, seeded from `config/internal/ut_timers.yaml`, the previous run of this **schema and `-name` variant**, keyed together because `-name` selects the suites that run and so selects the job being timed, upper-cased and sorted so two spellings of one run share one history, `%` when unfiltered. Once suites have returned, the run's own rate is blended in by the completed fraction: early the stored figure knows more, by the last suite the sample *is* the run. The store is a rolling `(this run + previous) / 2`, the average `config/internal/apex.db` already uses, gitignored beside it; every mode records, and a run that executed nothing records nothing rather than seeding `0:00:00`. A run that matched no suite prints **no bar at all**, an empty table reports the same fact in the same shape as a full one, and a bar has no empty form.
 
 `#317` replaced `-dense`, which is now **rejected outright**: it collapsed `TEST RESULTS:` to one `PASS <passed>/<total>` line per suite, and those counts were `SUMMARY PER SUITE:` one section early.
 
-`-refresh` rebuilds utPLSQL's annotation cache before discovery. A package compiled since the last run is not in that cache yet, so it is not discoverable and is silently ignored, `-refresh` is the first thing to try when a suite you know exists is missing from `ut3 -verbose`'s `UNIT TESTS SUITES:`. `ut3` runs suites; it never installs them.
+`-refresh` rebuilds utPLSQL's annotation cache before discovery. A package compiled since the last run is not in that cache yet, so it is not discoverable and is silently ignored, `-refresh` is the first thing to try when a suite you know exists is missing from `ut -verbose`'s `UNIT TESTS SUITES:`. `ut` runs suites; it never installs them.
 
 **The naming convention is four config values, not flags.** All are **Oracle** regular expressions, matched case-insensitively, and Oracle evaluates them: `REGEXP_LIKE` selects the test packages inside the dictionary query, where the old `LIKE` sat, so a schema of thousands of packages is never fetched to find a handful of suites, and `REGEXP_SUBSTR` extracts the capture groups in the same pass. `ut_owner` is the only one that defaults empty. `ut_pattern` (`'_UT$'`) selects test packages. `ut_match` (`'^(.+)_UT$'`) pairs one back to the package it tests through capture group 1, the pairing the `COVERAGE` column is built on, so a project whose suites are `TEST_ABC` sets `'^TEST_'` and `'^TEST_(.+)$'` and everything follows. `ut_owner` names the schema holding the suites when they do not live beside the code; it scopes discovery, the annotation cache, `-refresh` and the `ut.run` path, while coverage is still measured in the schema under test. `ut_module` names the module a suite belongs to (`'^[^_]+_([^_]+)'` reads `SEC` off `ICT_SEC_SECURITY_UT`): the run then prints a `SUMMARY PER MODULE:` table under `SUMMARY PER SUITE:`, `MODULE NAME` / `PACKAGES` / `LINES` / the same verdict, `TIMER` and `COVERAGE` columns, ending on a total row whose module name is blank. `LINES` is the group's size in code: the body-line total of the packages its suites test, each counted once however many suites name it, which is the same deduplicated set `COVERAGE` is computed over and the denominator that figure is scaled by. A group the expression could not name reads `?`, never blank, so it is not read as a second total. It ships set, so the table prints by default; `ut_module: ''` is how a project without a module convention turns it off. **Anchor it to nothing that has to follow the module token**: a trailing `_` cannot read `ICT_VPD`, a module whose whole implementation is one package, which is what put one package of Jan's 58 in the `?` row.
 
@@ -446,7 +441,7 @@ adtai patch -target UAT -archive
 
 Omitting refs archives every folder; refs that match nothing archive nothing and exit 0, because a sweep over a pattern that is legitimately empty is not a failure (`#355`). The report is one table, `ID | PATCH CODE | FOLDER`.
 
-Full flag set in `USAGE/patch.md`. ADT.ai no longer accepts old placeholder source flags; use the default commit-resolved files, rollout mode (`-rollout` / `-locked`, which the help screen groups under their own `HASH MODE:` section), or the explicit create/deploy/install/archive actions.
+Full flag set in `docs/patch.md`. ADT.ai no longer accepts old placeholder source flags; use the default commit-resolved files, rollout mode (`-rollout` / `-locked`, which the help screen groups under their own `HASH MODE:` section), or the explicit create/deploy/install/archive actions.
 
 ## search_repo: search Git history
 

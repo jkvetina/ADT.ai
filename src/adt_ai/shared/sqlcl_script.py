@@ -100,7 +100,11 @@ def _ran_without_a_session(output: str) -> bool:
     )
 
 
-def _sqlcl_environment() -> dict[str, str]:
+def _sqlcl_environment(
+    oci: bool = False,
+    client_lib_dir: str | None = None,
+    tns_admin: str | None = None,
+) -> dict[str, str]:
     """The process environment, minus what would flip SQLcl to the thick driver.
 
     SQLcl is a Java program and ADT.ai only ever asks it for JDBC *thin*, see
@@ -123,6 +127,35 @@ def _sqlcl_environment() -> dict[str, str]:
     parent environment is not mutated, so python-oracledb keeps its client.
     """
     environment = dict(os.environ)
+    if oci:
+        # The one connection shape that needs the opposite of everything above:
+        # a Secure External Password Store is read by the OCI client, so SQLcl
+        # has to find that client and therefore needs `ORACLE_HOME` present
+        # (ADT #395). Decided per connection, off the auth mode, never as a
+        # global switch, because every ordinary connection still runs thin and
+        # would break exactly the way the docstring above describes.
+        #
+        # `ORACLE_HOME` alone is not enough on macOS, and the reason is the same
+        # SIP behaviour: the launcher exports the client into
+        # `DYLD_LIBRARY_PATH`, which is stripped before the JVM starts, so the
+        # `jdbc:oracle:oci8:` URL it then builds dies on
+        # `no ocijdbc23 in java.library.path`. `JAVA_TOOL_OPTIONS` is read by the
+        # JVM itself rather than by dyld, so pointing `java.library.path` at the
+        # client directory is what actually puts `libocijdbc23.dylib` in reach.
+        # And the alias has to be findable: the OCI client resolves it through
+        # `TNS_ADMIN`, which defaults to the client's own `network/admin` folder,
+        # not to the wallet the connection names. Without this the driver loads
+        # and then reports ORA-12154 against a tnsnames.ora nobody wrote.
+        if tns_admin:
+            environment["TNS_ADMIN"] = tns_admin
+        client = client_lib_dir or environment.get("ORACLE_HOME")
+        if client:
+            environment["ORACLE_HOME"] = environment.get("ORACLE_HOME") or client
+            options = environment.get("JAVA_TOOL_OPTIONS", "")
+            environment["JAVA_TOOL_OPTIONS"] = (
+                f"{options} -Djava.library.path={client}".strip()
+            )
+        return environment
     for name in SQLCL_HIDDEN_VARIABLES:
         environment.pop(name, None)
     return environment
@@ -151,6 +184,9 @@ def run_sqlcl_script(
     root: Path,
     project_root: Path | None = None,
     timeout_seconds: float | None = None,
+    oci: bool = False,
+    client_lib_dir: str | None = None,
+    tns_admin: str | None = None,
 ) -> str:
     """Run ``script`` through SQLcl and return its captured, scrubbed output.
 
@@ -187,13 +223,13 @@ def run_sqlcl_script(
         # ``WHENEVER SQLERROR EXIT FAILURE`` guard turns that into a real error.
         try:
             completed = subprocess.run(
-                ["sql", "-S", "/nolog", f"@{script_path}"],
+                ["sql", *(["-L", "-oci"] if oci else []), "-S", "/nolog", f"@{script_path}"],
                 cwd            = root,
                 check          = False,
                 capture_output = True,
                 text           = True,
                 stdin          = subprocess.DEVNULL,
-                env            = _sqlcl_environment(),
+                env            = _sqlcl_environment(oci, client_lib_dir, tns_admin),
                 timeout        = timeout_seconds,
             )
         except subprocess.TimeoutExpired as expired:

@@ -111,7 +111,7 @@ COMMAND_SECTION_OVERRIDES = {
 # because an empty section is never printed: the key exists for every command
 # and only `patch` puts anything in it. Jan, 2026-08-15: "-rollout and -locked
 # were supose to be in dedicated help section", and "The section name was
-# supose to be HASH MODE" -- the name `USAGE/patch.md` has used since `#309`
+# supose to be HASH MODE" -- the name `docs/patch.md` has used since `#309`
 # renamed `-hash` to `-rollout`. `-target` stays in MODIFIERS even though
 # `-rollout` requires it, because it is also the deploy target and would follow
 # every `-deploy` run's help out of the section it belongs in.
@@ -142,7 +142,7 @@ def format_command_help(command: str, parser: argparse.ArgumentParser) -> str:
         "--------",
         *_summary_lines(canonical),
         "",
-        f"More details: USAGE/{canonical}.md",
+        f"More details: docs/{canonical}.md",
         "",
         "",
     ]

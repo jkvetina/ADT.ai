@@ -14,7 +14,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from adt_ai.export_apex.files import ApexFileResolver
 from adt_ai.export_apex.inventory import ApexApplication
 from adt_ai.export_apex.progress import (
     FALLBACK_TARGET_SECONDS,
@@ -25,10 +24,10 @@ from adt_ai.export_apex.progress import (
     segment_budget,
     segment_row_label,
 )
+from adt_ai.export_apex.schema_level import SCHEMA_LEVEL_ACTIONS, schema_level_only
 from adt_ai.export_apex.writers import CollectionWriteResult
 from adt_ai.shared.apex_store import ApexStore
 from adt_ai.shared.apex_version import readable_yaml_removed, supports_apexlang
-from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.progress import (
     ROW_INDENT,
     print_adt_header,
@@ -50,13 +49,6 @@ ACTION_HEADERS = {
     "files": "APPLICATION FILES",
     "files_ws": "WORKSPACE FILES",
 }
-
-# `-rest` and `-files_ws` write workspace artifacts, paths carrying no app id,
-# so they belong to the schema and run exactly once however many applications it
-# has. `#190` established that for `-rest` alone; `-files_ws` kept re-exporting
-# the identical files once per application until ADT #233. The tuple order is
-# the order they run in, so `planned_actions` can read it straight through.
-SCHEMA_LEVEL_ACTIONS = ("files_ws", "rest")
 
 # The formats exported from a collection query, in the order the runner walks
 # them. Named here rather than inline in `runner._run_text_actions` because
@@ -139,7 +131,10 @@ def open_segment_bar(
     # argument and cannot see through a function call, so a header chosen inside
     # a helper is a header the review step that approved it cannot see
     # (`tests/helpers/console_surface.py`).
-    if applications:
+    #
+    # A segment exporting only workspace artifacts is not exporting apps, whatever
+    # the schema happens to host, so it takes the schema spelling (`#385`).
+    if applications and not schema_level_only(request.actions):
         print_adt_header(SEGMENT_APPS_HEADER.format(schema=schema_label(schema)))
     else:
         print_adt_header(SEGMENT_SCHEMA_HEADER.format(schema=schema_label(schema)))
@@ -266,28 +261,3 @@ class ApexActionTimingMixin:
             app_id = application.app_id,
         )
         return result or CollectionWriteResult([])
-
-    def _schema_only_actions(
-        self,
-        request: Any,
-        applications: list[ApexApplication],
-        gateway: QueryGateway,
-        resolver: ApexFileResolver,
-    ) -> list[tuple[str, Callable[[], None]]]:
-        """The schema-level slices owed by a schema with no application.
-
-        With applications present these ride the first one's block instead, so
-        this returns nothing; report-only `-recent` runs export nothing at all.
-        """
-        if applications or request.recent_report_only:
-            return []
-        actions: list[tuple[str, Callable[[], None]]] = []
-        if request.actions.get("files_ws"):
-            actions.append(
-                ("files_ws", lambda: self._write_static_files(gateway, resolver, None, 0))  # type: ignore[attr-defined]
-            )
-        if request.actions.get("rest"):
-            actions.append(
-                ("rest", lambda: self._write_rest_export(gateway, resolver, request.config))  # type: ignore[attr-defined]
-            )
-        return actions
