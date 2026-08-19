@@ -151,7 +151,7 @@ class CompactApexProgressReporter:
     not sized per label, or a percentage would draw a different number of dots
     depending on which slice happened to be running.
 
-    **The seconds field is what is left, not what has passed**, the shape `ut3`
+    **The seconds field is what is left, not what has passed**, the shape `ut`
     and the per-action bar both close on, and it opens on real history rather
     than on nothing, which is the whole reason Jan asked for apex.db here.
     `export_db` seeds its own bar from stored seconds per object TYPE (`#377`);

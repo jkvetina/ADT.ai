@@ -32,7 +32,9 @@ from typing import TYPE_CHECKING
 
 from adt_ai.cli.context_debug import DebugQueryGateway
 from adt_ai.shared.announce import AnnouncedGateway, strict_mode
+from adt_ai.shared.config import is_enabled
 from adt_ai.shared.db import OracleGateway, QueryGateway
+from adt_ai.shared.sqlcl_gateway import SqlclGateway
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle guard, typing only
     from adt_ai.cli.context import StartupContext
@@ -51,12 +53,24 @@ def build_gateway(
     (it decides where the generated script runs from); everything else about
     the connection comes from the context and is not a caller's choice.
     """
-    gateway = OracleGateway(
-        connection,
-        project_root = project_root,
-        startup_sql  = startup.startup_sql,
-        config       = startup.config,
-    )
+    # `sqlcl_only` (ADT #396) swaps the transport and nothing else: the same four
+    # methods, the same session setup, the credential left in SQLcl's own store so
+    # no database password is ever handled inside this process. It is read here
+    # rather than at a call site for the reason the whole module exists.
+    if is_enabled(startup.config.get("sqlcl_only")):
+        gateway: QueryGateway = SqlclGateway(
+            connection,
+            project_root = project_root,
+            startup_sql  = startup.startup_sql,
+            config       = startup.config,
+        )
+    else:
+        gateway = OracleGateway(
+            connection,
+            project_root = project_root,
+            startup_sql  = startup.startup_sql,
+            config       = startup.config,
+        )
     wired = DebugQueryGateway(gateway) if debug else gateway
     # Outermost, so the console guard sees the call before -debug renders it.
     # This is the real path; the injected-factory path is wrapped in

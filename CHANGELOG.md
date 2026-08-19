@@ -2,6 +2,28 @@
 
 All notable changes to the public ADT.ai release are recorded here, newest first.
 
+## 0.9.1 - 2026-08-19
+
+- **Breaking: `ut3` is now `ut`.** The command was named after utPLSQL's own version number. There is no compatibility alias, so a pipeline calling `ut3` has to be edited. The six `ut_*` config keys are unchanged, and the run history is taken over under the new name.
+- **Breaking: `USAGE/` is now `docs/`, and `USAGE.md` is now `docs/README.md`.** Every help screen points at `docs/<command>.md`. GitHub renders the folder's own index, so the documentation opens where readers already look for it.
+- **Breaking: `adtai export_db -dry-run` is withdrawn.** It printed the same object rows a real export does, with nothing saying no file had been written, so the only way to learn what it had done was to look in the folder. No other command has one.
+- **Breaking: `export_db -groups` lists and moves nothing, and `-force` is what applies it.** The confirmation prompt is gone, so bare `-groups` is a report you read. `-force` moves exactly what the listing showed, and a group you arranged by hand is never touched.
+- **The `-groups` listing reads as a grouping rather than a wall of paths.** `PLANNED MOVES:` names each target group with its files under it, A to Z, and `UNMATCHED (LEFT IN PLACE):` follows in the same shape. Naming a group narrows the screen as well as the move.
+- **A connection file can hold no password at all.** `pwd_cmd:`, `wallet_pwd_cmd:` and `ADT_KEY_CMD` run a command of your own and take its output as the secret, so 1Password, HashiCorp Vault, `pass` or Azure Key Vault owns the credential, its rotation and its access log.
+- **`auth: external` passes no credential to the database at all.** The Oracle client reads the login out of a Secure External Password Store, so the connect call carries neither a user nor a password and no decryption happens. The mode implies the thick client.
+- **`sqlcl_only` keeps every database password out of the Python process.** Set it in the project config and every call is served by SQLcl, so the credential stays in SQLcl's own secure store and a connection needs no stored password. Slower per query, and off by default.
+- **Stored secrets are salted and versioned, and a wrong key now says so.** A new encrypted value carries its own random salt and 600000 iterations. A fingerprint beside it separates a wrong key from a damaged value. Files already encrypted keep working and are never rewritten underneath you.
+- **`adtai connection -rekey` moves a whole file onto a new encryption key in one pass.** It walks every environment, every schema and the wallet block. Previewing is the default, and nothing is written unless every secret decrypts, so a wrong old key leaves the file untouched.
+- **A loaded credential renders as `***`.** Passwords are wrapped where the connection is constructed, so a debug print, an error message or a test runner showing local variables can no longer put one on screen. Three call sites read the real value, each handing it straight to Oracle.
+- **A connection error names the thing you have to fix.** `CONFIGURATION INVALID:`, `CREDENTIAL UNAVAILABLE:`, `DATABASE CONNECTION FAILED:` and `CONFIGURATION NOT FOUND:` are four screens now, so a YAML typo no longer advises you to go and find the file it had just read.
+- **`docs/connection_security.md` answers a security reviewer.** It separates what encryption protects, a file that leaks, from what it does not, a machine where other software can read what the tool reads, and it gives the longest section to the controls that are yours rather than ours.
+- **`ut` remembers what it measured.** Every run is recorded, and under `-verbose` a `COVERAGE CHANGED SINCE LAST RUN:` table lists only the suites whose ratio moved, with `WAS`, `NOW` and a signed `DELTA`, worst first. The last twenty runs per schema are kept.
+- **`adtai export_apex -rest` and `-files_ws` no longer walk the applications.** A run whose every format is schema-level prints one `EXPORTING:` header and skips the per-application blocks, measured at 34 seconds down to 8 on a 17-application schema. The per-application header now leads with the verb.
+- **`dependencies -refresh` shows the PL/Scope recompile moving.** On a schema without full `PLSCOPE_SETTINGS` it is the slowest thing the command does and it had no output at all. One progress row now carries a rising percent and a falling estimate through the loop.
+- **`dependencies -refresh` records the database's own UTC offset.** Freshness is compared against the database clock rather than this machine's, so a repo on a host in another timezone is no longer judged against the wrong one. A mirror refreshed before this needs one refresh.
+- **The README opens on the problem it solves, and every section carries its own illustration.** Commands are grouped by the job you came to do, Install walks from cloning the repository to a first export, and Quick Start groups its examples the same way Commands does.
+- **`discovery` and `dependencies` say who they are really for.** `discovery` is the safe way to let an AI agent explore a schema, because it only ever reads. `dependencies` costs an agent a fraction of the tokens that digging through a live schema would.
+
 ## 0.9.0 - 2026-08-17
 
 - **`export_db -compact` replaces the per-object rows with one progress bar per schema.** The overview table, connection block and timer stay. The countdown is seeded from what the last export of that schema cost, and the bar labels the object type it is working through.
@@ -58,7 +80,7 @@ All notable changes to the public ADT.ai release are recorded here, newest first
 
 ## 0.8.4 - 2026-08-07
 
-- **New: `ut3 -coverage` reports Oracle code coverage for every package in the schema, including ones no test reaches.** Coverage data alone can only describe packages that were executed, so `CODE COVERAGE:` leads with the schema's own package list and joins the measurements onto it. See `USAGE/ut3.md`.
+- **New: `ut3 -coverage` reports Oracle code coverage for every package in the schema, including ones no test reaches.** Coverage data alone can only describe packages that were executed, so `CODE COVERAGE:` leads with the schema's own package list and joins the measurements onto it. See `docs/ut3.md`.
 - **`NO CODE COVERAGE:` is the work list beside it**, carrying `PACKAGE` and `LINES` only. Three cells never render alike: `-` means nothing was measured, `0` means Oracle instrumented the package and nothing ran it, and `NATIVE` is a `-` with the cause attached.
 - **A `-coverage` run goes quiet.** The suites still execute, since running the code is how Oracle collects block coverage, but the per-test rows and the run `SUMMARY:` are suppressed. `ERRORS & FAILURES:` still prints when there is something to show.
 - **`SUMMARY:` closes with one row: `PACKAGES` / `LINES` / `COVERED` / `COVERAGE`.** The figures deliberately do not divide into each other: `LINES` counts every package-body source row, `COVERED` counts instrumented lines that ran, `COVERAGE` stays covered blocks over measured blocks. A percentage blanks when nothing was measured.
@@ -78,7 +100,7 @@ All notable changes to the public ADT.ai release are recorded here, newest first
 
 ## 0.8.3 - 2026-08-05
 
-- **New `ut3` command: it runs the connected schema's utPLSQL test suites.** A bare `adtai ut3` runs every suite; `-name` takes repeatable Oracle `LIKE` patterns. A package is a suite only when both halves agree: its name ends in `_UT` *and* utPLSQL has parsed it as a `%suite`. See `USAGE/ut3.md`.
+- **New `ut3` command: it runs the connected schema's utPLSQL test suites.** A bare `adtai ut3` runs every suite; `-name` takes repeatable Oracle `LIKE` patterns. A package is a suite only when both halves agree: its name ends in `_UT` *and* utPLSQL has parsed it as a `%suite`. See `docs/ut3.md`.
 - **`ut3` treats dishonest green as a failure.** utPLSQL does not raise on failure, so the exit code is the deliverable: a failed or errored test, an empty or unparsable report, and a run matching nothing are all non-zero. An empty green run is what a vanished suite looks like.
 - **`ut3` output is one grid.** `UNIT TESTS SUITES:` rolls up what will run; `TEST RESULTS:` prints as the run proceeds, each row carrying the test's procedure name rather than its `%test` description; every non-passing test gets a stanza under `ERRORS & FAILURES:`; `SUMMARY:` repeats the suites table with verdict counts.
 - **SQLcl is launched without `ORACLE_HOME`, so it stays on the thin driver.** Every SQLcl-backed command died on macOS with `no ocijdbc23 in java.library.path`, a library that is present and correct, so the obvious readings are all wrong. ADT.ai created the condition itself by exporting `ORACLE_HOME` for python-oracledb's thick mode.
@@ -96,7 +118,7 @@ All notable changes to the public ADT.ai release are recorded here, newest first
 - **The connection file is no longer written ahead of the run that earns it.** A SQLcl connection name and fingerprint were recorded for a connection that had never been created, and deleting the two lines by hand wrote them back. **Behaviour change:** a failed connect is now a non-zero exit.
 - **`export_apex -rest` tells an empty export apart from a failed one.** A schema that genuinely publishes no REST services still exports successfully and leaves an empty folder; an export that reported an Oracle or SQLcl error now fails naming that error, instead of completing as though nothing needed writing.
 - **`recompile` shows what the run actually repaired.** Every number in OBJECTS OVERVIEW was read *after* the recompile, so a run that fixed seventeen package bodies printed what a run that fixed nothing printed. A new `VALIDATED` column counts objects by identity, since recompiling a spec invalidates its dependents.
-- **Documentation corrected: no sample connection file ships with the tool.** `USAGE/connection.md` described a template connection file as shipped and created for you; connection files hold credentials, so `doctor -init` writes none. `connection -create` is the bootstrap path.
+- **Documentation corrected: no sample connection file ships with the tool.** `docs/connection.md` described a template connection file as shipped and created for you; connection files hold credentials, so `doctor -init` writes none. `connection -create` is the bootstrap path.
 
 ## 0.8.1 - 2026-08-03
 
@@ -109,17 +131,17 @@ All notable changes to the public ADT.ai release are recorded here, newest first
 - **`recompile` no longer has a LOCKED OBJECTS report.** It read `gv$` views, and ADT.ai connects as the application schema, which holds no `SELECT` on them: a DBA decision, not a misconfiguration a tool can correct. Nothing is lost, since a stuck object surfaces under `INVALID OBJECTS`.
 - **A corrupt cache or hand-edited config file now degrades with a warning instead of killing the run.** A YAML syntax error in a generated cache or `config/IDENTITY.yaml` used to cost the whole command with a raw traceback. Both loaders now warn and continue empty, and a malformed `connections.yaml` reports normally.
 - **In the same hardening pass:** a foreign-key tree walk survives chains deeper than Python's recursion limit, `search_repo -restore` prints a `COULD NOT RESTORE:` section instead of letting an incomplete restore look finished, blank `groups.yaml` entries are reported, not dropped, and a control character can no longer truncate a cached record.
-- **Documentation corrected against the code.** `USAGE/recompile.md` marks `-scope`/`-warnings` repeatable (they always were), `USAGE/search_repo.md`'s argument table gains the `Repeatable` column its siblings carry, and the discovery report filename reads `<YYYY-MM-DD--HH-MI>.md` everywhere.
+- **Documentation corrected against the code.** `docs/recompile.md` marks `-scope`/`-warnings` repeatable (they always were), `docs/search_repo.md`'s argument table gains the `Repeatable` column its siblings carry, and the discovery report filename reads `<YYYY-MM-DD--HH-MI>.md` everywhere.
 
 ## 0.8.0 - 2026-07-28
 
-- **New `validate` command: check an exported APEXlang folder before anything tries to import it.** It runs the APEXlang compiler over the `apexlang/` trees and exits non-zero when the compiler reports anything, so it works as a deploy or CI gate. It never connects to a database. See `USAGE/validate.md`.
+- **New `validate` command: check an exported APEXlang folder before anything tries to import it.** It runs the APEXlang compiler over the `apexlang/` trees and exits non-zero when the compiler reports anything, so it works as a deploy or CI gate. It never connects to a database. See `docs/validate.md`.
 - **`validate` resolves targets three ways, and they combine.** `-input` takes a folder, a zip, or a single `.apx` file; `-app` is repeatable and resolves offline to that application's export path; a bare run validates every `apexlang/` folder under the configured APEX root. Warnings never fail the run.
 - **A `validate` run that checked nothing is never reported as a pass.** A folder holding no APEXlang files, an input path that cannot be found, a requested application with no export on disk, and output this version cannot parse are all non-zero. Static-file payloads are linked into place before compiling.
 - **`export_apex` gains a ninth format: `-apexlang` (alias `-apx`)**, which exports APEX 26.1's APEXlang `.apx` source as a whole-application tree under `apexlang/`, and joins `-all`. The layout is what APEX emits, written verbatim with none of the SQL export's postprocessing: `.apx` is compiler input, not something to decorate.
 - **APEXlang is a whole-application format in this version.** `-page`, `-component` and `-recent` never filter it, and an APEXlang run never advances a `-recent` watermark. Below APEX 26.1 the row completes as `SKIPPED` rather than failing, so an `-all` run against an older instance degrades instead of breaking.
 - **Static-file payloads are deliberately not written into `apexlang/`.** `-files` remains the single static-file channel, so the repository holds one copy of each file. That makes `apexlang/` a source and review surface, readable in Git and editable by hand or by an AI tool, rather than a directly importable artifact.
-- **New `calendar` command**: `adtai calendar` renders your Git activity across all branches as a month-by-month calendar, read from the commit index `rebuild` caches, so it answers "what did I work on, and when?" without touching a database. See `USAGE/calendar.md`.
+- **New `calendar` command**: `adtai calendar` renders your Git activity across all branches as a month-by-month calendar, read from the commit index `rebuild` caches, so it answers "what did I work on, and when?" without touching a database. See `docs/calendar.md`.
 - **`export_apex -deep` is now part of the public surface.** Combined with `-page`, it also exports the components recorded for the selected pages in `config/dependencies.db`, so a page export carries the shared components that page actually uses. Run `dependencies -refresh` first; `-deep` without `-page` is rejected.
 - **ADT.ai now fills in its own environment when the calling shell never ran your startup file**, so a command from an AI tool or editor stops failing on a missing `ADT_KEY` or `ORACLE_HOME`. When either sentinel is unset, it reads that file and fills in only the variables it knows.
 - **A variable already present in the environment is never overwritten**, so an explicit export, a CI variable, or a one-off `ADT_ENV=PROD adtai …` always wins. Every failure mode is soft, and it is a no-op on Windows. `doctor` gains a `HYDRATED` row; `ADT_KEY` is hydrated but never printed.
@@ -133,7 +155,7 @@ All notable changes to the public ADT.ai release are recorded here, newest first
 
 - **Breaking: a bare `-recent` now means "since my last successful export", not "one day".** `export_db` and `export_apex` keep a per-scope watermark in `config/recent.yaml`, so a repeated run exports only what changed since the previous covering run. `-recent N` keeps its N-day meaning everywhere.
 - **The `-recent` watermark is read from the database clock before the object listing**, so an object changed mid-run is re-selected next time rather than lost, and it advances only on a successful, unnarrowed, non-dry-run pass. With no watermark yet the run is a full export that seeds it.
-- **Breaking: the per-developer identity file is now `config/IDENTITY.yaml`** (was `config/me.yaml`; migrate with `mv config/me.yaml config/IDENTITY.yaml`). It keeps the same three keys, stays gitignored, and ships no sample file; its shape is documented in `USAGE.md` under Developer Identity.
+- **Breaking: the per-developer identity file is now `config/IDENTITY.yaml`** (was `config/me.yaml`; migrate with `mv config/me.yaml config/IDENTITY.yaml`). It keeps the same three keys, stays gitignored, and ships no sample file; its shape is documented in `docs/README.md` under Developer Identity.
 - **Every new database connection now sets the Oracle session identifier automatically** from `db_schema` before `STARTUP.sql` is processed, so sessions are attributable through `V$SESSION.CLIENT_IDENTIFIER` without the hand-written startup block the docs used to suggest. A personal `STARTUP.sql` can still override it.
 - **Added `export_apex -checksum`**, which writes the application's ID-independent SHA-256 fingerprint to `checksum.txt` beside `f<id>.sql`. Because the fingerprint ignores internal component ids, a deploy gate can answer "did anything actually change?" with `git diff --exit-code` on one small file instead of a full export.
 - **`-schema` accepts a space-separated list** on `export_db`, `export_data`, `export_apex`, `recompile`, and `dependencies`, so `-schema CORE APP` runs both schemas in one pass, joining the repeated-flag, comma-separated, and wildcard forms that already worked. `discovery` and `connection` stay single-valued by design.
@@ -141,11 +163,11 @@ All notable changes to the public ADT.ai release are recorded here, newest first
 - **`recompile -force` with a compile modifier now recompiles only what actually drifts.** A bare `-force` still recompiles every matching object, but `-force` with `-native`, `-interpreted`, `-level`, `-scope`, or `-warnings` selects only valid PL/SQL objects whose settings differ from the requested state. Types carrying no compile settings are skipped.
 - **A duplicate object filename no longer aborts `export_db`.** The export runs to completion and the affected object is reported inline, one row per location marked `[DUPE]`, so the stale copy is named rather than merely detected. Two schemas legitimately exporting the same object name are not a collision.
 - **`dependencies -app … -refresh`** lists the selected applications as a table before the refresh loop and shows progress during each application's component scan, matching `export_apex`.
-- Every `USAGE/<command>.md` now opens with a description of what the module does and how it relates to its siblings, instead of starting straight on a command example. Three stale one-line purposes in the `USAGE.md` command table were corrected, and personal identifiers were replaced with neutral placeholders.
+- Every `docs/<command>.md` now opens with a description of what the module does and how it relates to its siblings, instead of starting straight on a command example. Three stale one-line purposes in the `docs/README.md` command table were corrected, and personal identifiers were replaced with neutral placeholders.
 
 ## 0.7.1 - 2026-07-21
 
-- **Added the `connection` module** for managing named SQLcl connections. Generated SQLcl scripts (including `export_apex -rest`) now connect through a named, credential-free SQLcl connection instead of embedding a username, password, or wallet path each time; a changed credential is detected and re-registered automatically. See `USAGE/connection.md`.
+- **Added the `connection` module** for managing named SQLcl connections. Generated SQLcl scripts (including `export_apex -rest`) now connect through a named, credential-free SQLcl connection instead of embedding a username, password, or wallet path each time; a changed credential is detected and re-registered automatically. See `docs/connection.md`.
 - **Fixed:** `export_apex -rest` against an Oracle wallet (OCI) could produce no output — wallet paths now resolve correctly regardless of where the generated script runs from.
 - **Fixed:** `export_apex -rest` occasionally wrote a stray `Session altered.` line into generated REST files, corrupting the output.
 - **Fixed:** `export_apex -component` help text could crash on some Python versions due to an unescaped `%` character.
@@ -156,7 +178,7 @@ All notable changes to the public ADT.ai release are recorded here, newest first
 - **Breaking — `recompile`:** the `-target` alias is removed; use `-env`. The report actions `-mviews`, `-synonyms`, `-disabled`, and `-jobs` no longer carry their own `[NAME]` pattern — they are bare flags scoped by the shared `-name` and `-type` filters, so `adtai recompile -mviews DEP%` becomes `adtai recompile -mviews -name DEP%`.
 - **Breaking — `dependencies`:** the query flags `-uses` and `-used-by` are renamed to `-from` and `-to`. `-unused` is removed — determining truly unused objects offline is not reliable and the mode produced false results. The derived `config/db_dependencies.yaml` artifact is no longer written; `config/dependencies.db` is the single source.
 - **Line endings are deterministic on every platform, and the `file_crlf` setting works.** Exported files previously took the host's native line ending, so a Windows run produced mixed output while `file_crlf` was carried in config but never applied. ADT.ai now writes LF by default and CRLF when `file_crlf: true`.
-- **Flipping `file_crlf` never rewrites files whose content is unchanged**, so there is no mass rewrite; files adopt the new ending on their next real change. Raw LOB sidecars are the deliberate exception, mirroring stored database values byte for byte. Documented in `USAGE.md` under Line Endings.
+- **Flipping `file_crlf` never rewrites files whose content is unchanged**, so there is no mass rewrite; files adopt the new ending on their next real change. Raw LOB sidecars are the deliberate exception, mirroring stored database values byte for byte. Documented in `docs/README.md` under Line Endings.
 - **Long-running queries no longer abort after 15 seconds.** A single timeout bounded both the connection attempt and every query round-trip. The two budgets are now independent and configurable as plain seconds: `connect_timeout_seconds` (default 15) and `query_timeout_seconds` (default 1200). Connections also fail fast on an unreachable host.
 - **Added `recompile -trailing`**, which removes trailing whitespace from stored database source in place. `export_db` strips it from every line it writes, so an otherwise untouched package still differs from the database's stored source on every export. There is no preview mode, so scope it with `-type`/`-name`.
 - **`recompile -trailing` never touches an object with nothing to strip**, a disabled trigger stays disabled, and wrapped objects are skipped. Follow a sweep with a plain `recompile`, since `CREATE OR REPLACE` invalidates dependents.
@@ -174,7 +196,7 @@ All notable changes to the public ADT.ai release are recorded here, newest first
 - **New config templates.** `config/me.sample.yaml` documents the gitignored per-developer identity file, and `config/STARTUP.sample.sql` replaces the tracked `config/STARTUP.sql`, so local session setup no longer dirties the checkout. `merge_batch_size` and `dependencies_max_depth` moved out of the code into `config.yaml`.
 - **A flag with the same name now parses the same way on every command.** `search_repo -type` and `-name` accept multiple patterns, and `export_db -recent` / `search_repo -recent` accept the bare `-recent` form meaning one day, both matching the commands that already had them. No existing invocation changes meaning.
 - **Hardened a batch of smaller failure paths:** malformed commit-cache files degrade to an empty cache instead of crashing, an unreadable project config warns instead of reading as none, a scheduler job argument with no anchor in its DDL warns instead of vanishing, and the synonyms report no longer fragments.
-- Fixed `USAGE/discovery.md` misdocumenting `-nolog`, which suppresses report logging only — `-file` result write-back happens on every `-file` run regardless.
+- Fixed `docs/discovery.md` misdocumenting `-nolog`, which suppresses report logging only — `-file` result write-back happens on every `-file` run regardless.
 - Public commands unchanged: `export_db`, `doctor`, `dependencies`, `export_apex`, `export_data`, `recompile`, `rebuild`, `search_repo`, `discovery`, `flow`.
 
 ## 0.6.4 - 2026-06-26
@@ -204,7 +226,7 @@ All notable changes to the public ADT.ai release are recorded here, newest first
 - Added focused `export_apex` component exports. `-page` accepts page IDs and ranges, `-component` accepts type-qualified wildcard filters such as `LOV:NAME%`, and scoped page/component requests default to split output when no explicit export format is passed.
 - Improved scoped `export_apex` progress and timing behavior: partial page, component, recent, developer, and current-user exports now print the affected components directly and no longer retrain full-export timing estimates.
 - Added `export_apex -recent DAYS -my`, which resolves the current Git identity against saved APEX developer metadata so recent-component reports can be filtered to the current developer. Multi-app recent reports keep the application inventory visible while skipping empty per-app detail sections.
-- Simplified public command help pages with single-line summaries, clearer `USAGE/<command>.md` links, compact option wrapping, and ADT-style single-dash aliases in displayed help while keeping long aliases accepted by the parser.
+- Simplified public command help pages with single-line summaries, clearer `docs/<command>.md` links, compact option wrapping, and ADT-style single-dash aliases in displayed help while keeping long aliases accepted by the parser.
 - Public commands unchanged: `export_db`, `doctor`, `export_apex`, `export_data`, `recompile`, `rebuild`, `search_repo`, `discovery`, `flow`.
 
 ## 0.6.1 - 2026-06-22
@@ -281,7 +303,7 @@ All notable changes to the public ADT.ai release are recorded here, newest first
 
 ## 0.4.2 - 2026-06-12
 
-- Corrected documentation and help text across the README and the usage index so examples, command references, and argument tables match the shipped command surface (the installed `adtai` command name, the real public options, and the per-command `USAGE/<command>.md` files).
+- Corrected documentation and help text across the README and the usage index so examples, command references, and argument tables match the shipped command surface (the installed `adtai` command name, the real public options, and the per-command `docs/<command>.md` files).
 
 ## 0.4.1 - 2026-06-12
 
@@ -293,7 +315,7 @@ All notable changes to the public ADT.ai release are recorded here, newest first
 
 ## 0.3.0 - 2026-06-12
 
-- Added four new commands — `recompile`, `rebuild`, `search_repo`, and `discovery` — each with its own `USAGE/<command>.md` reference.
+- Added four new commands — `recompile`, `rebuild`, `search_repo`, and `discovery` — each with its own `docs/<command>.md` reference.
 - `recompile` recompiles a schema's invalid objects with an objects / invalid-objects overview, supports `-force`, `-scope`, and name filtering, builds the right `ALTER … COMPILE` flags (native vs interpreted, optimize level, PL/Scope, warnings), retries in reverse dependency order on reconnect, and exits non-zero when objects remain invalid.
 - **`rebuild` builds a fast per-branch Git commit cache** (one file per branch) with a count-first pass and progress ETA. Its read-only `-reveal` branch inspector filters by name words, `-my`, and `-since` with a `-limit` cap, and can `-switch` the working tree to a listed branch.
 - `search_repo` searches Git history fast off the `rebuild` cache — by summary terms, file path, database object type/name, author, commit or branch, and date windows (`-since` / `-until`) — printing newest-first with optional changed-file rows, and can restore matched historical file versions.

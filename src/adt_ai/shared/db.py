@@ -4,12 +4,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
-from adt_ai.shared.connections import DEFAULT_PORT, Connection
+from adt_ai.shared.connections import DEFAULT_PORT, Connection, InvalidConnectionError
 from adt_ai.shared.oracle_session import DDL_LOCK_TIMEOUT_STATEMENT
 from adt_ai.shared.sqlcl_connect import (
     SqlclConnect,
     _ensure_wallet_folder,
-    coerce_password,
     sqlcl_connect,
 )
 from adt_ai.shared.sqlcl_names import credential_fingerprint, record_sqlcl_registration
@@ -287,11 +286,26 @@ class OracleGateway:
         root: Path,
         timeout_seconds: float | None,
     ) -> str:
+        # `oci` is passed ONLY when it is true, so the ordinary call is
+        # byte-for-byte the one every existing caller and test fake already
+        # takes. Per connection, off the auth mode, never a global switch: a
+        # SEPS connection needs the OCI driver and every other one still runs
+        # thin (ADT #395).
+        extra: dict[str, Any] = (
+            {
+                "oci": True,
+                "client_lib_dir": self.connection.client_lib_dir,
+                "tns_admin": self.connection.wallet_path,
+            }
+            if self.connection.external_auth
+            else {}
+        )
         return run_sqlcl_script(
             f"{plan.script}{body}",
             root,
             self.project_root,
             timeout_seconds = timeout_seconds,
+            **extra,
         )
 
     def _sqlcl_plan(self, *, force_register: bool = False) -> SqlclConnect:
@@ -321,6 +335,14 @@ class OracleGateway:
         kwargs: dict[str, Any] = {}
         if self.connection.client_lib_dir:
             kwargs["lib_dir"] = self.connection.client_lib_dir
+        # A TNS alias is resolved by the client library, not by the connect call,
+        # so a SEPS connection has to name its `tnsnames.ora` folder HERE.
+        # Passing `config_dir` to `connect()` alone leaves the alias unresolvable
+        # in thick mode (ADT #395).
+        if self.connection.external_auth and self.connection.wallet_path:
+            kwargs["config_dir"] = str(
+                _ensure_wallet_folder(Path(self.connection.wallet_path).expanduser())
+            )
         driver.init_oracle_client(**kwargs)
         self._thick_initialized = True
 
@@ -346,9 +368,24 @@ class OracleGateway:
         connection.outputtypehandler = output_type_handler
 
     def _connect_kwargs(self, driver: Any) -> dict[str, Any]:
-        kwargs: dict[str, Any] = {
+        # `auth: external` (ADT #395) passes no user and no password at all: the
+        # Oracle client library reads the credential out of `cwallet.sso` itself,
+        # so it never exists as a Python string and there is nothing here for an
+        # agent reading this process to catch. Every other option on the security
+        # page moves where the secret rests; this one removes it from the call.
+        if self.connection.external_auth:
+            kwargs: dict[str, Any] = {
+                "dsn": self._external_dsn(),
+                "externalauth": True,
+                "tcp_connect_timeout": self.connect_timeout_seconds,
+                "retry_count": 0,
+            }
+            self._apply_wallet(kwargs)
+            return kwargs
+
+        kwargs = {
             "user": self.connection.username,
-            "password": coerce_password(self.connection.password),
+            "password": self.connection.password.reveal(),
             "dsn": self._dsn(driver),
             # Fail a dead/unreachable host inside the connect phase (also applies
             # when reconnecting to a different schema), with no driver-level
@@ -356,13 +393,33 @@ class OracleGateway:
             "tcp_connect_timeout": self.connect_timeout_seconds,
             "retry_count": 0,
         }
-        if self.connection.wallet_path:
-            wallet_path = _ensure_wallet_folder(Path(self.connection.wallet_path).expanduser())
-            kwargs["config_dir"] = str(wallet_path)
-            kwargs["wallet_location"] = str(wallet_path)
+        self._apply_wallet(kwargs)
         if self.connection.wallet_password:
-            kwargs["wallet_password"] = coerce_password(self.connection.wallet_password)
+            kwargs["wallet_password"] = self.connection.wallet_password.reveal()
         return kwargs
+
+    def _apply_wallet(self, kwargs: dict[str, Any]) -> None:
+        if not self.connection.wallet_path:
+            return
+        wallet_path = _ensure_wallet_folder(Path(self.connection.wallet_path).expanduser())
+        kwargs["config_dir"] = str(wallet_path)
+        kwargs["wallet_location"] = str(wallet_path)
+
+    def _external_dsn(self) -> str:
+        """The TNS alias the wallet files the credential under.
+
+        A SEPS wallet is keyed by alias, not by host and service, so this is a
+        name resolved through `tnsnames.ora` beside the wallet rather than a
+        descriptor built from the connection's own parts.
+        """
+        alias = self.connection.tns or self.connection.service
+        if not alias:
+            raise InvalidConnectionError(
+                f"{self.connection.environment}.{self.connection.schema} sets "
+                "auth: external but names no TNS alias. Add `tns: <alias>`, the "
+                "name the wallet stores the credential under."
+            )
+        return str(alias)
 
     def _dsn(self, driver: Any) -> str:
         if not self.connection.hostname:

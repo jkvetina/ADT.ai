@@ -5,6 +5,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from adt_ai.shared.progress import print_adt_header
 from adt_ai.shared.yaml_io import load_yaml_mapping, store_yaml_mapping
 
 
@@ -359,18 +360,64 @@ def apply_group_moves(plan: GroupMovePlan) -> None:
         move.source.rename(move.dest)
 
 
+def _file_label(path: Path) -> str:
+    """`tables/inv_billing_header.sql`, the file's own folder and its name.
+
+    Every row of a preview shares the same project path, so printing it in full
+    spends the width a reader needs on the two fields that differ. The parent
+    folder survives the trim because it names the object type the file holds.
+    """
+    return f"{path.parent.name}/{path.name}"
+
+
+def _emit_planned_moves(moves: Iterable[GroupMove], emit: Callable[[str], None]) -> None:
+    """Print the plan as the grouping it is: a group line, then its files under it.
+
+    A group gathers files across object types, so `INV_BILLING` owns rows from
+    `tables/` and `views/` alike. Groups sort A to Z and so do the files inside
+    each one, because the reader is looking a name up rather than reading a log.
+    """
+    by_group: dict[str, list[str]] = {}
+    for move in moves:
+        by_group.setdefault(move.dest.parent.name, []).append(_file_label(move.source))
+    for group in sorted(by_group):
+        # An empty line above EVERY group, the first one included (ADT #409), so
+        # the eye lands on the names rather than counting indents to find them.
+        emit("")
+        emit(f"  {group}")
+        for label in sorted(by_group[group]):
+            emit(f"    - {label}")
+
+
 def execute_group_move(
     plan: GroupMovePlan,
     *,
-    dry_run: bool,
-    confirm: Callable[[], bool],
     emit: Callable[[str], None] = print,
+    show_unmatched: bool = True,
+    force: bool = False,
 ) -> int:
-    """Render the move preview, then gate the relocation behind a confirmation.
+    """Print the plan, and move the files when `force` says to.
 
     Returns an exit code: `2` when a uniqueness collision aborts the run (nothing
-    moves), `1` when the user declines at the prompt, and `0` otherwise, including
-    a dry run (preview only, never prompts or moves) and the empty case.
+    moves), `0` otherwise, the empty case and every preview included.
+
+    **The plan is a report, not a question** (ADT #409). It used to print and then
+    ask, and a reader who wanted to see the layout before committing to it had to
+    answer no to a prompt, which is a worse spelling of the thing `#406` removed
+    when it dropped `-dry-run`. Applying is now an explicit action flag, the shape
+    §Command surface prefers over a command that previews by default and then
+    negotiates.
+
+    `show_unmatched` is off when the caller named the groups it wants. Bare
+    `-groups` proposes a whole layout, so what it declined to move is part of the
+    proposal; `-groups INV_BILLING` asks about INV_BILLING, and answering it with
+    every other file in the export is the noise ADT #408 was filed on.
+
+    Naming groups also bounds what `force` can touch, and it does so through the
+    plan rather than through a second check here: `plan_group_moves` only ever
+    routes files sitting directly in a type folder whose name a rule matches, so a
+    group somebody arranged by hand is not in `plan.moves` and cannot be moved,
+    flattened or renamed by a run that did not name it.
     """
     if plan.collisions:
         emit("Aborting: duplicate object names would collide (file name must be "
@@ -380,28 +427,28 @@ def execute_group_move(
             emit(f"  {collision.object_type} {collision.name}: {joined}")
         return 2
 
+    leftovers = sorted(_file_label(source) for _object_type, source in plan.unmatched)
+
     if not plan.moves:
         emit("Nothing to move: no files matched a group.")
-        for _object_type, source in plan.unmatched:
-            emit(f"  unmatched: {source}")
+        if show_unmatched:
+            for label in leftovers:
+                emit(f"  - {label}")
         return 0
 
-    emit("Planned moves:")
-    for move in plan.moves:
-        emit(f"  {move.source}  ->  {move.dest}")
-    if plan.unmatched:
-        emit("Unmatched (left in place):")
-        for _object_type, source in plan.unmatched:
-            emit(f"  {source}")
+    print_adt_header("PLANNED MOVES:")
+    _emit_planned_moves(plan.moves, emit)
+    if show_unmatched and leftovers:
+        print_adt_header("UNMATCHED (LEFT IN PLACE):")
+        for label in leftovers:
+            emit(f"  - {label}")
 
-    if dry_run:
-        emit("Dry run: no files moved.")
+    if not force:
         return 0
-
-    if not confirm():
-        emit("Aborted: no files moved.")
-        return 1
 
     apply_group_moves(plan)
+    # The result of the action, not a fourth file under the last group: flush
+    # against the rows above it, it read as one.
+    emit("")
     emit(f"Moved {len(plan.moves)} file(s).")
     return 0

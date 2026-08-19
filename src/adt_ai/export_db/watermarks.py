@@ -54,7 +54,6 @@ def advance_watermark(
         stored   = stored,
         db_now   = candidate,
         narrowed = narrowed,
-        dry_run  = request.dry_run,
     ):
         return
     store = RecentStore.load(request.root)

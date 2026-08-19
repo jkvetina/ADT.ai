@@ -12,7 +12,7 @@ reach for it, and what you get out of it, in the words someone who has not
 read the source would use. Do NOT name flags, output section headers, config
 keys, file formats, storage engines, or exit-code semantics: the option rows
 three lines below this block explain the flags, one at a time and correctly,
-and `USAGE/<command>.md` explains everything else. The reader of this block
+and `docs/<command>.md` explains everything else. The reader of this block
 has not yet decided to run the command.
 
 Three contract tests guard it, all in `tests/cli/test_help.py`:
@@ -57,14 +57,16 @@ COMMAND_SUMMARIES = {
         "Use it before a change, to find the callers nobody remembers, and after one, "
         "to see how far the effect actually reached, including into APEX applications, "
         "which is where the surprising callers usually are.",
-        "The answers come from a picture of the database you refresh when it moves on, "
-        "so the question is fast to ask and can be asked without a connection.",
+        "The answers come from a local picture of the database you refresh when it "
+        "moves on, so asking is fast, needs no connection, and costs an AI agent a "
+        "fraction of the tokens that digging through a live schema would.",
     ),
     "discovery": (
-        "Answers saved questions about a database and writes down what it found.",
-        "Use it to take stock of a schema, or to gather facts while working out what is "
-        "wrong, without opening a SQL client and without any risk of changing something: "
-        "it only ever reads.",
+        "Answers questions about a database, writes down what it found, and only "
+        "ever reads.",
+        "Use it as the safe way to let an AI agent explore your schema: the agent "
+        "gathers the facts it needs on its own, and there is no way for a question "
+        "to change anything, so it can work unsupervised.",
         "The questions live with the project rather than in someone's scratch file, so "
         "the same one asked next month gives an answer you can compare with this one.",
     ),
@@ -88,8 +90,8 @@ COMMAND_SUMMARIES = {
         "Use it for the rows an application needs in order to work at all (lookup "
         "values, defaults, configuration held as data), which belong under review "
         "beside the code that reads them.",
-        "Each table comes back both as something you can read in a diff and as "
-        "something that can put the same rows into another environment.",
+        "Each table comes back both as something you can read in version control "
+        "and as something that can put the same rows into another environment.",
     ),
     "export_db": (
         "Brings database objects out of the database and into your repository.",
@@ -124,7 +126,7 @@ COMMAND_SUMMARIES = {
         "It can also bring an older version of a file back so you can look at what it "
         "used to say, without disturbing the one you are working on.",
     ),
-    "ut3": (
+    "ut": (
         "Runs the unit tests installed in a database schema and reports how they went.",
         "Use it to find out whether the code in a schema still does what it is meant "
         "to, before a deployment rather than after one, and on evidence rather than "

@@ -37,6 +37,18 @@ META_LAST_REFRESH_QUERY = (
     "SELECT key, value FROM _meta WHERE key LIKE 'last_refresh:%' ORDER BY key"
 )
 
+# The refreshed scope's DATABASE UTC offset, stored beside its last-refresh
+# stamp under the same key/value `_meta` table and the same `<kind>:<name>`
+# key shape. `patch -create` resolves the mirrored LAST_DDL_TIME through it, so
+# the comparison against a repo file's mtime is made on one clock (ADT #394).
+# A scope with no row here was mirrored before that fix and cannot answer the
+# question, which the gate reports rather than guessing at.
+META_DB_OFFSET_PREFIX = "db_utc_offset:"
+
+META_DB_OFFSET_QUERY = (
+    "SELECT key, value FROM _meta WHERE key LIKE 'db_utc_offset:%' ORDER BY key"
+)
+
 # The dictionary's own LAST_DDL_TIME per object, mirrored on every
 # `dependencies -refresh`. `patch -create` reads it to prove the exported files
 # still match the schema, so a stale `export_db` cannot ship a previous package

@@ -4,7 +4,7 @@ from adt_ai.cli.constants import DEFAULT_ROW_LIMIT
 from adt_ai.cli.parser_common import add_connection_key_argument
 from adt_ai.shared.dates import recent_window
 from adt_ai.shared.recent_state import BARE_RECENT
-from adt_ai.ut3.limits import GATE_FROM_CONFIG
+from adt_ai.ut.limits import GATE_FROM_CONFIG
 
 
 def add_database_parsers(subparsers) -> None:
@@ -306,20 +306,20 @@ def add_database_parsers(subparsers) -> None:
         help   = "show input parameters and SQL queries with bind values",
     )
     add_connection_key_argument(discovery)
-    ut3 = subparsers.add_parser(
-        "ut3",
-        description="run the schema's utPLSQL (UT3) test suites",
+    ut = subparsers.add_parser(
+        "ut",
+        description="run the schema's utPLSQL (UT) test suites",
         help="run utPLSQL test suites",
     )
-    ut3.add_argument("--root", "-root", default=".", help="project root folder")
-    ut3.add_argument(
+    ut.add_argument("--root", "-root", default=".", help="project root folder")
+    ut.add_argument(
         "--config-dir",
         "-config-dir",
         action = "append",
         help   = "folder containing config YAML",
     )
-    ut3.add_argument("--env", "-env", help="connection environment")
-    ut3.add_argument(
+    ut.add_argument("--env", "-env", help="connection environment")
+    ut.add_argument(
         "--name",
         "-name",
         action = "append",
@@ -328,7 +328,7 @@ def add_database_parsers(subparsers) -> None:
                  "%% wildcards; selects the suites to run, and names itself in the "
                  "RUNNING TESTS FOR ...: header; no pattern means everything",
     )
-    ut3.add_argument(
+    ut.add_argument(
         "--schema",
         "-schema",
         action = "append",
@@ -336,14 +336,14 @@ def add_database_parsers(subparsers) -> None:
         help   = "schema(s) to test, repeatable, comma- or space-separated, "
                  "supports %% wildcards",
     )
-    ut3.add_argument(
+    ut.add_argument(
         "--refresh",
         "-refresh",
         action = "store_true",
         help   = "rebuild utPLSQL's annotation cache before discovery, so a suite "
                  "compiled since the last run is found",
     )
-    ut3.add_argument(
+    ut.add_argument(
         "--gate",
         "-gate",
         nargs  = "?",
@@ -353,7 +353,7 @@ def add_database_parsers(subparsers) -> None:
                  "threshold; with a number that number is the threshold, bare it "
                  "comes from config ut_coverage_gate, absent nothing gates",
     )
-    ut3.add_argument(
+    ut.add_argument(
         "--silent",
         "-silent",
         action = "store_true",
@@ -361,20 +361,21 @@ def add_database_parsers(subparsers) -> None:
                  "roll-up and per-test results under -verbose; keep the summary, "
                  "the errors and failures detail, and command chrome",
     )
-    ut3.add_argument(
+    ut.add_argument(
         "--verbose",
         "-verbose",
         action = "store_true",
         help   = "print UNIT TESTS SUITES: and TEST RESULTS: with a row per test "
-                 "instead of the RUNNING TESTS: progress bar; -silent outranks it",
+                 "instead of the RUNNING TESTS: progress bar, and list the suites "
+                 "whose coverage moved since the previous run; -silent outranks it",
     )
-    ut3.add_argument(
+    ut.add_argument(
         "--debug",
         "-debug",
         action = "store_true",
         help   = "show input parameters and SQL queries with bind values",
     )
-    add_connection_key_argument(ut3)
+    add_connection_key_argument(ut)
     flow = subparsers.add_parser(
         "flow",
         description="map APEX page navigation: query incoming/outgoing links or refresh diagrams",

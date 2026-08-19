@@ -90,7 +90,6 @@ class ExportDbRequest:
     recent       : int | float | object | None = None
     environment  : str | None = None
     clean        : bool = False
-    dry_run      : bool = False
     reporter     : ExportDbReporter | None = None
     group_rules  : GroupRules | None = None
     changed_by   : str | None = None
@@ -133,23 +132,6 @@ class ExportDbRunner:
             gateway_factory = gateway_factory,
             grant_contents  = grant_contents,
         )
-        if request.dry_run:
-            requests: list[ObjectWriteRequest] = []
-            for database_object, content, fix_content in object_contents:
-                requests.append(ObjectWriteRequest(database_object, content))
-                if fix_content is not None:
-                    requests.append(
-                        ObjectWriteRequest(
-                            database_object,
-                            fix_content,
-                            path = resolver.fix_path_for(database_object),
-                        )
-                    )
-            requests.extend(
-                ObjectWriteRequest(database_object, content)
-                for database_object, content in grant_contents
-            )
-            return writer.plan(requests, dry_run=True)
         plans: list[ObjectWritePlan] = []
         for database_object, content, fix_content in object_contents:
             plans.append(writer.write_one(ObjectWriteRequest(database_object, content)))
@@ -218,9 +200,8 @@ class ExportDbRunner:
             # run that made them clears them itself; this catches the run that
             # could not, because the connection died with the tables still there.
             # It happens BEFORE the listing so this export cannot read a table
-            # the sweep is about to drop, and a dry run sweeps too: nothing about
-            # "do not write files" says "leave the schema dirty". No row of its
-            # own, because a backstop that finds nothing is not news (`#372`).
+            # the sweep is about to drop. No row of its own, because a backstop
+            # that finds nothing is not news (`#372`).
             #
             # **It runs under the overview header and reports under the overview
             # table.** Its own `DROPPING DIFF TABLES:` section can only print
@@ -236,7 +217,7 @@ class ExportDbRunner:
             # already has it from above, so the round trip still happens once.
             candidate = (
                 (header_now if sub_day else read_db_now(gateway))
-                if not request.dry_run and not narrowed
+                if not narrowed
                 else None
             )
             database_objects = discovery.discover(
@@ -295,9 +276,9 @@ class ExportDbRunner:
                     schema,
                     missing_objects,
                 )
-                if is_enabled(request.config.get("auto_delete")) and not request.dry_run:
+                if is_enabled(request.config.get("auto_delete")):
                     resolver.delete_missing_objects(missing_objects)
-            if request.clean and not request.dry_run:
+            if request.clean:
                 resolver.delete_configured_object_files(schema)
             # Before, not after, the DBMS_METADATA setup and the comment
             # pre-read: neither prints a row, so the header is all there is.

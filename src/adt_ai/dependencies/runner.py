@@ -62,6 +62,26 @@ def _now_stamp() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _database_utc_offset(gateway: QueryGateway) -> str | None:
+    """The database server's UTC offset, or None when it cannot be read.
+
+    Recorded per schema rather than once per run because a run's schemas are
+    resolved through one gateway each and nothing says they live on the same
+    database, so one offset for the whole refresh would be a guess on a
+    multi-database project.
+
+    None on an empty or unreadable answer: a mirror carrying no offset is a
+    mirror `patch -create` refuses to compare clocks against, which is the
+    honest outcome, whereas writing a wrong offset here would be the original
+    defect with a stamp of authority on it.
+    """
+    rows = gateway.fetch_all(queries.DB_UTC_OFFSET_QUERY)
+    if not rows:
+        return None
+    value = rows[0].get("DB_UTC_OFFSET")
+    return str(value).strip() if value else None
+
+
 class DependencyIndexRunner:
     def __init__(self, gateway_factory: GatewayFactory) -> None:
         self.gateway_factory = gateway_factory
@@ -132,6 +152,11 @@ class DependencyIndexRunner:
                         else None
                     )
                 try:
+                    # Under the USER_OBJECTS row already open above, on purpose.
+                    # It is one `FROM DUAL` read and a row of its own would be a
+                    # new console string nobody asked for (`#372`); the open line
+                    # is the announcement the console contract asks for.
+                    db_offset = _database_utc_offset(gateway)
                     object_rows = (
                         gateway.fetch_all(object_query, scoped_params)
                         if scoped_params
@@ -165,7 +190,9 @@ class DependencyIndexRunner:
                     # Nothing changed since the cutoff: skip the detail pulls
                     # entirely, but still advance the stamp, the scope WAS
                     # covered for everything since the previous refresh.
-                    store.record_refresh("schema", schema, refreshed_at)
+                    store.record_refresh(
+                        "schema", schema, refreshed_at, db_offset=db_offset
+                    )
                     continue
                 if id(gateway) not in prepared:
                     # No row of its own (`#372`). The refresh header above says
@@ -178,6 +205,7 @@ class DependencyIndexRunner:
                         gateway,
                         candidates=changed_objects,
                         progress=progress.line,
+                        bar=progress.bar(),
                     )
                     prepared.add(id(gateway))
                 tables = {}
@@ -223,7 +251,7 @@ class DependencyIndexRunner:
                     store.refresh_schema_incremental(
                         schema, object_rows, tables, force=request.force
                     )
-                store.record_refresh("schema", schema, refreshed_at)
+                store.record_refresh("schema", schema, refreshed_at, db_offset=db_offset)
 
             for app in apps:
                 if app_schema is None:
@@ -239,7 +267,9 @@ class DependencyIndexRunner:
                 print_adt_header(f"APP {label}, REFRESHING:")
                 gateway = self.gateway_factory(app_schema)
                 if id(gateway) not in prepared:
-                    plscope.ensure_plscope(gateway, progress=progress.line)
+                    plscope.ensure_plscope(
+                        gateway, progress=progress.line, bar=progress.bar()
+                    )
                     prepared.add(id(gateway))
                 # The component scan below is a real, potentially slow DB call
                 # with no natural row count; without a visible row here the
@@ -271,6 +301,9 @@ class DependencyIndexRunner:
 
 
 class _NoProgressReporter:
+    def bar(self) -> None:
+        return None
+
     def begin(self, label: str, *, indent: str = "  ") -> None:
         return None
 
@@ -307,6 +340,11 @@ class _CallableProgressReporter:
 
     def __init__(self, progress: Callable[[str], None]) -> None:
         self._progress = progress
+
+    def bar(self) -> None:
+        # Same reason `begin` is a no-op here: a plain callable has no notion of
+        # a terminal line to redraw.
+        return None
 
     def begin(self, label: str, *, indent: str = "  ") -> None:
         return None

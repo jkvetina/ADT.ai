@@ -189,7 +189,7 @@ class DottedProgressBar:
         frozen at a stale percentage, never two rows on one line.
 
         Keyed on the header changing, so one row's own in-place redraws, and
-        the single-header bars in ``rebuild``/``ut3``, never trip it. On a
+        the single-header bars in ``rebuild``/``ut``, never trip it. On a
         healthy sequence every row closes itself, this returns ``""``, and the
         bytes are identical to what the bar has always emitted.
 
@@ -310,6 +310,16 @@ class FixedWidthProgressPrinter:
         self.line_width = line_width
         self.indent = indent
         self._active_left: str | None = None
+
+    def bar(self) -> DottedProgressBar:
+        """A crawling row on this console, for work with a count but no rows.
+
+        The reporter is what a runner already holds to answer "is anything being
+        printed", so it is also what answers "what do I crawl under". A reporter
+        that prints nothing returns None instead, and the caller draws nothing
+        (`#381`).
+        """
+        return DottedProgressBar(line_width=self.line_width)
 
     def begin(self, label: str, *, indent: str | None = None) -> None:
         self._active_left = f"{self.indent if indent is None else indent}{label}"

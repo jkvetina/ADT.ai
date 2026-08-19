@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import fnmatch
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +8,21 @@ import yaml
 
 from adt_ai.shared import crypto
 from adt_ai.shared.config import is_enabled
+from adt_ai.shared.connection_errors import (
+    ConnectFailedError,
+    ConnectionError,
+    ConnectionNotFoundError,
+    CredentialUnavailableError,
+    InvalidConnectionError,
+)
 from adt_ai.shared.dict_merge import deep_merge
+from adt_ai.shared.schema_selection import (
+    expand_schema_patterns,
+    match_schema,
+    split_schema_values,
+)
+from adt_ai.shared.secret import Secret
+from adt_ai.shared.secret_command import SecretCommandError, block_secret
 from adt_ai.shared.sqlcl_names import derive_sqlcl_name
 
 # Standard Oracle listener port, applied wherever a connection omits `port`
@@ -17,20 +30,34 @@ from adt_ai.shared.sqlcl_names import derive_sqlcl_name
 DEFAULT_PORT = 1521
 
 
-class ConnectionError(Exception):
-    """Base error for connection loading failures."""
-
-
-class ConnectionNotFoundError(ConnectionError):
-    """Raised when a requested connection file, environment, or schema is missing."""
+# The error classes live in `connection_errors.py` (ADT #407) and are re-exported
+# because `from adt_ai.shared.connections import ConnectionError` is the spelling
+# the whole tree already uses.
+__all__ = [
+    "ConnectFailedError",
+    "Connection",
+    "ConnectionError",
+    "ConnectionLoader",
+    "ConnectionNotFoundError",
+    "ConnectionResult",
+    "CredentialUnavailableError",
+    "DEFAULT_PORT",
+    "InvalidConnectionError",
+]
 
 
 @dataclass(frozen=True)
 class Connection:
+    # `password` and `wallet_password` always hold a `Secret` once the object
+    # exists (ADT #400). The constructor still accepts `str`, `bytes` or `None`
+    # and `__post_init__` coerces, so the invariant holds for every caller,
+    # runtime and test alike, rather than resting on each construction site
+    # remembering to wrap. `password_mode` is the `pwd!` marker, not a
+    # credential, so it stays a plain string.
     environment     : str
     schema          : str
     username        : str
-    password        : str | None
+    password        : Secret
     password_mode   : str | None
     hostname        : str | None
     port            : int | None
@@ -41,7 +68,7 @@ class Connection:
     export          : dict[str, Any]
     apex            : dict[str, Any]
     wallet_path     : str | None = None
-    wallet_password : str | None = None
+    wallet_password : Secret = field(default_factory=Secret)
     client_lib_dir  : str | None = None
     # Named SQLcl connection identity (ADT #148): the name generated SQLcl
     # scripts connect with, the fingerprint recorded at last registration, and
@@ -50,6 +77,26 @@ class Connection:
     sqlcl_name      : str | None = None
     sqlcl_sync      : str | None = None
     sqlcl_source    : str | None = None
+    # `auth: external` (ADT #395). The credential is read out of `cwallet.sso`
+    # inside the Oracle client library, so ADT never holds one: no `pwd`, no
+    # `pwd!`, no `ADT_KEY`, and `_decrypt_if_enabled` is never reached. `tns` is
+    # the alias the wallet files that credential under, and is what both the
+    # driver and SQLcl connect to.
+    auth            : str | None = None
+    tns             : str | None = None
+
+    @property
+    def external_auth(self) -> bool:
+        return str(self.auth or "").strip().lower() == "external"
+
+    def __post_init__(self) -> None:
+        # The wrap happens here rather than at `resolve()` so that no way of
+        # building a Connection can produce one carrying a bare string: an
+        # ad-hoc construction in a command, a test fixture, and the loader all
+        # land on the same guarantee. `object.__setattr__` is how a frozen
+        # dataclass normalizes its own fields.
+        object.__setattr__(self, "password", Secret(self.password))
+        object.__setattr__(self, "wallet_password", Secret(self.wallet_password))
 
 
 @dataclass(frozen=True)
@@ -96,7 +143,7 @@ class ConnectionResult:
     def expand_schemas(self, values: Any, environment: str | None = None) -> list[str]:
         environment_name = environment or self.default_environment
         available = self.schema_names(environment_name)
-        return _expand_schema_patterns(_split_schema_values(values), available)
+        return expand_schema_patterns(split_schema_values(values), available)
 
     # An Oracle schema name is a case-insensitive identifier, but ADT.ai reaches this
     # lookup with names from two different places: what the user typed in the
@@ -116,7 +163,7 @@ class ConnectionResult:
         environment_name = environment or self.default_environment
         environment_data = self._environment(environment_name)
         schema_name = schema or self.default_schema(environment_name, kind=kind)
-        schema_name, schema_data = _match_schema(
+        schema_name, schema_data = match_schema(
             environment_data.get("schemas", {}), schema_name
         )
         if not isinstance(schema_data, dict):
@@ -133,18 +180,39 @@ class ConnectionResult:
         wallet_data = environment_data.get("wallet", {})
         db = deep_merge(environment_data.get("db", {}), wallet_data)
         db = deep_merge(db, schema_data.get("db", {}))
-        password = _decrypt_if_enabled(
-            db.get("pwd"),
-            db.get("pwd!"),
-            key     = self.key,
-            context = f"{environment_name}.{schema_name} pwd",
-        )
-        wallet_password = _decrypt_if_enabled(
-            db.get("wallet_password") or db.get("wallet_pwd"),
-            db.get("wallet_password!") or db.get("wallet_pwd!"),
-            key     = self.key,
-            context = f"{environment_name} wallet_pwd",
-        )
+        # A `pwd_cmd:` / `wallet_pwd_cmd:` block fetches its secret from the
+        # customer's own vault (ADT #397), so it never reaches the stored-value
+        # path below and needs no key at all. `None` means no command is
+        # configured; a command standing beside a stored value raises rather than
+        # ranking the two.
+        password_context = f"{environment_name}.{schema_name} pwd"
+        external = str(db.get("auth") or "").strip().lower() == "external"
+        if external:
+            # `auth: external` skips password resolution entirely (ADT #395).
+            # Not "resolves to empty": the whole point is that no branch below
+            # can ask for `ADT_KEY`, run a vault command, or reach a decrypt, so
+            # a file under this mode needs none of them and cannot fail on them.
+            password = None
+        else:
+            password = _fetched_secret(db, "pwd", password_context)
+            if password is None:
+                password = _decrypt_if_enabled(
+                    db.get("pwd"),
+                    db.get("pwd!"),
+                    db.get("pwd_key"),
+                    key     = self.key,
+                    context = password_context,
+                )
+        wallet_context = f"{environment_name} wallet_pwd"
+        wallet_password = _fetched_secret(db, "wallet_pwd", wallet_context)
+        if wallet_password is None:
+            wallet_password = _decrypt_if_enabled(
+                db.get("wallet_password") or db.get("wallet_pwd"),
+                db.get("wallet_password!") or db.get("wallet_pwd!"),
+                db.get("wallet_password_key") or db.get("wallet_pwd_key"),
+                key     = self.key,
+                context = wallet_context,
+            )
         return Connection(
             environment     = environment_name,
             schema          = schema_name,
@@ -155,7 +223,10 @@ class ConnectionResult:
             port            = db.get("port"),
             service         = db.get("service"),
             sid             = db.get("sid"),
-            thick           = is_enabled(db.get("thick")),
+            # External authentication is thick-mode only in python-oracledb, so
+            # the mode implies the flag rather than asking the reader to set two
+            # things that only work together.
+            thick           = is_enabled(db.get("thick")) or external,
             lang            = db.get("lang"),
             export          = dict(schema_data.get("export") or {}),
             apex            = dict(schema_data.get("apex") or {}),
@@ -168,6 +239,8 @@ class ConnectionResult:
             sqlcl_name      = self._sqlcl_name(db, environment_name, schema_name),
             sqlcl_sync      = db.get("sqlcl_sync"),
             sqlcl_source    = str(self.files[0]) if self.files else None,
+            auth            = db.get("auth"),
+            tns             = db.get("tns"),
         )
 
     def _sqlcl_name(
@@ -266,11 +339,13 @@ class ConnectionLoader:
         except yaml.YAMLError as error:
             # Route a hand-edit syntax error through the friendly connection
             # banner instead of the generic UNEXPECTED ERROR catch-all.
-            raise ConnectionError(
+            raise InvalidConnectionError(
                 f"Connection file is not valid YAML: {chosen}\n{error}"
             ) from error
         if not isinstance(loaded, dict):
-            raise ConnectionError(f"Connection file must contain a YAML mapping: {chosen}")
+            raise InvalidConnectionError(
+                f"Connection file must contain a YAML mapping: {chosen}"
+            )
         return ConnectionResult(
             data         = loaded,
             files        = [chosen],
@@ -312,22 +387,70 @@ def _resolve_wallet_path(value: Any, wallet_roots: list[Path]) -> str | None:
     return str(candidates[0] if candidates else wallet)
 
 
+def _fetched_secret(db: dict[str, Any], kind: str, context: str) -> Secret | None:
+    """The secret a `_cmd` key fetches, as a connection failure when it cannot.
+
+    A vault CLI that is missing, unauthenticated, or slow is a connect failure
+    like a wrong password, so it re-raises as `CredentialUnavailableError` and
+    lands on the credential banner rather than surfacing as an unexpected error.
+    `block_secret`'s other refusal, a block naming two sources for one secret, is
+    a file defect and is reported the same way on purpose: separating it would
+    cost an exception class one module down, and the message names the keys to
+    edit either way.
+    """
+    try:
+        return block_secret(db, kind, context=context)
+    except SecretCommandError as error:
+        raise CredentialUnavailableError(str(error)) from error
+
+
 def _decrypt_if_enabled(
     value: Any,
     marker: Any,
+    recorded_fingerprint: Any = None,
     *,
     key: str | None,
     context: str,
 ) -> Any:
     if not is_enabled(marker):
         return value
+
+    def cannot_decrypt(error: Exception) -> CredentialUnavailableError:
+        return CredentialUnavailableError(
+            f"Could not decrypt {context}; pass -key or set {crypto.KEY_ENV}: {error}"
+        )
+
     try:
         resolved_key = crypto.resolve_key(key)
+        # Fernet answers a wrong key and a damaged value with the same
+        # exception, so without a recorded fingerprint (`pwd_key:`, ADT #399)
+        # the commonest mistake of all reads as a corrupt connection file. The
+        # comparison is close to free: it needs the same PBKDF2 derivation the
+        # decrypt below is about to do, and `crypto` memoises that. A file
+        # written before `#399` records nothing, and keeps the older, honestly
+        # vaguer message rather than a guess about which case it hit.
+        #
+        # `readable_fingerprint` also returns None for a recorded value that is
+        # not a digest, which a YAML loader can produce from one that happens to
+        # look numeric. Such a value says nothing about the key, so it counts as
+        # absent rather than as a mismatch: an unreadable fingerprint must never
+        # refuse a correct key (ADT #398).
+        expected = crypto.readable_fingerprint(recorded_fingerprint)
+        actual = crypto.fingerprint(value, resolved_key) if expected else None
+    except crypto.CryptoError as error:
+        raise cannot_decrypt(error) from error
+
+    if expected and actual != expected:
+        raise CredentialUnavailableError(
+            f"Wrong encryption key for {context}: the stored value carries key "
+            f"fingerprint {expected}, the key in use fingerprints as {actual}. "
+            f"Pass -key or set {crypto.KEY_ENV} to the key this value was encrypted with."
+        )
+
+    try:
         return crypto.decrypt(value, resolved_key)
     except crypto.CryptoError as error:
-        raise ConnectionError(
-            f"Could not decrypt {context}; pass -key or set {crypto.KEY_ENV}: {error}"
-        ) from error
+        raise cannot_decrypt(error) from error
 
 
 def _is_legacy_adt_wallet_path(path: Path) -> bool:
@@ -336,60 +459,3 @@ def _is_legacy_adt_wallet_path(path: Path) -> bool:
         parts[index:index + 3] == ("PROJECTS", "ADT", "wallets")
         for index in range(len(parts) - 2)
     )
-
-
-def _match_schema(schemas: Any, wanted: str) -> tuple[str, Any]:
-    """Find ``wanted`` among the configured schema keys, exact match first.
-
-    Returns the key as the file spells it alongside its data, so everything
-    downstream reports the configured name rather than the caller's casing.
-    """
-    if not isinstance(schemas, dict):
-        return wanted, None
-    if wanted in schemas:
-        return wanted, schemas[wanted]
-    folded = str(wanted).casefold()
-    for key, data in schemas.items():
-        if str(key).casefold() == folded:
-            return str(key), data
-    return wanted, None
-
-
-def _split_schema_values(value: Any) -> list[str]:
-    if value is None:
-        return []
-    values = value if isinstance(value, list | tuple) else [value]
-    schemas: list[str] = []
-    for item in values:
-        if isinstance(item, list | tuple):
-            # Defensive against a -schema group list (action="append" + nargs="+")
-            # reaching here unflattened: recurse rather than str()-ing the inner
-            # list, which would yield "['DA', 'GSN']" and match no schema.
-            schemas.extend(_split_schema_values(item))
-            continue
-        schemas.extend(
-            part.strip()
-            for part in str(item).split(",")
-            if part.strip()
-        )
-    return schemas
-
-
-def _expand_schema_patterns(patterns: list[str], available: list[str]) -> list[str]:
-    schemas: list[str] = []
-    for pattern in patterns:
-        if pattern == "%":
-            matches = available
-        elif "%" in pattern or "*" in pattern:
-            wildcard = pattern.upper().replace("%", "*")
-            matches = [
-                schema
-                for schema in available
-                if fnmatch.fnmatchcase(schema.upper(), wildcard)
-            ]
-        else:
-            matches = [pattern]
-        for schema in matches:
-            if schema not in schemas:
-                schemas.append(schema)
-    return schemas

@@ -14,11 +14,11 @@ ADT.ai is a Python CLI for Oracle/APEX deployment work. This skill gives an agen
 
 ## How it works
 
-The skill maps each `adtai` command to a short set of runnable examples plus the rules that keep output clean and safe. Full argument tables stay in the repo's `USAGE.md`, so the skill stays lean and does not drift when flags change. Install and machine health are handled separately by the `adt-setup` skill.
+The skill maps each `adtai` command to a short set of runnable examples plus the rules that keep output clean and safe. Full argument tables stay in the repo's `docs/README.md`, so the skill stays lean and does not drift when flags change. Install and machine health are handled separately by the `adt-setup` skill.
 
 ## Usage
 
-Invoke with `/adt`. Full implementation in [SKILL.md](SKILL.md). Argument reference in [USAGE.md](../../USAGE.md).
+Invoke with `/adt`. Full implementation in [SKILL.md](SKILL.md). Argument reference in [docs/README.md](../../docs/README.md).
 
 ## Related skills
 

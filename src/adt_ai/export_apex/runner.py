@@ -98,6 +98,7 @@ from adt_ai.export_apex.rest import (
     _schema_definition,
     _split_rest_modules,
 )
+from adt_ai.export_apex.schema_level import ApexSchemaLevelMixin, schema_level_only
 from adt_ai.export_apex.watermarks import (
     _WATERMARKED_FORMATS,
     ApexWatermarkMixin,
@@ -119,7 +120,12 @@ from adt_ai.shared.row_values import row_value
 GatewayFactory = Callable[[str], QueryGateway]
 
 
-class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexActionTimingMixin):
+class ApexExportRunner(
+    ApexCollectionWriterMixin,
+    ApexWatermarkMixin,
+    ApexActionTimingMixin,
+    ApexSchemaLevelMixin,
+):
     EXPORT_START_QUERY    = queries.EXPORT_START_QUERY
     EXPORT_FULL_QUERY     = queries.EXPORT_FULL_QUERY
     EXPORT_SPLIT_QUERY    = queries.EXPORT_SPLIT_QUERY
@@ -189,6 +195,14 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexAction
             # the stored time of every pair it is about to run.
             segment_bar = open_segment_bar(request, applications, timers, schema)
             segment_reporter = segment_bar or reporter
+            # Nothing per-application is requested, so the loop below, which
+            # exists to export applications, is not entered at all.
+            if schema_level_only(request.actions) and not request.recent_report_only:
+                self._run_schema_level_segment(
+                    request, applications, gateway, resolver,
+                    segment_bar, segment_reporter, timers, store,
+                )
+                continue
             for index, application in enumerate(applications):
                 # `-rest` and `-files_ws` write workspace artifacts, paths with
                 # no app id in them, so they belong to the schema, not to an
@@ -343,18 +357,10 @@ class ApexExportRunner(ApexCollectionWriterMixin, ApexWatermarkMixin, ApexAction
                 # Reached only when every requested format wrote successfully, so
                 # an app that raised mid-export keeps its previous watermarks.
                 self._advance_watermarks(request, application, candidate)
-            # A schema hosting no APEX application still owns its workspace
-            # artifacts, and there is no application block for their rows to sit
-            # under, so this is the one case that keeps a `SCHEMA <name>,
-            # EXPORTING:` header. Skipping the schema entirely here is what made
-            # `-rest` finish printing nothing at all (ADT #190); `-files_ws` had
-            # the same hole and never got that fix.
-            schema_only = self._schema_only_actions(request, applications, gateway, resolver)
-            if schema_only and segment_bar is None:
-                _print_schema_export_header(schema)
-            for action, operation in schema_only:
-                self._run_schema_action(
-                    segment_reporter, timers, store, action, operation
+            if not applications:
+                self._run_schema_artifacts_tail(
+                    request, schema, gateway, resolver,
+                    segment_bar, segment_reporter, timers, store,
                 )
             # Only where every action wrote: one that raised already completed
             # its row with `FAILED`, and a 100% redraw would overwrite it.

@@ -7,20 +7,38 @@ from typing import Any
 
 from ruamel.yaml import YAML
 
+from adt_ai.connection.errors import ConnectionEditError
+from adt_ai.connection.stored_secrets import (
+    SECRET_SAFE_YAML_WIDTH,
+    fingerprint_key,
+    rekey_secrets,
+    write_fingerprint,
+)
 from adt_ai.shared import crypto, text_files
 from adt_ai.shared.connections import DEFAULT_PORT
+from adt_ai.shared.secret_command import COMMAND_KEYS
 
-# Keys that may hold a secret. They are stripped when cloning an environment with
-# -like so a copied skeleton never inherits another environment's password.
-_SECRET_KEYS = ("pwd", "pwd!", "wallet_pwd", "wallet_pwd!", "wallet_password")
-
-
-class ConnectionEditError(Exception):
-    """Raised when a requested connection edit is invalid for the current file.
-
-    Distinct from connections.py's ``ConnectionError`` so the CLI facade's
-    star-imports never collide; the handler catches this and exits 2.
-    """
+# Keys that belong to a stored secret: the value, its encryption marker, and the
+# key fingerprint recorded beside it (ADT #399). They are stripped together when
+# cloning an environment with -like, so a copied skeleton never inherits another
+# environment's password, nor a fingerprint describing a password it no longer
+# has.
+#
+# The `_cmd` keys (ADT #397) are stripped for the same reason and it is the more
+# dangerous case of the two: a vault path names the environment it belongs to
+# (`op://vault/DEV_APP/password`), so a UAT skeleton cloned from DEV would carry
+# a working pointer at the DEV credential and connect with it.
+_SECRET_KEYS = (
+    "pwd",
+    "pwd!",
+    "pwd_key",
+    "wallet_pwd",
+    "wallet_pwd!",
+    "wallet_pwd_key",
+    "wallet_password",
+    "wallet_password_key",
+    *COMMAND_KEYS,
+)
 
 
 @dataclass(frozen=True)
@@ -46,6 +64,10 @@ class ConnectionEditRequest:
     apply       : bool = False
     encrypt     : bool = False
     key         : str | None = None
+    # -rekey only (ADT #398). Both are required for that action and unused by
+    # every other one; `key` stays the single-key flag the write actions use.
+    old_key     : str | None = None
+    new_key     : str | None = None
 
 
 @dataclass(frozen=True)
@@ -62,6 +84,15 @@ def _yaml() -> YAML:
     yaml = YAML()
     yaml.preserve_quotes = True
     yaml.indent(mapping=2, sequence=4, offset=2)
+    # A stored secret is a single 130 character token with no spaces in it, and
+    # the default width of 80 pushes it onto a continuation line, leaving the
+    # key spelled `pwd: ` with a trailing space above it. The value survives
+    # that (YAML can only fold at a space, and there is none, so the token is
+    # emitted whole) but the layout is wrong twice over: trailing whitespace in
+    # a file ADT writes, and a shape that flips back and forth depending on
+    # which writer touched the file last. `sqlcl_names.py` sets the same width
+    # for that second reason, so the two dumpers cannot disagree.
+    yaml.width = SECRET_SAFE_YAML_WIDTH
     return yaml
 
 
@@ -163,6 +194,8 @@ class ConnectionEditor:
             summary, preview = self._set_pwd(data, request)
         elif request.action == "set-wallet-pwd":
             summary, preview = self._set_wallet_pwd(data, request)
+        elif request.action == "rekey":
+            summary, preview = rekey_secrets(data, request)
         else:
             raise ConnectionEditError(f"unknown action: {request.action}")
 
@@ -379,13 +412,19 @@ class ConnectionEditor:
         if request.encrypt:
             try:
                 key = crypto.resolve_key(request.key)
-                target[value_key] = crypto.encrypt(password, key)
+                stored = crypto.encrypt(password, key)
+                recorded = crypto.fingerprint(stored, key)
             except crypto.CryptoError as error:
                 raise ConnectionEditError(str(error)) from error
+            target[value_key] = stored
             target[marker_key] = "Y"
+            write_fingerprint(target, value_key, recorded)
             return
         target[value_key] = password
         target.pop(marker_key, None)
+        # A fingerprint outliving the encrypted value it described would make
+        # the loader refuse a password that is not encrypted at all.
+        target.pop(fingerprint_key(value_key), None)
 
     def _require_environment(self, data: Any, env: str) -> Any:
         env_node = data.get(env) if isinstance(data, dict) else None

@@ -23,7 +23,7 @@ announce, and between them they are the whole console contract:
   Nothing has to opt in, because leaving the line open IS the announcement.
   It announces the work that will **close** it and nothing after: a redrawable
   row that has reached its own end says so through `mark_finished()`, because
-  the cursor cannot tell `12%` from `100%` and `ut3` spent half a run behind
+  the cursor cannot tell `12%` from `100%` and `ut` spent half a run behind
   the latter (`#379`).
 * **A section header.** It ends its line like any finished row, so the cursor
   cannot see it and `print_adt_header` says so through `mark_announced()`. Jan:
@@ -109,7 +109,7 @@ def mark_finished() -> None:
 
     A redrawable row is the one open line that outlives its own wait: the
     carriage return keeps the cursor on it, so it reads as an announcement until
-    something closes it. `ut3` closed its bar only after the coverage read for
+    something closes it. `ut` closed its bar only after the coverage read for
     exactly that reason and spent half the run parked on `100%  0:00:00`
     (`#379`). A bar draws 100% without closing only once its units are all
     accounted for, so `DottedProgressBar.print_line` calls this and no command

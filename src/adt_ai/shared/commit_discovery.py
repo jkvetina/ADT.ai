@@ -366,7 +366,7 @@ def commit_ref_matches(number: int, commit_hash: str, ref: str) -> bool:
 
     Shared by `patch` and `search_repo` rather than written twice: they are one
     concept at two call sites, and `search_repo` already understood `N+` while
-    `patch` understood neither, so `USAGE/patch.md`'s documented "commit numbers
+    `patch` understood neither, so `docs/patch.md`'s documented "commit numbers
     or ranges" selected nothing at all, silently (ADT #309, was #15).
     """
     value = str(ref).strip().lower()

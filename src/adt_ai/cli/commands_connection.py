@@ -34,7 +34,22 @@ _CONNECTION_ACTIONS = (
     ("add-schema", "add_schema"),
     ("set-pwd", "set_pwd"),
     ("set-wallet-pwd", "set_wallet_pwd"),
+    ("rekey", "rekey"),
 )
+
+_CONNECTION_ACTION_NAMES = [f"-{name}" for name, _ in _CONNECTION_ACTIONS]
+_CONNECTION_ACTION_LIST = ", ".join(
+    [*_CONNECTION_ACTION_NAMES[:-1], f"or {_CONNECTION_ACTION_NAMES[-1]}"]
+)
+
+# `-encrypt` says what to do with a password the run supplies, so it means
+# nothing for an action that supplies none. `-rekey` is the sharper case: it
+# encrypts by definition, and accepting the flag would imply there is a variant
+# of it that does not.
+_ACTIONS_WITHOUT_ENCRYPT = {"add-env", "rekey"}
+
+# A rekey rewrites the whole file, so it takes no environment or schema selector.
+_WHOLE_FILE_ACTIONS = {"rekey"}
 
 
 def _selected_connection_action(args: argparse.Namespace) -> str | None:
@@ -43,6 +58,8 @@ def _selected_connection_action(args: argparse.Namespace) -> str | None:
 
 
 def _missing_connection_selector(action: str, args: argparse.Namespace) -> str | None:
+    if action in _WHOLE_FILE_ACTIONS:
+        return None
     if action == "add-env":
         if not args.env:
             return "-add-env requires -env"
@@ -91,6 +108,8 @@ def _connection_request(
         apply       = apply,
         encrypt     = args.encrypt,
         key         = args.key,
+        old_key     = getattr(args, "old_key", None),
+        new_key     = getattr(args, "new_key", None),
     )
 
 
@@ -154,8 +173,7 @@ def _run_connection(args: argparse.Namespace) -> int:
     action = _selected_connection_action(args)
     if action is None:
         print(
-            "connection: provide exactly one of -create, -add-env, -add-schema, "
-            "-set-pwd, or -set-wallet-pwd",
+            f"connection: provide exactly one of {_CONNECTION_ACTION_LIST}",
             file=sys.stderr,
         )
         return 2
@@ -163,8 +181,15 @@ def _run_connection(args: argparse.Namespace) -> int:
     if missing:
         print(f"connection: {missing}", file=sys.stderr)
         return 2
-    if args.encrypt and action == "add-env":
-        print("connection: -encrypt is only valid for password actions", file=sys.stderr)
+    if args.encrypt and action in _ACTIONS_WITHOUT_ENCRYPT:
+        if action == "rekey":
+            print(
+                "connection: -encrypt is not used with -rekey, which re-encrypts by "
+                "definition; give it -old-key and -new-key",
+                file=sys.stderr,
+            )
+        else:
+            print("connection: -encrypt is only valid for password actions", file=sys.stderr)
         return 2
 
     startup, path = _connection_edit_path(args, allow_missing=action == "create")
@@ -208,14 +233,25 @@ def _run_connection(args: argparse.Namespace) -> int:
             print(f"connection: {error_message}", file=sys.stderr)
             return 2
 
-    result = editor.run(
-        _connection_request(
-            action, args, path,
-            password=password, wallet_password=wallet_password, apply=True,
+    try:
+        result = editor.run(
+            _connection_request(
+                action, args, path,
+                password=password, wallet_password=wallet_password, apply=True,
+            )
         )
-    )
+    except ConnectionEditError as error:
+        # `-rekey` does its own validation on the apply pass, where the keys are
+        # actually used, so this is the first point a wrong -old-key can surface.
+        print(f"connection: {error}", file=sys.stderr)
+        return 2
     print()
     print(f"  {result.summary}")
+    if action == "rekey" and result.preview:
+        # Which secrets were rewritten is the result of a rekey, not decoration:
+        # it is the record that no corner of the file was missed.
+        print()
+        print(result.preview)
     print()
     print(f"WROTE: {path}")
     return 0

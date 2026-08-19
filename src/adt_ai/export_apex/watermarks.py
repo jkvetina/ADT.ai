@@ -80,7 +80,6 @@ class ApexWatermarkMixin:
                 stored   = store.watermark(request.environment, application.app_id, action),
                 db_now   = candidate,
                 narrowed = request.narrowed,
-                dry_run  = False,
             ):
                 continue
             # No `save()` and no dirty flag: each stamp is its own committed

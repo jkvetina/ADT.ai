@@ -32,7 +32,6 @@ class ObjectWritePlan:
     object  : DatabaseObject
     path    : Path
     action  : Literal["create", "update", "unchanged"]
-    dry_run : bool
 
 
 class ObjectFileResolver:
@@ -319,23 +318,11 @@ class ObjectFileWriter:
         self.resolver = resolver
         self.compare_existing = compare_existing
 
-    def plan(
-        self, requests: list[ObjectWriteRequest], dry_run: bool = True
-    ) -> list[ObjectWritePlan]:
-        return [
-            self._plan_one(request, dry_run=dry_run, compare_existing=True)
-            for request in requests
-        ]
-
     def write(self, requests: list[ObjectWriteRequest]) -> list[ObjectWritePlan]:
         return [self.write_one(request) for request in requests]
 
     def write_one(self, request: ObjectWriteRequest) -> ObjectWritePlan:
-        plan = self._plan_one(
-            request,
-            dry_run=False,
-            compare_existing=self.compare_existing,
-        )
+        plan = self._plan_one(request, compare_existing=self.compare_existing)
         if plan.action == "unchanged":
             return plan
         plan.path.parent.mkdir(parents=True, exist_ok=True)
@@ -345,7 +332,6 @@ class ObjectFileWriter:
     def _plan_one(
         self,
         request: ObjectWriteRequest,
-        dry_run: bool,
         compare_existing: bool,
     ) -> ObjectWritePlan:
         path = request.path or self.resolver.path_for(request.object)
@@ -362,10 +348,9 @@ class ObjectFileWriter:
             action = "update"
 
         return ObjectWritePlan(
-            object  = request.object,
-            path    = path,
-            action  = action,
-            dry_run = dry_run,
+            object = request.object,
+            path   = path,
+            action = action,
         )
 
 

@@ -54,12 +54,6 @@ def add_export_parsers(subparsers) -> None:
                 "(bare -recent = since the last export of that schema)",
     )
     export_db.add_argument(
-        "--dry-run",
-        "-dry-run",
-        action="store_true",
-        help="plan writes without changing files",
-    )
-    export_db.add_argument(
         "--delete",
         "-delete",
         action = "store_true",
@@ -71,7 +65,7 @@ def add_export_parsers(subparsers) -> None:
         action = "store_true",
         help   = "suppress per-object progress; keep overview, chrome, and timer",
     )
-    # The polarity is the reverse of `ut3 -verbose`, deliberately and on Jan's
+    # The polarity is the reverse of `ut -verbose`, deliberately and on Jan's
     # call (2026-08-16): there the bar is the default and the listing is the
     # flag, here the per-object listing is old-ADT parity output and stays the
     # default, so the flag is the bar. Both spellings mean one thing wherever
@@ -94,9 +88,18 @@ def add_export_parsers(subparsers) -> None:
         nargs  = "*",
         default= None,
         metavar= "PREFIX",
-        help   = "reorganize exported files into <type>/<group>/ subfolders, previewing "
-                 "then confirming and never connecting; PREFIX names group only those, "
-                 "bare -groups auto-detects by prefix",
+        help   = "list how exported files would reorganize into <type>/<group>/ "
+                 "subfolders, moving nothing and never connecting; PREFIX lists only "
+                 "those groups, bare -groups auto-detects by prefix",
+    )
+    # `-force` is `store_true` on `patch`, `doctor`, `recompile` and `dependencies`
+    # too. The shared-argument contract pins the argparse shape, never the effect,
+    # and "override the guard standing here" is what all five of them mean.
+    export_db.add_argument(
+        "--force",
+        "-force",
+        action = "store_true",
+        help   = "with -groups, apply the listed moves instead of only listing them",
     )
     # `-by` then `-my`, worded off the one pattern every module shares since
     # ADT #364: "limit to <what this module acts on> by <whom>". Each row names

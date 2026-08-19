@@ -227,7 +227,7 @@ def _matches_ref(commit: _Commit, ref: str) -> bool:
     # ONE resolver with `patch` (ADT #309). `search_repo` understood `N+` and
     # `patch` understood neither spelling, so the same argument written the same
     # way meant different things depending on which command read it, and
-    # `USAGE/patch.md` documented the syntax `patch` did not have. `N-M` arrives
+    # `docs/patch.md` documented the syntax `patch` did not have. `N-M` arrives
     # here for free, which is the point of sharing rather than copying.
     return commit_ref_matches(commit.number, commit.id, ref)
 

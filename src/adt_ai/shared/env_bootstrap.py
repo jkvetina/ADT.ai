@@ -67,6 +67,10 @@ HYDRATED_VARIABLES = (
     "ADT_BRANCH",
     "ADT_SCHEMA",
     "ADT_KEY",
+    # A user who exports the fetch command in ~/.zshrc rather than the key itself
+    # (ADT #397) hits exactly the failure this module exists to prevent, so it
+    # travels with ADT_KEY.
+    "ADT_KEY_CMD",
     "ORACLE_HOME",
     "TNS_ADMIN",
     "NLS_LANG",

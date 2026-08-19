@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from collections.abc import Mapping
 
+from adt_ai.cli.commands_export_db_groups import run_groups_move
 from adt_ai.cli.constants import (
     APEX_EXPORT_ACTIONS,
     ApexApplication,
@@ -46,17 +46,9 @@ from adt_ai.cli.export_reporters import ConsoleApexRevealReporter
 from adt_ai.cli.gateways import build_gateway
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.export_apex.deep import ApexDeepFilterError
+from adt_ai.export_apex.schema_level import schema_level_only
 from adt_ai.export_db.config import AuthorFilterError, resolve_author_filter
-from adt_ai.export_db.files import ObjectFileResolver
-from adt_ai.export_db.groups import (
-    GroupRules,
-    build_prefix_rules,
-    detect_groups_by_prefix,
-    execute_group_move,
-    parse_group_prefixes,
-    plan_group_moves,
-    resolve_group_inputs,
-)
+from adt_ai.export_db.groups import resolve_group_inputs
 from adt_ai.shared import git_identity
 from adt_ai.shared.object_types import normalize_object_type_patterns
 
@@ -87,7 +79,16 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
         # <object_type>/<group>/ subfolders. It never connects or exports.
         if args.debug:
             _print_startup_debug(startup)
-        return _run_groups_move(args, root, config, schemas)
+        return run_groups_move(args, root, config, schemas)
+    if args.force:
+        # -force applies a -groups plan and means nothing on an export. Accepting
+        # it here would be the accepted-but-unused flag §Command surface bans.
+        print(
+            "export_db: -force applies a -groups plan; add -groups, "
+            "or drop -force to export.",
+            file=sys.stderr,
+        )
+        return 2
     # -type resolves onto Oracle's vocabulary at the edge, as recompile does. -name is
     # an identifier pattern: its underscores are real wildcards, so it is left alone.
     flattened_types = _flatten_arg_groups(args.type)
@@ -144,7 +145,6 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
                 recent        = args.recent,
                 environment   = environment,
                 clean         = args.delete,
-                dry_run       = args.dry_run,
                 reporter      = ConsoleExportDbReporter(
                     silent  = args.silent,
                     compact = args.compact,
@@ -158,49 +158,6 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
         return 0
 
     return run_schema_sections(schemas, run_one, first_started_at=handler_started_at)
-
-
-def _confirm_groups_move() -> bool:
-    """Prompt the user before any file is moved; default to no on EOF/empty."""
-    try:
-        answer = input("Proceed with these moves? [y/N] ").strip().lower()
-    except EOFError:
-        return False
-    return answer in {"y", "yes"}
-
-
-def _run_groups_move(
-    args: argparse.Namespace,
-    root: object,
-    config: Mapping[str, object],
-    schemas: list[str],
-) -> int:
-    """Reorganize already-exported object files into <object_type>/<group>/ folders.
-
-    Explicit prefixes (`-groups ABC DEF`) route only those prefixes; bare `-groups`
-    auto-detects groups per object type using ``groups_min``. The plan is previewed,
-    then gated behind a confirmation; ``-dry-run`` previews without prompting or
-    moving. Group folder names are always uppercased.
-    """
-    resolver = ObjectFileResolver.from_config(root=root, config=config)
-    prefixes = parse_group_prefixes(args.groups)
-    if prefixes:
-        rules = build_prefix_rules(prefixes)
-    else:
-        groups_min = int(config.get("groups_min", 5))
-        type_rules: dict[str, dict[str, str]] = {}
-        for object_type, names in resolver.flat_object_names(schemas).items():
-            detected = detect_groups_by_prefix(names, groups_min)
-            if detected:
-                type_rules[object_type.upper()] = detected
-        rules = GroupRules(type_rules=type_rules)
-    plan = plan_group_moves(resolver.iter_type_roots(schemas), rules)
-    return execute_group_move(
-        plan,
-        dry_run=args.dry_run,
-        confirm=_confirm_groups_move,
-        emit=print,
-    )
 
 
 def _run_export_apex(
@@ -386,7 +343,9 @@ def _run_export_apex(
                 if _app_in_selection(application.app_id, app_selection)
             ]
         applications_by_schema[schema] = applications
-        reporter.applications(schema, applications)
+        # Exports no application, so it lists none (`schema_level_only`).
+        if not schema_level_only(actions):
+            reporter.applications(schema, applications)
 
         # Missing-app owner routing runs once, inside the last originally
         # requested schema's segment, after its own export/before its timer.

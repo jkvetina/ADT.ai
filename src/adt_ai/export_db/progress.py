@@ -4,7 +4,7 @@ The default `export_db` screen prints a row per object, which is old-ADT parity
 output and stays the default. On a real schema that is hundreds of rows, so the
 `OBJECTS OVERVIEW:` table that opened the run leaves the terminal's scrollback
 long before the export ends and the run is readable only while it is short.
-`-compact` answers that the way `ut3` already does: the overview, then one line
+`-compact` answers that the way `ut` already does: the overview, then one line
 that moves.
 
 **The row is labelled with the object type being pulled right now** (`TABLES`,
@@ -44,7 +44,7 @@ here spells an indent of its own.
 unit `export_db` reports and the unit the header counts, so the dots advance
 when an object's DDL comes back and at no other moment.
 
-**The seconds field is what is left, not what has passed**, the shape `ut3` and
+**The seconds field is what is left, not what has passed**, the shape `ut` and
 `export_apex` both close on, and since `#377` it is seeded from what the last
 export of this schema cost (`export_db/timers.py`). Before the first object
 returns the history is the whole estimate; from the first return onward this
@@ -268,7 +268,7 @@ class ObjectProgressBar:
         the rate observed so far. Objects are uneven, so that projection is a
         poor sample early and the true answer late; weighting it by the completed
         fraction collapses to the right end at both ends with no special case.
-        This is `ut3/progress.py::_target` and it is deliberately the same
+        This is `ut/progress.py::_target` and it is deliberately the same
         arithmetic, one bar, one estimator (`#377`).
         """
         if self._done == 0 or not self._total:
