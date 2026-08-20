@@ -1,8 +1,8 @@
 ---
 created: 2026-06-10
-updated: 2026-08-19
+updated: 2026-08-20
 name: adt
-version: 1.8.6
+version: 1.8.11
 tags: [oracle, apex, deployment, cli, database]
 description: "ADT.ai usage guide for Oracle/APEX work: export database objects, APEX apps and data, validate APEXlang source, run utPLSQL test suites, run read-only SQL discovery, search Git history, query the dependency graph, recompile, and build/deploy patches. Use for any ADT.ai command help."
 ---
@@ -23,7 +23,7 @@ Run commands from the project root (the folder holding `config/` and the export 
 
 ## export_db: export database objects
 
-Each object becomes a clean `.sql` file under `<schema>/database/<object_type>/` (the default layout; the legacy `database/<schema>/<object_type>/` layout is also supported via `path_objects`). Filter by time (`-recent`), type (`-type`), and name (`-name`); these combine.
+Each object becomes a clean `.sql` file under `<schema>/database/<object_type>/` (the default layout; the legacy `database/<schema>/<object_type>/` layout is also supported via `path_objects`). The schema token carries its own case, so a project whose folders are uppercase sets `path_objects: '<SCHEMA>/database/<object_type>/'`. Filter by time (`-recent`), type (`-type`), and name (`-name`); these combine.
 
 **Always pass `-silent`** when driving exports from this skill, it suppresses the per-object name/progress flood while keeping the banner, connection block, overview, and timer. Drop `-silent` only when the user is interactively debugging a specific object.
 
@@ -57,7 +57,7 @@ Name + time filters combined:
 adtai export_db -silent -name APP_% -recent 7
 ```
 
-Jobs export separately, `JOB` objects have no reliable `last_ddl_time`, so **never** combine `-type JOB` with `-recent`:
+`JOB` and `MVIEW LOG` both ride a windowed run, by two different routes. An mview log is filtered on its log table's `LAST_DDL_TIME`, a real DDL timestamp that DML never moves. A job has no change timestamp anywhere, so a window compares a content signature against `config/internal/job_signatures.yaml` and exports only the jobs whose definition actually moved, which keeps `-recent` on a schema of thousands of jobs down to the handful that changed. **The signature narrows a window and never an explicit request:** `-type JOB` with no `-recent` exports every matching job, unfiltered, which is how to re-pull a whole job tree on demand:
 
 ```bash
 adtai export_db -silent -type JOB
@@ -78,6 +78,12 @@ Clean export (delete existing object files first, excluding `DATA`):
 
 ```bash
 adtai export_db -silent -recent 7 -delete
+```
+
+**`-groups` reorganizes files that are already exported and never connects or exports.** Bare `-groups` auto-detects a per-prefix layout and lists it; `-groups PREFIX ...` lists only the prefixes named. Nothing moves until `-force` is added, and `-force GROUP` lands every named prefix in one uppercased `<object_type>/GROUP/` folder instead of one folder per prefix, across every object type they reach. A name needs named prefixes, so `-groups -force GROUP` is refused at exit `2`:
+
+```bash
+adtai export_db -groups ICT_VPD ICT_ABC -force VPD
 ```
 
 When the user wants to *watch* a long export rather than have it stay quiet, `-compact` keeps the `OBJECTS OVERVIEW:` table and replaces the per-object rows with one dotted bar per schema, drawn under `EXPORTING <n> OBJECTS:` and advanced as each object's DDL comes back, with the time still to run on the right. The polarity is the reverse of `ut`, where the bar is the default and `-verbose` brings back the listing: here the listing is old-ADT parity output and stays the default. `-silent` outranks `-compact`, so pass one or the other:
@@ -380,7 +386,9 @@ Output order is the point, and **no wait is spent on a finished screen** (`#359`
 
 Reads commits, resolves dependencies, orders objects, and generates deployment scripts. Group order follows `patch_map` in `config.yaml`; within a group, objects are ordered from `config/internal/dependencies.db`, **both** halves of it: `USER_DEPENDENCIES` for PL/SQL and views, and `USER_CONSTRAINTS` for the table-to-table foreign keys Oracle does not record there, so a table always follows the table it references.
 
-The graph has to describe the objects it orders. `-create` **refreshes the stale schemas itself** and continues, opening the standard `CONNECTING TO SCHEMA <schema>, <environment>:` block as it goes; `-install` still **refuses to run** on a `config/internal/dependencies.db` that is missing, unreadable, or older than what it would order, because it orders every install target and so has no narrower scope to refresh. Either way a run that cannot produce a usable graph exits non-zero without writing, naming each stale schema, the stamp it was measured against (the same `last_refresh` rows `dependencies -age` prints), the object that outran it, and a scoped `adtai dependencies -refresh -schema <OWNER>`. Read-only previews are never gated, and a run with no objects to order needs no graph.
+The graph has to describe the objects it orders. `-create` **refreshes the stale schemas itself** and continues, opening the standard `CONNECTING TO SCHEMA <schema>, <environment>:` block and an `UPDATING DEPENDENCIES:` section over that schema's count rows as it goes; `-install` still **refuses to run** on a `config/internal/dependencies.db` that is missing, unreadable, or older than what it would order, because it orders every install target and so has no narrower scope to refresh. Either way a run that cannot produce a usable graph exits non-zero without writing, naming each stale schema, the stamp it was measured against (the same `last_refresh` rows `dependencies -age` prints), the object that outran it, and a scoped `adtai dependencies -refresh -schema <OWNER>`. Read-only previews are never gated, and a run with no objects to order needs no graph.
+
+A schema is one scope whatever case its name was spelled in, and a mirror written by an older ADT that holds both `ICT_OWNER` and `ict_owner` is folded to the newer of the two on the next `dependencies -refresh`. Until then the gate reads the newer stamp, so a repeat of the same `-create` cannot refuse a graph it just refreshed.
 
 Every `patch` run also levels the branch's commit store from git before it does anything, `-install` and `-archive` included, so the commit NUMBERS it writes into a patch folder always describe the repository you are looking at.
 
@@ -413,7 +421,14 @@ adtai patch -target UAT -create TASK_ID
 adtai patch -target UAT -deploy TASK_ID
 ```
 
-`-deploy` ships the patch as it stands on disk: it never creates a folder, rewrites a script, re-orders files, or advances a hash snapshot, so what deploys is what was reviewed. Pass `-rollout`, `-locked`, `-local`, `-head`, or `-nosnap` alongside it and they are ignored, named under an `IGNORING WITH -deploy:` header rather than silently dropped. `-create NAME -deploy` is the exception and is not refused work: it is how the name arrives, and an existing folder still deploys unchanged, so only a name with no folder behind it is built first and then deployed. A target that already recorded `SUCCESS` for this patch is skipped on redeploy; `-force` re-runs it anyway.
+Read the patch first and then append `-deploy` to the same line, which is the other half of that habit. `-deploy` takes its name from `-create` or from `-patch` when it carries none of its own, so neither review has to be retyped:
+
+```bash
+adtai patch -target UAT -patch TASK_ID
+adtai patch -target UAT -patch TASK_ID -deploy
+```
+
+`-deploy` ships the patch as it stands on disk: it never creates a folder, rewrites a script, re-orders files, or advances a hash snapshot, so what deploys is what was reviewed. Pass `-rollout`, `-locked`, `-local`, `-head`, or `-nosnap` alongside it and they are ignored, named under an `IGNORING WITH -deploy:` header rather than silently dropped. `-create NAME -deploy` is not refused work either: it is how the name arrives, and an existing folder still deploys unchanged, so only a name with no folder behind it is built first and then deployed. A name on `-deploy` itself always wins over a borrowed one, and `-create` never borrows, so `-patch NAME -create` is still an error. A target that already recorded `SUCCESS` for this patch is skipped on redeploy; `-force` re-runs it anyway.
 
 Cherry-pick commits and ignore some. `-commit` and `-ignore` both take a number or hash prefix, an open-ended `20+` (that commit and everything newer), and a closed `1-20` span:
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -90,6 +90,7 @@ class QueryGateway(Protocol):
         request: str,
         root: Path,
         timeout_seconds: float | None = None,
+        on_line: Callable[[str], None] | None = None,
     ) -> str:
         ...
 
@@ -136,9 +137,17 @@ class FakeGateway:
         request: str,
         root: Path,
         timeout_seconds: float | None = None,
+        on_line: Callable[[str], None] | None = None,
     ) -> str:
         self.sqlcl_requests.append((request, root))
         self.sqlcl_timeouts.append(timeout_seconds)
+        if on_line is not None:
+            # The real gateway hands a live reader each line as SQLcl prints it,
+            # so the fake replays its canned transcript the same way (ADT #434).
+            # A fake that only returned the finished text would let a
+            # non-streaming implementation pass every progress test.
+            for line in self.sqlcl_output.splitlines():
+                on_line(line)
         return self.sqlcl_output
 
 
@@ -246,6 +255,7 @@ class OracleGateway:
         request: str,
         root: Path,
         timeout_seconds: float | None = None,
+        on_line: Callable[[str], None] | None = None,
     ) -> str:
         root.mkdir(parents=True, exist_ok=True)
         body = f"{request.rstrip()}\nexit;\n"
@@ -254,9 +264,9 @@ class OracleGateway:
             if plan.name is None:
                 # Plain credentialed connect: nothing is registered, so a
                 # failure here is the caller's to see.
-                return self._run(plan, body, root, timeout_seconds)
+                return self._run(plan, body, root, timeout_seconds, on_line)
             try:
-                return self._run(plan, body, root, timeout_seconds)
+                return self._run(plan, body, root, timeout_seconds, on_line)
             except RuntimeError:
                 # Fresh fingerprint, but the local SQLcl store has never seen
                 # the name (the YAML travels with the project, the store does
@@ -268,7 +278,7 @@ class OracleGateway:
                 # ADT #232 the retry never ran for the failure it was written
                 # for.
                 plan = self._sqlcl_plan(force_register=True)
-        output = self._run(plan, body, root, timeout_seconds)
+        output = self._run(plan, body, root, timeout_seconds, on_line)
         if plan.registers is not None and plan.registers.sqlcl_source:
             record_sqlcl_registration(
                 plan.registers.sqlcl_source,
@@ -285,6 +295,7 @@ class OracleGateway:
         body: str,
         root: Path,
         timeout_seconds: float | None,
+        on_line: Callable[[str], None] | None = None,
     ) -> str:
         # `oci` is passed ONLY when it is true, so the ordinary call is
         # byte-for-byte the one every existing caller and test fake already
@@ -300,6 +311,11 @@ class OracleGateway:
             if self.connection.external_auth
             else {}
         )
+        # `on_line` rides the same rule for the same reason (ADT #434): only a
+        # deploy with a live console passes one, so every other call stays the
+        # byte-for-byte one it was, test fakes included.
+        if on_line is not None:
+            extra["on_line"] = on_line
         return run_sqlcl_script(
             f"{plan.script}{body}",
             root,

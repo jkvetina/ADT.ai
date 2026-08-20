@@ -69,16 +69,34 @@ def module_cell(module: str) -> str:
     return module or UNNAMED_MODULE
 
 
-def coverage_cell(package: PackageCoverage | None) -> str:
-    """One suite row's `COVERAGE` figure, and a blank where there is none.
+# What a `COVERAGE` cell reads for a suite that pairs to no package at all.
+#
+# The same character and the same argument as `UNNAMED_MODULE` above: a column
+# of short values has no room for a word, and `?` cannot be mistaken for a
+# figure the way `0`, `n/a` or `-` can. It says the run could not work out WHAT
+# to measure, which is a different report from a blank (the package was measured
+# and Oracle collected nothing) and from `0.0` (it was measured and nothing ran).
+#
+# Those three were one cell until `#436`. Jan read a blank beside eight green
+# tests as a defect and it was: `ict_int_ariba_pushback_ut` had no target,
+# `ut_match` having derived a name no package answers to, and the cell had no way
+# to say so.
+UNPAIRED_COVERAGE = "?"
 
-    **A blank means "no measurement", and there are two honest ways to get one.**
-    The suite's own name may pair to nothing (`ut_match` found no capture group,
-    or names a package the schema does not hold), or Oracle may have collected no
-    block for the package it does pair to, natively compiled code carries no
-    instrumentation at all. Neither is a zero: `0.0` is the answer for a package
-    Oracle *did* instrument and nothing entered, which `percent` returns as a
-    real figure.
+
+def coverage_cell(package: PackageCoverage | None, *, paired: bool = True) -> str:
+    """One suite row's `COVERAGE` figure, and what stands in where there is none.
+
+    **A blank means "measured nothing", and an unpaired suite is not that.** The
+    package may have been listed and Oracle may have collected no block for it,
+    natively compiled code carries no instrumentation at all, and that is a
+    blank. A suite whose name resolves to no package at all never got as far as
+    being measured, and it reads :data:`UNPAIRED_COVERAGE` instead. Neither is a
+    zero: `0.0` is the answer for a package Oracle *did* instrument and nothing
+    entered, which `percent` returns as a real figure.
+
+    ``paired`` is the caller's answer to "did this suite resolve to a package",
+    which the figure alone cannot carry: both states arrive here as ``None``.
 
     This is the one place the run's per-suite figure differs from a group's:
     `percent_cell` blanks only a `None` from `coverage_percent`, which reports an
@@ -92,6 +110,8 @@ def coverage_cell(package: PackageCoverage | None) -> str:
     the figures do not stack, and a column read by scanning down it for the low
     numbers is exactly the column that has to stack.
     """
+    if not paired:
+        return UNPAIRED_COVERAGE
     if package is None or package.percent is None:
         return ""
     return f"{package.percent:.1f}"

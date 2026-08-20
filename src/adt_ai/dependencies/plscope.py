@@ -48,14 +48,24 @@ def ensure_plscope(
     PL/Scope everywhere or none of the candidates lack it). ``progress``
     receives exceptional skip lines only, not one line per successful recompile.
 
-    ``bar`` is the crawling row all three of the waits below run under (ADT
-    #381). None means the caller has no console reporter, and then nothing is
-    drawn: a progress row is not required chrome. `#372` deleted the per-object
-    row on purpose and this does not restore it, there is one row, redrawn in
-    place, which is what that card said was missing.
+    ``bar`` is the crawling row the recompile loop runs under (ADT #381). None
+    means the caller has no console reporter, and then nothing is drawn: a
+    progress row is not required chrome. `#372` deleted the per-object row on
+    purpose and this does not restore it, there is one row, redrawn in place,
+    which is what that card said was missing.
+
+    **The row belongs to the loop, so a run that recompiles nothing draws no
+    row** (ADT #413). `#381` opened it before the session ``ALTER`` so the two
+    reads in front of the loop would be covered by it too, and the price was
+    ``RECOMPILING DUE TO WRONG PL/SCOPE ....... 100%  0:00:00`` on every warm
+    schema, which is most of them, and on every incremental refresh whose
+    changed objects hold no PL/SQL. Jan, 2026-08-19: *"dont print recompiling
+    line unless you are actually going to recompile something"*. Those two reads
+    are announced instead by the section the caller has already opened, which is
+    the console contract's own answer and the one it prefers over minting a new
+    label.
     """
     _progress = progress or (lambda _: None)
-    crawl = _Crawl(bar)
 
     # 1. Turn full PL/Scope on for this session so the recompiles below populate
     #    the identifier / statement dictionaries.
@@ -63,9 +73,7 @@ def ensure_plscope(
 
     # 2. Discover VALID PL/SQL objects whose stored PL/Scope settings are not
     #    already IDENTIFIERS:ALL + STATEMENTS:ALL (reuses the recompile catalog
-    #    read, no RecompileRunner, no second connection). This is a whole-schema
-    #    scan, and it runs behind the row opened above rather than behind the
-    #    section header, which cannot say that anything is still moving.
+    #    read, no RecompileRunner, no second connection).
     pending = RecompileDiscovery(gateway).objects_missing_plscope()
     if candidates is not None:
         candidate_keys = set(candidates)
@@ -74,8 +82,13 @@ def ensure_plscope(
             for database_object in pending
             if (database_object.object_type, database_object.object_name) in candidate_keys
         ]
+    if not pending:
+        return []
 
     # 3. Recompile each with scope=["ALL"] + REUSE SETTINGS on the same gateway.
+    #    The row opens here, in front of the first ``ALTER ... COMPILE``, so the
+    #    unbounded half of the work is the half it announces.
+    crawl = _Crawl(bar)
     recompiled: list[RecompileObject] = []
     total = len(pending)
     for index, database_object in enumerate(pending, start=1):
@@ -118,9 +131,10 @@ class _Crawl:
         self._started_at = time.monotonic()
         self._open = False
         self._done = False
-        # Opened before the first database call, so the session ALTER and the
-        # catalog scan behind it both block against an open line rather than a
-        # finished one (`#379`: a row is not an announcement once it closes).
+        # Opened before the first recompile, so the loop blocks against an open
+        # line rather than a finished one (`#379`: a row is not an announcement
+        # once it closes). Constructed only when something is pending, so the
+        # row cannot claim a recompile that never happens (`#413`).
         self._draw(0, 0)
 
     def advance(self, index: int, total: int) -> None:

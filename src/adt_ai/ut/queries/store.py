@@ -36,9 +36,33 @@ CREATE TABLE IF NOT EXISTS package_coverage (
 CREATE INDEX IF NOT EXISTS runs_by_schema ON runs (schema_name, run_id);
 """
 
-#: The newest run recorded for one schema.
-LATEST_RUN_QUERY = (
-    "SELECT run_id FROM runs WHERE schema_name = ? ORDER BY run_id DESC LIMIT 1"
+#: How a run says what it measured, added after the store shipped (`#436`).
+#:
+#: `-name` narrows a run to the suites it names, so a filtered run measures a
+#: handful of packages and a full one measures them all. Comparing the second
+#: against the first reports every package the filter excluded as having no
+#: previous figure, which is exactly what Jan's store did on 2026-08-20: four
+#: single-package runs sat between two 42-package ones. The selection keys the
+#: history, the same key `ut_timers.yaml` already stores its seconds under.
+RUN_COLUMNS_PRAGMA = "PRAGMA table_info(runs)"
+
+#: Nullable on purpose, and the NULL is load-bearing. A row written before this
+#: column existed cannot say what it measured, and :func:`run_history` declines
+#: to compare against one rather than guess: reading them all as full runs puts
+#: a single-package run straight back into the baseline position, which is the
+#: defect, and reading them all as filtered throws real history away.
+ADD_VARIANT_STATEMENT = "ALTER TABLE runs ADD COLUMN variant TEXT"
+
+#: Every run recorded for one schema and one selection, newest first.
+#:
+#: A list rather than the newest row alone, because the baseline is the newest
+#: run whose figures actually DIFFER from the current ones. Coverage moves only
+#: when a suite is deployed, so the run a reader is looking at is usually
+#: identical to the one before it, and "the previous run" made the table empty
+#: on every one of those (`#436`).
+RUNS_QUERY = (
+    "SELECT run_id, recorded_at FROM runs "
+    "WHERE schema_name = ? AND variant = ? ORDER BY run_id DESC"
 )
 
 #: What that run measured. Unmeasured packages are filtered in SQL, so no caller
@@ -50,7 +74,9 @@ RUN_PERCENTS_QUERY = (
 
 RUN_COUNT_QUERY = "SELECT COUNT(*) FROM runs WHERE schema_name = ?"
 
-INSERT_RUN_STATEMENT = "INSERT INTO runs (schema_name, recorded_at) VALUES (?, ?)"
+INSERT_RUN_STATEMENT = (
+    "INSERT INTO runs (schema_name, recorded_at, variant) VALUES (?, ?, ?)"
+)
 
 INSERT_PACKAGE_STATEMENT = (
     "INSERT INTO package_coverage "

@@ -6,10 +6,14 @@ public entry point stays re-exported from ``adt_ai.shared.db``.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
+import select
 import subprocess
 import tempfile
+import time
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from adt_ai.shared import text_files
@@ -179,6 +183,115 @@ def _scrub_secrets(text: str, secrets: set[str]) -> str:
     return text
 
 
+def _sqlcl_command(script_path: Path, oci: bool) -> list[str]:
+    """The argv SQLcl is launched with.
+
+    Its own function so a test can stand a different child in front of the
+    transport, which is the only way to prove the streaming half without a
+    database (ADT #434). Everything about the invocation stays here, so the two
+    transports below cannot drift on the flags they pass.
+    """
+    return ["sql", *(["-L", "-oci"] if oci else []), "-S", "/nolog", f"@{script_path}"]
+
+
+def _stream_on_pty(
+    command: Sequence[str],
+    root: Path,
+    environment: Mapping[str, str],
+    timeout_seconds: float | None,
+    on_line: Callable[[str], None],
+) -> tuple[str, int]:
+    """Run ``command`` with its output on a pty, handing over each finished line.
+
+    A pipe cannot serve a live reader, and that is measured rather than assumed:
+    `shared/sqlcl_session.py` established it on 2026-08-19 against SQLcl 26.2 --
+    "The JVM block-buffers stdout when it is not a terminal ... Measured: 60
+    seconds, not one byte." So `patch -deploy` was never withholding progress, it
+    had none to print, and moving a print statement could not have fixed it.
+
+    Three mechanics come straight from that module, for the same reasons it gives:
+    `TERM=dumb` plus the JLine property, or SQLcl writes a cursor-position query
+    at startup and blocks until something answers it; terminal echo off, or the
+    script comes back as its own output. The fourth is this function's own.
+    **`stdin` stays `DEVNULL` while only stdout and stderr take the pty**: a
+    failed CONNECT makes SQLcl fall back to prompting for a username, and on a
+    terminal that prompt has nothing to end it, which is the hang ADT #188 fixed
+    by pointing stdin at `DEVNULL` in the first place. `sqlcl_session` needs a
+    writable stdin because it drives statements; a script run does not.
+
+    Returns the transcript and the exit code, so the caller classifies a failure
+    exactly as it does on the pipe path.
+    """
+    # POSIX-only, imported here rather than at module scope: this module is
+    # imported by every command and only a live reader ever reaches the pty.
+    import pty
+    import termios
+
+    environment = dict(environment)
+    environment["TERM"] = "dumb"
+    environment["JAVA_TOOL_OPTIONS"] = (
+        environment.get("JAVA_TOOL_OPTIONS", "") + " -Dorg.jline.terminal.dumb=true"
+    ).strip()
+
+    master, slave = pty.openpty()
+    attributes = termios.tcgetattr(slave)
+    attributes[3] &= ~termios.ECHO
+    termios.tcsetattr(slave, termios.TCSANOW, attributes)
+    process = subprocess.Popen(
+        list(command),
+        cwd    = root,
+        stdin  = subprocess.DEVNULL,
+        stdout = slave,
+        stderr = slave,
+        env    = environment,
+    )
+    os.close(slave)
+
+    collected: list[str] = []
+    buffer = b""
+    deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
+
+    def emit(raw: bytes) -> None:
+        # A pty turns every `\n` into `\r\n`, so the marker has to come back off
+        # or the transcript stops matching what the pipe path returned and every
+        # parser reading it (`_deployment_succeeded`, the progress echoes) sees a
+        # different string.
+        line = raw.decode("utf-8", "replace").rstrip("\r")
+        collected.append(line)
+        on_line(line)
+
+    try:
+        while True:
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                process.kill()
+                process.wait()
+                raise SqlclTimeoutError(
+                    f"SQLcl did not finish within {timeout_seconds:g} seconds and was killed."
+                    + (f"\n{chr(10).join(collected).strip()}" if collected else "")
+                )
+            if not select.select([master], [], [], remaining if remaining else 1.0)[0]:
+                continue
+            try:
+                chunk = os.read(master, 65536)
+            except OSError:
+                # The child closed its end. Linux reports EIO here where macOS
+                # returns empty; both mean the same thing.
+                chunk = b""
+            if not chunk:
+                break
+            buffer += chunk
+            *complete, buffer = buffer.split(b"\n")
+            for raw in complete:
+                emit(raw)
+        if buffer.strip():
+            emit(buffer)
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(master)
+    return "\n".join(collected), process.wait()
+
+
 def run_sqlcl_script(
     script: str,
     root: Path,
@@ -187,12 +300,20 @@ def run_sqlcl_script(
     oci: bool = False,
     client_lib_dir: str | None = None,
     tns_admin: str | None = None,
+    on_line: Callable[[str], None] | None = None,
 ) -> str:
     """Run ``script`` through SQLcl and return its captured, scrubbed output.
 
     ``timeout_seconds`` bounds the child; ``None`` (the default) leaves it
     unbounded, which is what ``patch -deploy`` and ``diff`` need. Only the REST
     export passes a deadline today.
+
+    ``on_line`` is a live reader (ADT #434). Passing one moves the child onto a
+    pty so its output arrives line by line instead of in one block at exit; the
+    callback sees each line as it lands and the whole transcript still comes back
+    as the return value. **Without one nothing changes**: the `subprocess.run`
+    pipe below is the same call `diff`, `validate` and `export_apex -rest` have
+    always made, so this card cannot alter how they talk to SQLcl.
     """
     root.mkdir(parents=True, exist_ok=True)
     secrets = _connect_secrets(script)
@@ -209,44 +330,61 @@ def run_sqlcl_script(
     # The script may embed a cleartext connect credential; pin owner-only perms
     # even if the platform's tempfile defaults ever differ from mkstemp's 0600.
     os.chmod(script_path, 0o600)
+    command = _sqlcl_command(script_path, oci)
+    environment = _sqlcl_environment(oci, client_lib_dir, tns_admin)
     try:
-        # ``-S`` (silent) suppresses the banner and command echo so SQLcl does not
-        # print the connect line in the first place; the scrub below is the
-        # belt-and-braces backstop for the cases where it still does.
-        #
-        # ``stdin=DEVNULL`` is not cosmetic. A CONNECT that fails makes SQLcl
-        # fall back to prompting for a username, and without this the child
-        # inherits the caller's terminal, so it sat at a prompt that
-        # ``capture_output`` had already swallowed, waiting forever while
-        # ``export_apex -rest`` printed nothing but a crawling progress bar
-        # (ADT #188). At EOF the prompt fails immediately instead, and the
-        # ``WHENEVER SQLERROR EXIT FAILURE`` guard turns that into a real error.
-        try:
-            completed = subprocess.run(
-                ["sql", *(["-L", "-oci"] if oci else []), "-S", "/nolog", f"@{script_path}"],
-                cwd            = root,
-                check          = False,
-                capture_output = True,
-                text           = True,
-                stdin          = subprocess.DEVNULL,
-                env            = _sqlcl_environment(oci, client_lib_dir, tns_admin),
-                timeout        = timeout_seconds,
+        if on_line is not None:
+            # A live reader, so the child goes on a pty. Every line is scrubbed
+            # on the way out rather than at the end, because the callback prints
+            # to the user's terminal and a credential SQLcl echoed would be on
+            # screen long before the returned transcript was scrubbed.
+            raw_output, returncode = _stream_on_pty(
+                command,
+                root,
+                environment,
+                timeout_seconds,
+                lambda line: on_line(_scrub_secrets(line, secrets)),
             )
-        except subprocess.TimeoutExpired as expired:
-            # `subprocess.run` kills the child before re-raising, so nothing is
-            # left running. Whatever it managed to say first is the only clue
-            # about where it stalled, so it rides the error rather than being
-            # dropped with the process.
-            partial = _scrub_secrets(
-                _decode(expired.stdout) + _decode(expired.stderr), secrets
-            ).strip()
-            raise SqlclTimeoutError(
-                f"SQLcl did not finish within {timeout_seconds:g} seconds and was killed."
-                + (f"\n{partial}" if partial else "")
-            ) from expired
+        else:
+            # ``-S`` (silent) suppresses the banner and command echo so SQLcl does
+            # not print the connect line in the first place; the scrub below is
+            # the belt-and-braces backstop for the cases where it still does.
+            #
+            # ``stdin=DEVNULL`` is not cosmetic. A CONNECT that fails makes SQLcl
+            # fall back to prompting for a username, and without this the child
+            # inherits the caller's terminal, so it sat at a prompt that
+            # ``capture_output`` had already swallowed, waiting forever while
+            # ``export_apex -rest`` printed nothing but a crawling progress bar
+            # (ADT #188). At EOF the prompt fails immediately instead, and the
+            # ``WHENEVER SQLERROR EXIT FAILURE`` guard turns that into a real error.
+            try:
+                completed = subprocess.run(
+                    command,
+                    cwd            = root,
+                    check          = False,
+                    capture_output = True,
+                    text           = True,
+                    stdin          = subprocess.DEVNULL,
+                    env            = environment,
+                    timeout        = timeout_seconds,
+                )
+            except subprocess.TimeoutExpired as expired:
+                # `subprocess.run` kills the child before re-raising, so nothing
+                # is left running. Whatever it managed to say first is the only
+                # clue about where it stalled, so it rides the error rather than
+                # being dropped with the process.
+                partial = _scrub_secrets(
+                    _decode(expired.stdout) + _decode(expired.stderr), secrets
+                ).strip()
+                raise SqlclTimeoutError(
+                    f"SQLcl did not finish within {timeout_seconds:g} seconds and was killed."
+                    + (f"\n{partial}" if partial else "")
+                ) from expired
+            raw_output = (completed.stdout or "") + (completed.stderr or "")
+            returncode = completed.returncode
     finally:
         script_path.unlink(missing_ok=True)
-    output = _scrub_secrets((completed.stdout or "") + (completed.stderr or ""), secrets)
+    output = _scrub_secrets(raw_output, secrets)
     if _ran_without_a_session(output):
         # Reported in full, not as the one line a regex picked: the cause is
         # always some earlier line in this same transcript, and asking the user
@@ -254,12 +392,10 @@ def run_sqlcl_script(
         # The output is already secret-scrubbed above.
         raise SqlclNotConnectedError(
             "SQLcl ran the script without a connected session "
-            f"(exit code {completed.returncode}). Full SQLcl output:\n{output.strip()}"
+            f"(exit code {returncode}). Full SQLcl output:\n{output.strip()}"
         )
-    if completed.returncode != 0:
-        raise SqlclScriptError(
-            output.strip() or f"SQLcl failed with exit code {completed.returncode}"
-        )
+    if returncode != 0:
+        raise SqlclScriptError(output.strip() or f"SQLcl failed with exit code {returncode}")
     return output
 
 

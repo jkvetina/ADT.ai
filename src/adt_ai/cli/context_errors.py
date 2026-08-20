@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from adt_ai.cli.constants import DROPBOX_PATH_RE, print_adt_header
 from adt_ai.shared.config import InvalidConfigValueError
@@ -61,6 +62,23 @@ def _is_database_connection_error(error: Exception) -> bool:
 
 def _display(value: object) -> str:
     return DROPBOX_PATH_RE.sub("Dropbox/", str(value))
+
+def _project_relative(path: Path, root: Path) -> str:
+    """A path as the reader thinks of it: relative to the project root (ADT #415).
+
+    `_display` above only shortens a Dropbox prefix, which leaves a path that is
+    neither absolute nor relative to anything, and long enough to wrap. Every
+    caller already knows the root the run was given, so the honest rendering is
+    the part below it.
+
+    An unrelated path falls back to `_display` rather than raising: this runs at
+    a print site, and a patch that is already written on disk must not die on the
+    line that says where it landed.
+    """
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return _display(path)
 
 def _print_database_error(error: Exception) -> None:
     # A failing query attaches its SQL to the exception (OracleGateway). When the

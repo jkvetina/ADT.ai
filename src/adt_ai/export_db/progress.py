@@ -61,7 +61,6 @@ import time
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from adt_ai.export_db.grants import GRANT_OBJECT_TYPE
 from adt_ai.shared.progress import DottedProgressBar, progress_dot_capacity
 
 # What the row reads before the first object type is known and after the last one
@@ -120,31 +119,18 @@ def widest_object_type(objects: Iterable[Any]) -> str:
     nine characters while `TYPE BODIES` is longer than `MVIEW LOGS`, so the
     singular answer depends on which one discovery happened to list first.
 
-    It measures the dictionary listing, so the GRANT artifacts are not in it:
-    they are not dictionary objects. `start_export` widens the label itself when
-    that row will be drawn (`#382`).
+    It measures the dictionary listing, and the GRANT artifacts are not in it
+    because they are not dictionary objects. That used to leave a gap: while the
+    four privilege reads ran under this bar they relabelled the row `GRANTS`, so
+    the track had to be widened for a label no listing could report (`#382`).
+    Those reads happen under the overview table since `#437`, so this bar never
+    names the type and the dictionary listing is the whole measurement again.
     """
     return max(
         (object_type_label(item.object_type) for item in objects),
         key     = len,
         default = "",
     )
-
-
-def widest_row_label(widest_object: str, grants: bool = False) -> str:
-    """The label the dot track is sized from, `GRANTS` included when it will run.
-
-    `GRANT` has no `USER_OBJECTS` row, so it is not in the listing
-    :func:`widest_object_type` measures, and a track sized without it would
-    shift its dots the moment the grant reads relabel the row (`#382`). It is
-    compared as the plural the row prints, for the same reason the dictionary
-    types are (`#383`).
-
-    Here rather than in `render.py`, which is at its 20 KB context budget.
-    """
-    if not grants:
-        return widest_object
-    return max(widest_object, object_type_label(GRANT_OBJECT_TYPE), key=len)
 
 
 class ObjectProgressBar:

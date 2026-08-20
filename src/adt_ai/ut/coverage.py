@@ -18,9 +18,26 @@ the schema would fetch rows nothing can render.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
+
 from adt_ai.shared.db import QueryGateway
 from adt_ai.ut import queries
 from adt_ai.ut.inventory import CoverageReport, PackageCoverage, SuitePackage
+
+
+@dataclass(frozen=True)
+class CoverageOutcome:
+    """The report, and the suites with their targets as finally resolved.
+
+    Two values because ``ut_match``'s answer is only a guess about a name until
+    the schema's own package list is in hand, and that list arrives here
+    (`#436`). The suites travel back so the row that renders a suite's
+    `COVERAGE` cell looks the figure up under the same name the report is keyed
+    by.
+    """
+
+    report   : CoverageReport
+    packages : tuple[SuitePackage, ...]
 
 
 def build_coverage_report(
@@ -29,7 +46,7 @@ def build_coverage_report(
     coverage_run_id: str,
     packages: tuple[SuitePackage, ...],
     naming_pattern: str,
-) -> CoverageReport:
+) -> CoverageOutcome:
     """What the run measured about the packages its suites test.
 
     ``owner`` is the schema under test, never ``ut_owner``. Coverage measures the
@@ -44,10 +61,16 @@ def build_coverage_report(
     executed, so a coverage-first build would silently drop a target no test
     reached, and a target that was supposed to be reached and was not is exactly
     what a `0.0` in the column has to be able to say.
+
+    **The listing is also what settles whether a pairing is real** (`#436`). One
+    regular expression cannot know which of a schema's names exist, so
+    ``ut_match`` yields a name that may be no package at all, and a suite in that
+    state used to contribute no row and print a cell no reader could tell from an
+    unmeasured one. The derived name is resolved against the schema's own
+    packages before anything is listed; see :func:`resolve_targets`.
     """
-    targets = _targets(packages)
-    if not targets:
-        return CoverageReport()
+    if not _targets(packages):
+        return CoverageOutcome(CoverageReport(), packages)
 
     measured = {
         str(row.get("PACKAGE_NAME") or "").upper(): row
@@ -56,8 +79,6 @@ def build_coverage_report(
             {"coverage_run_id": coverage_run_id, "owner": owner},
         )
     }
-
-    listed = []
     # The query excludes the test packages by the same `ut_pattern` that selects
     # them, a suite whose `ut_match` pairs it to another suite would otherwise
     # report the coverage of test code, and it does so in SQL, because a
@@ -66,10 +87,20 @@ def build_coverage_report(
     # IN-list: the row count is a schema's packages, not its rows, and a bind
     # list built per run cannot be a stored constant the way every other
     # statement in `queries/` is.
-    for row in gateway.fetch_all(
-        queries.SCHEMA_PACKAGES_QUERY,
-        {"owner": owner, "ut_pattern": naming_pattern},
-    ):
+    schema_rows = list(
+        gateway.fetch_all(
+            queries.SCHEMA_PACKAGES_QUERY,
+            {"owner": owner, "ut_pattern": naming_pattern},
+        )
+    )
+    packages = resolve_targets(
+        packages,
+        {str(row.get("OBJECT_NAME") or "").upper() for row in schema_rows},
+    )
+    targets = _targets(packages)
+
+    listed = []
+    for row in schema_rows:
         name = str(row.get("OBJECT_NAME") or "")
         if name.upper() not in targets:
             continue
@@ -82,7 +113,54 @@ def build_coverage_report(
                 blocks_covered = int(found.get("BLOCKS_COVERED") or 0),
             )
         )
-    return CoverageReport(packages=tuple(listed))
+    return CoverageOutcome(CoverageReport(packages=tuple(listed)), packages)
+
+
+def resolve_targets(
+    packages: tuple[SuitePackage, ...],
+    known: set[str],
+) -> tuple[SuitePackage, ...]:
+    """Each suite's `ut_match` name, resolved against the packages that exist.
+
+    **A suite is often named for what it tests ABOUT a package, not for the
+    package.** `ict_int_ariba_pushback_ut` derives `ICT_INT_ARIBA_PUSHBACK`,
+    which is no package in `ICT_OWNER`; the code it exercises is
+    `ict_int_ariba`. Four more suites in that one schema are the same shape, and
+    every one of them ran green while its blocks were collected by the profiler
+    and dropped by the report (`#436`). So a name that resolves to nothing falls
+    back to the longest package it is a prefix of, which is a name the schema
+    itself supplied rather than a guess.
+
+    **Longest first, and it stops on the first hit.** A suite whose derived name
+    IS a package keeps it, so nothing that already paired can be re-pointed, and
+    a schema holding both `ICT_INT_ARIBA` and `ICT_INT` credits an ARIBA suite to
+    ARIBA rather than to whichever name happens to be shorter.
+
+    **Nothing resolves, nothing is invented.** `ict_int_fusion_ariba_ut` walks
+    `ICT_INT_FUSION_ARIBA`, `ICT_INT_FUSION`, `ICT_INT` and finds none of them;
+    its target stays empty and `cells.coverage_cell` marks the row unpaired.
+    Attaching it to some near name would put a figure another suite earned beside
+    a suite that did not earn it, which is worse than saying nothing.
+    """
+    return tuple(
+        replace(package, target=_resolve(package.target, known))
+        if package.target
+        else package
+        for package in packages
+    )
+
+
+def _resolve(target: str, known: set[str]) -> str:
+    """The derived name, or the longest existing package it prefixes, or blank."""
+    candidate = target.upper()
+    while candidate:
+        if candidate in known:
+            return candidate
+        head, separator, _ = candidate.rpartition("_")
+        if not separator:
+            return ""
+        candidate = head
+    return ""
 
 
 def _targets(packages: tuple[SuitePackage, ...]) -> set[str]:

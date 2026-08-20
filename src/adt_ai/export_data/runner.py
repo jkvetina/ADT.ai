@@ -20,6 +20,7 @@ from adt_ai.shared.config import (
     reject_unresolved_placeholders,
 )
 from adt_ai.shared.db import QueryGateway
+from adt_ai.shared.path_template import object_type_token, render_path_template
 from adt_ai.shared.row_values import row_value
 
 _SIDE_CAR_DATA_TYPES = {
@@ -289,9 +290,10 @@ def _data_path(root: Path, config: dict[str, Any], table_name: str, schema: str 
 
 
 def _data_folder(root: Path, config: dict[str, Any], schema: str = "") -> Path:
-    # Mirrors export_db.files.ObjectFileResolver._folder_for so data lands beside
-    # its database objects. Placeholders in ``path_objects``:
-    #   <schema>       schema / owner name (lowercased)
+    # Data lands beside its database objects, so both go through the one shared
+    # renderer rather than two copies of the same substitution. Placeholders in
+    # ``path_objects``:
+    #   <schema>       schema / owner name, cased the way the token is spelled
     #   <object_type>  the DATA layout folder (e.g. data/); auto-appended if absent
     layout = (config.get("object_types") or {}).get("DATA", ["data", ".sql"])
     folder = str(layout[0]) if isinstance(layout, list | tuple) and layout else "data"
@@ -299,9 +301,8 @@ def _data_folder(root: Path, config: dict[str, Any], schema: str = "") -> Path:
     template = reject_unresolved_placeholders(
         str(config.get("path_objects") or DEFAULT_PATH_OBJECTS)
     )
-    rendered = template.replace("<schema>", (schema or "").lower())
-    if "<object_type>" in rendered:
-        rendered = rendered.replace("<object_type>", folder)
+    rendered = render_path_template(template, schema=schema or "", object_type=folder)
+    if object_type_token(template):
         return root / Path(rendered.strip("/"))
     return root / Path(rendered.strip("/")) / folder
 

@@ -4,7 +4,8 @@ Reading a patch FOLDER back off disk is the other half and lives in
 `patch_folders.py` since ADT #309 split this file at the 20 KB context guard.
 Everything there is re-exported below, so an importer that reached for
 `PatchFolder`, `patch_id`, `discover_patch_folders` or `parse_patch_folder` here
-still finds them.
+still finds them. ADT #429 split the same guard again and moved deciding what a
+changed path IS into `commit_file_classes.py`, re-exported for the same reason.
 """
 
 from __future__ import annotations
@@ -17,6 +18,12 @@ from adt_ai.shared.commit_cache import (
     DEFAULT_COMMITS_TEMPLATE,
     current_branch,
     open_store,
+)
+from adt_ai.shared.commit_file_classes import (  # noqa: F401  (re-exported)
+    classify_file,
+)
+from adt_ai.shared.commit_file_classes import (  # noqa: F401  (re-exported)
+    classify_file as _classify_file,
 )
 from adt_ai.shared.commit_store import StoredCommit
 from adt_ai.shared.git_files import ChangedFile
@@ -34,6 +41,7 @@ from adt_ai.shared.patch_folders import (  # noqa: F401  (re-exported for existi
     patch_folder_match_targets,
     patch_id,
 )
+from adt_ai.shared.sql_like import matches_sql_like
 
 FIELD_SEPARATOR = "\x1f"
 
@@ -94,6 +102,12 @@ class PatchRequest:
     ignore_commits: list[str] | None = None
     files_only: bool = False
     include_full_exports: bool = False
+    # The APEX export heads to recognise, most specific first, as
+    # `patch/layout.apex_head_variants` derives them from `path_apex`. Empty is
+    # the classic reading, `apex/` at the top or one level under the schema,
+    # which is what every caller but `patch` still passes: the layout keys are
+    # `patch`'s to resolve and this module stays free of its imports (ADT #429).
+    apex_heads: tuple[tuple[str, ...], ...] = ()
     # `patch_commit_pattern`, a regex a commit SUMMARY must match to be
     # selected at all (old ADT config.yaml:113, patch.py:1012-1017). Empty or
     # `None` is the shipped default and filters nothing.
@@ -266,7 +280,11 @@ def _as_record(stored: StoredCommit, request: PatchRequest) -> CommitRecord:
         files    = {
             path: file_hash
             for path, file_hash in stored.files.items()
-            if _classify_file(path, include_full_exports=request.include_full_exports) is not None
+            if _classify_file(
+                path,
+                include_full_exports = request.include_full_exports,
+                apex_heads           = request.apex_heads,
+            ) is not None
         },
         deleted  = stored.deleted,
         patch    = stored.patch,
@@ -307,11 +325,14 @@ def _filter_records(records: list[CommitRecord], request: PatchRequest) -> list[
             if any(author in record.author.lower() for author in authors)
         ]
     if request.search_terms:
-        terms = [value.lower() for value in request.search_terms]
+        # No case folding here since ADT #423: `matches_sql_like` folds both
+        # sides itself, and lowering a term in advance would leave two places
+        # claiming to own case, which is how the pattern language forked in the
+        # first place.
         filtered = [
             record
             for record in filtered
-            if all(_record_contains(record, term) for term in terms)
+            if all(_record_contains(record, term) for term in request.search_terms)
         ]
     elif request.patch_code and not request.commit_refs and not request.hash_mode:
         # With no explicit `-search`, the patch code IS the search term, old ADT
@@ -324,8 +345,16 @@ def _filter_records(records: list[CommitRecord], request: PatchRequest) -> list[
         # code was dropped silently, and `-patch <name> -create -commit <n>` is
         # the documented IVORY build sequence, where that would build an empty
         # patch and still report success.
-        needle = request.patch_code.lower()
-        filtered = [record for record in filtered if needle in record.summary.lower()]
+        #
+        # Matched through `_like_pattern` for the same reason `-search` is (ADT
+        # #423): `docs/patch.md` says the patch code IS the search term, and two
+        # spellings of one concept is how the two drift apart. The summary-only
+        # scope is the one thing that stays narrower here, which is old ADT's
+        # own split.
+        pattern = _like_pattern(request.patch_code)
+        filtered = [
+            record for record in filtered if matches_sql_like(record.summary, pattern)
+        ]
     if request.commit_pattern and not request.search_terms and not request.commit_refs:
         # `patch_commit_pattern`, a project whose commits all carry a ticket
         # reference declares the shape once and gets every stray `wip` commit
@@ -388,38 +417,50 @@ def _matches_any_ref(record: CommitRecord, refs: set[str]) -> bool:
     )
 
 
+def _like_pattern(term: str) -> str:
+    """One `-search` term as a SQL LIKE pattern (ADT #423).
+
+    Jan, 2026-08-20: *"how can I search for 'any' commits when you treat '%'
+    literarly and not as SQL LIKE?"*, and on chips the same day: *"Same way as we
+    are using SQL LIKE filters elsewhere, it should be reusable code!"* So the
+    matching is `shared/sql_like.matches_sql_like`, already carrying `ut`,
+    `export_db` and `patch_folders`; this commit search was the one filter that
+    bypassed it, which is why `%` reached the haystack as a literal character and
+    `-search %` returned the single commit whose subject spells `%rollback`.
+
+    A parity regression rather than a feature: old ADT short-circuited the whole
+    match on `what_words == ['%']` (patch.py:1060-1062).
+
+    **The wrapping is the whole compatibility story.** `matches_sql_like` is
+    anchored, and a `-search` term has always been a substring test, so passing a
+    bare term straight through would turn every existing search into an equality
+    test and match nothing. A term carrying no `%` of its own is searched as
+    `%<term>%`, which is how a contains filter is written in SQL; a term that
+    brings its own `%` is its own pattern, so bare `%` matches everything and
+    `%TEST%` still means contains.
+
+    `_` is left to the helper's own single-character semantics rather than
+    special-cased. Forking the pattern language per call site is exactly the
+    drift this card exists to end, and the widening is small: `fn_1` still
+    matches `fn_1.sql`, it merely also matches `fnX1`.
+    """
+    return term if "%" in term else f"%{term}%"
+
+
 def _record_contains(record: CommitRecord, term: str) -> bool:
-    haystack = "\n".join(
-        [
+    """Does `term` match this commit's subject, author, or any of its paths?
+
+    Per FIELD rather than over a joined haystack: the fields used to be glued
+    with newlines and substring-searched, which no anchored pattern can stand in
+    for, and joining would let one pattern straddle a subject and a file path,
+    a match a substring test could never have produced.
+    """
+    return any(
+        matches_sql_like(field, _like_pattern(term))
+        for field in (
             record.summary,
             record.author,
             *record.usable_files.keys(),
             *record.deleted_files,
-        ]
-    ).lower()
-    return term in haystack
-
-
-def _classify_file(path: str, *, include_full_exports: bool) -> str | None:
-    parts = Path(path).parts
-    if not parts:
-        return "file"
-    # `database`/`apex` lead in the legacy layout and follow the schema in the
-    # default layout (<schema>/database/..., <schema>/apex/...). Recognise both.
-    if len(parts) >= 4 and parts[0].lower() == "database":
-        return f"database:{parts[1]}:{parts[2]}"
-    if len(parts) >= 4 and parts[1].lower() == "database":
-        return f"database:{parts[0]}:{parts[2]}"
-    apex_at = (
-        0 if parts[0].lower() == "apex"
-        else 1 if len(parts) >= 2 and parts[1].lower() == "apex"
-        else None
+        )
     )
-    if apex_at is not None and len(parts) >= apex_at + 3:
-        app = parts[apex_at + 1]
-        if len(parts) == apex_at + 3 and re.fullmatch(r"f\d+\.sql", parts[apex_at + 2].lower()):
-            return f"apex:{app}:full" if include_full_exports else None
-        return f"apex:{app}:component"
-    if len(parts) >= 2 and parts[0].lower() == "patch":
-        return f"patch:{parts[1]}"
-    return "file"

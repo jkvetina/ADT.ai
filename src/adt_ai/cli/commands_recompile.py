@@ -26,6 +26,7 @@ from adt_ai.cli.constants import (
 from adt_ai.cli.context import (
     DebugQueryGateway,
     StartupContext,
+    _config_search_paths,
     _flatten_arg_groups,
     _flatten_compile_setting_groups,
     _is_database_connection_error,
@@ -51,6 +52,7 @@ from adt_ai.recompile.render import (
     print_synonym_tables,
     print_trailing_updated_objects,
 )
+from adt_ai.shared.config import ConfigError, ConfigLoader
 from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.object_types import normalize_object_type_patterns
 
@@ -352,6 +354,22 @@ def _run_discovery(
     return 0
 
 
+def _doctor_config(args: argparse.Namespace) -> dict[str, object] | None:
+    """The project config, or None when this setup does not have one yet.
+
+    Doctor is the command a broken setup runs first, so a config it cannot read
+    is a normal outcome and never an error: the checks that need one report
+    nothing, and the rest of the screen is unaffected.
+    """
+    try:
+        root = Path(args.root).expanduser().resolve()
+        return ConfigLoader(
+            _config_search_paths(getattr(args, "config_dir", None), root, _repo_root())
+        ).load().data
+    except (ConfigError, OSError):
+        return None
+
+
 def _run_doctor(args: argparse.Namespace) -> int:
     print_module_banner("DOCTOR")
     selected_actions = [
@@ -422,6 +440,7 @@ def _run_doctor(args: argparse.Namespace) -> int:
             init  =args.init,
             root  =Path(args.root),
             force =args.force,
+            config=_doctor_config(args),
         )
     )
     if not printed_lines:

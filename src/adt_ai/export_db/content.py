@@ -139,16 +139,22 @@ def _append_job_arguments(
     argument_lines = _render_job_arguments(rows)
     if not argument_lines:
         return content
-    marker = "    --\n    DBMS_SCHEDULER.SET_ATTRIBUTE"
-    replacement = f"    --\n{argument_lines}\n    --\n    DBMS_SCHEDULER.SET_ATTRIBUTE"
+    # Anchored on the END of the CREATE_JOB call rather than on whatever follows it.
+    # It used to anchor on `DBMS_SCHEDULER.SET_ATTRIBUTE`, which only ever worked
+    # because the template emitted a hardcoded JOB_PRIORITY row for every job; ADT
+    # #414 removed that invention (PROCOBJ emits no priority attribute at a default
+    # priority), and with it the anchor. The close of CREATE_JOB is always there,
+    # and it is also the right place: arguments have to be set before the ENABLE.
+    marker = "    );\n    --\n"
+    replacement = f"    );\n    --\n{argument_lines}\n    --\n"
     if marker not in content:
         # The job HAS arguments but the DDL didn't render the expected
-        # SET_ATTRIBUTE block to anchor them, dropping them silently would
+        # CREATE_JOB block to anchor them, dropping them silently would
         # export a job that deploys without its arguments.
         label = f" for job {object_name}" if object_name else ""
         print(
             f"Warning: job arguments{label} not exported: "
-            "no DBMS_SCHEDULER.SET_ATTRIBUTE block found in the DDL",
+            "no DBMS_SCHEDULER.CREATE_JOB block found in the DDL",
             file=sys.stderr,
         )
         return content

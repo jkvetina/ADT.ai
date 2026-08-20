@@ -366,8 +366,8 @@ def add_database_parsers(subparsers) -> None:
         "-verbose",
         action = "store_true",
         help   = "print UNIT TESTS SUITES: and TEST RESULTS: with a row per test "
-                 "instead of the RUNNING TESTS: progress bar, and list the suites "
-                 "whose coverage moved since the previous run; -silent outranks it",
+                 "instead of the RUNNING TESTS: bar, and list the suites whose "
+                 "coverage moved since the last differing run; -silent outranks it",
     )
     ut.add_argument(
         "--debug",

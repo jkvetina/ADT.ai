@@ -10,7 +10,7 @@ Operating cheat-sheet for the ADT.ai command line, export Oracle database object
 
 ## What it is and why you need it
 
-ADT.ai is a Python CLI for Oracle/APEX deployment work. This skill gives an agent the common, correct invocations for every implemented command so it can run real export/inspect/search/deploy workflows without re-reading the full manual each time. It encodes the safety rules that matter in practice: drive `export_db` with `-silent`, never combine `-type JOB` with `-recent`, and reach for read-only `discovery` before any ad-hoc SQL.
+ADT.ai is a Python CLI for Oracle/APEX deployment work. This skill gives an agent the common, correct invocations for every implemented command so it can run real export/inspect/search/deploy workflows without re-reading the full manual each time. It encodes the safety rules that matter in practice: drive `export_db` with `-silent`, run `patch` against a real commit rather than a guessed one, and reach for read-only `discovery` before any ad-hoc SQL.
 
 ## How it works
 
