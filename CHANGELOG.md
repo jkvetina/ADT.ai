@@ -2,6 +2,27 @@
 
 All notable changes to the public ADT.ai release are recorded here, newest first.
 
+## 0.9.2 - 2026-08-20
+
+- **A windowed `export_db` exports every object type again, `JOB` and `MVIEW LOG` included.** Neither carries a change timestamp, so a run with `-recent` used to drop both in silence. Two scheduler jobs live on a database had never reached its repo.
+- **A windowed run exports the scheduler jobs that changed, not all of them.** A content signature computed in the database tells an edit from a run, so `-recent` no longer re-exports two thousand jobs. An explicit `-type JOB` still exports the whole set.
+- **An exported job file no longer switches on a job the database has switched off.** The template hardcoded an enable call and a priority attribute, so deploying it would have overridden two jobs disabled on purpose. The file now carries what the dictionary actually has.
+- **`export_db -recent` dates an index by when it changed, not by when its statistics were gathered.** A nightly stats job moved indexes into the window that had no DDL at all, and an index never analysed dropped out of every windowed run.
+- **`export_db -groups` on a folder two object types share no longer plans the same file twice.** `packages/` holds specs and bodies, and the shorter extension is a suffix of the longer one, so a run could die renaming a file it had already moved.
+- **`export_db -groups A B -force NAME` lands every named prefix in one folder.** The name overrides the group for every prefix the run listed, across every object type they reach. Bare `-force` is unchanged, and a name beside auto-detecting `-groups` is refused.
+- **`export_db` announces its `GRANT` exports only on the runs where a grant moved.** The row was appended from what the config selected rather than from anything that changed, so an export of an untouched schema printed a table holding one line. Every file is still written.
+- **`<SCHEMA>` in a path template writes the schema folder uppercase.** `path_objects` and `path_apex` carry their own case, so `export_db`, `export_data` and `export_apex` all follow what the template spells. A repo migrated from old ADT keeps `APP_OWNER/`.
+- **An unresolved `<token>` in a path template is refused instead of exported as a folder.** A typo used to build a real directory named after it and collapse every schema into one tree, two silent failures from one character.
+- **`doctor` reports a folder tree whose case disagrees with the template, and never renames it.** The read-only `ACTIONS:` section gains a row per mismatch with the `git mv` that fixes it. A repo-wide move is reviewed and committed by a person.
+- **`ut` reports coverage for a suite whose name does not match a package.** A derived name that is no package now falls back to the longest package it prefixes, so one measured module moved from 40.7 % to 45.7 %. A name resolving to nothing reads `?`.
+- **`COVERAGE CHANGED SINCE LAST RUN:` compares against the last run that was different.** Running `ut` twice over unchanged code recorded identical figures, so the table a reader opens after a deploy was always empty. A `-name` run now keeps its own history.
+- **A progress row whose label is wider than the grid is trimmed to it.** The middle of the label goes rather than its tail, the tail being what tells two rows apart. Every module that streams a labelled row inherits the fix.
+- **`dependencies` stores one schema under one spelling, and heals a mirror holding two.** A schema named `ict_owner` in a connection file and `ICT_OWNER` on the command line filled the mirror twice, and the freshness gate then read whichever copy sorted last.
+- **`dependencies -refresh` prints `RECOMPILING DUE TO WRONG PL/SCOPE` only when something is being recompiled.** The row used to open before the catalog scan, so a warm schema and every incremental refresh drew a bar reading `100%` over no work at all.
+- **Every key in the shipped `config.yaml` explains itself, briefly.** All 67 were documented, five had grown past 400 characters, and three named a folder without saying what changing it moves. A contract test now measures both ends.
+- **Two keys the code has always read now ship in the config file.** `rest_timeout_seconds` and the `audit:` block were documented and absent, so the only way to find either was to read the source. `audit:` ships commented out, its log table being a project's own.
+- **Two shipped defaults move: the APEX page stamp and four more audit column names.** `apex_timestamps` goes to `'20260101000000'`, and `ignored_columns` gains `CREATED_ON`, `CREATED_DATE`, `UPDATED_ON` and `UPDATED_DATE`, so four more columns drop out of every generated CSV and MERGE.
+
 ## 0.9.1 - 2026-08-19
 
 - **Breaking: `ut3` is now `ut`.** The command was named after utPLSQL's own version number. There is no compatibility alias, so a pipeline calling `ut3` has to be edited. The six `ut_*` config keys are unchanged, and the run history is taken over under the new name.

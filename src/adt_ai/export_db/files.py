@@ -4,10 +4,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from adt_ai.export_db.groups import GroupRules, group_for, object_name_from_file
+from adt_ai.export_db.groups import GroupRules, group_for, object_name_from_file, owns_file
 from adt_ai.export_db.inventory import DatabaseObject
 from adt_ai.shared import text_files
 from adt_ai.shared.config import DEFAULT_PATH_OBJECTS, reject_unresolved_placeholders
+from adt_ai.shared.path_template import (
+    object_type_token,
+    render_path_template,
+    schema_token,
+)
 
 
 class ObjectFileError(Exception):
@@ -44,11 +49,11 @@ class ObjectFileResolver:
     ) -> None:
         self.root = Path(root)
         self.group_rules = group_rules
-        # path_objects is a path template; it may contain <schema> and
-        # <object_type> placeholders. When <object_type> is omitted the
-        # per-type folder is appended automatically (legacy 'database/' layout).
-        # An old-ADT '{$NAME}' token is never substituted here, so it is rejected
-        # at construction, before the export can write a folder named after it.
+        # path_objects is a path template; it may contain <schema> (or <SCHEMA>,
+        # which renders the schema uppercase) and <object_type>. When
+        # <object_type> is omitted the per-type folder is appended automatically
+        # (legacy 'database/' layout). A token nothing substitutes is rejected at
+        # construction, before the export can write a folder named after it.
         self.path_objects = reject_unresolved_placeholders(str(path_objects))
         self.object_types = {key.upper(): value for key, value in object_types.items()}
         self._existing_case_paths_by_folder: dict[Path, dict[str, Path]] = {}
@@ -251,15 +256,20 @@ class ObjectFileResolver:
                         continue
                     if file_path.name.endswith(f".fix{layout.extension}"):
                         continue
+                    if not self._is_best_layout_for_file(object_type, layout, file_path):
+                        continue
                     names_by_type.setdefault(object_type, []).append(
                         object_name_from_file(file_path, layout.extension)
                     )
         return names_by_type
 
     def _folder_for(self, database_object: DatabaseObject, layout: ObjectTypeLayout) -> Path:
-        rendered = self.path_objects.replace("<schema>", database_object.schema.lower())
-        if "<object_type>" in rendered:
-            rendered = rendered.replace("<object_type>", layout.folder)
+        rendered = render_path_template(
+            self.path_objects,
+            schema      = database_object.schema,
+            object_type = layout.folder,
+        )
+        if object_type_token(self.path_objects):
             return self.root / Path(rendered.strip("/"))
         return self.root / Path(rendered.strip("/")) / layout.folder
 
@@ -269,7 +279,7 @@ class ObjectFileResolver:
         layout: ObjectTypeLayout,
         schemas: list[str],
     ) -> list[Path]:
-        if "<schema>" not in self.path_objects:
+        if schema_token(self.path_objects) is None:
             return [self._folder_for(DatabaseObject("", object_type, "scan"), layout)]
         return [
             self._folder_for(DatabaseObject(schema, object_type, "scan"), layout)
@@ -282,16 +292,21 @@ class ObjectFileResolver:
         layout: ObjectTypeLayout,
         file_path: Path,
     ) -> bool:
-        if not file_path.name.endswith(layout.extension):
-            return False
-        for candidate_type, candidate_layout in self.object_types.items():
-            if candidate_type == object_type or candidate_layout.folder != layout.folder:
-                continue
-            if len(candidate_layout.extension) <= len(layout.extension):
-                continue
-            if file_path.name.endswith(candidate_layout.extension):
-                return False
-        return True
+        """Does this file belong to `object_type`, or to another type on that folder?
+
+        The rule itself lives in `groups.owns_file` because the `-groups` move action
+        needs the same answer and cannot import this module (`files` imports `groups`,
+        never the other way). One rule, one spelling.
+        """
+        return owns_file(
+            layout.extension,
+            [
+                candidate_layout.extension
+                for candidate_type, candidate_layout in self.object_types.items()
+                if candidate_type != object_type and candidate_layout.folder == layout.folder
+            ],
+            file_path,
+        )
 
     def _duplicate_paths(self, folder: Path, extension: str) -> dict[str, list[Path]]:
         cache = self._duplicate_paths_by_folder.get(folder)
@@ -320,6 +335,20 @@ class ObjectFileWriter:
 
     def write(self, requests: list[ObjectWriteRequest]) -> list[ObjectWritePlan]:
         return [self.write_one(request) for request in requests]
+
+    def differs_from_disk(self, request: ObjectWriteRequest) -> bool:
+        """Is the file this request targets absent, or holding other content?
+
+        The comparison :meth:`write_one` makes under ``compare_existing``, asked
+        without writing anything. ``compare_existing`` itself is deliberately not
+        consulted: that flag says whether an unchanged file may skip its WRITE,
+        and this is a question about the content either way.
+
+        `export_db` asks it before printing the `GRANT` overview row, which
+        exists to say those artifacts moved and must not claim a run that
+        rewrites the same bytes (`#437`).
+        """
+        return self._plan_one(request, compare_existing=True).action != "unchanged"
 
     def write_one(self, request: ObjectWriteRequest) -> ObjectWritePlan:
         plan = self._plan_one(request, compare_existing=self.compare_existing)

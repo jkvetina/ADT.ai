@@ -42,13 +42,15 @@ class DebugQueryGateway:
         mark_announced()
         self.wrapped.execute(sql, params)
 
-    def sqlcl_request(self, request: str, root: Path) -> str:
+    def sqlcl_request(self, request: str, root: Path, timeout_seconds=None, on_line=None) -> str:
         print()
         print("SQLCL REQUEST:")
         print(request)
         print()
         mark_announced()
-        return self.wrapped.sqlcl_request(request, root)
+        return self.wrapped.sqlcl_request(
+            request, root, timeout_seconds=timeout_seconds, on_line=on_line
+        )
 
 def _print_startup_debug(context) -> None:
     print()

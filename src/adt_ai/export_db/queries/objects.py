@@ -117,28 +117,38 @@ AND NOT REGEXP_LIKE(object_name, '^DEPSCAN\\$[[:digit:]]+#[[:digit:]]+$')
 ORDER BY object_type, object_name
 """.strip()
 
-# `last_analyzed` is a statistics timestamp, so the window is day-aligned: from
-# tomorrow midnight backwards, which is what makes `-recent 1` mean "analyzed
-# today". A window shorter than a day has no day to align to, and the aligned
-# cutoff would land in the future (`TRUNC(SYSDATE) + 1 - 1/24` is 23:00 tonight)
-# and select nothing, so a sub-day window measures from now like the object
-# listing does.
+# An index dates its own changes through `user_objects`, exactly like the mview log
+# below and every type in `OBJECTS_QUERY`. It used to be narrowed by
+# `user_indexes.LAST_ANALYZED` instead, which records when statistics were gathered,
+# and a statistics timestamp answers a different question in both directions
+# (ADT #414's sweep subtask). Measured read-only on 2026-08-20: 4 of CORE26/APPS's 7
+# exportable indexes carry a `LAST_ANALYZED` 13 hours to a day after their
+# `LAST_DDL_TIME`, moved by the maintenance window's stats job with no DDL at all,
+# so a window between the two readings offered unchanged indexes as changed; and
+# `LAST_ANALYZED` is NULL for 70 of DA's 646 indexes, where the comparison drops the
+# row outright. The join loses nothing, an index always has its `user_objects` row:
+# counted on both schemas the same day, 307 of 307 on DA and 7 of 7 on APPS.
+#
+# The day-aligned window went with it. That alignment existed because a statistics
+# timestamp has day granularity; `LAST_DDL_TIME` is an instant, so the window is
+# `SYSDATE - :recent_days` here as everywhere else, and a sub-day window needs no
+# special case to stay out of the future.
 INDEXES_QUERY = """
 SELECT 'INDEX' AS object_type, t.index_name AS object_name, t.table_name,
        t.generated, t.constraint_index, c.constraint_name
 FROM user_indexes t
+JOIN user_objects o
+    ON o.object_name = t.index_name
+    AND o.object_type = 'INDEX'
 LEFT JOIN user_constraints c
     ON c.table_name = t.table_name
     AND c.constraint_name = t.index_name
     AND c.constraint_type IN ('P', 'U')
 WHERE (:schema IS NOT NULL)
-AND (:recent_days IS NULL OR t.last_analyzed >= CASE
-    WHEN :recent_days >= 1 THEN TRUNC(SYSDATE) + 1 - :recent_days
-    ELSE SYSDATE - :recent_days
-END)
+AND (:recent_days IS NULL OR o.last_ddl_time >= SYSDATE - :recent_days)
 AND (
     :changed_since IS NULL
-    OR t.last_analyzed >= TO_DATE(:changed_since, 'YYYY-MM-DD HH24:MI:SS')
+    OR o.last_ddl_time >= TO_DATE(:changed_since, 'YYYY-MM-DD HH24:MI:SS')
 )
 AND t.index_name NOT LIKE 'BIN$%'
 AND t.index_name NOT LIKE 'SYS%$$'
@@ -148,8 +158,38 @@ AND c.constraint_name IS NULL
 ORDER BY t.index_name
 """.strip()
 
+# A scheduler job carries no change timestamp anywhere in the dictionary, so the
+# window that narrows every other type cannot narrow this one. `user_objects` does
+# hold a JOB row, and its LAST_DDL_TIME is the last RUN rather than the last edit:
+# measured on CORE26/APPS 2026-08-20 with a dummy job, a scheduler run carrying no
+# DDL at all moved LAST_DDL_TIME from 11:26:31 to 11:27:31 while CREATED stayed put,
+# and an in-place SET_ATTRIBUTE later moved LAST_DDL_TIME again and left CREATED
+# alone. CREATED is therefore reliable but only sees a create or a drop+create, and
+# LAST_DDL_TIME sees everything and fires for every enabled job on every run.
+#
+# So the change signal is built rather than found: SIGNATURE hashes exactly the
+# columns `object_normalizers/job.py` renders into the exported file, and a windowed
+# run exports the jobs whose signature moved. It is computed IN the database so a
+# 4000-char JOB_ACTION never crosses the wire, which is what keeps a 2000-job schema
+# to one fetch of name plus 32 bytes instead of 2000 DBMS_METADATA round trips.
+# CHR(1) separates the fields so two different jobs cannot concatenate to one string,
+# and every column takes NVL because `||` swallows a NULL silently and would collide.
 JOBS_QUERY = """
-SELECT 'JOB' AS object_type, j.job_name AS object_name, j.schedule_type
+SELECT 'JOB' AS object_type, j.job_name AS object_name, j.schedule_type,
+    RAWTOHEX(STANDARD_HASH(
+        NVL(j.job_name, '~')                    || CHR(1) ||
+        NVL(j.job_type, '~')                    || CHR(1) ||
+        NVL(j.job_action, '~')                  || CHR(1) ||
+        NVL(TO_CHAR(j.number_of_arguments), '~')|| CHR(1) ||
+        NVL(j.repeat_interval, '~')             || CHR(1) ||
+        NVL(TO_CHAR(j.end_date), '~')           || CHR(1) ||
+        NVL(j.job_class, '~')                   || CHR(1) ||
+        NVL(j.program_name, '~')                || CHR(1) ||
+        NVL(j.schedule_name, '~')               || CHR(1) ||
+        NVL(j.auto_drop, '~')                   || CHR(1) ||
+        NVL(j.enabled, '~')                     || CHR(1) ||
+        NVL(j.comments, '~')
+    , 'SHA256')) AS signature
 FROM user_scheduler_jobs j
 WHERE (:schema IS NOT NULL)
 AND j.schedule_type != 'IMMEDIATE'
@@ -163,10 +203,23 @@ WHERE o.object_type = :object_type
 AND o.object_name = :object_name
 """.strip()
 
+# Unlike a JOB, an mview log needs no invented signal: its LOG_TABLE is an ordinary
+# TABLE in `user_objects`, and a table's LAST_DDL_TIME is a true DDL timestamp that
+# DML does not move (measured on IVORY 2026-08-20: 123 tables took DML at 05:07 with
+# LAST_DDL_TIME still reading 08-11 / 08-13). So the window binds here exactly as it
+# does for every other type, and this type never needed the widening ADT #414 gave it.
 MVIEW_LOGS_QUERY = """
 SELECT 'MVIEW LOG' AS object_type, l.master AS object_name
 FROM user_mview_logs l
+JOIN user_objects o
+    ON o.object_name = l.log_table
+    AND o.object_type = 'TABLE'
 WHERE (:schema IS NOT NULL)
+AND (:recent_days IS NULL OR o.last_ddl_time >= SYSDATE - :recent_days)
+AND (
+    :changed_since IS NULL
+    OR o.last_ddl_time >= TO_DATE(:changed_since, 'YYYY-MM-DD HH24:MI:SS')
+)
 ORDER BY l.master
 """.strip()
 

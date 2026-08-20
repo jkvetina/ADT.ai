@@ -12,10 +12,27 @@ considered and rejected for the same reason those three are separate: a store's
 lifetime belongs to the command that writes it, and a `ut` retention sweep has
 no business deleting rows a `dependencies -refresh` is reading.
 
-**Read before you write.** :func:`previous_percents` answers "what did the run
-BEFORE this one measure", so the runner must call it before
-:func:`record_run`. Recording first makes a run compare against itself and every
-delta is zero, which looks exactly like a stable schema.
+**Read before you write.** :func:`run_history` answers "what did the runs BEFORE
+this one measure", so the runner must call it before :func:`record_run`.
+Recording first makes a run compare against itself and every delta is zero,
+which looks exactly like a stable schema.
+
+**And the baseline is the last run that was DIFFERENT, not the last run.** The
+first version compared against whatever was recorded most recently, which reads
+as the obvious thing to do and made the table useless: coverage moves when a
+suite is deployed, a reader looks at the table some run after that, and every
+run in between is identical to the one before it. Measured on Jan's own store,
+2026-08-20 (`#436`): of the 20 runs it retained, exactly **two** consecutive
+pairs had moved at all, so eighteen renders were a header with nothing under it.
+His report was *"this table is always empty, even after you added some tests"*,
+and it was.
+
+**A run is comparable only to one that measured the same selection.** `-name`
+narrows a run to the suites it names, so its figures describe a handful of
+packages; four such single-package runs sat in that same store immediately
+before a 42-package one, and comparing across them reported 41 packages as
+having no previous figure. :func:`run_history` is keyed by the selection for
+that reason, the same key `ut/timers.py` already stores its seconds under.
 
 **An absent measurement is not a zero.** ``blocks_total == 0`` means Oracle
 collected nothing, natively compiled code, a package no test entered, so there is
@@ -57,6 +74,29 @@ LEGACY_STORE_NAME = "ut3.db"
 #: when a comparison is most wanted.
 DEFAULT_RETAINED_RUNS = 20
 
+#: The selection key a run with no `-name` filter records itself under.
+#:
+#: Spelled the same as `ut/timers.py`'s, and deliberately not imported from it:
+#: that module owns how long a run took and this one owns what it measured, and
+#: a shared constant between them would be the only edge either has on the
+#: other. Both read `variant_key`'s output, which is where the spelling is
+#: actually decided.
+ALL_SUITES_VARIANT = "%"
+
+
+@dataclass(frozen=True)
+class RunSnapshot:
+    """One recorded run: when it happened and what it measured.
+
+    ``percents`` holds only the packages that run could measure, so two
+    snapshots comparing equal means the two runs found the same thing, which is
+    the test :func:`baseline_percents` walks back on.
+    """
+
+    run_id      : int
+    recorded_at : str
+    percents    : dict[str, float]
+
 
 @dataclass(frozen=True)
 class CoverageChange:
@@ -95,35 +135,95 @@ def store_path(root: Path | str) -> Path:
     return path
 
 
-def previous_percents(root: Path | str, schema: str) -> dict[str, float]:
-    """Measured percentages from the latest recorded run, keyed by package name.
+def run_history(
+    root: Path | str,
+    schema: str,
+    variant: str = ALL_SUITES_VARIANT,
+) -> tuple[RunSnapshot, ...]:
+    """Every recorded run for one schema and selection, newest first.
 
-    Empty for a root with no store, a schema with no runs, and any store the
-    process cannot read: an unreadable history is a missing comparison, never a
-    reason to fail the command the user actually asked for.
+    Empty for a root with no store, a schema with no runs of that selection, and
+    any store the process cannot read: an unreadable history is a missing
+    comparison, never a reason to fail the command the user actually asked for.
 
-    Packages the run could not measure are absent rather than zero.
+    Packages a run could not measure are absent from its snapshot rather than
+    zero, so a package Oracle collected nothing for can neither gain nor lose a
+    figure.
+
+    **A row that predates the selection column is not returned at all.** It
+    carries a NULL variant and matches no live key, because nothing stored can
+    say whether it was a full run or a `-name` one: reading them as full runs
+    puts a single-package run back in the baseline position, which is the defect
+    `#436` fixed, and reading them as filtered discards real history. So the
+    first run after an upgrade reports no comparison and the second compares
+    normally, which costs one round and cannot report a wrong one.
     """
     path = store_path(root)
     if not path.is_file():
-        return {}
+        return ()
     try:
         with _connect(path) as connection:
-            row = connection.execute(
-                queries.LATEST_RUN_QUERY,
-                (_key(schema),),
-            ).fetchone()
-            if row is None:
-                return {}
-            return {
-                str(package): float(percent)
-                for package, percent in connection.execute(
-                    queries.RUN_PERCENTS_QUERY,
-                    (row[0],),
+            _migrate(connection)
+            runs = connection.execute(queries.RUNS_QUERY, (_key(schema), variant)).fetchall()
+            return tuple(
+                RunSnapshot(
+                    run_id      = int(run_id),
+                    recorded_at = str(recorded_at),
+                    percents    = {
+                        str(package): float(percent)
+                        for package, percent in connection.execute(
+                            queries.RUN_PERCENTS_QUERY,
+                            (run_id,),
+                        )
+                    },
                 )
-            }
+                for run_id, recorded_at in runs
+            )
     except sqlite3.Error:
-        return {}
+        return ()
+
+
+def measured_percents(packages: tuple[PackageCoverage, ...]) -> dict[str, float]:
+    """This run's figures in the shape the store keeps them.
+
+    One function so the write and the comparison cannot disagree about the
+    shape: same upper-cased key, same rule that an unmeasured package is absent
+    rather than zero. A mismatch here would make every run look different from
+    every other, which is the same empty table by the opposite route.
+    """
+    return {
+        package.name.upper(): package.percent
+        for package in packages
+        if package.percent is not None
+    }
+
+
+def baseline_percents(
+    history: tuple[RunSnapshot, ...],
+    current: dict[str, float],
+) -> dict[str, float] | None:
+    """The newest recorded run whose figures are not the ones this run measured.
+
+    **Not simply the newest run.** A `ut` run changes no coverage by itself, so
+    consecutive runs of unchanged code record identical figures and comparing
+    against the immediately previous one reports nothing moved — on the run
+    after a deploy, which is the one a reader opens the table for. Walking back
+    to the last run that was actually different is what makes the table say what
+    the reader came to find out, and it costs nothing when the previous run
+    already differs: the walk stops on its first candidate.
+
+    **``None``, never ``{}``, when no earlier run differs.** The two are opposite
+    reports and an empty mapping cannot tell them apart: an empty *baseline* says
+    every package here is new and appearing for the first time, which is what
+    :func:`coverage_changes` renders it as, while "nothing to compare against"
+    has to render as no rows at all. Returning the mapping for one and ``None``
+    for the other is what keeps a schema whose coverage simply has not moved from
+    printing its entire roster as new.
+    """
+    for snapshot in history:
+        if snapshot.percents != current:
+            return dict(snapshot.percents)
+    return None
 
 
 def record_run(
@@ -131,6 +231,7 @@ def record_run(
     schema: str,
     packages: tuple[PackageCoverage, ...],
     *,
+    variant: str = ALL_SUITES_VARIANT,
     retain: int = DEFAULT_RETAINED_RUNS,
 ) -> int | None:
     """Store what this run measured, then prune to the last ``retain`` runs.
@@ -138,15 +239,23 @@ def record_run(
     Returns the new run id, or ``None`` when the store could not be written. A
     project root that is read-only still gets its test run, its report and its
     exit code; only the history is skipped.
+
+    ``variant`` is the run's own `-name` selection, so a filtered run keeps its
+    own history instead of standing in front of the full runs either side of it.
     """
     path = store_path(root)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with _connect(path) as connection:
             connection.executescript(queries.STORE_SCHEMA_SCRIPT)
+            _migrate(connection)
             cursor = connection.execute(
                 queries.INSERT_RUN_STATEMENT,
-                (_key(schema), datetime.now(UTC).isoformat(timespec="seconds")),
+                (
+                    _key(schema),
+                    datetime.now(UTC).isoformat(timespec="seconds"),
+                    variant,
+                ),
             )
             run_id = int(cursor.lastrowid)
             connection.executemany(
@@ -250,6 +359,19 @@ def _connect(path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(path)
     connection.execute(queries.FOREIGN_KEYS_PRAGMA)
     return connection
+
+
+def _migrate(connection: sqlite3.Connection) -> None:
+    """Add the selection column to a store created before it existed.
+
+    ``CREATE TABLE IF NOT EXISTS`` is a no-op on a table that is already there,
+    so the schema script cannot deliver a new column to an existing store and
+    the migration has to happen on the way past. Idempotent by inspection rather
+    than by catching the error, so a genuine failure is not swallowed with it.
+    """
+    columns = {row[1] for row in connection.execute(queries.RUN_COLUMNS_PRAGMA)}
+    if "variant" not in columns:
+        connection.execute(queries.ADD_VARIANT_STATEMENT)
 
 
 def _key(schema: str) -> str:

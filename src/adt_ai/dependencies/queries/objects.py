@@ -33,6 +33,15 @@ META_LAST_REFRESH_PREFIX = "last_refresh:"
 
 META_UPSERT_QUERY = "INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)"
 
+# The three `_meta` reads and the delete the owner-case fold needs (ADT #413).
+# Here rather than beside it because every SQL string in this package lives in a
+# `queries` module, `tests/contracts/test_sql_home.py` included.
+META_KEY_PREFIX_QUERY = "SELECT key, value FROM _meta WHERE key LIKE ?"
+
+META_VALUE_QUERY = "SELECT value FROM _meta WHERE key = ?"
+
+META_DELETE_QUERY = "DELETE FROM _meta WHERE key = ?"
+
 META_LAST_REFRESH_QUERY = (
     "SELECT key, value FROM _meta WHERE key LIKE 'last_refresh:%' ORDER BY key"
 )
@@ -338,6 +347,15 @@ def resolve_object_types_query(owner_count: int = 0) -> str:
 
 def delete_owner_rows_query(table: str) -> str:
     return f"DELETE FROM {table} WHERE OWNER = ?"
+
+
+def distinct_owners_query(table: str) -> str:
+    return f"SELECT DISTINCT OWNER FROM {table}"
+
+
+def rename_owner_query(table: str) -> str:
+    """Move one mirror table's rows onto another spelling of the same owner."""
+    return f"UPDATE {table} SET OWNER = ? WHERE OWNER = ?"
 
 
 def delete_app_rows_query(table: str) -> str:

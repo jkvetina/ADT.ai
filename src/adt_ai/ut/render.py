@@ -195,12 +195,22 @@ def print_test_rows(outcomes: tuple[TestOutcome, ...], close_block: bool = True)
     what retires the heading's claim on the screen, and the coverage read runs
     after the last block (`#372`, `#359`).
     """
-    printer = FixedWidthProgressPrinter(indent=DETAIL_INDENT)
-    for outcome in outcomes:
+    cells = [test_status_cell(outcome) for outcome in outcomes]
+    # **The block's own widest value, not the printer's default reservation.**
+    # A streamed label is on screen before its value exists, so the room the
+    # value will need is reserved rather than measured (`#436`); reserving the
+    # generic eleven columns here would take eight of them off every test name
+    # to hold `0.0`. The whole block is known before the first row prints, so
+    # the reservation can be exact and the rows still stack.
+    printer = FixedWidthProgressPrinter(
+        indent      = DETAIL_INDENT,
+        value_width = max((len(cell) for cell in cells), default=1),
+    )
+    for outcome, cell in zip(outcomes, cells, strict=True):
         # begin() lays the label down and status() completes that same row; the
         # pair is the only way to get a labelled fixed-width line.
         printer.begin(outcome.test)
-        printer.status(outcome.test, test_status_cell(outcome))
+        printer.status(outcome.test, cell)
     if close_block:
         print()
 
@@ -304,7 +314,13 @@ def print_summary_rows(result: Ut3Result) -> None:
                 "FAIL"          : count_cell(count(outcomes, RESULT_FAILED)),
                 "ERROR"         : count_cell(count(outcomes, RESULT_ERRORED)),
                 "TIMER"         : seconds_cell(result.seconds_for(package.name)),
-                "COVERAGE"      : coverage_cell(result.coverage.for_package(package.target)),
+                # `paired` is the suite's own resolved target, which is what
+                # separates "this suite measures nothing knowable" from "the
+                # package it measures collected nothing" (`#436`).
+                "COVERAGE"      : coverage_cell(
+                    result.coverage.for_package(package.target),
+                    paired = bool(package.target),
+                ),
             }
             for package, outcomes in outcomes_by_package(result)
         ],

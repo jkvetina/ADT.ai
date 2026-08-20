@@ -33,8 +33,7 @@ from adt_ai.export_db.files import (
     ObjectWritePlan,
     ObjectWriteRequest,
 )
-from adt_ai.export_db.grants import exports_grants
-from adt_ai.export_db.grants import grant_contents as _grants_for
+from adt_ai.export_db.grants import exports_grants, grant_artifacts
 from adt_ai.export_db.groups import (
     GroupRules,
     detect_groups_from_tree,
@@ -44,6 +43,7 @@ from adt_ai.export_db.inventory import (
     ObjectDiscovery,
     has_exact_name_filter,
 )
+from adt_ai.export_db.job_signatures import advance_job_signatures, job_baseline
 from adt_ai.export_db.normalizers import (
     NormalizerRegistry,
     build_table_fix_sql,
@@ -123,13 +123,14 @@ class ExportDbRunner:
         )
         resolver.group_rules = self._resolve_group_rules(request, resolver)
         writer = ObjectFileWriter(resolver, compare_existing=False)
-        # Read by `_contents` while each schema's export section is still open,
-        # written here once that schema's objects are out. See the call site.
+        # Read by `_contents` under each schema's own overview table, written
+        # here once that schema's objects are out. See the call site.
         grant_contents: list[tuple[DatabaseObject, str]] = []
         object_contents = self._contents(
             request,
             resolver        = resolver,
             gateway_factory = gateway_factory,
+            writer          = writer,
             grant_contents  = grant_contents,
         )
         plans: list[ObjectWritePlan] = []
@@ -164,6 +165,7 @@ class ExportDbRunner:
         request: ExportDbRequest,
         resolver: ObjectFileResolver,
         gateway_factory: GatewayFactory,
+        writer: ObjectFileWriter,
         grant_contents: list[tuple[DatabaseObject, str]],
     ) -> Iterable[tuple[DatabaseObject, str, str | None]]:
         reporter = request.reporter or ExportDbReporter()
@@ -233,6 +235,7 @@ class ExportDbRunner:
                 recent_days  = request.recent_days,
                 changed_since = changed_since,
                 prefer_exact_names = True,
+                known_job_signatures = job_baseline(request, schema),
             )
             # Objects the requested authors touched but somebody else changed last.
             # They stay in the export, dropping them would silently lose work the
@@ -269,6 +272,16 @@ class ExportDbRunner:
                     db_now        = header_now,
                     grants        = grants,
                 )
+            if grants:
+                # **The four privilege reads run HERE, under the overview table
+                # the call above left open** (`#437`), rather than after the
+                # object loop where `#382` put them. Why that is the right place
+                # for both the reads and the row is in `grants.grant_artifacts`.
+                schema_grants, grants_changed = grant_artifacts(
+                    request, schema, discovery, _split_patterns, writer
+                )
+                grant_contents.extend(schema_grants)
+                reporter.overview_grants(grants_changed)
             reporter.diff_tables_dropped(dropped_diff_tables)
             if not _has_runtime_filter(request):
                 missing_objects = resolver.missing_objects(database_objects, schema=schema)
@@ -290,7 +303,6 @@ class ExportDbRunner:
                 len(database_objects),
                 estimate_for(request.root, request.environment, schema, database_objects),
                 widest_object_type(database_objects),
-                grants = grants,
             )
             # The DBMS_METADATA setup and the comment pre-read are elapsed the
             # bar counts and no per-object rate can explain, so they are booked
@@ -382,15 +394,6 @@ class ExportDbRunner:
                     )
                 ):
                     reporter.finish_type(schema, database_object.object_type)
-            # Read here rather than from `run()` after the loop: under `-compact`
-            # the line below closes the bar, and these four reads behind that
-            # closing blank are the naked wait this card is about. `run()` still
-            # writes the files, so only the moment of the read has moved (`#372`).
-            if grants:
-                reporter.start_grants(schema)
-            grant_contents.extend(
-                _grants_for(request, schema, discovery, _split_patterns)
-            )
             # Every object of this schema is written, so `-compact`'s bar has
             # nothing left to count: close it at 100% before the segment's TIMER.
             # One bar per schema, never a grand total across them, the same split
@@ -406,6 +409,16 @@ class ExportDbRunner:
             # schema that raised mid-export keeps its old watermark while the
             # schemas that finished keep theirs (per-schema isolation).
             advance_watermark(request, schema, candidate, stored, narrowed=narrowed)
+            # Same placement and the same reason as the watermark above: the
+            # baseline moves only once this schema's files are all written, so a
+            # schema that raised mid-export re-offers its jobs on the next run
+            # instead of recording a signature for a file that never landed.
+            advance_job_signatures(
+                request,
+                schema,
+                discovery.last_job_signatures.get(schema),
+                narrowed = narrowed,
+            )
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

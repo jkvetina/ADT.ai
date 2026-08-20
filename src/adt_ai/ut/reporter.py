@@ -53,7 +53,12 @@ from adt_ai.ut.render import (
     print_test_rows,
 )
 from adt_ai.ut.runner import Ut3Reporter, Ut3Result
-from adt_ai.ut.store import coverage_changes
+from adt_ai.ut.store import (
+    RunSnapshot,
+    baseline_percents,
+    coverage_changes,
+    measured_percents,
+)
 
 
 class ConsoleUt3Reporter(Ut3Reporter):
@@ -88,15 +93,20 @@ class ConsoleUt3Reporter(Ut3Reporter):
         previous_seconds: float = 0.0,
         started_at: float | None = None,
         error_limit: int | None = None,
-        previous_percents: dict[str, float] | None = None,
+        history: tuple[RunSnapshot, ...] = (),
     ) -> None:
         self._silent = silent
         self._verbose = verbose
-        # `#251`: what the previous run measured, read from `config/internal/ut.db`
+        # `#251`: what earlier runs measured, read from `config/internal/ut.db`
         # BEFORE this run records itself. Empty on a first run, on a fresh root,
         # and whenever the store could not be read, and each of those renders the
         # same way: no change table, because there is nothing to have changed from.
-        self._previous_percents = dict(previous_percents or {})
+        #
+        # **Every recorded run, not the newest one** (`#436`). The baseline is the
+        # newest run whose figures DIFFER from this one's, and which run that is
+        # cannot be known until the profiler has been read, so the choosing
+        # happens in `coverage_measured` and this holds the candidates.
+        self._history = tuple(history)
         self._packages: tuple[SuitePackage, ...] = ()
         # Set when the change table's header, rather than `SUMMARY PER SUITE:`,
         # is the one standing above the coverage read.
@@ -174,16 +184,40 @@ class ConsoleUt3Reporter(Ut3Reporter):
         else:
             print_summary_header()
 
-    def coverage_measured(self, coverage: CoverageReport) -> None:
+    def coverage_measured(
+        self,
+        coverage: CoverageReport,
+        packages: tuple[SuitePackage, ...] = (),
+    ) -> None:
         """The change table, when this run leads with one, then the summary header.
 
         The rows can only be built once the profiler has been read, so they land
         here while their header went up before the wait.
+
+        ``packages`` supersedes what :meth:`discovered` stored: the suite-to-
+        package pairing is `ut_match`'s guess until the schema's own package list
+        resolves it, and that happens during the coverage build (`#436`). A row
+        keyed on the unresolved name would look its figure up under a name the
+        report is not keyed by, which is the blank cell this card exists to fix.
         """
+        if packages:
+            self._packages = packages
         if not self._changes_lead:
             return
+        # **The baseline is chosen here, not when the reporter was built.** It is
+        # the newest recorded run whose figures differ from the ones just
+        # measured, and the ones just measured are what this call is delivering
+        # (`#436`).
+        baseline = baseline_percents(self._history, measured_percents(coverage.packages))
+        # **No baseline is no rows, never an empty baseline.** Handing
+        # `coverage_changes` an empty mapping reports every package as appearing
+        # for the first time, which is the right answer for a genuinely fresh
+        # schema and exactly the wrong one for a schema whose coverage has simply
+        # not moved since it was last measured.
         print_coverage_changes_rows(
-            coverage_changes(self._previous_percents, self._packages, coverage.packages)
+            ()
+            if baseline is None
+            else coverage_changes(baseline, self._packages, coverage.packages)
         )
         print_summary_header()
 
@@ -191,11 +225,17 @@ class ConsoleUt3Reporter(Ut3Reporter):
         """Does this run print the change table at all?
 
         Three conditions, and the third is the one that keeps the table honest:
-        `-verbose` asked for it, `-silent` did not veto it, and there is a previous
-        run to compare against. A first run on a schema has no comparison, and a
-        table of nothing above two full summaries would be chrome.
+        `-verbose` asked for it, `-silent` did not veto it, and there is an
+        earlier run of the same selection to compare against. A first run on a
+        schema has no comparison, and a table of nothing above two full summaries
+        would be chrome.
+
+        **Whether anything MOVED is not one of the three.** That is only knowable
+        once the profiler has been read, and the heading has to be on screen
+        before that read to announce it (`#379`), so a run with history prints
+        the heading and then prints however many rows the comparison produced.
         """
-        return bool(self._verbose and not self._silent and self._previous_percents)
+        return bool(self._verbose and not self._silent and self._history)
 
     def discovered(self, packages: tuple[SuitePackage, ...]) -> None:
         # Kept for the change table: a row is per suite, and the suite-to-package

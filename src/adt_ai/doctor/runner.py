@@ -21,6 +21,7 @@ from adt_ai.doctor._base import (
     format_status_line,
 )
 from adt_ai.doctor.init import DoctorInitMixin
+from adt_ai.doctor.layout_check import schema_case_action_lines
 from adt_ai.doctor.upgrade import DoctorUpgradeMixin
 from adt_ai.doctor.version_check import DoctorVersionMixin
 
@@ -142,8 +143,11 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
 
         if not request.update:
             # Read-only run: the section exists to offer upgrades, so with
-            # nothing stale it is not an empty section, it is no section.
+            # nothing stale it is not an empty section, it is no section. The
+            # layout rows join it because a rename is an offer too, and the
+            # section is already the place a read-only run puts its offers.
             action_lines = self._status_action_lines()
+            action_lines.extend(self._layout_action_lines(request))
             if action_lines:
                 self._begin_actions_section(lines)
                 self._extend(lines, action_lines)
@@ -160,6 +164,17 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
             exit_code = max(exit_code, action_result.exit_code)
 
         return DoctorResult(lines, performed_actions, exit_code)
+
+    def _layout_action_lines(self, request: DoctorRequest) -> list[str]:
+        """Rows offering the rename when the repo tree disagrees with the template.
+
+        Empty whenever there is no config, no schema level, or no folder whose
+        case the next export would change, which is every setup that has not hit
+        this. See `doctor/layout_check.py` for why a switch alone leaves work.
+        """
+        if request.root is None:
+            return []
+        return schema_case_action_lines(request.root, request.config)
 
     def _begin_actions_section(self, lines: list[str]) -> None:
         """Open `ACTIONS:` with the blank line that separates it from ENVIRONMENT.

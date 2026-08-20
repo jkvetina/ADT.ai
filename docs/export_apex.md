@@ -76,6 +76,10 @@ That last sentence has a measured mechanism behind it (`#163`). Validating the s
 
 Version handling is one-way in both directions. `-apexlang` needs APEX 26.1+; on an older instance the slice is skipped and the run continues, so `-all` never fails on a pre-26.1 environment. The skip is *announced* only when you named the format yourself, `-apexlang` and `-apx` print `APEXLANG EXPORT SKIPPED, NEEDS APEX 26.1`, and under `-all` it is silent, because the note answers a question `-all` never asked. Conversely, APEX 26.1 folded `READABLE_YAML` into APEXlang, so on 26.1+ a requested `-readable` slice is skipped silently and writes nothing, a "readable" export there would just be APEXlang content in the wrong folder. Pre-26.1 `-readable` is unchanged.
 
+## Where files land (path_apex)
+
+`path_apex` in `config.yaml` is a path template, `'<schema>/apex/'` by default, and the schema token carries its own case exactly as `path_objects` does: `<SCHEMA>` writes `APP_OWNER/apex/`. The two keys are independent, so a project can spell them differently. It resolves the schema token and nothing else, so any other token there is refused before the export writes a folder named after it. See [export_db → The schema token carries its own case](export_db.md#the-schema-token-carries-its-own-case).
+
 ## The application checksum
 
 Every export records the application's checksum, an ID-independent SHA-256 fingerprint of the whole app, in `config/internal/apex.db` beside the owner, alias and page count already cached there:

@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.export_apex.inventory import ApexApplication
+from adt_ai.shared.config import reject_unresolved_placeholders
+from adt_ai.shared.path_template import contains_run, render_path_template
 
 
 @dataclass(frozen=True)
@@ -16,14 +18,22 @@ class ApexFileResolver:
     path_files    : str = "files/"
     path_rest     : str = "workspace/rest/"
     workspace_dir : str = "workspace/"
-    # Schema bound at runtime (per export loop); substitutes <schema> in path_apex.
+    # Schema bound at runtime (per export loop); substitutes <schema> in
+    # path_apex, or <SCHEMA> when the folders are spelled uppercase.
     schema        : str = ""
 
     @classmethod
     def from_config(cls, root: Path, config: dict[str, Any]) -> ApexFileResolver:
         return cls(
             root          = root,
-            path_apex     = str(config.get("path_apex") or "apex/"),
+            # `path_apex` resolves only the schema token, so every other one is a
+            # folder name waiting to be written; reject it here, before the
+            # export builds it (ADT #411).
+            path_apex     = reject_unresolved_placeholders(
+                str(config.get("path_apex") or "apex/"),
+                key     = "path_apex",
+                allowed = ("schema",),
+            ),
             path_app      = str(config.get("apex_path_app") or "{$APP_ID}_{$APP_ALIAS}"),
             path_files    = str(config.get("apex_path_files") or "files/"),
             path_rest     = str(config.get("apex_path_rest") or "workspace/rest/"),
@@ -34,7 +44,7 @@ class ApexFileResolver:
         return replace(self, schema=schema or "")
 
     def apex_root(self) -> Path:
-        rendered = self.path_apex.replace("<schema>", (self.schema or "").lower())
+        rendered = render_path_template(self.path_apex, schema=self.schema or "")
         return self.root / _clean_relative(rendered)
 
     def app_root(self, application: ApexApplication) -> Path:
@@ -103,7 +113,7 @@ class ApexFileResolver:
         return [
             path
             for path in sorted(root.rglob("checksum.txt"))
-            if not _contains_run(path.parent.relative_to(root).parts, files_parts)
+            if not contains_run(path.parent.relative_to(root).parts, files_parts)
         ]
 
     def rest_export(self, module_name: str) -> Path:
@@ -138,21 +148,6 @@ def _render_app_folder(template: str, application: ApexApplication) -> Path:
     for token, value in replacements.items():
         rendered = rendered.replace(token, value or "")
     return _clean_relative(rendered)
-
-
-def _contains_run(parts: tuple[str, ...], run: tuple[str, ...]) -> bool:
-    """Whether `run` appears as a consecutive stretch of `parts`.
-
-    A configured folder is a path, not a name, so `static/files` has to match
-    those two components side by side and never a stray `files` somewhere else
-    in the tree.
-    """
-    if not run:
-        return False
-    return any(
-        parts[start:start + len(run)] == run
-        for start in range(len(parts) - len(run) + 1)
-    )
 
 
 def _clean_relative(path: str | Path) -> Path:

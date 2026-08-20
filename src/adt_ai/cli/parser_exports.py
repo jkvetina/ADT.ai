@@ -92,14 +92,20 @@ def add_export_parsers(subparsers) -> None:
                  "subfolders, moving nothing and never connecting; PREFIX lists only "
                  "those groups, bare -groups auto-detects by prefix",
     )
-    # `-force` is `store_true` on `patch`, `doctor`, `recompile` and `dependencies`
-    # too. The shared-argument contract pins the argparse shape, never the effect,
-    # and "override the guard standing here" is what all five of them mean.
+    # `-force` is `store_true` on `patch`, `doctor`, `recompile` and `dependencies`,
+    # and takes an optional group name here (ADT #416), which is the one divergence
+    # `tests/contracts/test_shared_argument_semantics.py` carries a reason for. The
+    # effect is the same word in all five, apply what is standing ready; only this
+    # one also says where the applied files land.
     export_db.add_argument(
         "--force",
         "-force",
-        action = "store_true",
-        help   = "with -groups, apply the listed moves instead of only listing them",
+        nargs   = "?",
+        const   = True,
+        default = False,
+        metavar = "GROUP",
+        help    = "with -groups, apply the listed moves; -force GROUP lands every "
+                  "prefix -groups named in one <type>/GROUP/ folder",
     )
     # `-by` then `-my`, worded off the one pattern every module shares since
     # ADT #364: "limit to <what this module acts on> by <whom>". Each row names

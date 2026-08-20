@@ -272,6 +272,8 @@ That listing is a real run against `ICT_OWNER@ORCLPDB1`, trimmed only by droppin
 
 **`TEST RESULTS:` and `ERRORS & FAILURES:` share one indentation grid.** Both sections have the same shape, a heading naming what follows, then its detail, so a package name sits at two spaces where a stanza heading sits, and a test row at four where a wrapped message line sits. A test row is still fixed-width: the extra indent eats dots, so every verdict stays flush with the right edge the tables align to.
 
+**A test name longer than the grid is trimmed in the middle, never left to overhang it.** `TEST_SEND_FROM_APEX#DISPATCHES_EVERY_PENDING_NOTIFICATION_FOR_THE_INCIDENT` needs 83 of a 78-column row and prints as `TEST_SEND_FROM_APEX#DISPATCHES_E...NG_NOTIFICATION_FOR_THE_INCIDENT`. The middle goes rather than the tail, because a `<procedure>#<test name>` label shares its procedure with every other row in the block and the tail is what tells them apart; the dot leader never falls below two, since one dot reads as the end of a line rather than as a leader. Nothing that already fits is touched. Card `#436`, after Jan measured the overhang: *"some names are too long, you have to trim them."*
+
 **Free text is a stanza list, not a table column.** A failure message is prose (utPLSQL prints the expectation, the actual value, and the source location), and a shared table column is sized to its widest cell, so one long message widens the whole table past the terminal and destroys the alignment the table existed for. `ERRORS & FAILURES:` therefore carries every non-passing test as a heading with the reason wrapped at 80 columns and indented four beneath it, one blank line above each stanza.
 
 **The status leads the heading**, `ERROR > ADT_FIXTURE_UT.TEST_LABELS#LOOKUP_RAISES`, not the name with the verdict trailing. A reader scanning this section is looking for which ones errored, and a status word parked behind a package-qualified identifier is behind the longest and most variable part of the line. A raised exception reads `ERROR`; a refused expectation reads `FAIL`.
@@ -372,15 +374,20 @@ Those blocks are rendered through the real renderer from the per-package figures
 
 **`COVERAGE` is a property of the package a suite tests, not of the suite.** The pairing is `ut_match`'s capture group, resolved by Oracle at discovery: `ICT_COM_INVOICE_UT` puts its figure on `ICT_COM_INVOICE`'s block coverage. Two suites testing one package print the same figure, because block coverage records which blocks ran and never which test ran them, attributing execution back to a test is not something any data source records.
 
-**A blank cell means no measurement, and `0.0` means a measurement of zero.** They are different answers and the column keeps them apart:
+**A derived name that is not a package falls back to the longest one it prefixes.** A regular expression cannot know which of a schema's names exist, so `ut_match` answers with a name and the schema's own package list decides whether it means anything. `ICT_INT_ARIBA_PUSHBACK_UT` derives `ICT_INT_ARIBA_PUSHBACK`, no such package, and its 13 tests exercise `ICT_INT_ARIBA`; the walk drops one trailing token at a time until a package answers, so that suite reports `ICT_INT_ARIBA`'s figure. It is longest-first and stops on the first hit, so a suite whose derived name **is** a package keeps it and nothing that already paired can be re-pointed.
+
+**A suite that resolves to nothing reads `?`, and that is not a blank.** `ICT_INT_FUSION_ARIBA_UT` walks `ICT_INT_FUSION_ARIBA`, `ICT_INT_FUSION` and `ICT_INT` and finds none of them; attaching it to a near name would put a figure another suite earned beside a suite that did not earn it. The three states are kept apart:
 
 | Cell | What happened |
 | ---- | ------------- |
 | `88.0` | Oracle instrumented the package and 88% of its blocks ran. |
 | `0.0` | Oracle instrumented the package and nothing entered it. That is a real finding, the suite ran and reached none of its target. |
-| blank | Nothing was measured. Either `ut_match` paired the suite to nothing (or to a package the schema does not hold), or the package carries no instrumentation at all, `PLSQL_CODE_TYPE = NATIVE` strips it, so Oracle writes no `dbmspcc_blocks` row however hard the tests hammer it. |
+| blank | The package was listed and nothing was measured, `PLSQL_CODE_TYPE = NATIVE` strips instrumentation, so Oracle writes no `dbmspcc_blocks` row however hard the tests hammer it. |
+| `?` | The suite pairs to no package at all, so the run never got as far as having something to measure. |
 
-A `NATIVE` marker named that last case until card `#291`; it lived in the removed report's own column and there is no cell left to carry it.
+`?` is the same marker, and the same argument, as the `MODULE NAME` column's: a column of short values has no room for a word, and it cannot be mistaken for a figure the way `0` or `-` can.
+
+Those two were one cell until card `#436`. Jan, 2026-08-20: *"we still have packages like ICT_INT_ARIBA_PUSHBACK_UT which has multiple tests, yet no code coverage!"* Six of the eight `ICT_INT%` suites printed a blank beside 71 green tests, and both halves of this section are why. A `NATIVE` marker named the blank case until card `#291`; it lived in the removed report's own column and there is no cell left to carry it.
 
 **Coverage is run-scoped, and that is a deliberate trade.** The report is built from the pairings of the suites that ran, so a package no suite tests appears nowhere, no row, no contribution to any module figure, no total. The removed `NO CODE COVERAGE:` table existed precisely to list those packages, and it went with the flag: Jan's call on 2026-08-11 is that the merged column describes what the run reached. **`ut` no longer answers "what in this schema is untested."** It answers "how much of what these suites test did they reach", which is the question the rest of the table is about.
 
@@ -422,18 +429,25 @@ COVERAGE CHANGED SINCE LAST RUN:
   ICT_COM_INVOICE_UT             61.0   58.9    -2.1
 ```
 
-**Only the suites that moved.** Two full summaries already list everything, so a third table repeating them would be the second and worse telling of something already told. What this adds is what changed. A run where nothing moved prints the header with no rows under it, and that is the report: the ratchet held.
+**Only the suites that moved.** Two full summaries already list everything, so a third table repeating them would be the second and worse telling of something already told. What this adds is what changed.
+
+**The comparison is against the last run that was different, not the last run.** Running `ut` changes no coverage, so two runs of unchanged code measure the same thing, and comparing each run against the one immediately before it made the table empty on precisely the run a reader opens it for: the one after a deploy, when they re-run the suite to look. Card `#436` measured it on a real store, where **18 of 20 retained runs** were identical to their predecessor, and Jan's report was *"this table is always empty, even after you added some tests."* The walk stops on its first candidate, so a run that follows a real move costs nothing extra.
 
 **Ordered by the size of the move, largest first**, drops and gains together, so a regression cannot hide under a long tail of rounding.
 
-Four rules, and each is the same rule the `COVERAGE` column already follows:
+Five rules, and each is the same rule the `COVERAGE` column already follows:
 
 - **`-verbose` only.** The history is recorded on every run, including `-silent` ones: a quiet run still moves the figure, and a store that only remembered verbose runs would compare against whenever somebody last passed the flag rather than against last time.
 - **`-silent` outranks it**, like every other section this flag pair governs.
 - **A first run prints nothing.** There is no comparison to draw, and a table of nothing above two full summaries would be chrome.
-- **`WAS` and `DELTA` blank together** for a package the previous run did not measure. A package appearing for the first time has no comparison rather than a gain of its whole figure, exactly as an unmeasured package blanks rather than reading `0.0`.
+- **A run whose whole history agrees with it prints the header and no rows.** That is the ratchet holding, and it is a different report from having nothing to compare against, which prints no table at all.
+- **`WAS` and `DELTA` blank together** for a package the baseline run did not measure. A package appearing for the first time has no comparison rather than a gain of its whole figure, exactly as an unmeasured package blanks rather than reading `0.0`.
+
+**A `-name` run keeps its own history.** It measures the suites it selected and nothing else, so standing it in front of a full run would report every package the filter excluded as having no previous figure — the same store held four single-package runs immediately before a 42-package one. The history is keyed by the selection, the same key `ut_timers.yaml` stores its seconds under, so `-name ICT_INT%` compares against the last `-name ICT_INT%` and an unfiltered run compares against the last unfiltered one.
 
 The history lives in `config/internal/ut.db`, beside `apex.db` and `dependencies.db`, and is gitignored with them. It keeps **the last 20 runs per schema** and prunes the rest on every write, so the file cannot grow unbounded; a schema is keyed upper-case, so `-schema ict_owner` and `-schema ICT_OWNER` read one history rather than two. A root ADT.ai cannot write still runs, reports and exits normally — only the history is skipped.
+
+**Runs recorded before `#436` are not compared against.** They carry no record of what they selected, so nothing stored can say whether one was a full run or a `-name` run: reading them all as full runs puts a single-package run straight back into the baseline position, and reading them all as filtered discards real history. The first run after upgrading therefore reports no comparison and the second compares normally, which costs one round and cannot report a wrong one.
 
 ## The coverage gate
 

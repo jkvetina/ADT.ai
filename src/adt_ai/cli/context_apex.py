@@ -7,7 +7,6 @@ from dataclasses import dataclass
 
 from adt_ai.cli.constants import APEX_EXPORT_ACTIONS
 from adt_ai.export_apex.filters import ApexComponentFilter, ApexPageSelection
-from adt_ai.shared.sql_like import matches_sql_like
 
 
 @dataclass(frozen=True)
@@ -243,8 +242,3 @@ def _split_config_values(value: object) -> list[str] | None:
         if part.strip()
     ]
     return normalized or None
-
-def _has_job_recent_conflict(recent_days: int | float | None, object_types: list[str]) -> bool:
-    if recent_days is None:
-        return False
-    return any(matches_sql_like("JOB", object_type) for object_type in object_types)

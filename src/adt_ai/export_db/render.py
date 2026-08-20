@@ -1,16 +1,54 @@
+"""What an `export_db` run puts on screen, and the reporter every mode drives.
+
+The ADT table renderer this module used to carry lives in `export_db/table.py`
+since `#437` split it out at the 20 KB context budget. It is re-exported below,
+so `from adt_ai.export_db.render import print_adt_table` still resolves for the
+five other modules that render one.
+"""
+
 from __future__ import annotations
 
-import sys
 from collections import Counter
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping
 
 from adt_ai.export_db.grants import GRANT_OBJECT_TYPE
 from adt_ai.export_db.inventory import DatabaseObject
-from adt_ai.export_db.progress import ObjectProgressBar, widest_row_label
+from adt_ai.export_db.progress import ObjectProgressBar
+from adt_ai.export_db.table import (
+    ADT_TABLE_GUTTER,
+    ADT_TABLE_INDENT,
+    _adt_cell,
+    _AdtTableLayout,
+    _commit_stdout,
+    _compute_adt_layout,
+    adt_table_line_width,
+    close_adt_table,
+    open_adt_table,
+    print_adt_pipes,
+    print_adt_table,
+)
 from adt_ai.shared.dates import recent_since
-from adt_ai.shared.progress import DROPBOX_PATH_RE, print_adt_header
+from adt_ai.shared.progress import print_adt_header
 from adt_ai.shared.recent_state import parse_timestamp
+
+__all__ = [
+    "ADT_TABLE_GUTTER",
+    "ADT_TABLE_INDENT",
+    "ConsoleExportDbReporter",
+    "ExportDbReporter",
+    "GRANT_OVERVIEW_ROW",
+    "OVERVIEW_COLUMNS",
+    "_AdtTableLayout",
+    "_adt_cell",
+    "_commit_stdout",
+    "_compute_adt_layout",
+    "adt_table_line_width",
+    "close_adt_table",
+    "open_adt_table",
+    "print_adt_header",
+    "print_adt_pipes",
+    "print_adt_table",
+]
 
 
 class ExportDbReporter:
@@ -48,6 +86,9 @@ class ExportDbReporter:
     ) -> None:
         pass
 
+    def overview_grants(self, changed: bool) -> None:
+        pass
+
     def recent_note(self, message: str) -> None:
         pass
 
@@ -63,7 +104,6 @@ class ExportDbReporter:
         total: int,
         estimate: float = 0.0,
         widest_label: str = "",
-        grants: bool = False,
     ) -> None:
         pass
 
@@ -78,147 +118,19 @@ class ExportDbReporter:
     def finish_object(self, failed: bool = False) -> None:
         pass
 
-    def start_grants(self, schema: str) -> None:
-        pass
-
     def finish_type(self, schema: str, object_type: str) -> None:
         pass
 
     def finish_export(self, schema: str) -> None:
         pass
 
-ADT_TABLE_INDENT = "  "
-ADT_TABLE_GUTTER = "   "
+# The overview table's two columns, named once so a run that discovers nothing
+# still renders its header instead of collapsing to no table at all.
+OVERVIEW_COLUMNS = ("object_type", "count")
 
-def adt_table_line_width(widths: Sequence[int]) -> int:
-    """Rendered width of a row whose columns are ``widths`` wide.
-
-    The trailing gutter is excluded because ``row_line`` strips it. A caller
-    that has to *budget* a column, fit the whole line inside 78 characters and
-    spend whatever is left on the last one, needs this geometry, and copying
-    the indent and gutter to the call site is how the copy drifts from the
-    renderer (ADT #269). Pass ``0`` for the column being sized.
-    """
-    if not widths:
-        return 0
-    return len(ADT_TABLE_INDENT) + sum(widths) + len(ADT_TABLE_GUTTER) * (len(widths) - 1)
-
-def _adt_cell(value: object, width: int, numeric: bool) -> str:
-    # coalesce only None to "", a legitimate falsy value such as the int 0
-    # (e.g. a sub-second duration) must still render. ``str(value or "")``
-    # disagreed with the width/numeric detection and silently dropped the cell.
-    cell = "" if value is None else str(value)
-    text = DROPBOX_PATH_RE.sub("Dropbox/", cell)
-    align = ">" if numeric else "<"
-    return f"{text:{align}{width}}{ADT_TABLE_GUTTER}"
-
-@dataclass(frozen=True)
-class _AdtTableLayout:
-    """Pre-computed column geometry, shared by the batch and streaming renders.
-
-    Holding the widths/alignment lets a single row be emitted in pieces, the
-    object name first, the rest after an action runs, that rejoin byte-for-byte
-    with the whole-row render. ``cells_segment`` carries the two-space table
-    indent only on the leading segment (``start == 0``).
-    """
-
-    columns: tuple[str, ...]
-    widths: tuple[int, ...]
-    numeric: tuple[bool, ...]
-
-    def cells_segment(self, values: Sequence[object], start: int, end: int) -> str:
-        line = ADT_TABLE_INDENT if start == 0 else ""
-        for index in range(start, end):
-            line += _adt_cell(values[index], self.widths[index], self.numeric[index])
-        return line
-
-    def row_line(self, values: Sequence[object]) -> str:
-        # Stripped: every cell is padded to its column width and carries a
-        # three-space gutter, the last column included, so an unstripped row ran
-        # three characters (nine on the header) past its visible content. On an
-        # 80-column terminal that invisible tail wrapped and printed as a blank
-        # line under every row, the table read as perfectly aligned one column
-        # wider and shredded one column narrower (ADT #237). Trailing padding
-        # aligns nothing: a cell is placed by what sits to its left.
-        return self.cells_segment(values, 0, len(self.columns)).rstrip()
-
-    def header_line(self) -> str:
-        return self.row_line([column.upper().replace("_", " ") for column in self.columns])
-
-    def separator_line(self) -> str:
-        return self.row_line(["-" * width for width in self.widths])
-
-def _compute_adt_layout(
-    rows: list[dict[str, object]],
-    columns: Sequence[str],
-    min_widths: Mapping[str, int],
-    numeric_columns: Sequence[str] = (),
-) -> _AdtTableLayout:
-    columns = list(columns)
-    widths = [
-        max(
-            len(column),
-            min_widths.get(column, 0),
-            *(len(DROPBOX_PATH_RE.sub("Dropbox/", str(row.get(column, "")))) for row in rows),
-        )
-        for column in columns
-    ]
-    # Detection reads the cells, so a column of quantities that carry a unit,
-    # `75%`, `1.2s`, sniffs as text and prints left-aligned, which is exactly
-    # where a reader most wants the digits to line up. ``numeric_columns`` is the
-    # caller saying what the column *is*, and it wins over what the cells look
-    # like; formatting the value to hide its unit would be the alternative, and
-    # that trades a real alignment problem for an unreadable number.
-    numeric = [
-        column in numeric_columns
-        or (
-            bool(rows)
-            and all(
-                str(row.get(column, "")).isnumeric() or row.get(column, "") in {None, ""}
-                for row in rows
-            )
-        )
-        for column in columns
-    ]
-    return _AdtTableLayout(tuple(columns), tuple(widths), tuple(numeric))
-
-def print_adt_table(
-    rows: list[dict[str, object]],
-    min_widths: Mapping[str, int] | None = None,
-    columns: Sequence[str] | None = None,
-    leading_blank: bool = True,
-    numeric: Sequence[str] | None = None,
-) -> None:
-    # ``columns`` makes a requested section render even with zero rows: the
-    # header and separator still print so the user sees the feature ran (an
-    # empty table reads as "looked, found nothing", not "silently did nothing").
-    if not rows and not columns:
-        return
-    min_widths = min_widths or {}
-    columns = list(rows[0].keys()) if rows else list(columns)
-    layout = _compute_adt_layout(rows, columns, min_widths, numeric or ())
-    if leading_blank:
-        print()
-    print(layout.header_line())
-    print(layout.separator_line())
-    for row in rows:
-        print(layout.row_line([row.get(column, "") for column in columns]))
-    print()
-    _commit_stdout()
-
-def _commit_stdout() -> None:
-    commit_pending = getattr(sys.stdout, "commit_pending", None)
-    if callable(commit_pending):
-        commit_pending()
-        return
-    sys.stdout.flush()
-
-def print_adt_pipes(rows: dict[str, list[str]]) -> None:
-    for key in sorted(rows):
-        for index, value in enumerate(rows[key]):
-            label = key.upper() if index == 0 else ""
-            print(f"  {label:>18} | {value}")
-    print()
+# The overview row for the grant artifacts, measured into the table before the
+# reads that decide whether it prints (`#437`). Read only, never mutated.
+GRANT_OVERVIEW_ROW: Mapping[str, object] = {"object_type": GRANT_OBJECT_TYPE, "count": ""}
 
 class ConsoleExportDbReporter(ExportDbReporter):
     def __init__(self, silent: bool = False, compact: bool = False) -> None:
@@ -236,6 +148,9 @@ class ConsoleExportDbReporter(ExportDbReporter):
         # The bar for the schema being exported, or None outside `-compact` and
         # between segments.
         self._bar: ObjectProgressBar | None = None
+        # The overview table held open while the grant reads run, or None when
+        # no table is open. See `overview` and `overview_grants`.
+        self._overview_layout: _AdtTableLayout | None = None
 
     @property
     def reports_objects(self) -> bool:
@@ -277,14 +192,46 @@ class ConsoleExportDbReporter(ExportDbReporter):
             {"object_type": object_type, "count": counts[object_type]}
             for object_type in sorted(counts)
         ]
-        if grants:
-            # **A row, and deliberately no number** (`#382`): how many files the
-            # four reads write is not knowable here (`grants_received` produces
-            # one per owner) and they run after this table. Appended rather than
-            # counted in, so these rows and `EXPORTING <n> OBJECTS:` below stay a
-            # dictionary total.
-            rows.append({"object_type": GRANT_OBJECT_TYPE, "count": ""})
-        print_adt_table(rows)
+        if not grants:
+            print_adt_table(rows)
+            return
+        # **The table opens here and the GRANT row waits** (`#437`). Whether
+        # that row is owed at all is a question only the four privilege reads
+        # can answer, and they run under this open table, which is what keeps
+        # them announced. Jan, 2026-08-20: *"You will print table header and
+        # only AFTER you fetch grants and evaluate changes, you will print the
+        # line"*. Sized for the row whichever way the answer goes, so the
+        # decision can never move a column that has already printed.
+        self._overview_layout = open_adt_table(
+            rows,
+            columns   = list(OVERVIEW_COLUMNS),
+            sized_for = [GRANT_OVERVIEW_ROW],
+        )
+
+    def overview_grants(self, changed: bool) -> None:
+        """Close the overview table, printing the `GRANT` row only if one moved.
+
+        ``changed`` is what the four reads came back with: at least one artifact
+        this export writes differs from the file on disk. A row on a run that
+        rewrites the same bytes claims work nobody did, which is the console
+        rule this correction was filed on, *"A row must not claim work it might
+        not perform"*.
+
+        **A row, and deliberately still no number** (`#382`): `grants_received`
+        writes one file per owner, so the figure a reader would compare against
+        the schema is not the count of anything on screen.
+
+        A no-op when no table is open, which is every run narrowed by an exact
+        `-name`: the overview is skipped outright there, so there is nothing to
+        append a row to and nothing to close.
+        """
+        layout = self._overview_layout
+        self._overview_layout = None
+        if layout is None:
+            return
+        if changed:
+            print(layout.row_line([GRANT_OVERVIEW_ROW[column] for column in OVERVIEW_COLUMNS]))
+        close_adt_table()
 
     def recent_note(self, message: str) -> None:
         # The title is the header; the sentence explaining it is body text. The
@@ -320,7 +267,6 @@ class ConsoleExportDbReporter(ExportDbReporter):
         total: int,
         estimate: float = 0.0,
         widest_label: str = "",
-        grants: bool = False,
     ) -> None:
         self._last_type_by_schema[schema] = ""
         # The count reads as part of the sentence rather than a parenthetical
@@ -337,15 +283,16 @@ class ConsoleExportDbReporter(ExportDbReporter):
             # rates; the reporter never reads or writes that history itself, a
             # console class that touches the filesystem is the wrong seam.
             # `widest_label` sizes the dot track once for the whole segment, so a
-            # percentage is the same number of dots whichever type is in flight;
-            # `widest_row_label` folds in the GRANT row when one will be drawn.
-            # **The bar counts the grants; the header does not** (`#382`). They
-            # are one more unit of work, and leaving them out let the row read
-            # 100% while they were still running, the `#379` defect exactly.
+            # percentage is the same number of dots whichever type is in flight.
+            # **The bar counts objects and nothing else** (`#437`). It carried
+            # one extra unit for the grant reads while those ran under it, which
+            # is what stopped the row reading 100% mid-work (`#379`); the reads
+            # happen under the overview table now, so a unit for them would be
+            # one this bar never waits on.
             self._bar = ObjectProgressBar(
-                total + (1 if grants else 0),
+                total,
                 previous_seconds = estimate,
-                widest_label     = widest_row_label(widest_label, grants),
+                widest_label     = widest_label,
             )
             self._bar.begin()
             return
@@ -421,19 +368,6 @@ class ConsoleExportDbReporter(ExportDbReporter):
             return
         self._row_open = False
         print()
-
-    def start_grants(self, schema: str) -> None:
-        """Name `GRANTS` on the compact row, and print nothing in any other mode.
-
-        The four grant reads run after the object loop, so under `-compact` this
-        is what the reader watches while they block. Every other mode prints no
-        row for them at all (Jan, 2026-08-16: *"dont list grants ... in non
-        compact mode in the list of objects"*); the overview row above is what
-        says the type is coming.
-        """
-        if self._bar is None:
-            return
-        self._bar.start_object(GRANT_OBJECT_TYPE)
 
     def finish_type(self, schema: str, object_type: str) -> None:
         if self._silent or self._compact:

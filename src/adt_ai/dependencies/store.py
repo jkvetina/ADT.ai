@@ -11,15 +11,9 @@ from adt_ai.dependencies import edges as _edges
 from adt_ai.dependencies.classify import split_node
 from adt_ai.dependencies.db import connect
 from adt_ai.dependencies.foreign_key_tree import foreign_key_tree as _foreign_key_tree
-from adt_ai.dependencies.schema import (
-    APEX_TABLES,
-    DROP_SCHEMA,
-    LEGACY_TABLES,
-    SCHEMA,
-    SCHEMA_VERSION,
-    USER_TABLES,
-)
-from adt_ai.dependencies.write import insert_rows as _insert_rows
+from adt_ai.dependencies.owner_case import fold_owner_case, normalize_owner
+from adt_ai.dependencies.owner_case import owner_params as _owner_params
+from adt_ai.dependencies.schema import DROP_SCHEMA, LEGACY_TABLES, SCHEMA, SCHEMA_VERSION
 
 DEFAULT_MAX_DEPTH = 20
 
@@ -27,18 +21,6 @@ DEFAULT_MAX_DEPTH = 20
 def _meta_table_exists(connection: Any) -> bool:
     row = connection.execute(queries.META_TABLE_EXISTS_QUERY).fetchone()
     return row is not None
-
-
-def _owner_params(owners: Iterable[str] | None) -> list[str]:
-    """Normalize the query-mode ``-schema`` owner filter to deduped uppercase
-    params. Empty/whitespace entries (and ``None``) collapse to ``[]``, so an
-    empty owner filter behaves exactly like an absent one."""
-    params: list[str] = []
-    for owner in owners or ():
-        owner = str(owner).strip().upper()
-        if owner and owner not in params:
-            params.append(owner)
-    return params
 
 
 def build_db(db_path: str | Path) -> DependencyStore:
@@ -78,6 +60,13 @@ class DependencyStore:
             connection.execute(f"DROP TABLE IF EXISTS [{_legacy}]")
         connection.execute(queries.META_UPSERT_SCHEMA_VERSION, (SCHEMA_VERSION,))
         connection.commit()
+        if rebuild and not wiped:
+            # Heal a mirror an older ADT split across two spellings of one
+            # schema (ADT #413). Refresh path only, for the same reason the
+            # version wipe is: this deletes the duplicate copy, and a query mode
+            # must never rewrite data underneath a report. A wiped mirror has
+            # nothing left to fold.
+            fold_owner_case(connection)
         return cls(connection)
 
     # writers
@@ -88,15 +77,7 @@ class DependencyStore:
         tables: Mapping[str, Iterable[Mapping[str, Any]]] | None = None,
     ) -> dict[str, int]:
         """Replace one owner's ``USER_*`` rows in a single transaction."""
-        provided = {str(key).upper(): value for key, value in (tables or {}).items()}
-        counts: dict[str, int] = {}
-        with self.connection:
-            for table in USER_TABLES:
-                self.connection.execute(queries.delete_owner_rows_query(table), (owner,))
-                counts[table] = _insert_rows(
-                    self.connection, table, provided.get(table, ()), stamp={"OWNER": owner}
-                )
-        return counts
+        return refresh.refresh_schema_full(self.connection, normalize_owner(owner), tables)
 
     def refresh_schema_incremental(
         self,
@@ -108,7 +89,7 @@ class DependencyStore:
     ) -> dict[str, int]:
         """Patch one owner's ``USER_*`` rows without wiping unchanged objects."""
         return refresh.refresh_schema_incremental(
-            self.connection, owner, object_rows, tables, force=force
+            self.connection, normalize_owner(owner), object_rows, tables, force=force
         )
 
     def refresh_schema_deep(
@@ -121,7 +102,11 @@ class DependencyStore:
     ) -> dict[str, int]:
         """Replace rows to/from named objects without wiping the whole owner."""
         return refresh.refresh_schema_deep(
-            self.connection, owner, object_rows, tables, object_names=object_names
+            self.connection,
+            normalize_owner(owner),
+            object_rows,
+            tables,
+            object_names=object_names,
         )
 
     def schema_changed_objects(
@@ -132,7 +117,9 @@ class DependencyStore:
         force: bool = False,
     ) -> list[tuple[str, str]]:
         """Return added or modified ``USER_OBJECTS`` keys for ``owner``."""
-        return refresh.schema_changed_objects(self.connection, owner, object_rows, force=force)
+        return refresh.schema_changed_objects(
+            self.connection, normalize_owner(owner), object_rows, force=force
+        )
 
     def refresh_app(
         self,
@@ -140,18 +127,7 @@ class DependencyStore:
         tables: Mapping[str, Iterable[Mapping[str, Any]]] | None = None,
     ) -> dict[str, int]:
         """Replace one app's ``APEX_*`` rows in a single transaction."""
-        provided = {str(key).upper(): value for key, value in (tables or {}).items()}
-        counts: dict[str, int] = {}
-        with self.connection:
-            for table in APEX_TABLES:
-                self.connection.execute(queries.delete_app_rows_query(table), (app_id,))
-                counts[table] = _insert_rows(
-                    self.connection,
-                    table,
-                    provided.get(table, ()),
-                    stamp={"APPLICATION_ID": app_id},
-                )
-        return counts
+        return refresh.refresh_app_full(self.connection, app_id, tables)
 
     def refresh_app_incremental(
         self,
@@ -180,7 +156,13 @@ class DependencyStore:
         ``db_offset`` is that scope's DATABASE UTC offset (``+02:00``), under
         the parallel ``db_utc_offset:`` key so `patch -create` reads a mirrored
         ``LAST_DDL_TIME`` on the clock that produced it (ADT #394).
+
+        A schema scope is normalized the way its mirror rows are, so `-schema
+        ict_owner` and `-schema ICT_OWNER` stamp one row rather than two (ADT
+        #413). An app scope is a numeric id and carries no case question.
         """
+        if scope_type == "schema":
+            scope_name = normalize_owner(scope_name)
         rows = [
             (f"{queries.META_LAST_REFRESH_PREFIX}{scope_type}:{scope_name}", timestamp)
         ]

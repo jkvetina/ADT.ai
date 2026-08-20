@@ -22,6 +22,7 @@ from adt_ai.export_db.content import (
     _render_grants_received,
     _render_user_privileges,
 )
+from adt_ai.export_db.files import ObjectFileWriter, ObjectWriteRequest
 from adt_ai.export_db.inventory import DatabaseObject, ObjectDiscovery
 
 # The object type all four artifacts already carry. Named once so the yield
@@ -49,6 +50,46 @@ def exports_grants(request) -> bool:
     if GRANT_OBJECT_TYPE not in request.config.get("object_types", {}):
         return False
     return bool(_requested_object_type_matches(GRANT_OBJECT_TYPE, request.object_types))
+
+
+def grant_artifacts(
+    request,
+    schema,
+    discovery: ObjectDiscovery,
+    split_patterns,
+    writer: ObjectFileWriter,
+) -> tuple[list[tuple[DatabaseObject, str]], bool]:
+    """This schema's GRANT artifacts, and whether any of them actually moved.
+
+    The four reads and the comparison are one step because the console asks one
+    question. `#382` put a `GRANT` row in the overview to say the type was
+    coming, and put it there with the rest of the table, so it was a claim about
+    what the config selects rather than about anything the export would do: a
+    schema where nothing had changed still printed a table holding that one row.
+    Jan, 2026-08-20: *"When you are not detecting any grant changes, dont print
+    it. You will print table header and only AFTER you fetch grants and evaluate
+    changes, you will print the line"*.
+
+    So the runner calls this under the overview table it deliberately left open,
+    which is also what announces the wait, the job `#382` had given the row
+    itself and the compact bar's `GRANTS` label. A row that opens before the
+    read that decides it is the shape SOP §Console output contract bans outright.
+
+    **Comparing is not deciding what to write.** `run()` writes every artifact
+    whatever this answers, so a file edited by hand is still restored on the next
+    export; the answer reaches the screen and nowhere else.
+
+    Content is the only signal available. None of these four is a `USER_OBJECTS`
+    row, so there is no `LAST_DDL_TIME` for a `-recent` window to narrow them by,
+    which is exactly why the answer is worth computing: a windowed run cannot
+    learn from the dictionary whether a grant moved, and this can.
+    """
+    artifacts = list(grant_contents(request, schema, discovery, split_patterns))
+    changed = any(
+        writer.differs_from_disk(ObjectWriteRequest(grant_object, content))
+        for grant_object, content in artifacts
+    )
+    return artifacts, changed
 
 
 def grant_contents(

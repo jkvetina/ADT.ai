@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from html import unescape
 from pathlib import Path
+from typing import Any
 
 from adt_ai.shared.env_check import _first_line, _instant_client_version
 
@@ -99,6 +100,10 @@ class DoctorRequest:
     init  : bool = False
     root  : Path | None = None
     force : bool = False
+    # The project config, when the caller could load one. Doctor diagnoses a
+    # setup before any config exists, so this stays optional and a check reading
+    # it reports nothing rather than failing when it is absent.
+    config: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

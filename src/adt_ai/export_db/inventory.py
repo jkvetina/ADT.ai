@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import fnmatch
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from adt_ai.export_db import queries
+from adt_ai.export_db.timeless_types import discover_job_names, discover_mview_log_names
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.diff_tables import is_diff_table
 from adt_ai.shared.sql_like import matches_sql_like
@@ -39,6 +40,9 @@ class ObjectDiscovery:
         self.gateway = gateway
         self._comments_by_schema: dict[str, dict[tuple[str, str], list[dict[str, Any]]]] = {}
         self._comment_cache_keys: dict[str, tuple[str, str, str, str]] = {}
+        # Per-schema {job name: fresh signature} for the jobs this run selected,
+        # so the caller can stamp the baseline once the files are actually written.
+        self.last_job_signatures: dict[str, dict[str, str]] = {}
 
     def discover(
         self,
@@ -50,6 +54,7 @@ class ObjectDiscovery:
         recent_days: int | float | None = None,
         changed_since: str | None = None,
         prefer_exact_names: bool = True,
+        known_job_signatures: Mapping[str, str] | None = None,
     ) -> list[DatabaseObject]:
         filters = _ObjectFilters(
             object_types = _normalize_list(object_types),
@@ -77,13 +82,30 @@ class ObjectDiscovery:
         ]
         if _includes_object_type("INDEX", filters.object_types):
             objects.extend(self._discover_indexes(schema, filters, recent_days, changed_since))
-        # JOB and MVIEW LOG have no reliable last_ddl_time, so any change-window
-        # mode skips them, watermark mode for exactly the reason -recent N does.
-        windowed = recent_days is not None or changed_since is not None
-        if _includes_object_type("JOB", filters.object_types) and not windowed:
-            objects.extend(self._discover_jobs(schema, filters))
-        if _includes_object_type("MVIEW LOG", filters.object_types) and not windowed:
-            objects.extend(self._discover_mview_logs(schema, filters))
+        # A window narrows JOB and MVIEW LOG too, but the two types answer it very
+        # differently. An mview log's LOG_TABLE is an ordinary TABLE, so its query
+        # binds the window like every other type. A JOB has no change timestamp
+        # anywhere, so `JOBS_QUERY` returns a content SIGNATURE and the window is
+        # answered by comparing it against the last one exported.
+        #
+        # ADT #414 first answered this by exporting every job under a window, and
+        # Jan rejected that: a `-recent` run on a 2000-job schema then exports 2000
+        # jobs, which is worse than skipping them, because `-type JOB` already gives
+        # the caller that set on demand. Both shapes were wrong in the same way, and
+        # the signature is what lets a window mean "what changed" for this type too.
+        if _includes_object_type("JOB", filters.object_types):
+            objects.extend(
+                self._discover_jobs(
+                    schema,
+                    filters,
+                    windowed = recent_days is not None or changed_since is not None,
+                    known    = known_job_signatures,
+                )
+            )
+        if _includes_object_type("MVIEW LOG", filters.object_types):
+            objects.extend(
+                self._discover_mview_logs(schema, filters, recent_days, changed_since)
+            )
         return objects
 
     def _object_rows(
@@ -126,35 +148,39 @@ class ObjectDiscovery:
         self,
         schema: str,
         filters: _ObjectFilters,
+        windowed: bool = False,
+        known: Mapping[str, str] | None = None,
     ) -> list[DatabaseObject]:
-        rows = self.gateway.fetch_all(
-            self.JOBS_QUERY,
-            {
-                "schema": schema,
-            },
-        )
-        return [
-            DatabaseObject(schema, "JOB", str(row["OBJECT_NAME"]))
-            for row in rows
-            if str(row.get("SCHEDULE_TYPE") or "").upper() != "IMMEDIATE"
-            if filters.matches("JOB", str(row["OBJECT_NAME"]))
-        ]
+        """Pick the jobs to export, narrowing by signature only under a window.
+
+        The fresh signatures of every job this run SELECTED are recorded on
+        `last_job_signatures` so the caller can persist them once the export has
+        actually written the files. Recording them here rather than returning them
+        keeps the discovery contract a plain list of objects.
+        """
+        rows = self.gateway.fetch_all(self.JOBS_QUERY, {"schema": schema})
+        names, signatures = discover_job_names(rows, filters.matches, windowed, known)
+        self.last_job_signatures[schema] = signatures
+        return [DatabaseObject(schema, "JOB", name) for name in names]
 
     def _discover_mview_logs(
         self,
         schema: str,
         filters: _ObjectFilters,
+        recent_days: int | float | None = None,
+        changed_since: str | None = None,
     ) -> list[DatabaseObject]:
         rows = self.gateway.fetch_all(
             self.MVIEW_LOGS_QUERY,
             {
                 "schema": schema,
+                "recent_days": recent_days,
+                "changed_since": changed_since,
             },
         )
         return [
-            DatabaseObject(schema, "MVIEW LOG", str(row["OBJECT_NAME"]))
-            for row in rows
-            if filters.matches("MVIEW LOG", str(row["OBJECT_NAME"]))
+            DatabaseObject(schema, "MVIEW LOG", name)
+            for name in discover_mview_log_names(rows, filters.matches)
         ]
 
     def _discover_indexes(

@@ -26,7 +26,6 @@ from adt_ai.cli.context import (
     _apex_scope,
     _app_in_selection,
     _flatten_arg_groups,
-    _has_job_recent_conflict,
     _load_startup_context,
     _parse_apex_app_selection,
     _parse_apex_export_filter_groups,
@@ -98,13 +97,6 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
     object_names = _flatten_arg_groups(args.name)
     if args.debug:
         _print_startup_debug(startup)
-    if _has_job_recent_conflict(args.recent, object_types or []):
-        print(
-            "export_db: JOB objects cannot be exported with -recent; "
-            "export jobs separately with -type JOB.",
-            file=sys.stderr,
-        )
-        return 2
     gateway_cache: dict[str, QueryGateway] = {}
 
     def default_gateway_factory(schema: str) -> QueryGateway:

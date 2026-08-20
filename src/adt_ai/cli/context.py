@@ -28,7 +28,6 @@ from adt_ai.cli.context_apex import (
     _app_in_selection,
     _flatten_arg_groups,
     _flatten_compile_setting_groups,
-    _has_job_recent_conflict,
     _parse_apex_app_selection,
     _parse_apex_export_filter_groups,
     _parse_apex_page_selection,
@@ -51,11 +50,17 @@ from adt_ai.cli.context_errors import (
     _print_database_error,
     _print_sqlcl_error,
     _print_unexpected_error,
+    _project_relative,
 )
 from adt_ai.shared import text_files
 
 FORCED_CHIME_DEFAULT_THEME = "chime"
 DISABLED_CHIME_THEME_VALUES = {"", "0", "false", "no", "off"}
+# Every caller with no human at a terminal: agent shells, and CI runners. The
+# worktree check below cannot stand in for the CI half, because CI clones the
+# repo rather than linking a worktree, so it reads as a real checkout. That was
+# harmless while CI ran on hardware nobody could hear and stopped being harmless
+# when DEV moved onto a self-hosted runner on Jan's own Mac.
 AGENT_ENV_VARS = (
     "CODEX_THREAD_ID",
     "CODEX_SHELL",
@@ -63,6 +68,8 @@ AGENT_ENV_VARS = (
     "CODEX_CI",
     "CODEX_SANDBOX",
     "CLAUDE_CODE_SESSION_ID",
+    "CI",
+    "GITHUB_ACTIONS",
 )
 
 

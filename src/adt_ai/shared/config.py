@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -8,6 +9,11 @@ from typing import Any
 import yaml
 
 from adt_ai.shared.dict_merge import deep_merge
+from adt_ai.shared.path_template import (
+    KNOWN_TOKEN_NAMES,
+    supported_spelling,
+    unsupported_tokens,
+)
 
 # Default export layout when `path_objects` is not configured. Shared by
 # export_db and export_data so both land files in the same tree.
@@ -105,10 +111,10 @@ class ConfigLoader:
 def reject_unresolved_placeholders(
     template: str,
     *,
-    key: str = "path_objects",
-    supported: str = "<schema> and <object_type>",
+    key    : str = "path_objects",
+    allowed: Sequence[str] = KNOWN_TOKEN_NAMES,
 ) -> str:
-    """Return ``template``, or raise when it still holds an old-ADT `{$NAME}` token.
+    """Return ``template``, or raise when it holds a token nothing will resolve.
 
     A path template is turned straight into folder names, so an unresolved token
     does not fail, it exports into a directory named after the placeholder.
@@ -116,17 +122,32 @@ def reject_unresolved_placeholders(
     example, so this is the copy-paste every migrating project makes; the
     failure has to be loud rather than a real folder called ``{$INFO_SCHEMA}``
     shadowing the tracked tree (851 files, 2026-08-01).
+
+    The angle-bracket kind is checked the same way and for the same reason. The
+    substitution is an exact-match ``str.replace`` per known spelling, so every
+    other one reached the filesystem intact: a project trying ``<SCHEMA>`` before
+    ADT #411 built a folder literally called ``<SCHEMA>``, and ``export_db`` then
+    read the missing ``<schema>`` as a schema-less layout and collapsed every
+    schema into one tree. Two failures from one typo, both silent.
     """
-    found = _OLD_ADT_PLACEHOLDER_RE.findall(str(template))
-    if not found:
+    old_adt = _OLD_ADT_PLACEHOLDER_RE.findall(str(template))
+    unknown = unsupported_tokens(str(template), allowed)
+    if not old_adt and not unknown:
         return str(template)
 
-    tokens = ", ".join(sorted(set(found)))
+    tokens = ", ".join(sorted(set(old_adt)) + unknown)
+    reason = (
+        "'{$NAME}' is old ADT syntax and would be written out as a literal folder name."
+        if old_adt
+        else "an unrecognised token is written out as a literal folder name."
+    )
     raise UnresolvedPlaceholderError(
         f"Unresolved placeholder in config {key}: {tokens}\n"
         f"  Value: {template}\n"
-        f"  ADT.ai substitutes only {supported} in {key}; '{{$NAME}}' is old ADT "
-        f"syntax and would be written out as a literal folder name.\n"
+        f"  ADT.ai substitutes only {supported_spelling(allowed)} in {key}; {reason}\n"
+        f"  A schema token carries its own case, so '<schema>' writes 'app_owner/' and "
+        f"'<SCHEMA>' writes 'APP_OWNER/'. An object type folder is spelled by "
+        f"object_types in config.yaml, so '<object_type>' has no cased form.\n"
         f"  Fix {key} in config.yaml (e.g. '<schema>/database/<object_type>/')."
     )
 

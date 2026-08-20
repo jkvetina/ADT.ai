@@ -27,7 +27,7 @@ from adt_ai.ut.render import (
 )
 from adt_ai.ut.reporter import ConsoleUt3Reporter
 from adt_ai.ut.runner import Ut3Request, Ut3Runner
-from adt_ai.ut.store import previous_percents, record_run
+from adt_ai.ut.store import record_run, run_history
 from adt_ai.ut.timers import previous_seconds, record_seconds, timers_path, variant_key
 
 
@@ -121,7 +121,12 @@ def _run_ut_for_schema(
         # run, so reading afterwards would compare the run against itself and
         # every delta would be zero, which looks exactly like a stable schema
         # (`#251`).
-        previous_percents = previous_percents(startup.root, owner),
+        #
+        # Keyed by `variant`, the same `-name` selection the timers above are
+        # keyed by: a filtered run measures only the packages it selected, so
+        # standing it in front of a full run reports every other package as
+        # having no previous figure (`#436`).
+        history           = run_history(startup.root, owner, variant),
     )
     try:
         result = Ut3Runner(gateway, reporter=reporter).run(
@@ -167,7 +172,7 @@ def _run_ut_for_schema(
     # store that only remembered verbose runs would compare against whenever
     # somebody last passed the flag rather than against last time (`#251`).
     if result.coverage.packages:
-        record_run(startup.root, owner, result.coverage.packages)
+        record_run(startup.root, owner, result.coverage.packages, variant=variant)
 
     # The gate reads the report rather than replacing it: every table above has
     # already printed, and what follows is only the list of packages under the

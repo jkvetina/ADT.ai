@@ -36,6 +36,65 @@ _APEX_PRIMARY_KEYS = {
 }
 
 
+def refresh_schema_full(
+    connection: sqlite3.Connection,
+    owner: str,
+    tables: Mapping[str, Iterable[Mapping[str, Any]]] | None = None,
+) -> dict[str, int]:
+    """Replace one owner's ``USER_*`` rows in a single transaction."""
+    return _replace_scope(
+        connection,
+        USER_TABLES,
+        tables,
+        delete_query = queries.delete_owner_rows_query,
+        scope_value  = owner,
+        stamp        = {"OWNER": owner},
+    )
+
+
+def refresh_app_full(
+    connection: sqlite3.Connection,
+    app_id: int,
+    tables: Mapping[str, Iterable[Mapping[str, Any]]] | None = None,
+) -> dict[str, int]:
+    """Replace one app's ``APEX_*`` rows in a single transaction."""
+    return _replace_scope(
+        connection,
+        APEX_TABLES,
+        tables,
+        delete_query = queries.delete_app_rows_query,
+        scope_value  = app_id,
+        stamp        = {"APPLICATION_ID": app_id},
+    )
+
+
+def _replace_scope(
+    connection: sqlite3.Connection,
+    mirror_tables: tuple[str, ...],
+    tables: Mapping[str, Iterable[Mapping[str, Any]]] | None,
+    *,
+    delete_query: Any,
+    scope_value: Any,
+    stamp: Mapping[str, Any],
+) -> dict[str, int]:
+    """Wipe one scope's rows and write the supplied ones back, all or nothing.
+
+    The schema and app writers differ only in which mirror tables they cover and
+    which column names the scope, which is what the two callers above pass. They
+    lived in `store.py` until ADT #413 and moved here so all four writers, full
+    and incremental, are in one module rather than two.
+    """
+    provided = {str(key).upper(): value for key, value in (tables or {}).items()}
+    counts: dict[str, int] = {}
+    with connection:
+        for table in mirror_tables:
+            connection.execute(delete_query(table), (scope_value,))
+            counts[table] = insert_rows(
+                connection, table, provided.get(table, ()), stamp=dict(stamp)
+            )
+    return counts
+
+
 def refresh_schema_incremental(
     connection: sqlite3.Connection,
     owner: str,

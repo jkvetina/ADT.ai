@@ -1,6 +1,6 @@
 # ADT.ai
 
-![Version](https://img.shields.io/badge/version-0.9.1-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Python](https://img.shields.io/badge/python-3.11%2B-blue) [![CI](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml/badge.svg)](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml)
+![Version](https://img.shields.io/badge/version-0.9.2-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Python](https://img.shields.io/badge/python-3.11%2B-blue) [![CI](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml/badge.svg)](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml)
 
 Get your Oracle database and APEX applications into Git, and get your changes back out to the next environment.
 
@@ -12,7 +12,7 @@ ADT.ai is a Python command-line tool for Oracle developers, and it closes that g
 
 Nothing is installed in the database. It is a command you run from your project folder, against a connection you configure, so there is no schema to create and nothing to uninstall when you are done with it.
 
-Build verified by 3553 private unit tests.
+Build verified by 3730 private unit tests.
 
 <br>
 

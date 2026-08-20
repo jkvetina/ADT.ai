@@ -264,143 +264,25 @@ def progress_dot_capacity(header: str, width: int) -> int:
     return width - 5 - len(row_left_margin(header)) - 9
 
 
-def fixed_width_count_line(
-    label: str,
-    count: int,
-    *,
-    total: int | None = None,
-    count_width: int = 1,
-    indent: str = ROW_INDENT,
-    line_width: int = 78,
-) -> str:
-    left = f"{indent}{label}"
-    right = fixed_width_count_suffix(count, total=total, count_width=count_width)
-    dots_len = line_width - len(left) - len(right) - 2
-    dots = "." * max(1, dots_len)
-    return f"{left} {dots} {right}"
+# The labelled fixed-width row family lives in `shared/fixed_width.py` since
+# `#436`: this module was over the repo's 20 KB per-file context budget and the
+# seam was already there, screen furniture here and the one row shape five
+# modules stream through over there. Re-exported rather than swept through every
+# call site, the same facade shape `export_db/normalizers.py` keeps over
+# `object_normalizers/`, so `from adt_ai.shared.progress import ...` still
+# resolves and the split cost no importer a line.
+from adt_ai.shared.fixed_width import (  # noqa: E402,F401  (facade: re-exported, unused here)
+    DEFAULT_VALUE_WIDTH,
+    LABEL_ELISION,
+    LEADER_DOTS_MINIMUM,
+    FixedWidthProgressPrinter,
+    fit_label,
+    fixed_width_count_line,
+    fixed_width_count_suffix,
+    fixed_width_row,
+    fixed_width_status_line,
+    open_section,
+    streamed,
+)
 
-
-def fixed_width_status_line(
-    label: str,
-    status: str,
-    *,
-    indent: str = ROW_INDENT,
-    line_width: int = 78,
-) -> str:
-    left = f"{indent}{label}"
-    right = status
-    dots_len = line_width - len(left) - len(right) - 2
-    dots = "." * max(1, dots_len)
-    return f"{left} {dots} {right}"
-
-
-def fixed_width_count_suffix(
-    count: int,
-    *,
-    total: int | None = None,
-    count_width: int = 1,
-) -> str:
-    if total is None:
-        return f"{count:>{count_width}}"
-    return f"{count:>{count_width}} | {total:>7}"
-
-
-class FixedWidthProgressPrinter:
-    def __init__(self, *, line_width: int = 78, indent: str = ROW_INDENT) -> None:
-        self.line_width = line_width
-        self.indent = indent
-        self._active_left: str | None = None
-
-    def bar(self) -> DottedProgressBar:
-        """A crawling row on this console, for work with a count but no rows.
-
-        The reporter is what a runner already holds to answer "is anything being
-        printed", so it is also what answers "what do I crawl under". A reporter
-        that prints nothing returns None instead, and the caller draws nothing
-        (`#381`).
-        """
-        return DottedProgressBar(line_width=self.line_width)
-
-    def begin(self, label: str, *, indent: str | None = None) -> None:
-        self._active_left = f"{self.indent if indent is None else indent}{label}"
-        # No mark_announced() here, nor on the dotted bar, nor on a streamed
-        # table half-row: all three stop mid-line, and an open line is what the
-        # runtime reads as an announcement (cli/constants.py _StdoutTracker).
-        print(self._active_left, end="", flush=True)
-
-    def finish(
-        self,
-        label: str,
-        count: int,
-        *,
-        total: int | None = None,
-        count_width: int = 1,
-        indent: str | None = None,
-    ) -> None:
-        left = self._active_left or f"{self.indent if indent is None else indent}{label}"
-        right = fixed_width_count_suffix(count, total=total, count_width=count_width)
-        dots_len = self.line_width - len(left) - len(right) - 2
-        dots = "." * max(1, dots_len)
-        print(f" {dots} {right}")
-        self._active_left = None
-
-    def fail(
-        self,
-        label: str,
-        *,
-        status: str = "FAILED",
-        indent: str | None = None,
-    ) -> None:
-        self.status(label, status, indent=indent)
-
-    def status(
-        self,
-        label: str,
-        status: str,
-        *,
-        indent: str | None = None,
-    ) -> None:
-        """Complete the active row with an arbitrary status word, not a count.
-
-        For blocking work with no natural count (a scan, a session setup
-        call) that would otherwise leave the row's label sitting alone with
-        no visible progress until the whole thing resolves.
-        """
-        left = self._active_left or f"{self.indent if indent is None else indent}{label}"
-        dots_len = self.line_width - len(left) - len(status) - 2
-        dots = "." * max(1, dots_len)
-        print(f" {dots} {status}")
-        self._active_left = None
-
-    def line(self, text: str) -> None:
-        print(text)
-
-
-def open_section(title: str) -> FixedWidthProgressPrinter:
-    """A section header, and the printer its rows will stream through.
-
-    The pair every announced phase needs, so a caller cannot print the header
-    and then forget the label under it, which is the half-fix `#360` was written
-    to stop.
-    """
-    print_adt_header(title)
-    return FixedWidthProgressPrinter()
-
-
-def streamed(progress: FixedWidthProgressPrinter, label: str, read):
-    """Stream `label`, run `read`, close the row with how much came back.
-
-    The whole shape of the console contract in one call, for the commonest case
-    it applies to: a read that blocks, produces a countable result and has no
-    rows of its own to stream. Shared rather than re-written per module because
-    `#360` needed it in five of them, and a per-module copy is how the
-    label-then-work order drifts out of one of them again.
-    """
-    progress.begin(label)
-    try:
-        result = read()
-    except Exception:
-        progress.fail(label)
-        raise
-    progress.finish(label, len(result) if hasattr(result, "__len__") else 1)
-    return result
+__all__ = [name for name in globals() if not name.startswith("_")]

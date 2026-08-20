@@ -44,8 +44,23 @@ The checkout is that release plus whatever has landed since, so it does not clai
 
 - `-update` appears when ADT.ai, `oracledb`, or SQLcl is behind. `oracledb` counts because the full update reinstalls `requirements.txt`.
 - `-sqlcl` appears only when SQLcl itself is behind.
+- A schema folder rename appears when the exported tree disagrees with the case `path_objects` or `path_apex` would write, see below.
 
-When neither applies the whole section is omitted, header included, an up-to-date machine is offered nothing. `-offline` checks nothing online, so no status is backed by a real check and the section is likewise absent. Under `-update` and `-sqlcl` the section always prints, because it reports the actions that ran.
+When none applies the whole section is omitted, header included, an up-to-date machine is offered nothing. `-offline` checks nothing online, so no status is backed by a real check and the section is likewise absent. Under `-update` and `-sqlcl` the section always prints, because it reports the actions that ran.
+
+### Schema folder case
+
+The schema token in `path_objects` and `path_apex` carries its own case: `<schema>` writes `app_owner/` and `<SCHEMA>` writes `APP_OWNER/`. Flipping it changes what the next export writes and moves nothing that is already on disk, so `doctor` reads the tree and offers the rename:
+
+```text
+ACTIONS:
+  Schema folders do not match path_objects: <SCHEMA> writes them uppercase, the repo has app_owner, core.
+  Rename them before the next export, git records a case-only move:
+    git mv app_owner APP_OWNER
+    git mv core CORE
+```
+
+`doctor` never performs the rename. A repo-wide move is yours to review and commit, and on macOS or Windows the case-only difference is invisible to the filesystem, so `git mv` is what actually records it. Nothing is reported when the tree already agrees, when the layout pins no schema level, or when the project has no config yet, which is the setup `doctor` exists to diagnose in the first place.
 
 Run the full ADT.ai, `requirements.txt`, and SQLcl upgrade:
 
