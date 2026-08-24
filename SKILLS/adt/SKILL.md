@@ -1,8 +1,8 @@
 ---
 created: 2026-06-10
-updated: 2026-08-20
+updated: 2026-08-24 17:40
 name: adt
-version: 1.8.11
+version: 1.9.7
 tags: [oracle, apex, deployment, cli, database]
 description: "ADT.ai usage guide for Oracle/APEX work: export database objects, APEX apps and data, validate APEXlang source, run utPLSQL test suites, run read-only SQL discovery, search Git history, query the dependency graph, recompile, and build/deploy patches. Use for any ADT.ai command help."
 ---
@@ -63,7 +63,9 @@ adtai export_db -silent -name APP_% -recent 7
 adtai export_db -silent -type JOB
 ```
 
-Filter by author in a shared schema worked through proxy users, `-by <NAME>` for a specific db user/schema, `-my` for yourself (db schema read from the gitignored `config/IDENTITY.yaml`). Both resolve authorship against the project's configured `audit:` source (a DDL-log table/view), so they need no DBA audit-trail access; without an `audit:` block in `config.yaml` they exit `2`:
+**`config/IDENTITY.yaml` is the one place ADT.ai asks who you are**, gitignored and never committed, and it answers both halves of that question. `db_schema` is the DATABASE identity, read by `export_db -my` and by every connection's `SET_IDENTIFIER`. `email` and `apex_account` are the COMMIT identity, read by every git-backed `-my`/`-by`: `patch`, `search_repo`, `rebuild -reveal`, `calendar`, and `export_apex -my`, which matches APEX workspace logins on `apex_account` because those are `FIRST.LAST` rather than addresses. **Git is the fallback, not a second source of truth:** state nothing and each half falls back independently to `git config user.email` and `user.name`, so a checkout with no file behaves exactly as it always has. Set `email` whenever your git author is not the identity your work should be attributed to, the ordinary case on a machine account, a shared runner, or a laptop carrying a corporate address. Full shape: `docs/config.md` §Developer Identity.
+
+Filter by author in a shared schema worked through proxy users, `-by <NAME>` for a specific db user/schema, `-my` for yourself (the `db_schema` above). Both resolve authorship against the project's configured `audit:` source (a DDL-log table/view), so they need no DBA audit-trail access; without an `audit:` block in `config.yaml` they exit `2`:
 
 ```bash
 adtai export_db -silent -by SCOTT
@@ -378,7 +380,7 @@ Output order is the point, and **no wait is spent on a finished screen** (`#359`
 
 **The naming convention is four config values, not flags.** All are **Oracle** regular expressions, matched case-insensitively, and Oracle evaluates them: `REGEXP_LIKE` selects the test packages inside the dictionary query, where the old `LIKE` sat, so a schema of thousands of packages is never fetched to find a handful of suites, and `REGEXP_SUBSTR` extracts the capture groups in the same pass. `ut_owner` is the only one that defaults empty. `ut_pattern` (`'_UT$'`) selects test packages. `ut_match` (`'^(.+)_UT$'`) pairs one back to the package it tests through capture group 1, the pairing the `COVERAGE` column is built on, so a project whose suites are `TEST_ABC` sets `'^TEST_'` and `'^TEST_(.+)$'` and everything follows. `ut_owner` names the schema holding the suites when they do not live beside the code; it scopes discovery, the annotation cache, `-refresh` and the `ut.run` path, while coverage is still measured in the schema under test. `ut_module` names the module a suite belongs to (`'^[^_]+_([^_]+)'` reads `SEC` off `ICT_SEC_SECURITY_UT`): the run then prints a `SUMMARY PER MODULE:` table under `SUMMARY PER SUITE:`, `MODULE NAME` / `PACKAGES` / `LINES` / the same verdict, `TIMER` and `COVERAGE` columns, ending on a total row whose module name is blank. `LINES` is the group's size in code: the body-line total of the packages its suites test, each counted once however many suites name it, which is the same deduplicated set `COVERAGE` is computed over and the denominator that figure is scaled by. A group the expression could not name reads `?`, never blank, so it is not read as a second total. It ships set, so the table prints by default; `ut_module: ''` is how a project without a module convention turns it off. **Anchor it to nothing that has to follow the module token**: a trailing `_` cannot read `ICT_VPD`, a module whose whole implementation is one package, which is what put one package of Jan's 58 in the `?` row.
 
-**Coverage is measured on every run** and lands as the `COVERAGE` column, after `TIMER`, in both tables. There is no `-coverage` flag: it was a mode until card `#291`, printing a `CODE COVERAGE:` / `NO CODE COVERAGE:` pair and a roll-up of its own instead of the run report, and Jan folded the figure into the run's own tables. The percentage is right-aligned and rendered to one decimal place with no `%` (`88.0`, `41.9`) so the figures stack under each other. **It is run-scoped**: a `SUMMARY PER SUITE:` row carries the figure for the package that suite tests, paired through `ut_match`, so a suite the expression cannot pair, or one whose target Oracle never instrumented, reads blank rather than `0.0`, which is reserved for code that *was* instrumented and never entered. Two suites testing one package therefore print the same figure, because block coverage records which blocks ran and never which test ran them. A `SUMMARY PER MODULE:` row and the total aggregate that group's target packages through one shared helper, so a group and the total under it can never be two calculations: the pooled block figure is scaled by the share of the group's body lines Oracle measured at all, which means a target nothing reached pulls its module down and a group nothing reached reads `0.0`. **A package no suite pairs to is not in the output at all**, that is the accepted cost of run-scoping, and it is what the removed `NO CODE COVERAGE:` work list used to show. **`-name` narrows the run and the figures follow it** (Jan, `#231`); a package reached only by an excluded suite reads lower than the truth. `PLSQL_OPTIMIZE_LEVEL` is **not** a prerequisite: level 2 is Oracle's default and block coverage is collected there anyway. Collection is utPLSQL's own, `DBMS_PROFILER` and `DBMS_PLSQL_CODE_COVERAGE` in parallel on 12.2+, never hand-rolled, and the percentage is the block figure with `COVERAGE`-pragma `NOT_FEASIBLE` blocks subtracted from the denominator, which makes it read slightly higher than utPLSQL's own HTML report, deliberately.
+**Coverage is measured on every run** and lands as the `COVERAGE` column, after `TIMER`, in both tables. There is no `-coverage` flag: it was a mode until card `#291`, printing a `CODE COVERAGE:` / `NO CODE COVERAGE:` pair and a roll-up of its own instead of the run report, and Jan folded the figure into the run's own tables. The percentage is right-aligned and rendered to one decimal place with no `%` (`88.0`, `41.9`) so the figures stack under each other. **It is run-scoped**: a `SUMMARY PER SUITE:` row carries the figure for the package that suite tests, paired through `ut_match`. **Three cells, three different reports, split apart by card `#436`**: `?` (`cells.UNPAIRED_COVERAGE`) is a suite that resolved to no package at all, so the run never worked out WHAT to measure; a blank is a suite that did resolve and whose target Oracle never instrumented, natively compiled code carrying none; and `0.0` is reserved for code that *was* instrumented and never entered. The first two were one blank cell until `#436`, which is why a green suite whose target does not exist used to read as a defect. **The derived name is resolved against the schema's own package list before anything is measured** (`ut/coverage.py`, `resolve_targets`), and a name matching no package falls back to the longest existing package it is a prefix of: `ict_int_ariba_pushback_ut` derives `ICT_INT_ARIBA_PUSHBACK`, which is no package, and lands on `ict_int_ariba`. The walk drops one `_` segment at a time and invents nothing when it runs out, so `ICT_TRG_REFACTOR_UT` tries `ICT_TRG_REFACTOR`, then `ICT_TRG`, then `ICT`, matches none and prints `?`. Only `object_type = 'PACKAGE'` is ever a candidate, so a suite exercising **triggers** can only ever read `?`; its blocks are credited to whichever packages the trigger bodies call, under the suites that name those. Two suites testing one package therefore print the same figure, because block coverage records which blocks ran and never which test ran them. A `SUMMARY PER MODULE:` row and the total aggregate that group's target packages through one shared helper, so a group and the total under it can never be two calculations: the pooled block figure is scaled by the share of the group's body lines Oracle measured at all, which means a target nothing reached pulls its module down and a group nothing reached reads `0.0`. **A package no suite pairs to is not in the output at all**, that is the accepted cost of run-scoping, and it is what the removed `NO CODE COVERAGE:` work list used to show. **`-name` narrows the run and the figures follow it** (Jan, `#231`); a package reached only by an excluded suite reads lower than the truth. `PLSQL_OPTIMIZE_LEVEL` is **not** a prerequisite: level 2 is Oracle's default and block coverage is collected there anyway. Collection is utPLSQL's own, `DBMS_PROFILER` and `DBMS_PLSQL_CODE_COVERAGE` in parallel on 12.2+, never hand-rolled, and the percentage is the block figure with `COVERAGE`-pragma `NOT_FEASIBLE` blocks subtracted from the denominator, which makes it read slightly higher than utPLSQL's own HTML report, deliberately.
 
 **`-gate [N]` turns that column into a pass/fail condition.** `-gate 90` sets the threshold for this run, bare `-gate` reads config `ut_coverage_gate` (ships at `80`), and no `-gate` at all gates nothing, the flag is opt-in and its absence is not a threshold of zero. The whole report prints first and a `COVERAGE BELOW <n>:` table closes it, listing the packages under the bar worst first; one is enough to make the run non-zero, and it fails a run whose tests all passed. Only a package with a **measured** figure is compared: a blank cell has nothing to compare, while `0.0` is a real measurement and does gate. At the boundary `>=` passes. There are no per-package thresholds, `-name` already narrows a run, so `-name CORE% -gate 90` sets a stricter bar for one group.
 
@@ -402,7 +404,7 @@ adtai patch -install
 
 It writes one `INSTALL.sql` per exported schema at the schema's objects root (`<schema>/database/INSTALL.sql` under the default `path_objects` template), and prints an objects overview plus the path per schema rather than the script body.
 
-Three verbs, one job each: `-patch` looks and acts on nothing, `-create` builds, `-deploy` ships, and the name sits on whichever one is acting. Running it bare answers "what is going on", the recent commits and then the patch folders:
+Three verbs, one job each: `-name` looks and acts on nothing, `-create` builds, `-deploy` ships, and the name sits on whichever one is acting. Running it bare answers "what is going on", the recent commits and then the patch folders:
 
 ```bash
 adtai patch
@@ -411,71 +413,116 @@ adtai patch
 Inspect one patch, its commits, its contents and its files, building and deploying nothing:
 
 ```bash
-adtai patch -target UAT -patch TASK_ID
+adtai patch -target UAT -name TASK_ID
 ```
 
 Create, then deploy, two runs, never one:
 
 ```bash
-adtai patch -target UAT -create TASK_ID
-adtai patch -target UAT -deploy TASK_ID
+adtai patch -target UAT -name TASK_ID -create
+adtai patch -target UAT -name TASK_ID -deploy
 ```
 
-Read the patch first and then append `-deploy` to the same line, which is the other half of that habit. `-deploy` takes its name from `-create` or from `-patch` when it carries none of its own, so neither review has to be retyped:
+Read the patch first and then append `-deploy` to the same line, which is the other half of that habit. `-deploy` takes its name from `-create` or from `-name` when it carries none of its own, so neither review has to be retyped:
 
 ```bash
-adtai patch -target UAT -patch TASK_ID
-adtai patch -target UAT -patch TASK_ID -deploy
+adtai patch -target UAT -name TASK_ID
+adtai patch -target UAT -name TASK_ID -deploy
 ```
 
-`-deploy` ships the patch as it stands on disk: it never creates a folder, rewrites a script, re-orders files, or advances a hash snapshot, so what deploys is what was reviewed. Pass `-rollout`, `-locked`, `-local`, `-head`, or `-nosnap` alongside it and they are ignored, named under an `IGNORING WITH -deploy:` header rather than silently dropped. `-create NAME -deploy` is not refused work either: it is how the name arrives, and an existing folder still deploys unchanged, so only a name with no folder behind it is built first and then deployed. A name on `-deploy` itself always wins over a borrowed one, and `-create` never borrows, so `-patch NAME -create` is still an error. A target that already recorded `SUCCESS` for this patch is skipped on redeploy; `-force` re-runs it anyway.
+`-deploy` ships the patch as it stands on disk: it never creates a folder, rewrites a script or re-orders files, so what deploys is what was reviewed. Pass `-hash`, `-baseline`, `-local`, `-head`, or `-nosnap` alongside it and they are ignored, named under an `IGNORING WITH -deploy:` header rather than silently dropped. `-name NAME -create -deploy` is not refused work either: it is how the name arrives, and an existing folder still deploys unchanged, so only a name with no folder behind it is built first and then deployed. A name on `-deploy` itself always wins over a borrowed one, and `-create` never borrows, so `-name NAME -create` is still an error. A target that already recorded `SUCCESS` for this patch is skipped on redeploy; `-force` re-runs it anyway.
 
 Cherry-pick commits and ignore some. `-commit` and `-ignore` both take a number or hash prefix, an open-ended `20+` (that commit and everything newer), and a closed `1-20` span:
 
 ```bash
-adtai patch -target UAT -create TASK_ID -commit 1-20 -ignore 5
+adtai patch -target UAT -name TASK_ID -create -commit 1-20 -ignore 5
 ```
 
-The commit scan walks the checked-out branch by default; `-branch NAME` walks a different branch's history instead, an unknown name stops the run rather than falling back to `HEAD`. `-my` narrows the scan to commits authored as the current git user, `-by NAME` to a specific author, and the run reads its limits from `patch_scan_commits` (how far the scan walks, and the reach of `-commit N`), `patch_show_commits` and `patch_show_patches` (how much prints).
+The commit scan walks the checked-out branch by default; `-branch NAME` walks a different branch's history instead, an unknown name stops the run rather than falling back to `HEAD`. The run reads its limits from `patch_scan_commits` (how far the scan walks, and the reach of `-commit N`), `patch_show_commits` and `patch_show_patches` (how much prints).
+
+**Three flags narrow the whole preview screen, both tables of it, not the commits alone.** `-my` limits it to your own work and `-by NAME` to one author's, matched as a case-insensitive substring of the commit author **email**, which is the identity the shared commit store records (`-by "Jan Kvetina"` matches nothing; `-by kvetina` matches the address). A patch folder carries no author of its own, so it is attributed through the commit numbers its install script records, and one of your commits is enough; a folder nothing can attribute, because it predates the header or its commits fall outside `patch_scan_commits`, is dropped rather than shown under a filtered heading:
+
+```bash
+adtai patch -target UAT -my
+```
+
+`-recent` is the third, and it takes the same window `export_db` takes, whole days or a fraction of one. **A whole-day window counts today as one of its days**, so `-recent 1` is today, `-recent 7` is today plus the six before it, and yesterday needs `-recent 2`; bare `-recent` is `1`. Folders are dated by the `yymmdd-` prefix in their name rather than by an mtime, so the window survives a copy; a folder whose name carries no parsable day is kept rather than hidden:
+
+```bash
+adtai patch -target UAT -recent 1
+adtai patch -target UAT -my -recent 7
+```
 
 `patch_commit_pattern` in `config.yaml` is a project-wide subject filter, set it to something like `'([A-Z0-9]+\-[0-9]+\-?[0-9]*)'` and a commit carrying no ticket reference is never patched. Empty is the default. An explicit `-search` or `-commit` bypasses it.
 
 `-create` snapshots the **committed** version of each file, the blob at its newest commit inside the patch window, so an uncommitted working-tree edit cannot leak into a deployment. Three mutually exclusive flags override that: `-local` snapshots the working-tree file, `-head` snapshots the file at git `HEAD` (and suppresses the newer-commit warning), and `-nosnap` writes no snapshots at all, linking each repo file where it already lives. Passing two exits `2`.
 
-`-create` also prints a section per schema as it builds: `PROCESSING SCHEMA <s>:`, `TABLE CHANGES DETECTED:` for generated `ALTER` scripts, `PROCESSED FILES:` with a `-`/`>`/`!` flag and a `[DELETED]`/`[ALT:n]`/`[NEW]` marker per file, and `WARNING: UNCOMMITTED FILES` for anything with no commit behind it. Under a file whose shipped version is older than a commit that already exists, a `^` block names the newer commits and the one being shipped.
+`-create` opens with `RELEVANT COMMITS:` (and `RECENT UNPATCHED COMMITS:` when the window still holds unpatched ones), then prints a section per schema as it builds: `ALTER STATEMENTS:` for generated `ALTER` scripts and `DELETED OBJECTS:` for what the window dropped, then `PROCESSED FILES: <s>`, every row a plain dash with nothing trailing it. **A file list groups under its folder**: one `  - <schema>/database/<type>/` line, trailing slash kept, with each file two spaces further in and any `export_db -groups` sub-folder left on the leaf (`    - CORE/core_logs.sql`). Anything hanging off a row sits two spaces further again, so the newer commits under `WARNING - OUTDATED FILES:` land at six. `nested_files: False` in `config.yaml` gives the flat one-path-per-row list instead, and it governs `export_db` and `search_repo` lists too. Each warning is a section of its own: `WARNING - UNCOMMITTED FILES:` only when a listed file genuinely has uncommitted changes in git and never under `-local`, and `WARNING - OUTDATED FILES:` naming any file whose shipped version is older than a commit that already exists, with those newer commits listed under it. Two more sit below the schema loop and describe the patch rather than a schema: `WARNING - OBJECTS CHANGED:` names every object the database has moved past since it was exported, `  - <TYPE> <NAME>` and nothing else, meaning this patch ships the older exported body for it, and `WARNING - NO DATABASE CLOCK:` names an owner whose mirror predates `#394` so that comparison could not be made at all. Neither stops the build. `PATCH FILES:` closes the screen. `-name <name>` and `-deploy` print `PATCH CONTENTS: <SCHEMA>`, one section per schema in install order.
 
-Per-patch scripts in `patch_scripts_dir/<CODE>/` **move** into the patch folder on `-create`, generated helpers and hand-written one-offs alike, and each statement is wrapped in an existence check on the way, so a second deploy is a no-op instead of ORA-01430. A later `-create` for the same patch code recovers them from the previous patch folder. A script no selected commit touched stays put under `WARNING: IGNORED SCRIPTS`; one in a slot no `patch_map` group can produce stays put under `WARNING: UNKNOWN SCRIPTS`. Templates in `patch_template_dir` are unaffected: they are linked where they live, never moved.
+**Every section header on that screen carries exactly two blank lines above it**, whatever printed above it, the command's own `APEX DEPLOYMENT TOOL - PATCH` banner excepted. It is the renderer that guarantees it, so the rule holds for every command, not just `patch`.
 
-`-archive` zips delivered patch folders into `patch_archive/` and removes them from `patch/`. A ref is the displayed `ID` when it is all digits, and a SQL LIKE pattern otherwise, matched against the folder name, the patch code, and the folder name with its `yymmdd` day rewritten as `YYYYMMDD`, so a whole month goes in one command:
+Per-patch scripts in `patch_scripts_dir/<CODE>/` **move** into the patch folder on `-create`, generated helpers and hand-written one-offs alike, and each statement is wrapped in an existence check on the way, so a second deploy is a no-op instead of ORA-01430. A later `-create` for the same patch code recovers them from the previous patch folder. A script no selected commit touched stays put under `WARNING - IGNORED SCRIPTS:`; one in a slot no `patch_map` group can produce stays put under `WARNING - UNKNOWN SCRIPTS:`. Templates in `patch_template_dir` are unaffected: they are linked where they live, never moved.
+
+`-archive` zips delivered patch folders into `patch_archive/` and removes them from `patch/`. A ref is the patch's card number when it is all digits, read off the first segment of the patch code and so visible in the `FOLDER` column itself (`260809-1-66_LAYER0_FIX` is patch `66`), and a SQL LIKE pattern otherwise, matched against the folder name, the patch code, and the folder name with its `yymmdd` day rewritten as `YYYYMMDD`, so a whole month goes in one command:
 
 ```bash
 adtai patch -target UAT -archive 202608%
 adtai patch -target UAT -archive 66 67
+adtai patch -target UAT -archive %
 adtai patch -target UAT -archive
 ```
 
-Omitting refs archives every folder; refs that match nothing archive nothing and exit 0, because a sweep over a pattern that is legitimately empty is not a failure (`#355`). The report is one table, `ID | PATCH CODE | FOLDER`.
+**Omitting refs archives nothing** (`#513`): a bare `-archive` only lists what is on disk, so you can read the inventory and then name what should go. `-archive %` is the sweep. Refs that match nothing archive nothing and exit 0, because a sweep over a pattern that is legitimately empty is not a failure (`#355`).
 
-Full flag set in `docs/patch.md`. ADT.ai no longer accepts old placeholder source flags; use the default commit-resolved files, rollout mode (`-rollout` / `-locked`, which the help screen groups under their own `HASH MODE:` section), or the explicit create/deploy/install/archive actions.
+The receipt is one table, `FOLDER | STATUS`, the same columns `ALL PATCH FOLDERS:` prints under it (`#513`, replacing the `ID | PATCH CODE | FOLDER` shape `#346` had restored). That listing holds every folder still on disk, newest first, uncapped and unfiltered, so the next pattern has something to aim at (`#510`). A run whose refs matched nothing therefore answers with the whole inventory, and a run that named nothing prints only the listing.
+
+### Hash mode: patch what no longer matches the baseline
+
+A patch built from what your repo no longer agrees with the target about, rather than from commits. Record a baseline, work for as long as you like, then patch whatever moved. The help screen groups the two flags under their own `HASH MODE:` section, `-hash` first:
+
+```bash
+adtai patch -target UAT -baseline
+adtai patch -target UAT -hash
+adtai patch -target UAT -name TASK_ID -create -hash
+adtai patch -target UAT -name TASK_ID -deploy
+```
+
+`-baseline` means hash everything: every file the layout resolves, written whole to `patch_hashes/<TARGET_ENV>/baseline.log`, one `file | commit | hash` line each. Keep it in git, its history is the record of what each environment holds. It needs no database and builds nothing.
+
+`-hash` compares the working tree against that file and reports each difference as `MODIFIED`, `NEW` or `DELETED` under `CHANGED FILES:`; `-create ... -hash` builds a patch of exactly those. Nothing is bounded by `patch_scan_commits`, so a file changed long ago and never deployed is still patched, and an uncommitted edit is a change like any other. The mode forces the `local` content mode, so what was compared is what ships and `-head`/`-nosnap` beside it exit `2`.
+
+Both flags take an optional FILE, which is then the whole address and makes `-target` unnecessary:
+
+```bash
+adtai patch -target UAT -name TASK_ID -create -hash hashes/alternative.log
+```
+
+**A successful deploy advances the baseline, for a hash-built patch only.** `-create -hash` records what it shipped in the patch folder's `hashes.log`, and that file's presence is what marks the patch; the deploy merges only those files, only for install scripts that succeeded, and a commit-built patch advances nothing. Do not mix the two modes. Handing the patch to a DBA instead means running `-baseline` yourself once it is in, and doing it before further work, since a full snapshot records the tree as it stands.
+
+A table whose baseline version is no longer in the scanned history gets no `ALTER` helper and is named under `WARNING: NO TABLE BASELINE`; the column change is yours to write into `patch_scripts/`.
+
+Full flag set in `docs/patch.md`. ADT.ai no longer accepts old placeholder source flags; use the default commit-resolved files, hash mode, or the explicit create/deploy/install/archive actions.
 
 ## search_repo: search Git history
 
 Git-only history search for commit summaries, changed file paths, ADT-style database object type/name, authors, dates, numbers, and hashes. It searches the shared `adtai rebuild` commit store at `repo_commits_file` (default `config/commits/<branch>.db`); no Oracle connection is required.
 
-Search changed packages and object names:
+Search changed packages and object names. `-type`, `-name` and `-by` are SQL LIKE patterns, anchored and case-insensitive, exactly as `export_db` reads its own `-type`/`-name`, so `%` covers any run of characters and `_` a single one. `-summary` and `-file` are the exception and search free text for AND-matched words:
 
 ```bash
 adtai search_repo -file packages -name ORDER_API
 adtai search_repo -file packages -name ORDER_API -files
+adtai search_repo -type "PACKAGE%"
 ```
 
-Search author/date scope:
+Search author/date scope. A partial address needs its own wildcard:
 
 ```bash
 adtai search_repo -by bob@example.com -since 2026-06-01 -until 2026-06-10
+adtai search_repo -by "bob%"
 ```
 
-Select commits by git hash prefix, repeatable, and the only place in ADT.ai where `-hash` means a hash:
+Select commits by git hash prefix, repeatable. `patch -hash` is the other flag of that name and means something else entirely, the baseline file hash mode compares against, so the two never take the same kind of value:
 
 ```bash
 adtai search_repo -hash a1b2c3 9f8e7d
@@ -522,6 +569,12 @@ Run the full explicit update flow only when requested:
 adtai doctor -update
 ```
 
+Land one named release instead of the latest one. The version scopes to the ADT.ai step alone, so requirements and SQLcl still follow it, and a version older than the one installed is installed like any other: this is how you step back off a release that broke you, or match the version a colleague is running. A git checkout resolves the release tag in its own `origin`, so the DEV repo, which carries no release tags, refuses the run naming the version and the remote rather than falling back to latest. Going below the release that added the flag leaves you on that release's own `doctor`, which rejects a version argument and cannot pull off its detached HEAD; `git checkout main && git pull && pip install -e .` is the way back and loses nothing:
+
+```bash
+adtai doctor -update 0.9.1
+```
+
 Upgrade SQLcl only:
 
 ```bash
@@ -544,7 +597,7 @@ adtai doctor -init
    - `adtai export_apex -app 100 -split -readable -recent 1`
    - `adtai export_data -name TABLE_NAME` (if data changed)
 3. Stage and commit with the task-id prefix.
-4. Build the patch: `adtai patch -target UAT -create TASK-123`.
+4. Build the patch: `adtai patch -target UAT -name TASK-123 -create`.
 5. Commit the patch folder and open a pull request.
 
 ## Examples
@@ -570,6 +623,6 @@ adtai dependencies -impact "TABLE.CORE_LOGS"
 Create and deploy a UAT patch for a task:
 
 ```bash
-adtai patch -target UAT -create TASK-123
-adtai patch -target UAT -deploy TASK-123
+adtai patch -target UAT -name TASK-123 -create
+adtai patch -target UAT -name TASK-123 -deploy
 ```

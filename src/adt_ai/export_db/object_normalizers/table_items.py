@@ -56,7 +56,8 @@ def _formatted_table_items_reordered(
     for order_index, item in enumerate(items):
         item_type = re.sub(r"\s+", " ", item.strip())
         formatted = _format_table_item(item, context)
-        if formatted is None:
+        # pragma: no cover reason: never None for items from _split_top_level_commas
+        if formatted is None:  # pragma: no cover
             continue
         if _is_constraint_item(item_type):
             constraints.append(
@@ -85,14 +86,16 @@ def _formatted_table_items_reordered(
     return columns + [entry[3] for entry in constraints]
 
 def _format_table_item(item: str, context: NormalizationContext) -> list[str] | None:
-    if not item.strip():
+    # pragma: no cover reason: caller passes items from _split_top_level_commas, already blank-free
+    if not item.strip():  # pragma: no cover
         return None
     if _is_constraint_item(re.sub(r"\s+", " ", item.strip())):
         # Pass the raw item: a constraint body's own line breaks are content.
         return _format_table_constraint(item.strip(), context)
 
     item = _cleanup_table_item(item)
-    if not item:
+    # pragma: no cover reason: every substitution requires a non-whitespace prefix
+    if not item:  # pragma: no cover
         return None
     return _format_table_column(item)
 
@@ -306,7 +309,8 @@ def _extract_parenthesized_clause(body: str, keyword: str) -> tuple[str, str] | 
         return None
     open_index = body.find("(", match.start())
     close_index = _matching_parenthesis_index(body, open_index)
-    if close_index is None:
+    # pragma: no cover reason: body is from _split_top_level_commas, already guaranteed balanced
+    if close_index is None:  # pragma: no cover
         return None
     return body[open_index + 1 : close_index], body[close_index + 1 :].strip()
 
@@ -331,7 +335,8 @@ def _format_references_clause(
         return None
     open_index = suffix.find("(", match.end("table"))
     close_index = _matching_parenthesis_index(suffix, open_index)
-    if close_index is None:
+    # pragma: no cover reason: suffix is the balanced remainder of an already-balanced item
+    if close_index is None:  # pragma: no cover
         return None
 
     table_name = _normalize_sql_identifier(match.group("table"), context)

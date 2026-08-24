@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from adt_ai.shared.config import DEFAULT_PATH_OBJECTS
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.identity import load_identity, session_identifier
-from adt_ai.shared.sql_like import matches_sql_like
+from adt_ai.shared.sql_like import matches_sql_like, split_patterns
 
 if TYPE_CHECKING:
     from adt_ai.export_db.runner import ExportDbRequest
@@ -139,11 +139,6 @@ def resolve_author_filter(
         authors.append(changed_by)
     return changed_by, my_changes, authors
 
-def _split_patterns(value: Any) -> list[str] | None:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return [item.strip() for item in value.split(",") if item.strip()]
-    if isinstance(value, list | tuple):
-        return [str(item).strip() for item in value if str(item).strip()]
-    return [str(value)]
+# One splitter with `export_data`, which read the same config key its own way
+# (ADT #474). Re-exported under the old private name so no call site moved.
+_split_patterns = split_patterns

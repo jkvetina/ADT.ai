@@ -19,6 +19,7 @@ from adt_ai.export_db.groups import (
     object_name_from_file,
     owns_file,
 )
+from adt_ai.shared.file_list import file_rows
 from adt_ai.shared.progress import print_adt_header
 
 
@@ -179,12 +180,28 @@ def _file_label(path: Path) -> str:
     return f"{path.parent.name}/{path.name}"
 
 
+def _emit_labels(labels: Iterable[str], emit: Callable[[str], None]) -> None:
+    """A flat `  - <type>/<name>.sql` list, through the shared renderer (ADT #504).
+
+    Not grouped: `_file_label` already trimmed the path to its type folder and
+    filename, which is the grouping a reader of a move preview wants, and
+    re-grouping the trimmed form would print half a path as a folder.
+    """
+    for line in file_rows(labels, nested=False):
+        emit(line)
+
+
 def _emit_planned_moves(moves: Iterable[GroupMove], emit: Callable[[str], None]) -> None:
     """Print the plan as the grouping it is: a group line, then its files under it.
 
     A group gathers files across object types, so `INV_BILLING` owns rows from
     `tables/` and `views/` alike. Groups sort A to Z and so do the files inside
     each one, because the reader is looking a name up rather than reading a log.
+
+    The rows come from the shared renderer since ADT #504, so this block and the
+    twelve `patch` sections share one indent rule rather than agreeing by hand.
+    Its grouping key is the GROUP, which no path carries, so the folder line is
+    written here and the files go through `file_rows` at the depth below it.
     """
     by_group: dict[str, list[str]] = {}
     for move in moves:
@@ -194,8 +211,8 @@ def _emit_planned_moves(moves: Iterable[GroupMove], emit: Callable[[str], None])
         # the eye lands on the names rather than counting indents to find them.
         emit("")
         emit(f"  {group}")
-        for label in sorted(by_group[group]):
-            emit(f"    - {label}")
+        for line in file_rows(sorted(by_group[group]), nested=False, depth=2):
+            emit(line)
 
 
 def execute_group_move(
@@ -241,16 +258,14 @@ def execute_group_move(
     if not plan.moves:
         emit("Nothing to move: no files matched a group.")
         if show_unmatched:
-            for label in leftovers:
-                emit(f"  - {label}")
+            _emit_labels(leftovers, emit)
         return 0
 
     print_adt_header("PLANNED MOVES:")
     _emit_planned_moves(plan.moves, emit)
     if show_unmatched and leftovers:
         print_adt_header("UNMATCHED (LEFT IN PLACE):")
-        for label in leftovers:
-            emit(f"  - {label}")
+        _emit_labels(leftovers, emit)
 
     if not force:
         return 0

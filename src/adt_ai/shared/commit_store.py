@@ -87,9 +87,18 @@ class CommitStore:
             path = Path(db_path)
             path.parent.mkdir(parents=True, exist_ok=True)
             connection = sqlite3.connect(str(path))
-        connection.executescript(queries.COMMIT_STORE_SCHEMA)
-        connection.execute(queries.META_VERSION_INSERT, (str(SCHEMA_VERSION),))
-        connection.commit()
+        # Closed on failure since ADT #510: `sqlite3.connect` succeeds against any
+        # readable path and only the first statement discovers the bytes are not a
+        # database, so a raise here used to leave the connection open and
+        # unreferenced. `ApexStore` and `DependencyStore` carry the same guard for
+        # the same reason; the argument is written out at `ApexStore.open`.
+        try:
+            connection.executescript(queries.COMMIT_STORE_SCHEMA)
+            connection.execute(queries.META_VERSION_INSERT, (str(SCHEMA_VERSION),))
+            connection.commit()
+        except BaseException:
+            connection.close()
+            raise
         return cls(connection)
 
     def close(self) -> None:

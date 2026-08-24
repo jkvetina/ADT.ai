@@ -9,8 +9,9 @@ name" and know nothing about credentials, wallets or files.
 
 from __future__ import annotations
 
-import fnmatch
 from typing import Any
+
+from adt_ai.shared.sql_like import matches_sql_like
 
 
 def match_schema(schemas: Any, wanted: str) -> tuple[str, Any]:
@@ -51,16 +52,25 @@ def split_schema_values(value: Any) -> list[str]:
 
 
 def expand_schema_patterns(patterns: list[str], available: list[str]) -> list[str]:
+    """Which configured schemas a `-schema` argument names, `%` patterns expanded.
+
+    Through `shared/sql_like` since ADT #474 rather than through a private
+    `%`-to-`*` rewrite and a `fnmatch` call. It was the one client-side pattern
+    match outside that module, and translating the pattern here meant `_` reached
+    `fnmatch` as a literal while every other filter in the tool reads it as SQL
+    LIKE's single-character wildcard. A `*` is still accepted, which is what this
+    function has always taken beside `%`, by spelling it as the `%` it means.
+    """
     schemas: list[str] = []
     for pattern in patterns:
         if pattern == "%":
             matches = available
         elif "%" in pattern or "*" in pattern:
-            wildcard = pattern.upper().replace("%", "*")
+            wildcard = str(pattern).replace("*", "%")
             matches = [
                 schema
                 for schema in available
-                if fnmatch.fnmatchcase(schema.upper(), wildcard)
+                if matches_sql_like(schema, wildcard)
             ]
         else:
             matches = [pattern]

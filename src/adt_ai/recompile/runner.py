@@ -221,8 +221,13 @@ class RecompileRunner:
                 try:
                     gateway.execute(self._statement_for(obj, request))
                 except Exception:
+                    # Unreachable with request.debug=True: the *first* compile loop
+                    # above already re-raises the moment any object fails, before
+                    # troublemakers is ever populated, so this retry loop only ever
+                    # runs with debug False. Kept for structural symmetry with that
+                    # loop's except.
                     if request.debug:
-                        raise
+                        raise  # pragma: no cover — see comment above
                     pass
 
         # reconnect for the final re-check, mirroring old ADT

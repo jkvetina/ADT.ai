@@ -1,7 +1,7 @@
 ---
 title: adt
 created: 2026-06-10
-updated: 2026-07-11 18:19
+updated: 2026-08-21 11:04
 tags: [SKILL, DEVOPS]
 ---
 # adt
@@ -18,7 +18,7 @@ The skill maps each `adtai` command to a short set of runnable examples plus the
 
 ## Usage
 
-Invoke with `/adt`. Full implementation in [SKILL.md](SKILL.md). Argument reference in [docs/README.md](../../docs/README.md).
+Invoke with `/adt`. Full implementation in SKILL.md. Argument reference in [docs/README.md](../../docs/README.md).
 
 ## Related skills
 

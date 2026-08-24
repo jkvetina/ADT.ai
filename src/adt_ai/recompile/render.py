@@ -16,6 +16,7 @@ from adt_ai.export_db.runner import (
 )
 from adt_ai.recompile.queries import mview_type_code
 from adt_ai.recompile.runner import RecompileReporter
+from adt_ai.shared.object_list import ObjectRowFormatter, type_separator
 from adt_ai.shared.progress import schema_label
 
 
@@ -133,26 +134,12 @@ def print_job_tables(jobs) -> None:
         )
 
 
-class _TrailingRowFormatter:
-    """Builds the ``TYPE | NAME`` row for one rewritten object.
-
-    Same shape export_db uses for the objects it acts on
-    (``export_db/render.py::export_object``): the type cell prints only when it
-    changes, so a run of one type reads as a group. Stateful by design, it has to
-    remember the previous type. The streamed reporter and the batch fallback each
-    drive one of these, so the two renders cannot drift.
-    """
-
-    TYPE_WIDTH = 20
-    NAME_WIDTH = 54
-
-    def __init__(self) -> None:
-        self._last_type = ""
-
-    def row(self, item) -> str:
-        object_type = item.object_type if item.object_type != self._last_type else ""
-        self._last_type = item.object_type
-        return f"{object_type:>{self.TYPE_WIDTH}} | {item.object_name:<{self.NAME_WIDTH}}"
+# `_TrailingRowFormatter` stood here until ADT #506. It was the third
+# implementation of one `TYPE | NAME` shape, correct about the widths and about
+# suppressing a repeated type, and wrong only in existing: `shared/object_list.py`
+# is that row now, so a change to the column reaches this listing and
+# `export_db`'s two in one edit. What it never had, and now inherits, is the
+# separator row closing each type group.
 
 
 def _print_trailing_updated_header(total: int) -> None:
@@ -164,17 +151,26 @@ def _print_trailing_updated_header(total: int) -> None:
 def print_trailing_updated_objects(trailing, trailing_actions, silent: bool = False) -> None:
     """Batch fallback listing the rewritten objects, for non-streamed callers.
 
-    Shares :class:`_TrailingRowFormatter` and the header with the streamed reporter,
-    so the two renders are byte-identical. The header counts the objects the sweep
+    Shares the shared row formatter and the header with the streamed reporter, so
+    the two renders are byte-identical. The header counts the objects the sweep
     took on (``trailing``), matching what the streamed reporter knows when it opens
     the section; the rows are the objects actually rewritten.
+
+    The objects arrive in the order the trailing query returned them
+    (``ORDER BY s.type, s.name``), and that order is kept rather than re-sorted
+    here: the streamed reporter cannot reorder a list it is printing as it goes,
+    so a sort in this half alone is exactly the drift the two renders exist to
+    rule out.
     """
     _print_trailing_updated_header(len(trailing))
     if not silent:
         print()
-        formatter = _TrailingRowFormatter()
+        formatter = ObjectRowFormatter()
         for action in trailing_actions:
-            print(formatter.row(action))
+            for row in formatter.stream_rows(action.object_type, action.object_name):
+                print(row)
+        if trailing_actions:
+            print(type_separator())
         print()
     _print_trailing_failures(trailing_actions)
 
@@ -204,12 +200,14 @@ class _ConsoleTrailingReporter(RecompileReporter):
 
     def __init__(self, silent: bool = False) -> None:
         self._silent = silent
-        self._formatter = _TrailingRowFormatter()
+        self._formatter = ObjectRowFormatter()
+        self._streamed_rows = False
         self.streamed = False
 
     def begin_trailing(self, candidates) -> None:
         self.streamed = True
-        self._formatter = _TrailingRowFormatter()
+        self._formatter = ObjectRowFormatter()
+        self._streamed_rows = False
         _print_trailing_updated_header(len(candidates))
         if self._silent:
             return
@@ -219,10 +217,17 @@ class _ConsoleTrailingReporter(RecompileReporter):
     def trailing_object(self, candidate) -> None:
         if self._silent:
             return
-        print(self._formatter.row(candidate), flush=True)
+        self._streamed_rows = True
+        for row in self._formatter.stream_rows(candidate.object_type, candidate.object_name):
+            print(row, flush=True)
 
     def end_trailing(self, trailing_actions) -> None:
         if not self._silent:
+            # The last type group closes here, where the caller finally knows
+            # there is no next object: the same moment `export_db`'s runner
+            # calls `finish_type` for its final type.
+            if self._streamed_rows:
+                print(type_separator())
             print()
         _commit_stdout()
         _print_trailing_failures(trailing_actions)

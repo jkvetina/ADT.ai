@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 
+from adt_ai.patch.layout import database_object_name, database_object_type
 from adt_ai.rebuild.runner import REVEAL_DEFAULT_LIMIT
 from adt_ai.shared.commit_cache import (
     DEFAULT_COMMITS_TEMPLATE,
@@ -12,7 +14,10 @@ from adt_ai.shared.commit_cache import (
     open_store,
 )
 from adt_ai.shared.commit_discovery import commit_ref_matches
-from adt_ai.shared.git_files import git_user_email, run_git, run_git_bytes
+from adt_ai.shared.dates import within_recent_window
+from adt_ai.shared.git_files import run_git, run_git_bytes
+from adt_ai.shared.identity import resolve_commit_email
+from adt_ai.shared.sql_like import matches_sql_like
 
 FIELD_SEPARATOR = "\x1f"
 
@@ -45,6 +50,12 @@ class SearchRepoRequest:
     # project that had configured `repo_commits_file` could rebuild happily and
     # then be told its cache did not exist.
     cache_file_template: str = DEFAULT_COMMITS_TEMPLATE
+    # `object_types`, which is what `-type`/`-name` mean. Carried on the request
+    # rather than re-derived here because the caller has already loaded it, and
+    # because the vocabulary being config is the whole of ADT #471: an empty
+    # mapping resolves no type, which is the honest answer for a caller that
+    # supplied none.
+    config: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -152,11 +163,14 @@ class SearchRepoRunner:
             return None
         if not _matches_date(commit.date, request):
             return None
-        if request.my and git_user_email(request.root) != commit.author:
+        # `resolve_commit_email` since ADT #469, so `-my` here means what it means
+        # in every other command: `IDENTITY.yaml`'s `email` when the project
+        # states one, `git config user.email` when it does not.
+        if request.my and resolve_commit_email(root=request.root) != commit.author:
             return None
         if not _contains_all(commit.summary, request.summary_terms):
             return None
-        if request.authors and not _contains_any(commit.author, request.authors):
+        if request.authors and not _matches_any_pattern(commit.author, request.authors):
             return None
 
         files: list[str] = []
@@ -239,59 +253,82 @@ def _matches_date(commit_date: str, request: SearchRepoRequest) -> bool:
         return False
     if request.until and value > date.fromisoformat(request.until):
         return False
-    if request.recent is not None:
-        if float(request.recent).is_integer():
-            # A whole-day window keeps its date-level meaning: `-recent 1` holds
-            # a commit made at 23:00 yesterday whatever time the search runs.
-            if value < datetime.now().date() - timedelta(days=int(request.recent)):
-                return False
-        elif moment < datetime.now() - timedelta(days=request.recent):
-            # Below a day both sides have to keep their time, or every commit
-            # made earlier today survives an "in the past hour" window.
-            return False
-    return True
+    # `within_recent_window` since ADT #467, and that is a behaviour change
+    # rather than only a move. This compared against `today - N`, so `-recent 1`
+    # covered today AND yesterday, N + 1 calendar days, while
+    # `shared/dates.recent_since` renders every export header from "inclusive of
+    # today", N days. Two readings of one flag, with `patch` about to become a
+    # third. Below a day nothing moves: that is `#340`'s measurement and it is
+    # pinned in the shared helper now.
+    return within_recent_window(moment, request.recent)
 
 
 def _matches_file(path: str, request: SearchRepoRequest) -> bool:
     if not _contains_all(path, request.file_terms):
         return False
-    object_type, object_name = _object_identity(path)
+    object_type, object_name = _object_identity(path, request.config)
     if request.object_types and not object_type:
         return False
     if request.object_names and not object_name:
         return False
-    if request.object_types and not _contains_any(object_type, request.object_types):
+    if request.object_types and not _matches_any_pattern(object_type, request.object_types):
         return False
-    return not (request.object_names and not _contains_any(object_name, request.object_names))
+    return not (
+        request.object_names and not _matches_any_pattern(object_name, request.object_names)
+    )
 
 
-def _object_identity(path: str) -> tuple[str, str]:
-    parts = Path(path).parts
-    # The `database` segment leads in the legacy layout (database/<schema>/...)
-    # and follows the schema in the default layout (<schema>/database/...). In
-    # both, the object type is parts[2] and the file name is parts[-1].
-    if len(parts) < 4 or "database" not in (parts[0].lower(), parts[1].lower()):
+def _object_identity(path: str, config: dict[str, Any]) -> tuple[str, str]:
+    """The object type and name ``path`` holds, read from ``object_types``.
+
+    This was a third file-to-object parser and it read no config at all (ADT
+    #471): it took `parts[2]` as the type folder, the hardcoded layout ADT #196
+    lifted out of `patch/layout.py`, de-pluralised that folder name with two
+    string rules, and special-cased a `.pkb` extension the shipped config does
+    not carry. Measured on the shipped config, `indexes/` answered `INDEXE`,
+    `mviews/` answered `MVIEW` where the config says `MATERIALIZED VIEW`, and
+    `job_schedules/` answered `JOB SCHEDULE` where it says `SCHEDULE`. Worse and
+    quieter, both halves of each shared folder reported the SPEC's type, so
+    `-type "PACKAGE BODY"` and `-type "TYPE BODY"` selected nothing at all.
+
+    A project on an old-ADT tree keeps working by CONFIGURING `.pkb`, which is
+    what `object_types` is for; nothing here knows any extension by name.
+    """
+    object_type = database_object_type(path, config)
+    if object_type is None:
         return "", ""
-    object_type = parts[2].replace("_", " ").replace("-", " ").upper()
-    if object_type.endswith("IES"):
-        object_type = f"{object_type[:-3]}Y"
-    elif object_type.endswith("S"):
-        object_type = object_type[:-1]
-    suffix = Path(parts[-1]).suffix.lower()
-    if object_type == "PACKAGE" and suffix == ".pkb":
-        object_type = "PACKAGE BODY"
-    object_name = Path(parts[-1]).stem.upper()
-    return object_type, object_name
+    return object_type, database_object_name(path, config) or ""
 
 
 def _contains_all(value: str, terms: list[str] | None) -> bool:
+    """`-summary` and `-file`, whose documented meaning is AND-matched WORDS.
+
+    Deliberately not `matches_sql_like`: these two flags search free text for
+    words the way a reader would, and their help has always said so. The pattern
+    filters below name an object or an author, which is the question every other
+    command answers with SQL LIKE.
+    """
     haystack = value.lower()
     return all(str(term).lower() in haystack for term in (terms or []))
 
 
-def _contains_any(value: str, terms: list[str]) -> bool:
-    haystack = value.lower()
-    return any(str(term).lower() in haystack for term in terms)
+def _matches_any_pattern(value: str, patterns: list[str]) -> bool:
+    """`-type`, `-name` and `-by`, as SQL LIKE patterns (ADT #474).
+
+    These three were substring tests while every other filter in the tool went
+    through `shared/sql_like`, so `%` was a wildcard on `export_db -type` and a
+    literal character on `search_repo -type`: measured at the CLI, `-type
+    "PACKAGE%"` and `-name "CORE%"` each returned nothing at all. Jan had already
+    settled the question for `-search` on ADT #423, 2026-08-20: *"Same way as we
+    are using SQL LIKE filters elsewhere, it should be reusable code!"*
+
+    Anchored, and matching `export_db`'s own comparator exactly rather than
+    wrapping each term in `%...%`. Two things follow, both intended. `-type TAB`
+    no longer matches `TABLE`, and `-type PACKAGE` no longer returns the body
+    files, which is the ADT #471 carry-over: that card fixed the reader and this
+    comparator kept handing the spec filter its body back.
+    """
+    return any(matches_sql_like(value, pattern) for pattern in patterns)
 
 
 def _versioned_restore_path(path: Path, number: int) -> Path:

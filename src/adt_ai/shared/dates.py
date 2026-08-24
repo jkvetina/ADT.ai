@@ -80,6 +80,64 @@ def recent_since(recent_days: int | float, *, now: datetime | None = None) -> da
     return ((now or datetime.now()) - timedelta(days=recent_days)).replace(microsecond=0)
 
 
+def within_recent_window(
+    value: date | datetime,
+    recent_days: int | float | None,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Is ``value`` inside a ``-recent`` window? The one arithmetic, shared.
+
+    It is `recent_since` above read as a predicate rather than as a header, so a
+    filter and the sentence describing it can never disagree: a whole-day window
+    is inclusive of today and counted in calendar days, `-recent 1` being today
+    and `-recent 7` today plus the six days before it.
+
+    **Three modules held two readings before ADT #467.** `search_repo` compared
+    against `today - N`, which is N + 1 calendar days, so `search_repo -recent 1`
+    kept yesterday while `recent_since` rendered a header saying today; `patch`
+    was about to grow the flag, and Jan named the meaning when he asked for it,
+    2026-08-22: "when I pass '-recent 1', it will show just commits and patches
+    created today". Two of the three agreed, so the third moved here. The
+    generalisable half is SOP §Command surface's: a flag means one thing in every
+    command, and per-module documentation of one flag is the tell that it does
+    not.
+
+    Below a day both sides keep their time. `#340` measured why: truncating the
+    commit stamp to a date and subtracting whole days let every commit made
+    earlier today survive `-recent 1/24`.
+
+    A **date-only** ``value`` (a patch folder carries `yymmdd` and no clock) is
+    judged on its day in both branches. An hour window cannot be answered
+    precisely for something that records no hour, and dropping it instead would
+    make `patch -recent 1/24` report no folders at all, which reads as "none were
+    built" rather than "this window cannot see them".
+
+    ``now`` is injected so a caller can pin the boundary; it defaults to the
+    client clock, which is what every consumer of this window already uses.
+    """
+    if recent_days is None:
+        return True
+    moment = now or datetime.now()
+    if float(recent_days).is_integer() or not isinstance(value, datetime):
+        day = value.date() if isinstance(value, datetime) else value
+        return day >= _window_floor_day(recent_days, moment)
+    return value >= moment - timedelta(days=recent_days)
+
+
+def _window_floor_day(recent_days: int | float, now: datetime) -> date:
+    """The first day a window covers, for the day-level comparison.
+
+    A whole-day window uses `recent_since`'s own inclusive-of-today arithmetic. A
+    sub-day window has no calendar span to be inclusive of, so its floor is the
+    day its instant falls on: today for every window shorter than the time
+    already elapsed, and yesterday just after midnight.
+    """
+    if float(recent_days).is_integer():
+        return now.date() - timedelta(days=int(recent_days) - 1)
+    return (now - timedelta(days=recent_days)).date()
+
+
 def resolve_since(value: str, *, option: str = "-since") -> str:
     # `-since`/`-until` accept a YYYY-MM-DD date or an integer number of days
     # back (e.g. '7' -> 7 days ago). Both resolve to an ISO date string.

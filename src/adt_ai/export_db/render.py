@@ -24,10 +24,17 @@ from adt_ai.export_db.table import (
     adt_table_line_width,
     close_adt_table,
     open_adt_table,
-    print_adt_pipes,
     print_adt_table,
 )
 from adt_ai.shared.dates import recent_since
+from adt_ai.shared.file_list import print_file_rows
+from adt_ai.shared.object_list import (
+    EMPTY_TYPE_CELL,
+    NAME_WIDTH,
+    ObjectRowFormatter,
+    print_object_rows,
+    type_separator,
+)
 from adt_ai.shared.progress import print_adt_header
 from adt_ai.shared.recent_state import parse_timestamp
 
@@ -46,7 +53,6 @@ __all__ = [
     "close_adt_table",
     "open_adt_table",
     "print_adt_header",
-    "print_adt_pipes",
     "print_adt_table",
 ]
 
@@ -124,17 +130,22 @@ class ExportDbReporter:
     def finish_export(self, schema: str) -> None:
         pass
 
-# The overview table's two columns, named once so a run that discovers nothing
-# still renders its header instead of collapsing to no table at all.
+# The overview table's two columns, named once so every render of it agrees.
+# It used to exist so a run discovering nothing still printed its column
+# headers; `#442` retired that reading, and a table with no rows in it now
+# prints nothing at all.
 OVERVIEW_COLUMNS = ("object_type", "count")
 
-# The overview row for the grant artifacts, measured into the table before the
-# reads that decide whether it prints (`#437`). Read only, never mutated.
+# The overview row for the grant artifacts, appended once the reads that decide
+# whether it prints have answered (`#437`, `#442`). Read only, never mutated.
 GRANT_OVERVIEW_ROW: Mapping[str, object] = {"object_type": GRANT_OBJECT_TYPE, "count": ""}
 
 class ConsoleExportDbReporter(ExportDbReporter):
     def __init__(self, silent: bool = False, compact: bool = False) -> None:
-        self._last_type_by_schema: dict[str, str] = {}
+        # The shared `TYPE | NAME` builder (`#506`). Scoped per schema because a
+        # run renders one listing per schema and each has to open by naming its
+        # own type, whatever the segment above it ended on.
+        self._rows = ObjectRowFormatter()
         self._silent = silent
         # `-silent` outranks `-compact`, the precedence `ut` already carries
         # between `-silent` and `-verbose`: silent suppresses the very rows the
@@ -148,9 +159,15 @@ class ConsoleExportDbReporter(ExportDbReporter):
         # The bar for the schema being exported, or None outside `-compact` and
         # between segments.
         self._bar: ObjectProgressBar | None = None
-        # The overview table held open while the grant reads run, or None when
-        # no table is open. See `overview` and `overview_grants`.
-        self._overview_layout: _AdtTableLayout | None = None
+        # The counted object rows waiting on the grant reads, or None when this
+        # segment has no overview to render. See `overview` and
+        # `overview_grants`.
+        self._overview_rows: list[Mapping[str, object]] | None = None
+        # Whether this segment printed an overview section header. It is what
+        # `start_export` consults before suppressing itself on a zero run: the
+        # header is the thing that already said the run found nothing, and
+        # without one there would be nothing on screen at all.
+        self._overview_section = False
 
     @property
     def reports_objects(self) -> bool:
@@ -175,6 +192,7 @@ class ConsoleExportDbReporter(ExportDbReporter):
                 db_now        = db_now,
             )
         )
+        self._overview_section = True
 
     def overview(
         self,
@@ -195,43 +213,48 @@ class ConsoleExportDbReporter(ExportDbReporter):
         if not grants:
             print_adt_table(rows)
             return
-        # **The table opens here and the GRANT row waits** (`#437`). Whether
-        # that row is owed at all is a question only the four privilege reads
-        # can answer, and they run under this open table, which is what keeps
-        # them announced. Jan, 2026-08-20: *"You will print table header and
-        # only AFTER you fetch grants and evaluate changes, you will print the
-        # line"*. Sized for the row whichever way the answer goes, so the
-        # decision can never move a column that has already printed.
-        self._overview_layout = open_adt_table(
-            rows,
-            columns   = list(OVERVIEW_COLUMNS),
-            sized_for = [GRANT_OVERVIEW_ROW],
-        )
+        # **Nothing below the section header prints yet** (`#442`). Whether the
+        # table owes a `GRANT` row is a question only the four privilege reads
+        # can answer, and until they have, neither is whether it owes anything
+        # at all: a schema where no object moved still prints a row when a
+        # privilege did. Jan, 2026-08-21: *"Drop both empty tables if you can.
+        # But you cant tell, you have to run at least grants before you print
+        # the content below header..."* The reads run under the section header
+        # `begin_overview` already put up, which is what keeps them announced,
+        # and the whole table renders in `overview_grants` once the answer is
+        # in. Every row is in hand at print time, so `sized_for` has nothing
+        # left to size for: a late row can no longer widen a printed column
+        # because there is no longer such a thing as a late row.
+        self._overview_rows = rows
 
     def overview_grants(self, changed: bool) -> None:
-        """Close the overview table, printing the `GRANT` row only if one moved.
+        """Render the overview table, now that the `GRANT` row is settled.
 
         ``changed`` is what the four reads came back with: at least one artifact
         this export writes differs from the file on disk. A row on a run that
         rewrites the same bytes claims work nobody did, which is the console
-        rule this correction was filed on, *"A row must not claim work it might
-        not perform"*.
+        rule `#437` was filed on, *"A row must not claim work it might not
+        perform"*.
 
         **A row, and deliberately still no number** (`#382`): `grants_received`
         writes one file per owner, so the figure a reader would compare against
         the schema is not the count of anything on screen.
 
-        A no-op when no table is open, which is every run narrowed by an exact
-        `-name`: the overview is skipped outright there, so there is nothing to
-        append a row to and nothing to close.
+        Two ways this prints nothing. No rows and no `GRANT` row means the run
+        found nothing at all, and `#442` retired the empty two-line table that
+        used to stand for that answer. And no overview was started, which is
+        every run narrowed by an exact `-name`: the section is skipped outright
+        there, so there is no table to render.
         """
-        layout = self._overview_layout
-        self._overview_layout = None
-        if layout is None:
+        rows = self._overview_rows
+        self._overview_rows = None
+        if rows is None:
             return
         if changed:
-            print(layout.row_line([GRANT_OVERVIEW_ROW[column] for column in OVERVIEW_COLUMNS]))
-        close_adt_table()
+            rows = [*rows, GRANT_OVERVIEW_ROW]
+        if not rows:
+            return
+        print_adt_table(rows, columns=list(OVERVIEW_COLUMNS))
 
     def recent_note(self, message: str) -> None:
         # The title is the header; the sentence explaining it is body text. The
@@ -248,18 +271,26 @@ class ConsoleExportDbReporter(ExportDbReporter):
         if not tables:
             return
         print_adt_header("DROPPING DIFF TABLES:")
-        for table_name in tables:
-            print(f"  - {table_name}")
+        # Flat, and not a file list: a SQLcl DIFF leftover is a TABLE name, so
+        # there is no folder to group it under (ADT #504).
+        print_file_rows(tables, nested=False)
         print()
 
     def deleted_objects(self, schema: str, objects: list[DatabaseObject]) -> None:
+        # Through the shared renderer since `#506`, so this listing and the
+        # `EXPORTING <n> OBJECTS:` one above it cannot drift apart: they are the
+        # same rows built by the same code, one batched and one streamed. The
+        # local `print_adt_pipes` this used to call left the name unpadded and
+        # closed no type group, which is two of the three ways the shape had
+        # already forked.
         if not objects:
             return
-        grouped: dict[str, list[str]] = {}
-        for database_object in sorted(objects, key=lambda item: (item.object_type, item.name)):
-            grouped.setdefault(database_object.object_type, []).append(database_object.name)
         print_adt_header("DELETED OBJECTS:")
-        print_adt_pipes(grouped)
+        print_object_rows(
+            (database_object.object_type, database_object.name)
+            for database_object in objects
+        )
+        print()
 
     def start_export(
         self,
@@ -268,7 +299,18 @@ class ConsoleExportDbReporter(ExportDbReporter):
         estimate: float = 0.0,
         widest_label: str = "",
     ) -> None:
-        self._last_type_by_schema[schema] = ""
+        self._rows.reset(schema)
+        # **A section header must not claim work it will not perform** (`#442`).
+        # At zero there is nothing to export, so the header and its dashed rule
+        # stood over an empty screen; the overview header above has already said
+        # the run found nothing, and saying it twice with no rows either time is
+        # what Jan called stupid. Guarded on that header actually being up: an
+        # exact `-name` run skips the overview outright, and suppressing this
+        # there would leave the whole segment silent.
+        announced_empty = self._overview_section
+        self._overview_section = False
+        if total == 0 and announced_empty:
+            return
         # The count reads as part of the sentence rather than a parenthetical
         # after the colon: `EXPORTING OBJECTS: (61)` put the rule under the label
         # and left the number dangling past it (ADT #237, Jan's wording).
@@ -304,13 +346,14 @@ class ConsoleExportDbReporter(ExportDbReporter):
         duplicates: list[str] | None = None,
         changed_by: str | None = None,
     ) -> None:
-        last_type = self._last_type_by_schema.get(database_object.schema, "")
-        object_type = (
-            database_object.object_type
-            if database_object.object_type != last_type
-            else ""
+        # The type cell is drawn by the shared builder (`#506`), which owns the
+        # width and the repeat suppression for every object listing in the CLI.
+        # It is taken before the `-compact`/`-silent` returns below so the state
+        # advances identically in every mode, exactly as the local copy did.
+        type_cell = self._rows.type_cell(
+            database_object.object_type,
+            scope = database_object.schema,
         )
-        self._last_type_by_schema[database_object.schema] = database_object.object_type
         if self._compact and self._bar is not None:
             # The bar IS this row under `-compact`, and it names the type it is
             # about to wait on. Set before the DDL round trip, so the label
@@ -332,18 +375,18 @@ class ConsoleExportDbReporter(ExportDbReporter):
                 # Same deliberately ragged shape as [DUPE] below: the object is in
                 # the export because the requested author worked on it, but someone
                 # else changed it last, and an aligned row would hide that.
-                row = f"{object_type:>20} | {database_object.name} [{changed_by}]"
+                row = f"{type_cell} | {database_object.name} [{changed_by}]"
                 print(row, end="", flush=True)
                 return
-            print(f"{object_type:>20} | {database_object.name:<54}", end="", flush=True)
+            print(f"{type_cell} | {database_object.name:<{NAME_WIDTH}}", end="", flush=True)
             return
         # One row per stale clone, so the object's every location is visible and
         # the user can delete the wrong ones by hand. The name column is left
         # unpadded here: an over-long, deliberately ragged row is how a [DUPE]
         # stands out from the aligned object list around it.
         for index, location in enumerate(duplicates):
-            label = object_type if index == 0 else ""
-            row = f"{label:>20} | {database_object.name} | {location} [DUPE]"
+            label = type_cell if index == 0 else EMPTY_TYPE_CELL
+            row = f"{label} | {database_object.name} | {location} [DUPE]"
             if index == len(duplicates) - 1:
                 print(row, end="", flush=True)
             else:
@@ -372,7 +415,7 @@ class ConsoleExportDbReporter(ExportDbReporter):
     def finish_type(self, schema: str, object_type: str) -> None:
         if self._silent or self._compact:
             return
-        print(f"{'':>20} |")
+        print(type_separator())
 
     def finish_export(self, schema: str) -> None:
         """Close this schema's bar at 100%; a no-op in every other mode."""

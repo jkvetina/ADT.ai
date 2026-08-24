@@ -116,6 +116,7 @@ from adt_ai.shared.recent_state import (
     read_db_now,
 )
 from adt_ai.shared.row_values import row_value
+from adt_ai.shared.session_scope import require_database_session
 
 GatewayFactory = Callable[[str], QueryGateway]
 
@@ -265,6 +266,11 @@ class ApexExportRunner(
                         application.app_id,
                         request.page_selection,
                     )
+                # Everything below reads back the collection this statement
+                # fills, so the two have to reach one database session. A
+                # transport that cannot promise that returns no rows at exit 0,
+                # and the export would write that emptiness to disk (ADT #449).
+                require_database_session(gateway, "export_apex")
                 gateway.execute(self.EXPORT_START_QUERY, {"app_id": application.app_id})
                 enrichments = _enrichments(gateway, application)
                 recent_rows = recent_components(

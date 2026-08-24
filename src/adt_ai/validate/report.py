@@ -30,16 +30,35 @@ EMPTY        = "EMPTY"
 NOT_FOUND    = "NOT_FOUND"
 UNRECOGNISED = "UNRECOGNISED"
 
-# Literal SQLcl 26.1.2 wordings. Kept as substrings rather than full-line
-# equalities so a trailing-whitespace or punctuation tweak upstream does not
-# silently drop an outcome into UNRECOGNISED.
+# SQLcl wordings. Kept as substrings rather than full-line equalities, and
+# matched case-insensitively, so a capitalisation or spacing tweak upstream does
+# not silently drop an outcome into UNRECOGNISED. Both halves are load-bearing:
+# 26.1.2 headed the block `APEXLang Compile Errors:` and 26.2.1.0 heads it
+# `APEXlang Compile Errors:`, so a case-sensitive match reported every compile
+# error on the shipped SQLcl as output the parser could not read.
 _SUCCESS_MARKER   = "Validation successful"
-_ERRORS_MARKER    = "APEXLang Compile Errors:"
-_WARNINGS_MARKER  = "APEXLang Compile Warnings:"
+_ERRORS_MARKER    = "APEXlang Compile Errors:"
+_WARNINGS_MARKER  = "APEXlang Compile Warnings:"
 _EMPTY_MARKER     = "does not contain APEXlang files"
 _NOT_FOUND_MARKER = "Could not find file or directory with inputPath"
 
 _FIELD_RE = re.compile(r"^(File|Line|Column|Type|Error|Warning):\s?(.*)$")
+
+
+def _marker_span(text: str, marker: str) -> tuple[int, int] | None:
+    """Where a marker sits in `text`, ignoring case, or None when it is absent.
+
+    A regex search rather than a `casefold()` compare because `casefold` can
+    change a string's length (`ß` folds to `ss`), and every index here is used to
+    slice the ORIGINAL text: a compiler message carrying such a character would
+    shift the cut and take a record with it.
+    """
+    match = re.search(re.escape(marker), text, re.IGNORECASE)
+    return match.span() if match else None
+
+
+def _has_marker(text: str, marker: str) -> bool:
+    return _marker_span(text, marker) is not None
 
 
 @dataclass(frozen=True)
@@ -89,17 +108,17 @@ def parse_validate_output(text: str) -> FolderReport:
     body = text or ""
     warnings = _parse_block(body, _WARNINGS_MARKER, "Warning")
 
-    if _ERRORS_MARKER in body:
+    if _has_marker(body, _ERRORS_MARKER):
         errors = _parse_block(body, _ERRORS_MARKER, "Error")
         # "Errors happened but we could not read them" must not render as an
         # empty error table, which reads exactly like a pass.
         outcome = ERRORS if errors else UNRECOGNISED
         return FolderReport(outcome, errors, body, warnings)
-    if _NOT_FOUND_MARKER in body:
+    if _has_marker(body, _NOT_FOUND_MARKER):
         return FolderReport(NOT_FOUND, (), body, warnings)
-    if _EMPTY_MARKER in body:
+    if _has_marker(body, _EMPTY_MARKER):
         return FolderReport(EMPTY, (), body, warnings)
-    if _SUCCESS_MARKER in body:
+    if _has_marker(body, _SUCCESS_MARKER):
         return FolderReport(SUCCESS, (), body, warnings)
     return FolderReport(UNRECOGNISED, (), body, warnings)
 
@@ -113,16 +132,16 @@ def _parse_block(text: str, marker: str, closing_field: str) -> tuple[CompileMes
     keep the compiler's own spacing: ``Component:   not found`` says the
     component name came back blank, and squashing it would hide that.
     """
-    start = text.find(marker)
-    if start < 0:
+    span = _marker_span(text, marker)
+    if span is None:
         return ()
-    region = text[start + len(marker):]
+    region = text[span[1]:]
     for other in (_ERRORS_MARKER, _WARNINGS_MARKER):
         if other == marker:
             continue
-        boundary = region.find(other)
-        if boundary >= 0:
-            region = region[:boundary]
+        boundary = _marker_span(region, other)
+        if boundary is not None:
+            region = region[:boundary[0]]
 
     records: list[CompileMessage] = []
     current: dict[str, str] = {}

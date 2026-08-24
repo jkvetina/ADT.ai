@@ -92,6 +92,43 @@ def _tracker() -> object | None:
     return sys.stdout if hasattr(sys.stdout, "announced") else None
 
 
+def settle_screen_before_error() -> None:
+    """Leave stdout one blank line short of an error banner (ADT #465).
+
+    An error screen writes to **stderr** while the run's output went to stdout,
+    and the runtime's stdout tracker holds trailing newlines back so the shared
+    `TIMER` footer can still retract them. Its stderr counterpart already commits
+    those before its first write, which covers a run that ended on a finished
+    section; it cannot cover a run that ended MID-ROW, because a redrawable row
+    carries no newline at all while it crawls. There is nothing pending to
+    commit, so `print_adt_header`'s own leading blank is spent terminating that
+    row and the banner lands flush against it. Jan, 2026-08-21, on a failed
+    deploy: *"when deploy fails, there are no blank lines above the header"*.
+
+    `#232` fixed the same defect for one caller by teaching the bar to complete
+    itself with `FAILED`; a failure raised anywhere else never reaches that call,
+    so this belongs on the error screen, where all four of them pass.
+
+    Two trailing newlines is one blank line and `print_adt_header` adds the
+    second, so the banner opens on exactly two whatever the screen was doing.
+    `normalize_trailing_newlines` is the right tool rather than a bare `print()`
+    because it **caps as well as pads**: a section that already closed itself
+    gets nothing added, so this cannot turn two blanks into four, which is
+    `#269`'s defect in the other direction.
+
+    Lives here rather than beside the tracker because this module already owns
+    the question "what is the screen currently saying", and reads the same
+    duck-typed stdout through the same `getattr` guards.
+    """
+    stream = sys.stdout
+    normalize = getattr(stream, "normalize_trailing_newlines", None)
+    commit = getattr(stream, "commit_pending", None)
+    if callable(normalize):
+        normalize(2)
+    if callable(commit):
+        commit()
+
+
 def mark_announced() -> None:
     """What was just printed says what is about to happen.
 
@@ -150,7 +187,7 @@ def _caller() -> str:
             name = frame.f_globals.get("__name__", "?")
             return f"{name}:{frame.f_lineno}"
         frame = frame.f_back
-    return "?"
+    return "?"  # pragma: no cover — unreachable: guard() always has a caller outside this module
 
 
 def first_line(operation: object) -> str:

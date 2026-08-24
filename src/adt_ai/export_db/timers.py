@@ -2,7 +2,7 @@
 
 `#373` gave `-compact` a countdown projected from the run's own rate, which is
 the only thing a first run can do and is a poor answer for the first few
-objects: on `CORE26` a 55 second export read `0:00:43`, then `0:10:12`, then
+objects: on the local container a 55 second export read `0:00:43`, then `0:10:12`, then
 `0:06:46`, because object 2 of 71 happened to cost 17 seconds and two samples
 were the whole sample. Jan, 2026-08-16: *"you know recent times so it would be
 better to based it on that, the current version is very jumpy and not user

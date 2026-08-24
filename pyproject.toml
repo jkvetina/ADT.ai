@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "adt-ai"
-version = "0.9.2"
+version = "0.9.3"
 description = "Modern Python rewrite of ADT focused on YAML-configured Oracle/APEX deployment tooling."
 readme = "README.md"
 license = {text = "MIT"}
@@ -16,6 +16,13 @@ dependencies = [
     "chime>=0.7",
     "cryptography>=42",
     "oracledb>=2.2",
+    # Windows only, and only ever loaded by a `sqlcl_only` project. The driven
+    # SQLcl session needs a terminal, because the JVM block-buffers stdout when
+    # it is not talking to one, and a plain pipe there is silent rather than slow
+    # (measured 2026-08-21: 90 seconds, no prompt, no answer). POSIX has `pty` in
+    # the standard library and Windows has nothing, so this is the ConPTY half.
+    # The marker keeps it off every Mac and Linux install (ADT #449).
+    "pywinpty>=2.0; sys_platform == 'win32'",
     "PyYAML>=6.0",
     "ruamel.yaml>=0.18",
 ]

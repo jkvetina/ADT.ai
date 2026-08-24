@@ -9,6 +9,7 @@ from adt_ai.export_db.normalizers import (
     _identifier_key,
     _matching_parenthesis_index,
     _normalize_sql_identifier,
+    sql_spans,
 )
 
 
@@ -66,10 +67,19 @@ _DDL_STATEMENT_START_RE = re.compile(r"(?:CREATE|ALTER)\b", flags=re.IGNORECASE)
 
 
 def _split_ddl_statements(text: str) -> list[str]:
+    """The trailing DDL statements, split on a top-level `;` or a new CREATE/ALTER.
+
+    Scanned through `sql_spans()` since ADT #474 rather than through a private
+    `in_string` walk, which is the rule `#299` wrote and this function had never
+    followed. It knew strings and nothing about comments, so a semicolon inside
+    `-- and then; more` split a `CREATE TABLE` in two and handed the halves to a
+    regex parser as prose; `discovery`'s walk, which did know, got the same input
+    right. Quoted identifiers stay code here, as they were, since a `"` never
+    changes what this function is looking for.
+    """
     statements: list[str] = []
     current: list[str] = []
     depth = 0
-    in_string = False
     at_line_start = True
 
     def flush() -> None:
@@ -78,28 +88,23 @@ def _split_ddl_statements(text: str) -> list[str]:
             statements.append(statement)
         current.clear()
 
-    index = 0
-    length = len(text)
-    while index < length:
-        char = text[index]
-
-        if (
-            at_line_start
-            and depth == 0
-            and not in_string
-            and "".join(current).strip()
-            and _DDL_STATEMENT_START_RE.match(text, index)
-        ):
-            flush()
-
-        if char == "'":
-            in_string = not in_string
-            current.append(char)
+    for kind, span_start, span_end in sql_spans(text):
+        if kind != "code":
+            current.append(text[span_start:span_end])
             at_line_start = False
-            index += 1
             continue
 
-        if not in_string:
+        for index in range(span_start, span_end):
+            char = text[index]
+
+            if (
+                at_line_start
+                and depth == 0
+                and "".join(current).strip()
+                and _DDL_STATEMENT_START_RE.match(text, index)
+            ):
+                flush()
+
             if char == "(":
                 depth += 1
             elif char == ")":
@@ -107,15 +112,13 @@ def _split_ddl_statements(text: str) -> list[str]:
             elif char == ";" and depth == 0:
                 flush()
                 at_line_start = True
-                index += 1
                 continue
 
-        current.append(char)
-        if char == "\n":
-            at_line_start = True
-        elif not char.isspace():
-            at_line_start = False
-        index += 1
+            current.append(char)
+            if char == "\n":
+                at_line_start = True
+            elif not char.isspace():
+                at_line_start = False
 
     flush()
     return statements

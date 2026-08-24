@@ -121,7 +121,7 @@ ORDER BY object_type, object_name
 # below and every type in `OBJECTS_QUERY`. It used to be narrowed by
 # `user_indexes.LAST_ANALYZED` instead, which records when statistics were gathered,
 # and a statistics timestamp answers a different question in both directions
-# (ADT #414's sweep subtask). Measured read-only on 2026-08-20: 4 of CORE26/APPS's 7
+# (ADT #414's sweep subtask). Measured read-only on 2026-08-20: 4 of the local container's 7
 # exportable indexes carry a `LAST_ANALYZED` 13 hours to a day after their
 # `LAST_DDL_TIME`, moved by the maintenance window's stats job with no DDL at all,
 # so a window between the two readings offered unchanged indexes as changed; and
@@ -161,7 +161,7 @@ ORDER BY t.index_name
 # A scheduler job carries no change timestamp anywhere in the dictionary, so the
 # window that narrows every other type cannot narrow this one. `user_objects` does
 # hold a JOB row, and its LAST_DDL_TIME is the last RUN rather than the last edit:
-# measured on CORE26/APPS 2026-08-20 with a dummy job, a scheduler run carrying no
+# measured on the local container 2026-08-20 with a dummy job, a scheduler run carrying no
 # DDL at all moved LAST_DDL_TIME from 11:26:31 to 11:27:31 while CREATED stayed put,
 # and an in-place SET_ATTRIBUTE later moved LAST_DDL_TIME again and left CREATED
 # alone. CREATED is therefore reliable but only sees a create or a drop+create, and

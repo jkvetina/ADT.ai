@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,18 +11,13 @@ from adt_ai.shared.dict_merge import deep_merge
 from adt_ai.shared.path_template import (
     KNOWN_TOKEN_NAMES,
     supported_spelling,
+    unsupported_curly_tokens,
     unsupported_tokens,
 )
 
 # Default export layout when `path_objects` is not configured. Shared by
 # export_db and export_data so both land files in the same tree.
 DEFAULT_PATH_OBJECTS = "database/<schema>/<object_type>"
-
-# Old ADT's `{$NAME}` substitution syntax. ADT.ai resolves it for a few keys
-# (apex_path_app, patch_scripts_dir, patch_deploy_logs, patch_hashes) but never
-# for a path template such as `path_objects`, whose placeholders are the
-# angle-bracket kind.
-_OLD_ADT_PLACEHOLDER_RE = re.compile(r"\{\$[A-Za-z0-9_]*\}")
 
 
 class ConfigError(Exception):
@@ -111,8 +105,9 @@ class ConfigLoader:
 def reject_unresolved_placeholders(
     template: str,
     *,
-    key    : str = "path_objects",
-    allowed: Sequence[str] = KNOWN_TOKEN_NAMES,
+    key          : str = "path_objects",
+    allowed      : Sequence[str] = KNOWN_TOKEN_NAMES,
+    curly_allowed: Sequence[str] = (),
 ) -> str:
     """Return ``template``, or raise when it holds a token nothing will resolve.
 
@@ -129,8 +124,15 @@ def reject_unresolved_placeholders(
     ADT #411 built a folder literally called ``<SCHEMA>``, and ``export_db`` then
     read the missing ``<schema>`` as a schema-less layout and collapsed every
     schema into one tree. Two failures from one typo, both silent.
+
+    ``curly_allowed`` names the ``{$TOKEN}`` spellings this key DOES resolve, and
+    is empty everywhere but ``apex_path_app`` (ADT #474). That key is the one
+    written in the old-ADT dialect, and it went through no guard at all: measured
+    on ``'{$APP_ID}_{$APP_VERSION}'``, the export created a folder literally
+    called ``100_{$APP_VERSION}``, which is this failure in the one dialect that
+    was not watched for it.
     """
-    old_adt = _OLD_ADT_PLACEHOLDER_RE.findall(str(template))
+    old_adt = unsupported_curly_tokens(str(template), curly_allowed)
     unknown = unsupported_tokens(str(template), allowed)
     if not old_adt and not unknown:
         return str(template)
@@ -138,17 +140,30 @@ def reject_unresolved_placeholders(
     tokens = ", ".join(sorted(set(old_adt)) + unknown)
     reason = (
         "'{$NAME}' is old ADT syntax and would be written out as a literal folder name."
-        if old_adt
+        if old_adt and not curly_allowed
         else "an unrecognised token is written out as a literal folder name."
+    )
+    # The casing advice belongs to the angle-bracket dialect, so a key written in
+    # the other one is not told about a token it cannot carry.
+    casing = (
+        "  A schema token carries its own case, so '<schema>' writes 'app_owner/' and "
+        "'<SCHEMA>' writes 'APP_OWNER/'. An object type folder is spelled by "
+        "object_types in config.yaml, so '<object_type>' has no cased form.\n"
+        if "schema" in allowed
+        else ""
+    )
+    example = (
+        "'<schema>/database/<object_type>/'"
+        if "schema" in allowed
+        else "'{$APP_ID}_{$APP_ALIAS}'"
     )
     raise UnresolvedPlaceholderError(
         f"Unresolved placeholder in config {key}: {tokens}\n"
         f"  Value: {template}\n"
-        f"  ADT.ai substitutes only {supported_spelling(allowed)} in {key}; {reason}\n"
-        f"  A schema token carries its own case, so '<schema>' writes 'app_owner/' and "
-        f"'<SCHEMA>' writes 'APP_OWNER/'. An object type folder is spelled by "
-        f"object_types in config.yaml, so '<object_type>' has no cased form.\n"
-        f"  Fix {key} in config.yaml (e.g. '<schema>/database/<object_type>/')."
+        f"  ADT.ai substitutes only {supported_spelling(allowed, curly_allowed)} in "
+        f"{key}; {reason}\n"
+        f"{casing}"
+        f"  Fix {key} in config.yaml (e.g. {example})."
     )
 
 

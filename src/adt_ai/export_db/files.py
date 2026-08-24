@@ -8,6 +8,7 @@ from adt_ai.export_db.groups import GroupRules, group_for, object_name_from_file
 from adt_ai.export_db.inventory import DatabaseObject
 from adt_ai.shared import text_files
 from adt_ai.shared.config import DEFAULT_PATH_OBJECTS, reject_unresolved_placeholders
+from adt_ai.shared.git_files import file_payload_hash
 from adt_ai.shared.path_template import (
     object_type_token,
     render_path_template,
@@ -36,7 +37,11 @@ class ObjectWriteRequest:
 class ObjectWritePlan:
     object  : DatabaseObject
     path    : Path
-    action  : Literal["create", "update", "unchanged"]
+    action  : Literal["create", "update", "unchanged", "hashed"]
+    #: Set only by :meth:`ObjectFileWriter.hash_one` (`#452`): the hash of the
+    #: bytes this object WOULD have been written as, so a baseline can be
+    #: measured off a live database without touching the working tree.
+    content_hash: str | None = None
 
 
 class ObjectFileResolver:
@@ -357,6 +362,33 @@ class ObjectFileWriter:
         plan.path.parent.mkdir(parents=True, exist_ok=True)
         text_files.write_text(plan.path, request.content)
         return plan
+
+    def hash_one(self, request: ObjectWriteRequest) -> ObjectWritePlan:
+        """What this object would hash to, without writing anything (`#452`).
+
+        The path is resolved exactly as a write would resolve it, so a measured
+        baseline is keyed the same way the working tree is and the two are
+        directly comparable.
+
+        The bytes are the bytes `write_text` would have produced, which is why
+        the configured line ending is applied here rather than hashing the raw
+        DDL string: `file_payload_hash` canonicalizes line endings (`#454`), so
+        this would agree either way, and pinning it to the writer's own output
+        keeps that agreement a property of the code rather than a coincidence.
+
+        Jan, 2026-08-21: *"when patch calculate the hash of the file, it must be
+        the same as the hash calculated in export_db -baseline mode."*
+        """
+        path = request.path or self.resolver.path_for(request.object)
+        rendered = text_files.normalize(request.content).replace(
+            "\n", text_files.configured_newline()
+        )
+        return ObjectWritePlan(
+            object       = request.object,
+            path         = path,
+            action       = "hashed",
+            content_hash = file_payload_hash(rendered.encode("utf-8")),
+        )
 
     def _plan_one(
         self,

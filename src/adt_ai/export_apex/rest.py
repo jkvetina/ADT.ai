@@ -16,7 +16,7 @@ from collections.abc import Mapping
 # shipped STARTUP.sql template itself documents, echoes "PL/SQL procedure
 # successfully completed." instead, and it went straight into line 1 of
 # `__enable_schema.sql` on any run that did not happen to reach the connect
-# preamble the cleanup trims. Seen live on CORE26 while closing `#313`. Literal
+# preamble the cleanup trims. Seen live on the local container while closing `#313`. Literal
 # strings rather than a pattern, so an echo can never be confused with a line of
 # exported REST DDL.
 _SQLCL_FEEDBACK_ECHOES = frozenset({

@@ -76,17 +76,28 @@ def target_status(path: Path) -> dict[str, str]:
 
 
 def latest_deploy_status(path: Path) -> str | None:
-    """The single newest deploy log, as ``<TARGET>:<OUTCOME>``.
+    """The single newest deploy log, as ``<OUTCOME>/<TARGET>``.
 
     Jan, 2026-08-10: "status will be reflecting the latest deployed log, so if
     the latest file is log_DEV_<result> I want to see the DEV:<result> as a
-    value", one value, the latest, not one per target.
+    value", one value, the latest, not one per target. That reading is unchanged;
+    only the spelling moved, on 2026-08-24 (ADT #510): *"I would like the status
+    to be printed as: "<STATUS>/<ENV>" and not as "<ENV>:<STATUS>""*, so
+    ``DEV:SUCCESS`` reads ``SUCCESS/DEV``. The outcome leads because it is what a
+    reader scans the column for; the target answers "where" second.
+
+    **Composed here rather than at the column that shows it.** Two user-facing
+    surfaces read this one value, the ``RECENT PATCH FOLDERS:`` ``STATUS`` cell
+    and the already-deployed refusal in ``patch/staleness.py``, so formatting it
+    at either one would put two spellings of one fact on two screens. That is
+    the `#240` ``schema_label()`` failure, and the display-layer rule it produced
+    binds a value with one meaning, not a value with one call site.
     """
     records = deploy_log_records(path)
     if not records:
         return None
     _stamped, _when, target, outcome = records[-1]
-    return f"{target}:{outcome}"
+    return f"{outcome}/{target}"
 
 
 __all__ = ["DEPLOY_LOG_RE", "deploy_log_records", "latest_deploy_status", "target_status"]

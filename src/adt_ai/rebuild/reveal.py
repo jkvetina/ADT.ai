@@ -8,9 +8,9 @@ from adt_ai.shared.git_files import (
     default_branch_ref,
     fetch_origin,
     git_checkout,
-    git_user_email,
     run_git,
 )
+from adt_ai.shared.identity import resolve_commit_email
 
 REVEAL_DEFAULT_LIMIT = 20
 
@@ -45,7 +45,8 @@ def reveal_branches(
         fetch_origin(root)
     infos = _branch_infos(root)
     if mine:
-        email = git_user_email(root).lower()
+        # One resolver for every `-my` in the tool (ADT #469).
+        email = resolve_commit_email(root=root).lower()
         infos = [b for b in infos if email and b.author_email.lower() == email]
     if since:
         # `-since` in reveal mode is a date filter on the branch's tip commit:
@@ -146,7 +147,7 @@ def branch_commits(
     """
     args = ["log", "--format=%cd\t%s", "--date=format:%Y-%m-%d %H:%M"]
     if mine:
-        email = git_user_email(root)
+        email = resolve_commit_email(root=root)
         if email:
             args.append(f"--author={email}")
     if limit:

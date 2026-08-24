@@ -1,69 +1,142 @@
-# APEX Flow, map page navigation (adtai flow)
+# Map APEX Page Navigation (adtai flow)
 
-`flow` answers two questions about an APEX application's navigation graph: **"where do links point INTO this page?"** and **"which pages can I reach FROM this page?"**. It scrapes the navigation links of one application from the database once, stores them in a local SQLite file (`config/internal/flow.db`, gitignored), writes Mermaid, Graphviz DOT, and JSON diagrams under `config/flow/`, and then answers both questions offline.
+`flow` answers two questions about an application's navigation graph: which pages link **into** a page, and which pages you can reach **from** it. Reach for it before changing a page, when you need to know what will send users there and where they will go next. It scrapes the links once, stores them locally, and answers offline from then on.
 
-`-app` is mandatory for **every** action, the store holds many applications side by side, keyed by `(workspace, app_id)`, so every command must say which application it means.
+The store is a SQLite file at `config/internal/flow.db` (gitignored), and every refresh also writes Mermaid, Graphviz DOT and JSON diagrams under `config/flow/`.
 
-The command has three modes:
-
-- **Query** (`-to PAGE` / `-from PAGE`): read the local store and list the incoming or outgoing page links for one page. Query tables show source component names, with component text capped at 30 characters for stable console width. Column headers render in UPPERCASE, PLURAL form, `FROM APPS`/`FROM PAGES`/`SRC TYPES`/`COMPONENTS`/`FLAGS` for `-to`, and `TO APPS`/`TO PAGES`/`SRC TYPES`/`COMPONENTS`/`FLAGS` for `-from`, matching the refresh summary's `PAGES`/`EDGES`/`DIAGRAMS` style. Existing stores created before the report-column fix can still contain rendered HTML or heading text; those stale report-column rows display `COL_<component_id>` instead of the bad stored text until the app is refreshed. With no action flag it prints a short hint and exits `2`. If the store file does not exist yet it reports `No APEX flow database found` and exits `1`; if the application is not in the store it reports `Application N is not loaded` and exits `1`.
-- **Refresh** (`-refresh`): connect through the default APEX schema, resolve the application's owner, reconnect through that configured schema, and (re)load the application's metadata, pages, and navigation edges. Each application's scan runs under its own `APP <id>, REFRESHING:` header, printed before the reads rather than after them, so the wait never sits on a blank screen; the owner lookup for every requested application runs once, up front, under the module banner. A refresh is a full rewrite: the application's old rows are deleted and replaced in one transaction, never appended. Each refresh writes all diagram formats automatically to `config/flow/app_<id>.mmd`, `.dot`, and `.json`.
-- **Delete** (`-delete`): delete the application and all its pages and edges from the store.
-
-Every run prints the generic `APEX DEPLOYMENT TOOL - FLOW` banner and a completion timer.
-
-## What counts as an edge
-
-A navigation edge is any link from a source component to a target page: page branches, buttons, list entries, tabs, navigation-bar entries, and report column links. Report column links use the APEX dictionary `COLUMN_ALIAS` value as the component label because that is the field exposed by APEX report-column views. Values that look like headings, link text, or HTML templates are replaced with `COL_<component_id>` in query output. Each edge carries a `flag` describing how resolvable its target is:
-
-- `PAGE`, a same-application page link (the common case).
-- `CROSS_APP`, a link into another application (`f?p=<other_app>:<page>`); indexed by the resolved target application and page.
-- `DYNAMIC`, the target page number is computed at runtime (substitution strings, item values) and cannot be resolved statically.
-- `NONE`, the link leaves APEX entirely (an external URL) or carries no page target.
-
-`-to` and `-from` only surface **resolvable** links (`PAGE` and `CROSS_APP`). The `json` dump is lossless and keeps every edge, including `DYNAMIC` and `NONE`, so diagrams and downstream tooling can decide what to draw. The Mermaid and DOT dumps draw only the resolvable edges.
+<br>
 
 ## Examples
 
-Build (or rebuild) one application's navigation graph from the database:
+Build or rebuild one application's graph from the database:
 
 ```bash
-cd ~/Dropbox/PROJECTS/CORE23
-adtai flow -app 956 -refresh -env DEV
+adtai flow -app 100 -refresh -env DEV
 ```
 
-Ask where links point into a page, and which pages you can reach from a page:
+Ask what links into a page, and what a page links out to:
 
 ```bash
 adtai flow -app 100 -to 2
 adtai flow -app 100 -from 1
 ```
 
-Delete an application from the store when you no longer track it:
+Drop an application you no longer track:
 
 ```bash
 adtai flow -app 100 -delete
 ```
 
-The default diagram paths are `<root>/config/flow/app_<id>.<ext>` (`.mmd`, `.dot`, and `.json`). Empty link results print an explicit `(none)` rather than nothing.
+`-app` is required for every action. The store holds many applications side by side, keyed by workspace and application id, so every run has to say which one it means.
+
+<br>
+
+## Output
+
+`-refresh` connects, scans under its own `APP <id>, REFRESHING:` header, and reports what it stored:
+
+```text
+APEX DEPLOYMENT TOOL - FLOW
+---------------------------
+
+CONNECTING TO SCHEMA SANDBOX, DEV:
+----------------------------------
+              APEX | 26.1.0
+          DATABASE | 23.26.1.0.0 | FREEPDB1
+
+
+APP 100, REFRESHING:
+--------------------
+
+
+APP 100/ORDERS, REFRESHED:
+--------------------------
+
+  PAGES   EDGES   DIAGRAMS
+  -----   -----   --------
+      4       9          3
+
+
+TIMER: 1s
+```
+
+A query reads that store and prints one table of resolvable links:
+
+```text
+APEX DEPLOYMENT TOOL - FLOW
+---------------------------
+
+LINKS INTO APP 100 PAGE 1 (4):
+------------------------------
+
+  FROM APPS   FROM PAGES   SRC TYPES    COMPONENTS       FLAGS
+  ---------   ----------   ----------   --------------   -----
+        100   2            BRANCH       Back to Orders   PAGE
+        100   4            BRANCH       Back to Orders   PAGE
+        100   3            BUTTON       BACK_TO_ORDERS   PAGE
+        100   shared       LIST_ENTRY   Orders           PAGE
+
+
+TIMER: 0s
+```
+
+- The number in the header is how many rows follow it.
+- `-from` prints the same table with `TO APPS` and `TO PAGES` where `FROM APPS` and `FROM PAGES` stand, under a `LINKS FROM APP <id> PAGE <n>` header.
+- `FROM PAGES` reads `shared` when the source belongs to the application rather than to one page, which is where list entries, tabs and navigation-bar entries sit.
+- Component text is capped at 30 characters so the width stays stable, and an empty result prints `(none)` rather than nothing.
+
+Before the store exists, every mode says so and exits `1`:
+
+```text
+APEX DEPLOYMENT TOOL - FLOW
+---------------------------
+No APEX flow database found. Run 'adt flow -app N -refresh' to build it.
+
+
+TIMER: 0s
+```
+
+- An application missing from an existing store reports `Application N is not loaded` and exits `1`.
+- With a store present and no action flag, the run prints a short hint and exits `2`.
+- Each refreshed application scans under its own `APP <id>, REFRESHING:` header, printed before the reads rather than after them, so the wait never sits on a blank screen. The owner lookup for every requested application runs once, up front, under the banner.
+
+<br>
+
+## The three modes
+
+- **Query** (`-to PAGE` or `-from PAGE`) reads the local store and lists the incoming or outgoing links for one page. It opens no connection.
+- **Refresh** (`-refresh`) connects through the default APEX schema, resolves the application's owner, reconnects through that schema, and reloads the application's metadata, pages and edges. A refresh is a full rewrite in one transaction: the old rows are deleted and replaced, never appended to.
+- **Delete** (`-delete`) removes the application, its pages and its edges from the store.
+
+<br>
+
+## What counts as an edge
+
+An edge is any link from a source component to a target page: page branches, buttons, list entries, tabs, navigation-bar entries and report column links. Report column links use the APEX dictionary's `COLUMN_ALIAS` value as the label, since that is the field the report-column views expose.
+
+Every edge carries a flag describing how resolvable its target is:
+
+| Flag | Meaning |
+| ---- | ------- |
+| `PAGE` | A page in the same application. The common case. |
+| `CROSS_APP` | A link into another application (`f?p=<other_app>:<page>`), indexed by the resolved target application and page. |
+| `DYNAMIC` | The target page number is computed at runtime, from a substitution string or an item value, and cannot be resolved statically. |
+| `NONE` | The link leaves APEX entirely, or carries no page target at all. |
+
+`-to` and `-from` surface only the resolvable flags, `PAGE` and `CROSS_APP`. The Mermaid and DOT diagrams draw the same set. The JSON dump is lossless and keeps every edge, `DYNAMIC` and `NONE` included, so downstream tooling can decide for itself what to draw.
+
+A store written before the report-column label fix can still hold rendered HTML or heading text where a column name belongs. Those rows display as `COL_<component_id>` until the application is refreshed again.
+
+<br>
 
 ## Arguments
 
 | Argument | Repeatable | Default | Description |
 | -------- | ---------- | ------- | ----------- |
-| `-app`, `--app` | Yes | none (required) | Application id(s). Mandatory for every action. Space-separate, repeat, or use ranges: `-app 100 200`, `-app 100 -app 200`, `-app 100-200`, `-app 100+`. On `-refresh`, ranges are resolved against the APEX catalog; on query/delete they filter the loaded store. |
-| `-to`, `--to` | No | none | Show pages that link INTO this page (incoming links). |
-| `-from`, `--from` | No | none | Show pages reachable FROM this page (outgoing links). |
-| `-refresh`, `--refresh` | No | off | Resolve the app owner schema, rescrape the application from the database, rewrite its stored edges, and write Mermaid/DOT/JSON diagrams. |
-| `-delete`, `--delete` | No | off | Delete the application and all its pages and edges from the store. |
-| `-root`, `--root` | No | `.` | Project root folder holding `config/internal/flow.db` and used for config and connection lookup. |
-| `-config-dir`, `--config-dir` | Yes | none | Folder containing project config YAML (refresh only). ADT.ai always loads repo defaults first, then overlays these project configs. |
-| `-env`, `--env` | No | connection default environment | Connection environment to refresh from, for example `DEV` (refresh only). |
-| `-debug`, `--debug` | No | off | Show input parameters and SQL queries with bind values. |
-| `-key`, `--key` | No | `ADT_KEY` | Encryption key value or path to a key file for encrypted connection passwords (refresh only). |
-| `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |
-| `-nobeep`, `--nobeep` | No | off | Suppress completion sounds for this run; this wins over `chime_theme` and `-beep`. |
+| `-app`, `--app` | Yes | none (required) | Application id or ids, required for every action. Space-separate, repeat, or use a range: `-app 100 200`, `-app 100-200`, `-app 100+`. Ranges resolve against the APEX catalog on `-refresh` and filter the loaded store on query or delete. |
+| `-to`, `--to` | No | none | Show the pages that link INTO this page. |
+| `-from`, `--from` | No | none | Show the pages reachable FROM this page. |
+| `-refresh`, `--refresh` | No | off | Resolve the owner schema, rescrape the application, rewrite its stored edges, and write the Mermaid, DOT and JSON diagrams. |
+| `-delete`, `--delete` | No | off | Delete the application, its pages and its edges from the store. |
 
----
-
-← [docs/README.md](README.md) index
+Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [arguments.md](arguments.md).

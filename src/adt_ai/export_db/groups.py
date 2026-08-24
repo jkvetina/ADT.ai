@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# `owns_file` and `object_name_from_file` were written here for ADT #412 and
+# moved to `shared/` for ADT #471, where `patch` and `search_repo` can reach them
+# too. Re-exported so this module's own callers are untouched.
+from adt_ai.shared.object_files import extensions_by_folder as extensions_by_folder
+from adt_ai.shared.object_files import object_name_from_file as object_name_from_file
+from adt_ai.shared.object_files import owns_file as owns_file
 from adt_ai.shared.yaml_io import load_yaml_mapping, store_yaml_mapping
 
 
@@ -198,45 +204,6 @@ def detect_groups_from_tree(
             if prefix:
                 type_rules.setdefault(object_type.upper(), {})[prefix] = subfolder.name
     return GroupRules(type_rules=type_rules)
-
-
-def object_name_from_file(file_path: Path, extension: str) -> str:
-    """Uppercased object name from an exported file: the filename minus its extension."""
-    name = file_path.name
-    if name.endswith(extension):
-        name = name[: -len(extension)]
-    return name.upper()
-
-
-def owns_file(extension: str, sibling_extensions: Iterable[str], file_path: Path) -> bool:
-    """Whether a file in a shared folder belongs to `extension` or to a sibling of it.
-
-    Two object types can be configured onto the same folder with different
-    extensions, and the shipped config does it twice: `PACKAGE` and `PACKAGE BODY`
-    both write `packages/` under `.spec.sql` and `.sql`, `TYPE` and `TYPE BODY` both
-    write `types/` under `.sql` and `.body.sql`. In each pair the shorter extension
-    is a suffix of the longer one, so a glob run for the shorter type matches the
-    longer type's files as well. The file belongs to the longest extension it ends
-    with, and to nothing else (ADT #412, where a package spec was planned for a move
-    twice and the second rename found the source already gone).
-    """
-    name = file_path.name
-    if not name.endswith(extension):
-        return False
-    return not any(
-        len(sibling) > len(extension) and name.endswith(sibling)
-        for sibling in sibling_extensions
-    )
-
-
-def extensions_by_folder(
-    type_roots: Sequence[tuple[str, Path, str]],
-) -> dict[Path, set[str]]:
-    """Every extension configured onto each folder, so `owns_file` has its siblings."""
-    by_folder: dict[Path, set[str]] = {}
-    for _object_type, folder, extension in type_roots:
-        by_folder.setdefault(folder, set()).add(extension)
-    return by_folder
 
 
 def load_groups_file(path: Path | str) -> GroupRules:

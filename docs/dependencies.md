@@ -1,133 +1,214 @@
-# Dependencies, query the object graph (adtai dependencies)
+# Query the Object Graph (adtai dependencies)
 
-`dependencies` answers "what uses this?" and "what would I break?" against a local SQLite mirror of the Oracle data dictionary. The mirror lives at `config/internal/dependencies.db`, a single, gitignored database holding the raw dictionary tables (`USER_OBJECTS`, `USER_DEPENDENCIES`, `USER_CONSTRAINTS`, `USER_IDENTIFIERS`, …), each stamped with an `OWNER` so the model is multi-schema, plus the APEX dictionary (`APEX_USED_DB_OBJECTS`, …) keyed by `APPLICATION_ID`. Every query mode recomputes its answer from those raw mirrors at query time.
+`dependencies` answers "what uses this?" and "what would I break?" against a local mirror of the Oracle data dictionary. Reach for it before changing a table or a package, when you need the blast radius rather than a guess.
 
-The command has two modes, and which one you get is decided by a single rule: **name a query and it queries, name none and it refreshes.**
+The mirror is a single gitignored SQLite file at `config/internal/dependencies.db`, holding the raw dictionary tables stamped with an owner, so it is multi-schema, plus the APEX dictionary keyed by application id. Every query recomputes its answer from those raw mirrors.
 
-- **Query**: read `config/internal/dependencies.db` and answer one of `-from`, `-to`, `-impact`, `-tree`, or `-age`. `-from OBJ` lists the objects `OBJ` depends on (what `OBJ` uses); `-to OBJ` lists the objects that depend on `OBJ` (what points at it); `-age` reports when each schema/app scope was last refreshed. If the database does not exist yet it reports `No dependency database found` and exits `1`. On a multi-schema mirror an object name (e.g. `PACKAGE.CORE`) can be ambiguous across owners; add `-schema OWNER [OWNER ...]` (space- or comma-separated, repeatable) to disambiguate the queried object by the owner column each mode matches it on (see below). Query-mode `-schema` is fully offline, it never connects to the database and is a literal, case-insensitive owner list parsed locally.
-- **Refresh** (default; `-refresh [NAME ...]` spells it explicitly): connect to the database and patch the mirror, one transaction per scope. A bare `adtai dependencies` refreshes, and so does any invocation that carries no query flag, so `-schema APP`, `-app 100`, `-force` and `-recent` all describe a refresh on their own. Those three refresh options steer the rebuild, so passing one beside a query is refused with `steers -refresh and cannot be combined with a query` and exit `2`. Refresh has two independent axes, used in any combination: `-schema` pulls the object inventory, uses `LAST_DDL_TIME` to detect added/changed objects, bulk-pulls the `USER_*` detail mirrors, filters those detail rows in SQLite to changed objects only, deletes old outbound rows for each changed object, deletes dropped objects plus relations to/from them from the mirror, and keeps unchanged object rows intact; `-app` sets the APEX workspace/security-group/session context through the same start block used by `export_apex`, re-scans the requested APEX application when the connected APEX release supports it, and patches only changed `APEX_*` rows for that app. Passing object names or SQL wildcards after `-refresh` forces a deep schema refresh for just those objects: ADT.ai pulls matching objects and dependency rows to/from them, deletes matching SQLite rows in both directions first, then inserts the scoped rows. Add `-force` to wipe only the requested schema/app scope before reloading it. This is the only mode that reads `-config-dir` and `-env`, and the only one that connects at all. Refresh writes only `config/internal/dependencies.db`; no derived YAML or other artifact is produced. Alongside each schema's refresh stamp it records that database's own UTC offset, read once per scope from `SYSTIMESTAMP`: `LAST_DDL_TIME` is a wall-clock reading taken on the database server, and `patch -create` compares it against repo file times taken here, so without the offset a database in another timezone shifts every one of those comparisons (see `docs/patch.md` §The export gate). Nothing configures it, and a mirror that predates it is refused by that gate rather than read on the wrong clock, which one refresh fixes.
+<br>
 
-Every run prints the generic banner once, then one segment per schema: connect, refresh that scope, print its own `TIMER`, a multi-`-schema` refresh reads schema by schema, exactly as if invoked once per schema. See `docs/README.md` §Console Output Contract for the general shape. The `-app` axis is folded into its owning schema's own segment (its scope line reads `REFRESHING <SCHEMA> SCHEMA AND APEX APP <id>/<alias>:`) whenever that schema is also being refreshed on the `-schema` axis; otherwise, which is always true for a bare `-app`-only refresh, since there is no `-schema` axis to fold into, the app axis becomes its own final segment. App-only refresh prints an `APEX APPLICATIONS:` table (`app_id` / `name` / `pages` / `updated_at`, one row per selected app) when the applications are visible in the APEX dictionary, the same table `export_apex` prints before its own per-app export loop, instead of a single-line summary; when the apps are not yet discoverable (offline / not previously exported) no table prints. Immediately before each app's own rows, refresh then prints a matching `APP <id>/<alias>, REFRESHING:` section header with a dashed underline, the same per-application section shape `export_apex` uses, so a multi-app or ranged `-app` refresh reads app by app instead of one flat combined listing. APEX refresh reads the APEX version shown in the connection block before choosing its dictionary path: releases before APEX 24.2 print that APEX dependency scanning is unavailable and skip the app refresh; APEX 24.2 uses discovered `APEX_USED_DB_OBJECTS`, `APEX_USED_DB_OBJECT_COMP_PROPS`, and `APEX_USED_DB_OBJ_DEPENDENCIES` columns joined into the mirror shape; APEX 26.1+ uses the full current `USED_DB_OBJECT_*` query path. Supported APEX refreshes run `APEX_APP_OBJECT_DEPENDENCY.SCAN` silently, then drop generated `DEPSCAN$...` helper procedures so scan internals do not clutter the console or exports. Refresh progress uses fixed-width non-timer rows: the table name is printed before the query/upsert starts, and the row is completed with dots once the result is known; if a table query fails, the active row is completed with `FAILED` before the database error block prints the failing SQL. Incremental schema refresh rows show `changed | total`, with `total` left-padded to seven characters, because detail views are bulk-pulled and filtered locally; under `-force` or named-object deep refresh, schema refresh rows show only the fetched count because those scopes are deleted before the fresh rows are inserted. APEX refresh rows use the same two-space indentation and show the patched count for each app table. In the default `table` format these go to stdout like the other commands; with `-format yaml` or `-format md` the chrome moves to stderr so stdout stays clean and pipeable.
+## Examples
 
-**A schema is one scope however you spell it** (`#413`). Oracle owners are uppercase identifiers, but ADT reads the name from your `-schema` argument or a connection-file key, so `-schema ict_owner` and `-schema ICT_OWNER` refresh the same scope and write the same `ICT_OWNER` rows, matching what a query mode's `-schema` filter has always done to its own values. A mirror written before this could hold both, two complete copies of one schema under two stamps, which is what made `patch -create` refuse a graph it had just refreshed (`docs/patch.md` §The graph gate). The next `-refresh` folds any such pair away, keeping the copy whose stamp is newer and dropping the other rather than merging it, since both describe the same schema and the older one can still be carrying objects the newer refresh saw dropped. It runs on the refresh path only, so no query mode ever rewrites the mirror underneath a report, and it is a no-op on a mirror that never split.
-
-`-app` takes one or more application ids, repeat the flag or space-separate them under a single `-app` (`-app 100 200 300`), and also accepts a range: `MIN-MAX` is the closed range `MIN..MAX` and `MIN+` is every id `>= MIN`. Plain ids are refreshed exactly as given; a range is resolved against the applications discovered across the configured schemas (the same shared APEX app-selection code `export_apex` and `flow` use), so only existing apps inside the range are refreshed. A range that matches no discovered application exits `1`.
-
-When you refresh by application id (`-app <id>`, without `-schema`), `dependencies -refresh` first reads the cached `config/internal/apex.db` (written by earlier `export_apex` runs) to pick the schema it connects through. The refresh runner pulls every `APEX_*` view over a single `app_schema` connection, so when all requested apps share one recorded non-default `owner` schema it connects straight to that owner schema and skips the wasted default-schema connection, for example `-refresh -app 160` connects to GSN instead of the default DA. Apps not yet recorded in the file, a missing file, apps recorded against the default schema, several `-app` ids that map to different owners (one connection cannot serve both), or an explicit `-schema` all fall back to connecting to the environment default schema.
-
-The refresh connection is an ordinary ADT.ai connection and runs the ordinary session setup: `DDL_LOCK_TIMEOUT = 10`, then the `DBMS_SESSION.SET_IDENTIFIER` block composed from `config/IDENTITY.yaml`, then `config/STARTUP.sql`. That is not cosmetic here, refresh issues `ALTER SESSION SET PLSCOPE_SETTINGS` and `ALTER … COMPILE` of its own, so on a schema whose DDL trigger requires a client identifier a sessionless connection fails the whole command with `ORA-20990` rather than degrading. Query modes are offline and open no connection at all.
-
-The SQLite mirror creates persistent lookup indexes for the hot query paths: reverse dependency traversal, object source lookup, constraint/table lookup, table-column lookup, object-type cleanup scans, and APEX object joins. Owner/object and `APPLICATION_ID` lookups use the mirror tables' primary-key prefixes, so refresh avoids duplicate secondary indexes.
-
-Refresh the schema mirror, the APEX mirror, or both in one connection:
+Refresh the mirror. Naming no query flag is what makes a run a refresh:
 
 ```bash
-cd ~/Dropbox/PROJECTS/CORE23
-adtai dependencies
-adtai dependencies -env DEV -schema APP
-adtai dependencies -refresh -env DEV -schema APP
-adtai dependencies -refresh -env DEV -app 100
-adtai dependencies -refresh -env DEV -app 100 200 300
-adtai dependencies -refresh -env DEV -app 100-200
-adtai dependencies -refresh -env DEV -app 300+
-adtai dependencies -refresh -env DEV -schema APP -app 100
-adtai dependencies -refresh CORE CORE% -env DEV -schema APP
-adtai dependencies -refresh CORE,API_% -env DEV -schema APP
+adtai dependencies -env DEV -schema SANDBOX
+adtai dependencies -refresh -env DEV -schema APP CORE
+adtai dependencies -refresh -env DEV -app 100 200
 adtai dependencies -refresh -recent -env DEV -schema APP
 adtai dependencies -refresh -force -env DEV -schema APP
 ```
 
-List what an object depends on, and what depends on it:
+Ask what an object uses, and what uses it:
 
 ```bash
-adtai dependencies -from "PACKAGE BODY.CORE"
-adtai dependencies -to "TABLE.CORE_LOGS"
+adtai dependencies -from "VIEW.ADT_ANNO_TICKET_V"
+adtai dependencies -to "TABLE.ADT_ANNO_TICKET"
 ```
 
-Show the transitive reverse impact of a change:
+Ask for the transitive blast radius, or walk a foreign key:
 
 ```bash
-adtai dependencies -impact "TABLE.CORE_LOGS"
-```
-
-The transitive walk stops at `dependencies_max_depth` levels (project `config.yaml`, default `20`); objects reachable only beyond that depth are omitted from the impact list.
-
-Check how fresh the mirror is, per scope, without connecting:
-
-```bash
-adtai dependencies -age
-```
-
-`-age` is an offline query mode: every `-refresh` stamps the completion time of each refreshed scope into the `dependencies.db` `_meta` table (`last_refresh:schema:<OWNER>` and `last_refresh:app:<ID>` keys), and `-age` reads them back. The default `table` format prints one row per scope with `SCOPE TYPE` (`SCHEMA`/`APP`), `SCOPE`, and `LAST REFRESH` (a sortable `YYYY-MM-DD HH:MM:SS` local timestamp), schemas first then apps. `-format yaml` emits an `age:` list and `-format md` an `## Age` list. Like the other query modes it never connects, and it reports `No dependency database found` and exits `1` when the database is absent. This lets an agent check staleness by scope instead of guessing from the database file's mtime.
-
-In the default `table` format every listed object is rendered as two columns, `OBJECT TYPE` and `OBJECT NAME`, split from the `TYPE.NAME` node on its first dot, so a multiword type like `PACKAGE BODY` stays intact in `OBJECT TYPE`. `-impact` keeps its `DEPTH` column alongside the split. There is no count column: `USER_DEPENDENCIES` is distinct per object→object pair, so a per-row reference count is always 1. The `-format yaml` and `-format md` outputs are unchanged and still emit the dotted `TYPE.NAME` node form for backward compatibility.
-
-### Disambiguate a query by owner with -schema (offline)
-
-When the mirror tracks more than one owner, the same object name can exist in several schemas. Pass `-schema` on any query mode to pin the queried object to one or more owners. It is offline (no connection), case-insensitive, and accepts a repeatable, space- or comma-separated list; omit it and every tracked owner is matched (the historical behavior). An empty or whitespace value behaves as absent. Each mode matches `-schema` against the owner column it keys on:
-
-- `-from OBJ -schema S`, the dependent side: keep only edges whose `OWNER` is in `S` (the `OBJ` instances owned by `S`).
-- `-to OBJ -schema S`, the referenced side: keep only edges whose `REFERENCED_OWNER` is in `S`.
-- `-impact OBJ -schema S`, constrains the seed object to `REFERENCED_OWNER` in `S`; the transitive walk outward is unchanged.
-
-`-schema` narrows within the tracked-owner set; it never widens to untracked owners.
-
-```bash
-adtai dependencies -from "PACKAGE.CORE" -schema APP
-adtai dependencies -to "TABLE.SHARED" -schema APP,OPS
-adtai dependencies -impact "TABLE.SHARED" -schema OPS
-```
-
-Show a foreign-key cascade around a specific constraint:
-
-```bash
+adtai dependencies -impact "TABLE.ADT_ANNO_TICKET"
 adtai dependencies -tree "ORDER_ITEMS_ORDER_FK"
 ```
 
-`-tree` looks up the named constraint in the SQLite mirror. For a foreign key, the `REFERENCES` table starts with that FK, prints the referenced parent PK/UK row, then keeps walking toward higher parent tables through their own FKs. The `DEPENDENCIES` table walks the other way from the named constraint's table, printing key rows before child FK rows when children exist. The visible columns are `TABLE NAME`, `COLUMN NAME`, `CONSTRAINT NAME`, and `TYPE`, sorted by traversal path. The dependency table is omitted when no child FK rows exist.
-
-When the APEX mirror has been refreshed with `-app`, `-impact` also appends an `APEX CALLERS` section showing which application, page/shared component, and component property uses the impacted database object. If PL/Scope can trace an impacted table column through a view and the APEX component property references that view column, the APEX caller row carries the rendered column and its source `TABLE.COLUMN`. The same data is emitted under `apex:` for `-format yaml` and under `## APEX callers` for `-format md`. This Phase 2 lineage uses the `APEX_USED_DB_OBJECT*` dictionaries already captured by `-refresh -app`; the APEX 26.1+ `APEX_DB_DICTIONARY` package is an optional future annotation source, not a dependency for the core blast radius.
-
-Emit machine-readable output for piping:
+Check how stale the mirror is, or emit machine-readable output:
 
 ```bash
-adtai dependencies -from "PACKAGE BODY.CORE" -format yaml
+adtai dependencies -age
+adtai dependencies -to "TABLE.ADT_ANNO_TICKET" -format yaml
 ```
 
-There is no separate "rebuild cache" step, re-running `-refresh` is the update path. Object names use the `TYPE.NAME` form shown in the graph (for example `PACKAGE BODY.CORE`, `TABLE.CORE_LOGS`). Empty results print an explicit `(none)` rather than nothing. A referenced object is treated as internal only when its owner is present in the tracked mirror; references to schemas that were not refreshed are external and are dropped from the graph.
+<br>
 
-## Column-level dependencies (PL/Scope)
+## Output
 
-When the schema carries PL/Scope data, the `USER_IDENTIFIERS` and `USER_STATEMENTS` mirrors let `-impact` resolve column-level lineage: per program unit, the exact table/view columns it touches, plus view-column → source `TABLE.COLUMN` lineage. Lineage is resolved only when exactly one of the view's sources exposes that column; ambiguous or unknown columns are kept with a `null` source, never dropped. `-impact` then appends an `AFFECTED COLUMNS` section listing view columns sourced from the impacted table (also in `yaml`/`md` output as `columns:` / `## Affected columns`). When no PL/Scope rows exist the section is simply omitted, nothing fails.
+A refresh prints one row per dictionary table, its name before the query starts and its counts after:
 
-PL/Scope is a prerequisite that `-refresh -schema` now satisfies automatically, on the same Oracle connection: it sets `PLSCOPE_SETTINGS='IDENTIFIERS:ALL,STATEMENTS:ALL'` on the session, then recompiles added/changed VALID PL/SQL objects that are still missing that scope (reusing the recompile module's compile statement). The shared Oracle connection bootstrap sets `DDL_LOCK_TIMEOUT = 10` immediately before `STARTUP.sql`, and `STARTUP.sql` can override that value; if a compile hits `ORA-04021` because another session holds the object lock, refresh reports `    SKIPPED LOCKED <TYPE> <NAME>`, indented one level under the row it interrupts, and continues. The line is worth reading: a skipped object keeps its old PL/Scope data, so its edges in `config/internal/dependencies.db` stay stale even though the command exits `0`; re-run the refresh once the lock clears. No separate flag, no full missing-scope sweep, and no second connection are involved.
+```text
+APEX DEPLOYMENT TOOL - DEPENDENCIES
+-----------------------------------
 
-On a first refresh this prerequisite is the slowest thing the command does, so it crawls rather than holding the section header still: one redrawn `RECOMPILING DUE TO WRONG PL/SCOPE` row, opened in front of the first `ALTER … COMPILE` and closed at 100%. It is one row, not a row per object, and there is no section header of its own.
 
-**The row prints only when something is being recompiled** (`#413`). A warm schema recompiles nothing, and so does any incremental refresh whose changed objects carry no PL/SQL, which is the common case rather than the exception; a row reading `RECOMPILING DUE TO WRONG PL/SCOPE ....... 100%  0:00:00` on those runs said work had happened that had not. The session `ALTER` and the catalog scan that decide whether there is anything to do now stand under the section header the command has already printed, which is what covers them. A refresh driven with no console reporter draws no bar at all, a progress row not being required chrome.
+CONNECTING TO SCHEMA SANDBOX, DEV:
+----------------------------------
+              APEX | 26.1.0
+          DATABASE | 23.26.1.0.0 | FREEPDB1
+
+
+REFRESHING SANDBOX SCHEMA:
+--------------------------
+  USER_OBJECTS .................................................. 17 |      17
+
+  RECOMPILING DUE TO WRONG PL/SCOPE ............................ 100%  0:00:00
+  USER_DEPENDENCIES .............................................. 9 |       9
+  USER_CONSTRAINTS .............................................. 10 |      10
+  USER_CONS_COLUMNS ............................................. 10 |      10
+  USER_IDENTIFIERS .............................................. 20 |      20
+  USER_STATEMENTS ................................................ 1 |       1
+
+
+TIMER: 3s
+```
+
+- The two numbers are `changed | total`. Detail views are bulk-pulled and filtered locally, so the second is what came back and the first is what mattered. Under `-force` or a named deep refresh only the fetched count shows, because those scopes are deleted before the fresh rows go in.
+- A failing table completes its row with `FAILED` before the database error block prints the SQL that failed.
+- A multi-schema refresh reads schema by schema, each with its own connection block and its own `TIMER`, banner printed once.
+- With `-format yaml` or `-format md` this chrome moves to stderr, so stdout stays clean and pipeable.
+
+A query prints one table and opens no connection:
+
+```text
+USED BY TABLE.ADT_ANNO_TICKET (2):
+----------------------------------
+
+  OBJECT TYPE         OBJECT NAME
+  -----------------   ------------------
+  MATERIALIZED VIEW   ADT_ANNO_TICKET_MV
+  VIEW                ADT_ANNO_TICKET_V
+```
+
+- Objects render as two columns, split from the `TYPE.NAME` node on its **first** dot, so `PACKAGE BODY` stays intact. `-impact` adds a `DEPTH` column.
+- There is no count column. `USER_DEPENDENCIES` is distinct per object pair, so a per-row reference count is always one.
+- An empty result prints `(none)` rather than nothing. A missing mirror reports `No dependency database found` and exits `1`.
+- `yaml` and `md` output keeps the dotted `TYPE.NAME` node form.
+
+<br>
+
+## Query or refresh, decided by one rule
+
+**Name a query and it queries; name none and it refreshes.** A bare `adtai dependencies` refreshes, and so does any run carrying no query flag, so `-schema APP`, `-app 100`, `-force` and `-recent` each describe a refresh on their own.
+
+Those last three steer the rebuild, so passing one beside a query is refused with `steers -refresh and cannot be combined with a query` and exit `2`.
+
+Refresh is the only mode that connects, and the only one that reads `-config-dir` and `-env`. Query modes are entirely offline. There is no separate cache-rebuild step: re-running the refresh is the update path.
+
+<br>
+
+## The five query modes
+
+| Flag | Answers |
+| ---- | ------- |
+| `-from OBJ` | What `OBJ` uses. |
+| `-to OBJ` | What points at `OBJ`. |
+| `-impact OBJ` | Everything affected if `OBJ` changes, walked transitively. |
+| `-tree CONSTRAINT` | The foreign-key cascade around a named constraint. |
+| `-age` | When each schema and application scope was last refreshed. |
+
+Object names use the `TYPE.NAME` form the graph itself uses, for example `PACKAGE BODY.CORE` or `TABLE.CORE_LOGS`.
+
+The `-impact` walk stops at `dependencies_max_depth` levels (project `config.yaml`, default `20`), and objects reachable only beyond that are left out. A referenced object counts as internal only when its owner is in the mirror, so references into schemas nobody refreshed are external and dropped from the graph.
+
+`-tree` looks the constraint up in the mirror. For a foreign key, the `REFERENCES` table starts there, prints the referenced parent key row, and keeps walking toward higher parents. The `DEPENDENCIES` table walks the other way from the constraint's own table, printing key rows before child foreign-key rows, and is omitted when there are no children.
+
+Its columns are `TABLE NAME`, `COLUMN NAME`, `CONSTRAINT NAME` and `TYPE`, sorted by traversal path.
+
+`-age` reads the completion stamps every refresh writes, and prints `SCOPE TYPE`, `SCOPE` and a sortable `LAST REFRESH` timestamp, schemas first then applications. It is how an agent checks staleness per scope rather than guessing from a file's modification time.
+
+<br>
+
+## Steering a refresh
+
+The two axes combine freely:
+
+- **`-schema`** pulls the object inventory, uses `LAST_DDL_TIME` to spot what was added or changed, bulk-pulls the detail mirrors, filters them locally to the changed objects, deletes the old outbound rows for each, drops objects that no longer exist along with their relations, and leaves unchanged rows alone.
+- **`-app`** sets the APEX workspace and security context through the same start block `export_apex` uses, rescans the application, and patches only the changed rows for it.
+
+`-app` takes ids, a repeated flag, a space-separated list, or a range: `MIN-MAX` is closed and `MIN+` is open. Plain ids refresh exactly as given; a range resolves against the applications discovered across the configured schemas, and a range matching none exits `1`.
+
+Object names or SQL wildcards after `-refresh` force a deep schema refresh for just those objects, deleting the matching rows in both directions first, and `-force` wipes the whole requested scope before reloading it.
+
+`-recent` reloads only what changed, either in a window of days you name or, bare, since that scope's own last-refresh stamp. `-force` and named deep refreshes ignore it. Only a full refresh detects dropped objects.
+
+The `-app` axis folds into its owning schema's segment when that schema is refreshed too, reading `REFRESHING <SCHEMA> SCHEMA AND APEX APP <id>/<alias>:`. Otherwise it becomes its own final segment, which is always the case for an app-only run.
+
+<br>
+
+## Disambiguating a query by owner
+
+When the mirror tracks more than one owner, the same object name can exist in several schemas. `-schema` on a query mode pins it. Here the flag is offline, case-insensitive, and takes a repeatable space- or comma-separated list; omit it and every tracked owner matches.
+
+Each mode matches it against the owner column it keys on:
+
+- `-from OBJ -schema APP` keeps edges whose `OWNER` is `APP`, the instances that schema owns.
+- `-to OBJ -schema APP` keeps edges whose `REFERENCED_OWNER` is `APP`.
+- `-impact OBJ -schema APP` constrains the seed object by `REFERENCED_OWNER`; the walk outward is unchanged.
+
+It narrows within the tracked set and never widens to untracked owners. An empty or whitespace value behaves as absent.
+
+**A schema is one scope however you spell it.** Oracle owners are uppercase, but ADT reads the name from your argument or a connection-file key, so `-schema app` and `-schema APP` refresh the same scope and write the same rows. A mirror written before that held both, two complete copies under two stamps. The next refresh folds any such pair away, keeping the newer stamp and dropping the other rather than merging, since the older copy can still carry objects the newer refresh saw dropped.
+
+<br>
+
+## Column-level lineage from PL/Scope
+
+Where the schema carries PL/Scope data, the identifier and statement mirrors let `-impact` resolve column lineage: per program unit, the exact table and view columns it touches, plus view-column to source `TABLE.COLUMN` lineage. `-impact` then appends an `AFFECTED COLUMNS` section listing view columns sourced from the impacted table.
+
+Lineage resolves only when exactly one of a view's sources exposes that column. Ambiguous or unknown columns are kept with a null source rather than dropped. With no PL/Scope rows the section is simply omitted and nothing fails.
+
+PL/Scope is a prerequisite `-refresh -schema` satisfies itself, on the same connection: it sets the session's `PLSCOPE_SETTINGS`, then recompiles the added or changed valid PL/SQL objects still missing that scope. A compile blocked by another session's lock reports `SKIPPED LOCKED <TYPE> <NAME>`, indented under the row it interrupted, and the refresh continues.
+
+That line is worth reading. A skipped object keeps its old PL/Scope data, so its edges stay stale even though the run exits `0`. Re-run the refresh once the lock clears.
+
+On a first refresh this is the slowest thing the command does, so it crawls rather than holding the header still: one redrawn `RECOMPILING DUE TO WRONG PL/SCOPE` row, opened in front of the first compile and closed at 100%.
+
+**The row prints only when something is being recompiled.** A warm schema recompiles nothing, and neither does any incremental refresh whose changed objects carry no PL/SQL, which is the common case.
+
+<br>
+
+## APEX callers
+
+When the APEX mirror has been refreshed with `-app`, `-impact` also appends an `APEX CALLERS` section: which application, page or shared component, and which component property uses the impacted database object.
+
+Where PL/Scope can trace an impacted column through a view and the component property references that view column, the caller row carries the rendered column and its source `TABLE.COLUMN`. The same data appears under `apex:` in yaml and `## APEX callers` in md.
+
+APEX refresh reads the release from the connection block before choosing its dictionary path. Releases before APEX 24.2 report that dependency scanning is unavailable and skip the app refresh. Supported releases run the APEX dependency scan silently, then drop the helper procedures it generates so scan internals never reach the console or an export.
+
+<br>
+
+## The clock the mirror records
+
+Alongside each schema's refresh stamp, the mirror records that database's own UTC offset, read once per scope. `LAST_DDL_TIME` is a wall-clock reading taken on the database server, and `patch -create` compares it against repository file times taken here, so without the offset a database in another timezone shifts every one of those comparisons.
+
+Nothing configures it. A mirror that predates it is refused by that gate rather than read on the wrong clock, which one refresh fixes.
+
+The refresh connection is an ordinary ADT.ai connection and runs the ordinary session setup, `DDL_LOCK_TIMEOUT`, the identifier block, then `STARTUP.sql`. That is not cosmetic here: refresh issues session `ALTER` statements and compiles of its own, so on a schema whose DDL trigger requires a client identifier, a sessionless connection would fail the whole command rather than degrade.
+
+<br>
 
 ## Arguments
 
 | Argument       | Repeatable | Default | Description |
 | -------------- | ---------- | ------- | ----------- |
-| `-root`, `--root` | No | `.` | Project root folder holding `config/internal/dependencies.db` and used for config and connection lookup. |
-| `-from`, `--from` | No | none | List the objects that the given object depends on (what `OBJ` uses). |
-| `-to`, `--to` | No | none | List the objects that depend on the given object (what points at `OBJ`). |
-| `-impact`, `--impact` | No | none | List the transitive reverse impact (everything affected if the given object changes). |
-| `-tree`, `--tree` | No | none | Show foreign-key reference and dependency cascade paths around a named constraint. |
-| `-age`, `--age` | No | off | Offline: list when each schema/app scope was last refreshed, read from the `_meta` last-refresh stamps. No connection. |
-| `-refresh [NAME ...]`, `--refresh [NAME ...]` | No | on when no query flag is given | Connect to the database and rebuild the local mirror. This is what the command does when no query flag is passed, so the flag is the explicit spelling of the default rather than the only way in. Optional object names or SQL wildcards trigger a deep schema refresh for matching objects and dependency rows to/from them. |
-| `-force`, `--force` | No | off | Refresh-only: delete the requested schema/app rows from the SQLite mirror before reloading that scope. Rejected beside a query flag. |
-| `-recent [DAYS]`, `--recent [DAYS]` | No | off | Refresh-only, rejected beside a query flag: reload only objects changed in the last DAYS days. DAYS may be a fraction of a day for a shorter window, `1/24` for the past hour and `5/1440` for the past 5 minutes; the window reaches the query as `SYSDATE - DAYS`. Bare `-recent` scopes each schema refresh to objects changed since that scope's own last refresh, the `_meta` last-refresh stamps `-age` reads, selected server-side and patched per object, so unchanged mirror rows stay intact; a scope with no stamp yet is refreshed in full, and a scope with no changes skips the detail pulls entirely. Dropped objects are only detected by a full refresh. `-force` and named deep refreshes ignore `-recent`. |
-| `-schema`, `--schema` | Yes | refresh: environment default DB schema; query: all tracked owners | Repeatable, space- or comma-separated. The mode it landed in decides which job it does: on a refresh, the schema(s) whose `USER_*` dictionary to mirror; beside a query (`-from`/`-to`/`-impact`), an offline, case-insensitive owner filter that disambiguates the queried object by the owner column that mode matches on. |
-| `-app`, `--app` | Yes | none | APEX application id(s) whose `APEX_*` dictionary to mirror (refresh only, rejected beside a query flag). Repeat or space-separate for multiple ids, or pass a range, `MIN-MAX` (closed) or `MIN+` (open), resolved against the discovered applications. |
-| `-format`, `--format` | No | `table` | Output format: `table`, `yaml`, or `md`. |
-| `-config-dir`, `--config-dir` | Yes | none | Folder containing project config YAML (refresh only). ADT.ai always loads repo defaults first, then overlays these project configs. |
-| `-env`, `--env` | No | connection default environment | Connection environment to refresh from, for example `DEV` (refresh only). |
-| `-key`, `--key` | No | `ADT_KEY` | Encryption key value or path to a key file for encrypted connection passwords (refresh only). |
-| `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |
-| `-nobeep`, `--nobeep` | No | off | Suppress completion sounds for this run; this wins over `chime_theme` and `-beep`. |
+| `-from`, `--from` | No | none | List the objects the given object depends on. |
+| `-to`, `--to` | No | none | List the objects that depend on the given object. |
+| `-impact`, `--impact` | No | none | List the transitive reverse impact of changing the given object. |
+| `-tree`, `--tree` | No | none | Show the foreign-key reference and dependency cascade around a named constraint. |
+| `-age`, `--age` | No | off | Offline: list when each schema and application scope was last refreshed. |
+| `-refresh [NAME ...]`, `--refresh [NAME ...]` | No | on when no query flag is given | Connect and rebuild the mirror. This is what the command does with no query flag, so the flag is the explicit spelling of the default. Object names or SQL wildcards trigger a deep refresh for matching objects and the dependency rows on both sides of them. |
+| `-force`, `--force` | No | off | Refresh only: delete the requested schema and application rows before reloading that scope. Rejected beside a query flag. |
+| `-recent [DAYS]`, `--recent [DAYS]` | No | off | Refresh only: reload just what changed in the last DAYS days, where DAYS may be a fraction of a day (`1/24` is the past hour). Bare `-recent` scopes each refresh to that scope's own last-refresh stamp, selected server-side and patched per object, so unchanged rows stay intact; a scope with no stamp is refreshed in full and one with no changes skips the detail pulls. Rejected beside a query flag. |
+| `-app`, `--app` | Yes | none | APEX application ids whose dictionary to mirror, refresh only. Repeat, space-separate, or pass a range, `MIN-MAX` closed or `MIN+` open, resolved against the discovered applications. |
+| `-format`, `--format` | No | `table` | Output format: `table`, `yaml` or `md`. |
 
----
-
-← [docs/README.md](README.md) index
+Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [arguments.md](arguments.md).

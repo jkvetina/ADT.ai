@@ -259,13 +259,27 @@ def _normalize_definition_name(name: str) -> str:
         return object_name.lower()
     return object_name
 
-def sql_spans(payload: str) -> list[tuple[str, int, int]]:
-    """Split SQL text into ``code``, ``string`` and ``comment`` spans.
+def sql_spans(payload: str, *, identifiers: bool = False) -> list[tuple[str, int, int]]:
+    """Split SQL text into ``code``, ``string``, ``comment`` and ``quoted`` spans.
 
     Every scan and rewrite of DDL text goes through this, so a comment is never
     read as SQL: the apostrophe in ``don't`` is not a string delimiter and the
     parenthesis in ``-- (see spec)`` is not a parenthesis. Both used to flip the
     scanners' state and corrupt the rest of the object (ADT #299).
+
+    ``identifiers=True`` adds the fourth span kind, a double-quoted identifier,
+    and is the half this scanner was missing (ADT #474). Without it an apostrophe
+    inside ``"IT'S"`` opens a string here and a ``--`` inside ``"A--B"`` opens a
+    comment, which is the `#299` defect one character over, in the scanner the
+    rule points at. It is OPT-IN because the callers that predate it rewrite
+    identifiers on purpose: the view normalizer lowercases quoted select-list
+    items, and reading them as opaque would stop it. A scanner asking where the
+    SQL *structure* is, a paren, a top-level comma, a statement terminator, wants
+    them opaque and says so.
+
+    The identifier form is a plain toggle rather than an escape-aware read, which
+    is what the walks this replaced did: ``"A""B"`` reads as two identifiers with
+    an empty code span between them, and that is the same answer.
     """
 
     spans: list[tuple[str, int, int]] = []
@@ -274,6 +288,15 @@ def sql_spans(payload: str) -> list[tuple[str, int, int]]:
     start = 0
 
     while index < length:
+        if identifiers and payload[index] == '"':
+            if start < index:
+                spans.append(("code", start, index))
+            closing = payload.find('"', index + 1)
+            end = length if closing < 0 else closing + 1
+            spans.append(("quoted", index, end))
+            index = start = end
+            continue
+
         if payload[index] == "'":
             if start < index:
                 spans.append(("code", start, index))

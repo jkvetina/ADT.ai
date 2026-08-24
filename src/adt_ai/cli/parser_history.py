@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from adt_ai.cli.constants import REVEAL_DEFAULT_LIMIT
+from adt_ai.cli.parser_common import COMMIT_IDENTITY_HELP
 from adt_ai.shared.dates import recent_window
 from adt_ai.shared.recent_state import BARE_RECENT
 
@@ -31,8 +32,12 @@ def add_history_parsers(subparsers) -> None:
         "--by",
         "-by",
         action = "append",
-        help   = "limit to commits by AUTHOR, matched on name or email, repeatable; "
-                 "defaults to your own git config user.email",
+        # "matched on name or email" until ADT #467, which is a promise the data
+        # cannot keep: the shared commit store is written with `%ae`, so the
+        # author of a stored commit is an email and a name matches nothing. The
+        # comment 160 lines below in `calendar/runner.py` already said so.
+        help   = "limit to commits by AUTHOR, matched against the commit author "
+                 f"email, repeatable; defaults to you, {COMMIT_IDENTITY_HELP}",
     )
     # `-list` was declared here until ADT #345 withdrew it. It reached
     # `CalendarRequest.list_mode` and was read by nothing: the task-centric
@@ -82,31 +87,38 @@ def add_history_parsers(subparsers) -> None:
     )
     # Multi-pattern like export_db/recompile: `-type A B`, `-type A,B`, and a repeated
     # `-type A -type B` are equivalent (shared argument semantics).
+    # `-type`, `-name` and `-by` are SQL LIKE patterns since ADT #474, matched by
+    # `shared/sql_like` the way `export_db` matches its own `-type`/`-name`. They
+    # were substring tests, so `%` was a wildcard on one command and a literal on
+    # the other.
     search_repo.add_argument(
         "--type",
         "-type",
         action = "append",
         nargs  = "+",
-        help   = "object type text, repeatable, comma- or space-separated",
+        help   = "object type pattern (SQL LIKE), repeatable, comma- or space-separated",
     )
     search_repo.add_argument(
         "--name",
         "-name",
         action = "append",
         nargs  = "+",
-        help   = "object name text, repeatable, comma- or space-separated",
+        help   = "object name pattern (SQL LIKE), repeatable, comma- or space-separated",
     )
     search_repo.add_argument(
         "--by",
         "-by",
         action = "append",
-        help   = "limit to commits by AUTHOR, matched on name or email, repeatable",
+        # Same correction as `calendar -by` above (ADT #467): the store holds
+        # `%ae` and `runner.py` compares against it, so an author is an email.
+        help   = "limit to commits by AUTHOR, a SQL LIKE pattern matched against "
+                 "the commit author email, repeatable",
     )
     search_repo.add_argument(
         "--my",
         "-my",
         action = "store_true",
-        help   = "limit to commits by you, matched against git config user.email",
+        help   = f"limit to commits by you, {COMMIT_IDENTITY_HELP}",
     )
     search_repo.add_argument(
         "--commit",
@@ -202,7 +214,7 @@ def add_history_parsers(subparsers) -> None:
         dest   = "my",
         action = "store_true",
         help   = "in reveal mode, limit to branches whose tip commit is yours, "
-                 "matched against git config user.email",
+                 f"{COMMIT_IDENTITY_HELP}",
     )
     rebuild.add_argument(
         "--switch",

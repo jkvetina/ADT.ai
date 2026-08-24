@@ -78,8 +78,12 @@ FILTER_DESTS = {
     "max_app_id",
     "month",
     "my",
+    # `patch_code` sat beside this until ADT #465 renamed `patch -patch` to
+    # `-name`, which is the dest already listed here. It stays, because `-name`
+    # genuinely narrows a list on `ut`, `recompile`, `export_db` and
+    # `search_repo`; `patch` overrides it to MODIFIERS below, where it names the
+    # one thing the run acts on instead of filtering anything (ADT #494).
     "name",
-    "patch_code",
     "prefix",
     "recent",
     "schema",
@@ -111,10 +115,11 @@ COMMAND_SECTION_OVERRIDES = {
 # because an empty section is never printed: the key exists for every command
 # and only `patch` puts anything in it. Jan, 2026-08-15: "-rollout and -locked
 # were supose to be in dedicated help section", and "The section name was
-# supose to be HASH MODE" -- the name `docs/patch.md` has used since `#309`
-# renamed `-hash` to `-rollout`. `-target` stays in MODIFIERS even though
-# `-rollout` requires it, because it is also the deploy target and would follow
-# every `-deploy` run's help out of the section it belongs in.
+# supose to be HASH MODE" -- the name `docs/patch.md` has used since `#309`.
+# `#447` replaced the two flags in it with `-hash` and `-baseline` and left the
+# section itself alone. `-target` stays in MODIFIERS even though hash mode
+# requires it, because it is also the deploy target and would follow every
+# `-deploy` run's help out of the section it belongs in.
 #
 # `#362` first placed it between FILTERS and MODIFIERS, reasoning that the two
 # flags select which files a patch carries. Jan moved it below MODIFIERS the same

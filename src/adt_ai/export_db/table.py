@@ -126,25 +126,27 @@ def open_adt_table(
     columns: Sequence[str] | None = None,
     leading_blank: bool = True,
     numeric: Sequence[str] | None = None,
-    sized_for: Sequence[Mapping[str, object]] = (),
 ) -> _AdtTableLayout | None:
     """Header, separator and ``rows``, with the table left OPEN.
 
-    ``sized_for`` holds rows that may still be appended once the work running
-    under this table answers. They are measured with the rest and not rendered,
-    so a late row can never widen a column that has already printed.
-
     Returns the layout those rows go through, or ``None`` when there is nothing
     to open at all, which is the caller's signal that no table is on screen.
+
+    ``sized_for`` lived here between `#437` and `#442`: rows that might still be
+    appended once the work running under an open table answered, measured with
+    the rest so a late row could not widen a printed column. `#442` moved the
+    whole overview table below the reads that decide its rows, which left the
+    parameter with no caller anywhere in the repo, so it went with them.
     """
-    # ``columns`` makes a requested section render even with zero rows: the
-    # header and separator still print so the user sees the feature ran (an
-    # empty table reads as "looked, found nothing", not "silently did nothing").
+    # ``columns`` renders a requested section that found zero rows as a header
+    # and separator over nothing. `#442` retired that reading for the
+    # `export_db` overview, which now prints no table at all rather than an
+    # empty one; the argument stays for a caller that wants the other answer.
     if not rows and not columns:
         return None
     min_widths = min_widths or {}
     columns = list(rows[0].keys()) if rows else list(columns)
-    layout = _compute_adt_layout([*rows, *sized_for], columns, min_widths, numeric or ())
+    layout = _compute_adt_layout(rows, columns, min_widths, numeric or ())
     if leading_blank:
         print()
     print(layout.header_line())
@@ -176,11 +178,14 @@ def _commit_stdout() -> None:
         return
     sys.stdout.flush()
 
-def print_adt_pipes(rows: dict[str, list[str]]) -> None:
-    for key in sorted(rows):
-        for index, value in enumerate(rows[key]):
-            label = key.upper() if index == 0 else ""
-            print(f"  {label:>18} | {value}")
-    print()
+# `print_adt_pipes` stood here until ADT #506. It was the batch half of the
+# `TYPE | NAME` object listing and the third spelling of a shape with only ever
+# one meaning, so it moved to `shared/object_list.py` beside the other two. Two
+# details went with it, both of them the fork rather than the feature: it wrote
+# the type cell as `"  " + 18` where the streamed renderer wrote `20`, the same
+# column reached two ways, and it left the name unpadded so a batch listing and
+# a streamed one could not be compared byte for byte. Deleted rather than kept
+# as a re-export, because `tests/contracts/shared_readers.txt` now fails on a
+# second reader of that rule and a re-export is what a next author would copy.
 
 __all__ = [name for name in globals() if not name.startswith("__")]

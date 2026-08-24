@@ -38,10 +38,26 @@ CASED_TOKEN_NAMES    = ("schema",)
 VERBATIM_TOKEN_NAMES = ("object_type",)
 KNOWN_TOKEN_NAMES    = CASED_TOKEN_NAMES + VERBATIM_TOKEN_NAMES
 
+# `apex_path_app` is the one key spelling its tokens the old-ADT `{$NAME}` way,
+# and this is the whole vocabulary it has (ADT #474). It lives here rather than
+# in either module because it has two readers who disagreed about it:
+# `export_apex/files._render_app_folder` substituted these four by name while
+# `patch/layout._apex_app_pattern` matched any `{$[A-Z_]+}`, so `patch` would
+# parse a folder the export could never have written.
+APEX_APP_TOKEN_NAMES = ("APP_ID", "APP_ALIAS", "APP_NAME", "APP_GROUP")
+
+# What that key names when a project configures nothing. Beside the vocabulary
+# for the same reason: `export_apex` writes the folder and `patch` reads it back,
+# and a default spelled twice is a default that can disagree with itself.
+DEFAULT_PATH_APP = "{$APP_ID}_{$APP_ALIAS}"
+
 # Every angle-bracket run, whatever is inside it. Deliberately not a whitelist:
 # the point is to SEE the tokens nothing resolves, so they can be reported
 # rather than written to disk as a folder name.
 _TOKEN_RE = re.compile(r"<[^<>]*>")
+
+# The same posture for the curly dialect: see every `{$NAME}`, then judge it.
+_CURLY_TOKEN_RE = re.compile(r"\{\$[^{}]*\}")
 
 
 def contains_run(parts: Sequence[str], run: Sequence[str]) -> bool:
@@ -134,15 +150,35 @@ def unsupported_tokens(
     return found
 
 
-def supported_spelling(allowed: Sequence[str] = KNOWN_TOKEN_NAMES) -> str:
+def unsupported_curly_tokens(template: str, allowed: Sequence[str]) -> list[str]:
+    """Every `{$TOKEN}` in `template` that no substitution will ever resolve.
+
+    The curly counterpart of `unsupported_tokens`, for the one key that spells
+    its tokens this way. `allowed` is empty for every other key, which is what
+    makes an old-ADT `{$INFO_SCHEMA}` in `path_objects` an error there and a
+    legitimate `{$APP_ID}` in `apex_path_app` fine here.
+    """
+    found: list[str] = []
+    for match in _CURLY_TOKEN_RE.finditer(str(template)):
+        token = match.group(0)
+        if token[2:-1] not in allowed and token not in found:
+            found.append(token)
+    return found
+
+
+def supported_spelling(
+    allowed      : Sequence[str] = KNOWN_TOKEN_NAMES,
+    curly_allowed: Sequence[str] = (),
+) -> str:
     """The accepted tokens, for an error message that names the way out."""
     spellings: list[str] = []
     for name in allowed:
         spellings.append(f"<{name}>")
         if name in CASED_TOKEN_NAMES:
             spellings.append(f"<{name.upper()}>")
-    if len(spellings) == 1:
-        return spellings[0]
+    spellings.extend(f"{{${name}}}" for name in curly_allowed)
+    if len(spellings) < 2:
+        return "".join(spellings)
     return ", ".join(spellings[:-1]) + f" and {spellings[-1]}"
 
 

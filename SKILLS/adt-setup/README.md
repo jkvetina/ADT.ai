@@ -18,7 +18,7 @@ The skill walks install → PATH prerequisites → environment variables → con
 
 ## Usage
 
-Invoke with `/adt-setup`. Full implementation in [SKILL.md](SKILL.md). Setup reference in [SETUP.md](../../SETUP.md).
+Invoke with `/adt-setup`. Full implementation in SKILL.md. Setup reference in SETUP.md.
 
 ## Related skills
 

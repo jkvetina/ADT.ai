@@ -26,6 +26,7 @@ from adt_ai.discovery.report import (
     report_path,
 )
 from adt_ai.discovery.validator import DiscoveryValidationError, validate_select_only
+from adt_ai.export_db.normalizers import sql_spans
 from adt_ai.shared import text_files
 from adt_ai.shared.db import QueryGateway
 
@@ -117,47 +118,25 @@ def write_file_results(file_path: Path, results: list[str]) -> None:
 
 
 def _split_top_level_semicolons(text: str) -> list[str]:
+    """Split a file of statements on the semicolons that are SQL.
+
+    Scanned through `export_db.normalizers.sql_spans()` since ADT #474 rather
+    than through this module's own `in_string` walk, which answered correctly and
+    was the fourth copy of one scan. The rule `#299` wrote is that a new scanner
+    reuses it or repeats that bug, and the copy in `table_folds.py` had already
+    repeated it. Nothing about the answer changes: a semicolon inside a string
+    literal or a comment was never a statement terminator here either.
+    """
     statements: list[str] = []
-    buffer: list[str] = []
-    in_string = False
-    index = 0
-    length = len(text)
-    while index < length:
-        char = text[index]
-        if in_string:
-            buffer.append(char)
-            if char == "'":
-                # A doubled '' is an escaped quote, not the end of the literal.
-                if text[index : index + 2] == "''":
-                    buffer.append("'")
-                    index += 2
-                    continue
-                in_string = False
-            index += 1
+    start = 0
+    for kind, span_start, span_end in sql_spans(text):
+        if kind != "code":
             continue
-        pair = text[index : index + 2]
-        if char == "'":
-            in_string = True
-            buffer.append(char)
-            index += 1
-        elif pair == "/*":
-            end = text.find("*/", index + 2)
-            stop = length if end == -1 else end + 2
-            buffer.append(text[index:stop])
-            index = stop
-        elif pair == "--":
-            end = text.find("\n", index + 2)
-            stop = length if end == -1 else end
-            buffer.append(text[index:stop])
-            index = stop
-        elif char == ";":
-            statements.append("".join(buffer))
-            buffer = []
-            index += 1
-        else:
-            buffer.append(char)
-            index += 1
-    statements.append("".join(buffer))
+        for index in range(span_start, span_end):
+            if text[index] == ";":
+                statements.append(text[start:index])
+                start = index + 1
+    statements.append(text[start:])
     return [statement.strip() for statement in statements if statement.strip()]
 
 

@@ -342,7 +342,9 @@ def _run_discovery(
     if has_sql:
         for index, rendered_result in enumerate(result.results):
             print(rendered_result.rstrip())
-            if index + 1 < len(result.results):
+            # -sql always resolves to exactly one statement (DiscoveryRunner._statements
+            # never splits it), so this branch is unreachable through the CLI.
+            if index + 1 < len(result.results):  # pragma: no cover
                 print()
     else:
         for outcome in result.outcomes:
@@ -372,10 +374,15 @@ def _doctor_config(args: argparse.Namespace) -> dict[str, object] | None:
 
 def _run_doctor(args: argparse.Namespace) -> int:
     print_module_banner("DOCTOR")
+    # `-update` carries an optional version, so its absence is None rather than
+    # False: `is not None` is what tells "no update asked for" apart from a
+    # version that happens to be falsy.
+    update_requested = args.update is not None
+    update_version = args.update if isinstance(args.update, str) else None
     selected_actions = [
         flag
         for flag, selected in (
-            ("-update", args.update),
+            ("-update", update_requested),
             ("-sqlcl", args.sqlcl),
             ("-init", args.init),
         )
@@ -416,13 +423,19 @@ def _run_doctor(args: argparse.Namespace) -> int:
         """Prints the action label immediately, then completes the same line with
         the dot leader and outcome once the work finishes."""
 
-        def begin(self, label: str) -> None:
+        # begin()/end() only fire inside a real DoctorRunner -update/-sqlcl action
+        # (real pip/git/network calls): _run_doctor builds DoctorRunner with no
+        # command_runner/fetcher injection point, unlike tests/helpers/doctor_runner.py's
+        # status_runner used for the read-only path, so driving these two print
+        # statements through the CLI would mean exercising the real upgrade
+        # machinery rather than this reporter.
+        def begin(self, label: str) -> None:  # pragma: no cover
             flush_pending_blank_lines()
             prefix = f"  {label} "
             self._prefix_len = len(prefix)
             print(prefix, end="", flush=True)
 
-        def end(self, label: str, outcome: str) -> None:
+        def end(self, label: str, outcome: str) -> None:  # pragma: no cover
             full = format_action_line(label, outcome)
             print(full[self._prefix_len:], flush=True)
 
@@ -434,7 +447,8 @@ def _run_doctor(args: argparse.Namespace) -> int:
         version_cache_dir=Path.home() / ".cache" / "adt-ai" / "doctor",
     ).run(
         DoctorRequest(
-            update= args.update,
+            update= update_requested,
+            update_version=update_version,
             sqlcl= args.sqlcl,
             offline=args.offline,
             init  =args.init,

@@ -27,16 +27,32 @@ one was measured on 2026-08-19 against SQLcl 26.2 rather than reasoned about:
 Costs, measured on the same run: 3.02 s to start and connect, then 52 ms per
 round trip. An error does not end the session, so a failed statement is a failed
 call and not a dead gateway.
+
+**The terminal itself moved out to `sqlcl_console.py` (ADT #449)**, because
+Windows has neither `pty` nor `termios` and importing them here took every
+command down on that platform, `--help` included. Two of the four mechanics
+above are POSIX readings rather than universal ones, measured on 2026-08-21
+against `windows-latest`, SQLcl 26.2.1.0 and pywinpty 3.0.5:
+
+* **Echo is not always off.** A pseudo console echoes what the parent writes, so
+  `_exchange` can no longer end on a plain `marker in line`: that matched the
+  echo of its own `prompt <<<...>>>` and returned an empty string as the answer.
+  `_is_sentinel` tells the two apart by shape, and a console that echoes says so,
+  which is what lets the echoed lines be dropped without touching the pty path.
+* **A terminal is not always a plain stream.** A pseudo console renders the
+  session, cursor addressing and all, so the reader takes the escapes off through
+  the console's own `clean`, which is the identity on a pty.
+
+The pty path is unchanged and its 2026-08-19 numbers stand. What is NOT settled
+is whether SQLcl reaches a prompt over ConPTY at all: on the 2026-08-21 run it
+did not inside ninety seconds, with `TERM=dumb` set. `sqlcl_console` explains why
+it now leaves that pair alone on Windows, and says plainly that the step is
+reasoned rather than measured.
 """
 
 from __future__ import annotations
 
-import contextlib
-import os
-import pty
 import re
-import subprocess
-import termios
 import threading
 import time
 from pathlib import Path
@@ -46,6 +62,7 @@ from typing import Any
 from adt_ai.shared.connections import ConnectFailedError, Connection
 from adt_ai.shared.oracle_session import DDL_LOCK_TIMEOUT_STATEMENT
 from adt_ai.shared.sqlcl_connect import sqlcl_connect
+from adt_ai.shared.sqlcl_console import open_console
 from adt_ai.shared.sqlcl_script import (
     _connect_secrets,
     _ran_without_a_session,
@@ -118,6 +135,11 @@ class SqlclSessionError(RuntimeError):
 class SqlclSession:
     """A SQLcl process kept open for the lifetime of one command."""
 
+    # Two calls reach one database session here, which is the whole reason this
+    # class exists. `shared/session_scope` reads it, and `ScriptSession` answers
+    # the same question with False (ADT #449).
+    holds_a_session = True
+
     def __init__(
         self,
         connection: Connection,
@@ -132,9 +154,7 @@ class SqlclSession:
         self.startup_sql = startup_sql
         self.config = config or {}
         self.launcher = launcher
-        self._process: subprocess.Popen[bytes] | None = None
-        self._master: int | None = None
-        self._writer: Any = None
+        self._console: Any = None
         self._lines: Queue[str | None] = Queue()
         self._counter = 0
         self._secrets: set[str] = set()
@@ -142,7 +162,7 @@ class SqlclSession:
     # -- lifecycle ---------------------------------------------------------
 
     def start(self) -> None:
-        if self._process is not None:
+        if self._console is not None:
             return
         plan = sqlcl_connect(
             self.connection,
@@ -181,23 +201,16 @@ class SqlclSession:
         self._exchange(_SESSION_PRELUDE, timeout_seconds=START_TIMEOUT_SECONDS)
 
     def close(self) -> None:
-        process, self._process = self._process, None
-        if process is None:
+        console, self._console = self._console, None
+        if console is None:
             return
         try:
-            self._writer.write(b"exit;\n")
-            self._writer.flush()
-            process.wait(timeout=15)
+            console.write(b"exit;\n")
+            console.wait(15)
         except Exception:
-            process.kill()
+            console.kill()
         finally:
-            if self._writer is not None:
-                with contextlib.suppress(Exception):
-                    self._writer.close()
-            if self._master is not None:
-                with contextlib.suppress(OSError):
-                    os.close(self._master)
-                self._master = None
+            console.close()
 
     def __enter__(self) -> SqlclSession:
         self.start()
@@ -217,46 +230,35 @@ class SqlclSession:
         )
 
     def _spawn(self) -> None:
-        environment = dict(_sqlcl_environment())
-        # See the module docstring: without this SQLcl blocks on a terminal
-        # negotiation nothing is going to answer.
-        environment["TERM"] = "dumb"
-        environment["JAVA_TOOL_OPTIONS"] = (
-            environment.get("JAVA_TOOL_OPTIONS", "") + " -Dorg.jline.terminal.dumb=true"
-        ).strip()
-        master, slave = pty.openpty()
-        attributes = termios.tcgetattr(slave)
-        attributes[3] &= ~termios.ECHO
-        termios.tcsetattr(slave, termios.TCSANOW, attributes)
-        self._process = subprocess.Popen(
-            list(self.launcher),
-            stdin  = slave,
-            stdout = slave,
-            stderr = slave,
-            env    = environment,
-        )
-        os.close(slave)
-        self._master = master
-        self._writer = os.fdopen(os.dup(master), "wb", buffering=0)
+        # The terminal itself lives in `sqlcl_console`, which owns the one thing
+        # that differs per platform (ADT #449). Everything below this line is the
+        # same on a pty and on a pseudo console.
+        self._console = open_console(self.launcher, dict(_sqlcl_environment()))
         threading.Thread(target=self._pump, daemon=True).start()
 
     def _pump(self) -> None:
-        assert self._master is not None
+        assert self._console is not None
+        console = self._console
         buffer = b""
         while True:
-            try:
-                chunk = os.read(self._master, 65536)
-            except OSError:
-                chunk = b""
+            chunk = console.read(65536)
             if not chunk:
                 self._lines.put(None)
                 return
             buffer += chunk
             *complete, buffer = buffer.split(b"\n")
             for line in complete:
-                self._lines.put(line.decode("utf-8", "replace").rstrip("\r"))
-            if buffer.rstrip().endswith(_PROMPT.encode()):
-                self._lines.put(buffer.decode("utf-8", "replace"))
+                # `clean` is the identity on a pty and takes the rendering
+                # escapes off a pseudo console, which puts cursor addressing
+                # around every line it draws (ADT #449). A whole line at a time,
+                # so an escape cannot straddle two reads.
+                self._lines.put(console.clean(line.decode("utf-8", "replace")).rstrip("\r"))
+            # The prompt carries no newline, so the tail is flushed when it ends
+            # in one. On a pseudo console the escapes sit AFTER the prompt text,
+            # so the test has to read the cleaned tail rather than the raw one.
+            tail = console.clean(buffer.decode("utf-8", "replace"))
+            if tail.rstrip().endswith(_PROMPT):
+                self._lines.put(tail)
                 buffer = b""
 
     def _await_prompt(self, timeout: float = START_TIMEOUT_SECONDS) -> None:
@@ -278,9 +280,16 @@ class SqlclSession:
         self._counter += 1
         marker = _SENTINEL.format(n=self._counter)
         payload = body.rstrip()
-        self._writer.write((payload + "\n").encode("utf-8"))
-        self._writer.write(f"prompt {marker}\n".encode())
-        self._writer.flush()
+        written = f"{payload}\nprompt {marker}"
+        self._console.write((payload + "\n").encode("utf-8"))
+        self._console.write(f"prompt {marker}\n".encode())
+
+        # A pseudo console echoes every line the parent writes, so on Windows the
+        # statement comes straight back before SQLcl has answered anything. The
+        # set is what we wrote, and it is consulted only when the console says it
+        # echoes, which leaves the pty path reading exactly what it read before.
+        echoed = {line.strip() for line in written.splitlines() if line.strip()}
+        drops_echo = bool(getattr(self._console, "echoes", False))
 
         collected: list[str] = []
         deadline = time.monotonic() + timeout_seconds
@@ -296,13 +305,34 @@ class SqlclSession:
             except Empty:
                 continue
             if line is None:
-                self._process = None
+                self._console = None
                 raise SqlclSessionError("SQLcl exited mid-statement")
-            if marker in line:
+            if _is_sentinel(line, marker):
                 break
+            if drops_echo and line.strip() in echoed:
+                continue
             collected.append(line)
         text = "\n".join(_clean(collected))
         return _scrub_secrets(text, self._secrets) if scrub else text
+
+
+def _is_sentinel(line: str, marker: str) -> bool:
+    """True for the marker SQLcl printed, never for the `prompt` line we wrote.
+
+    This used to be a plain `marker in line`, which is correct exactly as long as
+    the terminal does not echo. Measured on 2026-08-21, a Windows pseudo console
+    does: the echoed `prompt <<<ADT-SQLCL-n>>>` matched first, the exchange ended
+    before SQLcl had answered, and the caller got an empty string as its reply.
+
+    The two are told apart by shape rather than by timing. What we write is a
+    `prompt` COMMAND; what SQLcl writes back is the bare marker. The `SQL>`
+    fragments come off first because the prompt carries no newline, so a marker
+    can arrive with one glued to its front.
+    """
+    text = line.strip()
+    while text.startswith(_PROMPT):
+        text = text[len(_PROMPT):].strip()
+    return marker in text and not text.lower().startswith("prompt")
 
 
 def _clean(lines: list[str]) -> list[str]:

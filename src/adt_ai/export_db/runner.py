@@ -57,9 +57,9 @@ from adt_ai.export_db.render import (
     _commit_stdout,
     _compute_adt_layout,
     print_adt_header,
-    print_adt_pipes,
     print_adt_table,
 )
+from adt_ai.export_db.request import ExportDbRequest
 from adt_ai.export_db.timers import SegmentTimer, estimate_for
 from adt_ai.export_db.watermarks import advance_watermark, is_narrowed, stored_watermark
 from adt_ai.shared.config import is_enabled
@@ -74,36 +74,6 @@ from adt_ai.shared.recent_state import (
 from adt_ai.shared.row_values import row_value
 
 GatewayFactory = Callable[[str], QueryGateway]
-
-
-@dataclass(frozen=True)
-class ExportDbRequest:
-    root         : Path
-    schemas      : list[str]
-    config       : dict[str, Any]
-    schema_export: dict[str, dict[str, Any]] | None = None
-    object_types : list[str] | None = None
-    names        : list[str] | None = None
-    prefix       : str | None = None
-    ignore       : list[str] | None = None
-    # None (full export), an int day window, or BARE_RECENT (since last export).
-    recent       : int | float | object | None = None
-    environment  : str | None = None
-    clean        : bool = False
-    reporter     : ExportDbReporter | None = None
-    group_rules  : GroupRules | None = None
-    changed_by   : str | None = None
-    my_changes   : bool = False
-    authors      : list[str] | None = None
-
-    @property
-    def recent_days(self) -> int | float | None:
-        """The day window, or ``None`` for a full export and for watermark mode.
-
-        A float when the window is shorter than a day (`-recent 1/24`).
-        """
-        return recent_days(self.recent)
-
 
 
 class ExportDbRunner:
@@ -133,20 +103,23 @@ class ExportDbRunner:
             writer          = writer,
             grant_contents  = grant_contents,
         )
+        # The whole mode is this one seam: `-baseline` hashes where a normal run
+        # writes, and everything above is identical, which is what makes a
+        # measurement comparable to an export rather than merely similar (`#452`).
+        emit = writer.hash_one if request.baseline else writer.write_one
         plans: list[ObjectWritePlan] = []
         for database_object, content, fix_content in object_contents:
-            plans.append(writer.write_one(ObjectWriteRequest(database_object, content)))
+            plans.append(emit(ObjectWriteRequest(database_object, content)))
             fix_path = resolver.fix_path_for(database_object)
             if fix_content is not None:
                 plans.append(
-                    writer.write_one(
-                        ObjectWriteRequest(database_object, fix_content, path=fix_path)
-                    )
+                    emit(ObjectWriteRequest(database_object, fix_content, path=fix_path))
                 )
-            elif fix_path.exists():
+            elif fix_path.exists() and not request.baseline:
+                # A measured run deletes nothing, a stale sidecar included.
                 fix_path.unlink()
         for database_object, content in grant_contents:
-            plans.append(writer.write_one(ObjectWriteRequest(database_object, content)))
+            plans.append(emit(ObjectWriteRequest(database_object, content)))
         return plans
 
     def _resolve_group_rules(
@@ -283,7 +256,9 @@ class ExportDbRunner:
                 grant_contents.extend(schema_grants)
                 reporter.overview_grants(grants_changed)
             reporter.diff_tables_dropped(dropped_diff_tables)
-            if not _has_runtime_filter(request):
+            if not _has_runtime_filter(request) and not request.baseline:
+                # A measured run reports no deletions and makes none: a file the
+                # target lacks is a difference for `patch -hash` to decide about.
                 missing_objects = resolver.missing_objects(database_objects, schema=schema)
                 reporter.deleted_objects(
                     schema,
@@ -310,7 +285,14 @@ class ExportDbRunner:
             timer = SegmentTimer()
             if database_objects:
                 discovery.setup_dbms_metadata()
-            comment_types = _comment_query_object_types(request, request.config)
+            # Gated on objects, as the setup above already is: the pre-read
+            # fills a cache only the object loop reads, so a zero run fetched
+            # comments nothing would ask for (`#442`).
+            comment_types = (
+                _comment_query_object_types(request, request.config)
+                if database_objects
+                else []
+            )
             if comment_types:
                 discovery.prepare_comments(
                     schema       = schema,
@@ -405,6 +387,11 @@ class ExportDbRunner:
             # measured half a schema and would teach the store a rate no later
             # run can reproduce.
             timer.store(request.root, request.environment, schema)
+            # **A measured run advances neither** (`#452`): both record what an
+            # export WROTE, and this one wrote nothing, so stamping either would
+            # make the next real `-recent` run skip what this one only read.
+            if request.baseline:
+                continue
             # Reached only when every object of this schema was written, so a
             # schema that raised mid-export keeps its old watermark while the
             # schemas that finished keep theirs (per-schema isolation).

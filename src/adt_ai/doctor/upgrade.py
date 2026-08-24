@@ -6,7 +6,12 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from adt_ai.doctor._base import DoctorResult, _version_key
+from adt_ai.doctor._base import (
+    ADT_AI_GITHUB_REPO_URL,
+    DoctorResult,
+    _normalize_target_version,
+    _version_key,
+)
 
 
 class DoctorUpgradeMixin:
@@ -33,71 +38,125 @@ class DoctorUpgradeMixin:
         self._end_action(lines, label, "UPDATED")  # type: ignore[attr-defined]
         return DoctorResult(lines=[], performed_actions=["requirements"], exit_code=0)
 
-    def _upgrade_adt_ai(self, lines: list[str]) -> DoctorResult:
+    def _upgrade_adt_ai(
+        self,
+        lines         : list[str],
+        target_version: str | None = None,
+    ) -> DoctorResult:
+        """Move the ADT.ai install to the latest release, or to a named one.
+
+        `target_version` is what `-update <version>` was given. It is a request
+        for that exact release and nothing else, so a version older than the one
+        installed is checked out like any other: which way the version number
+        moves is the user's business, not this command's.
+        """
         label = "ADT.ai"
         self._begin_action(label)  # type: ignore[attr-defined]
+        release = ""
+        if target_version is not None:
+            release = _normalize_target_version(target_version)
+            if not release:
+                return self._fail_action(  # type: ignore[attr-defined]
+                    lines,
+                    label,
+                    f"not a version: {target_version}. Pass a release number such as "
+                    "0.9.1, or leave -update bare to take the latest release.",
+                )
         if self._is_git_repo():  # type: ignore[attr-defined]
-            stashed = False
-            repo_root: Path | None = None
-            try:
-                repo_root = self._git_repo_root()  # type: ignore[attr-defined]
-                head_before = self._git_head(repo_root)  # type: ignore[attr-defined]
-                # The user may have local edits in the ADT.ai checkout. Stash them
-                # (tracked + untracked) so `git pull` fast-forwards cleanly, then
-                # re-apply them on top of the update.
-                dirty = bool(
-                    self.command_runner(  # type: ignore[attr-defined]
-                        ["git", "status", "--porcelain"],
-                        repo_root,
-                        self._command_env(),  # type: ignore[attr-defined]
-                    ).strip()
-                )
-                if dirty:
-                    stash_command = [
-                        "git",
-                        "stash",
-                        "push",
-                        "--include-untracked",
-                        "-m",
-                        "adtai-update-autostash",
-                    ]
-                    self.command_runner(  # type: ignore[attr-defined]
-                        stash_command,
-                        repo_root,
-                        self._command_env(),  # type: ignore[attr-defined]
-                    )
-                    stashed = True
-                self.command_runner(["git", "pull"], repo_root, self._command_env())  # type: ignore[attr-defined]
-                head_after = self._git_head(repo_root)  # type: ignore[attr-defined]
-                if stashed:
-                    self.command_runner(["git", "stash", "pop"], repo_root, self._command_env())  # type: ignore[attr-defined]
-                    stashed = False
-                self.command_runner(  # type: ignore[attr-defined]
-                    ["pip3", "install", "-e", str(repo_root)],
-                    None,
-                    self._command_env(),  # type: ignore[attr-defined]
-                )
-            except Exception as error:
-                if stashed:
-                    restore_message = (
-                        "    Local changes saved in git stash; "
-                        "run `git stash pop` to restore them."
-                    )
-                    self._add(  # type: ignore[attr-defined]
-                        lines,
-                        restore_message,
-                    )
-                return self._fail_action(lines, label, str(error))  # type: ignore[attr-defined]
-            if head_before == head_after:
-                self._end_action(lines, label, "CURRENT")  # type: ignore[attr-defined]
-                return DoctorResult(lines=[], performed_actions=[], exit_code=0)
-            version = self._adt_ai_version(repo_root)  # type: ignore[attr-defined]
-            self._end_action(lines, label, self._updated_outcome(version))  # type: ignore[attr-defined]
-            return DoctorResult(lines=[], performed_actions=["adt-ai"], exit_code=0)
+            return self._upgrade_adt_ai_checkout(lines, label, release)
+        return self._upgrade_adt_ai_package(lines, label, release)
 
+    def _upgrade_adt_ai_checkout(
+        self,
+        lines  : list[str],
+        label  : str,
+        release: str,
+    ) -> DoctorResult:
+        stashed = False
+        repo_root: Path | None = None
+        try:
+            repo_root = self._git_repo_root()  # type: ignore[attr-defined]
+            head_before = self._git_head(repo_root)  # type: ignore[attr-defined]
+            tag = ""
+            if release:
+                # Resolved before anything is stashed or moved, so a version with
+                # no release leaves the checkout exactly where it was.
+                self._git(repo_root, "fetch", "--tags", "--force", "origin")
+                tag = self._release_tag(repo_root, release)
+                if not tag:
+                    origin = self._origin_url(repo_root)
+                    return self._fail_action(  # type: ignore[attr-defined]
+                        lines,
+                        label,
+                        f"no release {release} in {origin}: it carries no tag "
+                        f"v{release} and no tag {release}.",
+                    )
+            # The user may have local edits in the ADT.ai checkout. Stash them
+            # (tracked + untracked) so the update lands cleanly, then re-apply
+            # them on top of it.
+            dirty = bool(self._git(repo_root, "status", "--porcelain").strip())
+            if dirty:
+                self._git(
+                    repo_root,
+                    "stash",
+                    "push",
+                    "--include-untracked",
+                    "-m",
+                    "adtai-update-autostash",
+                )
+                stashed = True
+            if tag:
+                self._git(repo_root, "checkout", tag)
+            else:
+                # A checkout pinned to a tag sits on a detached HEAD, which
+                # `git pull` refuses to run on, so without this the way back to
+                # latest would be closed and the pin a one way door.
+                if self._git_detached(repo_root):
+                    branch = self._remote_default_branch(repo_root)
+                    if branch:
+                        self._git(repo_root, "checkout", branch)
+                self._git(repo_root, "pull")
+            head_after = self._git_head(repo_root)  # type: ignore[attr-defined]
+            if stashed:
+                self._git(repo_root, "stash", "pop")
+                stashed = False
+            self.command_runner(  # type: ignore[attr-defined]
+                ["pip3", "install", "-e", str(repo_root)],
+                None,
+                self._command_env(),  # type: ignore[attr-defined]
+            )
+        except Exception as error:
+            if stashed:
+                restore_message = (
+                    "    Local changes saved in git stash; "
+                    "run `git stash pop` to restore them."
+                )
+                self._add(  # type: ignore[attr-defined]
+                    lines,
+                    restore_message,
+                )
+            return self._fail_action(lines, label, str(error))  # type: ignore[attr-defined]
+        if head_before == head_after:
+            self._end_action(lines, label, "CURRENT")  # type: ignore[attr-defined]
+            return DoctorResult(lines=[], performed_actions=[], exit_code=0)
+        version = self._adt_ai_version(repo_root)  # type: ignore[attr-defined]
+        self._end_action(lines, label, self._updated_outcome(version))  # type: ignore[attr-defined]
+        return DoctorResult(lines=[], performed_actions=["adt-ai"], exit_code=0)
+
+    def _upgrade_adt_ai_package(
+        self,
+        lines  : list[str],
+        label  : str,
+        release: str,
+    ) -> DoctorResult:
+        command = (
+            ["pip3", "install", f"git+{ADT_AI_GITHUB_REPO_URL}@v{release}"]
+            if release
+            else ["pip3", "install", "--upgrade", "adt-ai"]
+        )
         try:
             output = self.command_runner(  # type: ignore[attr-defined]
-                ["pip3", "install", "--upgrade", "adt-ai"],
+                command,
                 None,
                 self._command_env(),  # type: ignore[attr-defined]
             )
@@ -109,6 +168,47 @@ class DoctorUpgradeMixin:
             return DoctorResult(lines=[], performed_actions=["adt-ai"], exit_code=0)
         self._end_action(lines, label, "CURRENT")  # type: ignore[attr-defined]
         return DoctorResult(lines=[], performed_actions=[], exit_code=0)
+
+    def _git(self, repo_root: Path | None, *arguments: str) -> str:
+        return self.command_runner(  # type: ignore[attr-defined]
+            ["git", *arguments],
+            repo_root,
+            self._command_env(),  # type: ignore[attr-defined]
+        )
+
+    def _release_tag(self, repo_root: Path, release: str) -> str:
+        """The tag naming this release, preferring the `v` form, or "" for none.
+
+        Both spellings are asked for in one `git tag --list`, so a repo that
+        tags either way answers in a single command and a repo that tags neither
+        (any checkout that is not the public one) answers with nothing.
+        """
+        listed = self._git(repo_root, "tag", "--list", f"v{release}", release)
+        tags = {line.strip() for line in listed.splitlines() if line.strip()}
+        for candidate in (f"v{release}", release):
+            if candidate in tags:
+                return candidate
+        return ""
+
+    def _origin_url(self, repo_root: Path) -> str:
+        try:
+            return self._git(repo_root, "remote", "get-url", "origin").strip() or "origin"
+        except Exception:
+            return "origin"
+
+    def _git_detached(self, repo_root: Path) -> bool:
+        try:
+            return self._git(repo_root, "rev-parse", "--abbrev-ref", "HEAD").strip() == "HEAD"
+        except Exception:
+            return False
+
+    def _remote_default_branch(self, repo_root: Path) -> str:
+        try:
+            listed = self._git(repo_root, "ls-remote", "--symref", "origin", "HEAD")
+        except Exception:
+            return ""
+        match = re.search(r"refs/heads/(\S+)", listed)
+        return match.group(1) if match else ""
 
     def _upgrade_sqlcl(self, lines: list[str]) -> DoctorResult:
         label = "SQLcl"

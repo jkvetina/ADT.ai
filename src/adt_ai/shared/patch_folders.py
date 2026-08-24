@@ -33,10 +33,11 @@ class PatchFolder:
     commits: list[str]
     files: list[str]
     target_status: dict[str, str]
-    # The single newest deploy log in the folder, as `<TARGET>:<OUTCOME>` --
-    # `None` for a patch nobody has deployed (ADT #268). `target_status` above
-    # answers a different question (has THIS target succeeded) and is what the
-    # deploy skip-guard reads; this one is what the listing shows.
+    # The single newest deploy log in the folder, as `<OUTCOME>/<TARGET>`
+    # (ADT #510), or `None` for a patch nobody has deployed (ADT #268).
+    # `target_status` above answers a different question (has THIS target
+    # succeeded) and is what the deploy skip-guard reads; this one is what the
+    # listing shows.
     latest_status: str | None = None
 
 
@@ -55,6 +56,23 @@ def patch_id(patch_code: str) -> str | None:
     """
     numbers = re.findall(r"\d+", patch_code.split("_", 1)[0])
     return numbers[-1] if numbers else None
+
+
+def named_patch_refs(refs: list[str] | None) -> list[str]:
+    """The refs an `-archive` run actually named, blanks dropped (ADT #513).
+
+    Two callers ask the same question and must not answer it differently: the
+    runner, which decides which folders leave the disk, and the console, which
+    decides whether the receipt section is printed at all. A screen claiming
+    nothing was taken over a run that took something is the failure this shared
+    reader exists to make impossible.
+
+    A blank counts as no ref rather than as a ref matching nothing, because
+    `-archive ""` reaches the parser as one empty string and a reader testing the
+    LIST for emptiness walks straight past it. `matches_patch_selector` already
+    refuses a blank selector, so this is the same rule read one level up.
+    """
+    return [ref for ref in (refs or []) if ref.strip()]
 
 
 def matches_patch_selector(folder: PatchFolder, selector: str) -> bool:
@@ -110,11 +128,23 @@ def patch_folder_match_targets(folder: PatchFolder) -> list[str]:
     return targets
 
 
-def discover_patch_folders(patch_root: Path, *, ref: str | None = None) -> list[PatchFolder]:
+def discover_patch_folders(
+    patch_root: Path,
+    *,
+    ref: str | None = None,
+    folder_re: re.Pattern[str] | None = None,
+) -> list[PatchFolder]:
+    """Every patch folder under ``patch_root``, newest first.
+
+    ``folder_re`` is the reader for the folder NAME, which `patch_folder` makes a
+    project's own answer since ADT #430. The compiled pattern is passed in rather
+    than the config, so this module keeps the property ADT #429 gave it: layout
+    keys are `patch`'s to resolve and nothing in `shared/` imports `patch/`.
+    """
     if not patch_root.exists():
         return []
     folders = [
-        parse_patch_folder(path)
+        parse_patch_folder(path, folder_re=folder_re)
         for path in sorted(patch_root.iterdir(), key=lambda item: item.name, reverse=True)
         if path.is_dir()
     ]
@@ -140,7 +170,7 @@ def discover_patch_folders(patch_root: Path, *, ref: str | None = None) -> list[
     return folders
 
 
-def parse_patch_folder(path: Path) -> PatchFolder:
+def parse_patch_folder(path: Path, folder_re: re.Pattern[str] | None = None) -> PatchFolder:
     """Read a patch folder back from the only artifact that gets deployed.
 
     Old ADT recovered both lists from the generated install script,
@@ -153,7 +183,7 @@ def parse_patch_folder(path: Path) -> PatchFolder:
     #259). Old folders that still carry the sidecars keep parsing, so a patch
     built before this change stays deployable.
     """
-    match = PATCH_FOLDER_RE.match(path.name)
+    match = (folder_re or PATCH_FOLDER_RE).match(path.name)
     patch_code = match.group("code") if match else path.name
     sql_files = sorted(path.glob("*.sql"))
     # Both halves are needed and neither is a superset: a DELETED file is named
