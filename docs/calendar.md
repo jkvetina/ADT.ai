@@ -1,10 +1,10 @@
-# Calendar Activity Report (adtai calendar)
+# Git Activity Calendar (adtai calendar)
 
-`calendar` shows your Git activity as a monthly author/ticket **calendar grid**. It reads commit metadata from the shared `adtai rebuild` commit store instead of re-walking every branch live, so it is fast and gets faster the more often you run it. It does not connect to Oracle, so no rebuild is needed first.
+`calendar` shows who committed what, when, as a month grid of tickets and commit counts. Reach for it when you need to account for a month of work, your own or a colleague's, without scrolling a git log. It reads the commit store `rebuild` maintains rather than walking every branch live, and it never connects to Oracle.
 
-Before reading, it tops the store up for exactly the branches it needs, the default branch plus every branch whose name carries the configured `jira_prefix` (when no prefix is set, every branch). The top-up runs `rebuild` in update mode, so steady-state runs only read the handful of new commits since last time. The store lives at the path `repo_commits_file` points to in `config/config.yaml` (default `./config/commits/#BRANCH#.db`, one file per branch).
+<br>
 
-By default the author is your own `git config user.email`; activity is sourced from the stored commits you authored. Pass `-by` to look at someone else instead.
+## Examples
 
 Show the current month for yourself:
 
@@ -12,65 +12,88 @@ Show the current month for yourself:
 adtai calendar
 ```
 
-Show a specific month or an older month by offset:
+Show a named month, or an older one by offset:
 
 ```bash
 adtai calendar -month 2026-06
 adtai calendar -calendar 1
 ```
 
-Look at another author, or restrict to a single branch:
+Look at somebody else, or narrow to one branch:
 
 ```bash
 adtai calendar -by bob@example.com
-adtai calendar -branch feat/PROJ-4995-rework
+adtai calendar -branch feat/PROJ-300-currency
 ```
 
-The output is a **month calendar grid**: weeks are rows, Monday–Friday are columns, and each active day's cell stacks one `<ticket> (<count>)` line per ticket, the ticket id and the number of commits attributed to it on that day. Commits are aggregated per ticket, never listed one row per commit:
+<br>
+
+## Output
+
+Weeks are rows and Monday to Friday are columns. Each active day stacks one `<ticket> (<count>)` line per ticket, so the grid says how many commits went to which ticket on which day:
 
 ```text
 APEX DEPLOYMENT TOOL - CALENDAR
-------------------------------
-
-MONTHLY OVERVIEW: 2026-06 (PROJ)
-----------------------------------
-  me@example.com                                    5
+-------------------------------
 
 
-5 COMMITS BY me@example.com (3 tickets, 0 PRs)
-----------------------------------------------
-2026-06-01         | 2026-06-02         | 2026-06-03         | 2026-06-04         | 2026-06-05
-PROJ-100 (2)     |                    |                    | PROJ-204 (1)     | PROJ-300 (2)
+MONTHLY OVERVIEW 2026-08 (PROJ):
+--------------------------------
+  dev@example.com                                   9
+
+
+9 COMMITS BY dev@example.com (4 tickets, 0 PRs):
+------------------------------------------------
+2026-08-03         | 2026-08-04         | 2026-08-05         | 2026-08-06         | 2026-08-07        
+
+2026-08-10         | 2026-08-11         | 2026-08-12         | 2026-08-13         | 2026-08-14        
+                   |                    | PROJ-101 (2)       | PROJ-118 (1)       | PROJ-118 (1)      
+
+2026-08-17         | 2026-08-18         | 2026-08-19         | 2026-08-20         | 2026-08-21        
+PROJ-204 (1)       |                    | PROJ-204 (1)       | PROJ-300 (1)       | PROJ-300 (2)      
 ```
 
-Saturday and Sunday commits are folded into the preceding Friday's bucket, so `2026-06-05` above carries both the Friday and weekend commits for `PROJ-300`. Weeks with no activity in the month are skipped.
+- `MONTHLY OVERVIEW` names the month and the active `jira_prefix`, then one row per author with their commit total.
+- The per-author header counts distinct tickets and pull requests, never commits per row: commits are aggregated per ticket and per day.
+- **Saturday and Sunday fold into the preceding Friday.** The last Friday cell above carries two commits for that reason, its own and the weekend's.
+- Every week that touches the month prints, active or not, so the grid keeps the shape of a wall calendar. Only a week lying entirely outside the month is dropped.
+- A cell shows the ticket id, a `PR#<n>` marker for a pull request, or a branch-derived label when neither is available.
 
-The task-centric report shown above is the only format. `-list` used to select a day-row layout and was kept as an inert compatibility flag once that layout was replaced; ADT #345 withdrew it, so passing it now fails the run instead of quietly doing nothing.
+<br>
 
-## Jira prefix scoping
+## Topping up the store
 
-Set `jira_prefix` in `config/config.yaml` (e.g. `jira_prefix: 'PROJ'`) to scope activity to one project. With a prefix configured, a commit counts when **any** of these hold:
+Before it reads anything, `calendar` tops the commit store up for exactly the branches it needs: the default branch, plus every branch whose name carries the configured `jira_prefix`. With no prefix set, that is every branch.
 
-- its message carries a matching ticket (`PROJ-4995`, case-insensitive, dash optional);
-- it lives on a branch whose **name** carries the prefix (the whole branch counts, every commit on it, even ones whose message has no ticket);
-- it is a **pull request**, PRs always get special attention and are surfaced regardless of prefix.
+The top-up runs `rebuild` in update mode, so a steady-state run reads only the handful of commits since last time. The store lives where `repo_commits_file` points in `config/config.yaml`, one file per branch, and it is the same store [`rebuild`](rebuild.md) and [`search_repo`](search_repo.md) use.
 
-Each grid cell shows the ticket id, a `PR#<n>` marker for pull requests, or a branch-derived label as a fallback, followed by `(<count>)`, the number of commits attributed to that ticket on that day. The per-author header reports the distinct ticket and PR counts, and the overview header shows the active prefix.
+<br>
 
-Leave `jira_prefix` empty to count every commit you authored across all branches (in which case every branch is cached, not just the prefixed ones).
+## Scoping to one project
+
+Set `jira_prefix` in `config/config.yaml` (for example `jira_prefix: 'PROJ'`) to keep the report on one project. With a prefix configured, a commit counts when any one of these holds:
+
+- Its message carries a matching ticket (`PROJ-300`, case-insensitive, the dash optional).
+- It sits on a branch whose **name** carries the prefix. The whole branch counts, including commits whose message names no ticket.
+- It is a pull request. Those are surfaced whatever the prefix says.
+
+Leave `jira_prefix` empty to count every commit you authored across all branches, in which case every branch is cached rather than only the prefixed ones.
+
+<br>
+
+## Choosing the author
+
+The default author is your own `git config user.email`, and activity is sourced from the stored commits you wrote. `-by` replaces that with an email or name substring, and it is repeatable, so several people can share one grid.
+
+<br>
 
 ## Arguments
 
-| Argument | Repeatable | Default | Notes |
-| -------- | ---------- | ------- | ----- |
-| `-root`, `--root` | No | `.` | Git repository root to read. |
+| Argument | Repeatable | Default | Description |
+| -------- | ---------- | ------- | ----------- |
 | `-branch`, `--branch` | No | all branches | Restrict the report to a single branch instead of every branch. |
 | `-month`, `--month` | No | current month | Month to show, in `YYYY-MM` format. |
-| `-calendar [OFFSET]`, `--calendar [OFFSET]` | No | `0` | Old ADT-style month selector. Bare `-calendar` shows the current month; an integer value shows that many months back. |
-| `-by`, `--by` | Yes | your `git config user.email` | Author email/name substring; repeatable. Overrides the default "my commits" author. |
-| `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |
-| `-nobeep`, `--nobeep` | No | off | Suppress completion sounds for this run; this wins over `chime_theme` and `-beep`. |
+| `-calendar [OFFSET]`, `--calendar [OFFSET]` | No | `0` | Month selector by offset. Bare `-calendar` is the current month; an integer is that many months back. |
+| `-by`, `--by` | Yes | your `git config user.email` | Author email or name substring, repeatable. Replaces the default "my commits" author. |
 
----
-
-← [docs/README.md](README.md) index
+Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [arguments.md](arguments.md).

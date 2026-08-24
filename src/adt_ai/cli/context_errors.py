@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from adt_ai.cli.constants import DROPBOX_PATH_RE, print_adt_header
+from adt_ai.shared.announce import settle_screen_before_error
 from adt_ai.shared.config import InvalidConfigValueError
 from adt_ai.shared.connection_errors import (
     ConnectFailedError,
@@ -15,7 +16,7 @@ from adt_ai.shared.connection_errors import (
 # about: it is noise above every failure where the file WAS found and read.
 _PROJECT_FOLDER_REMEDY = (
     "Run ADT.ai from a project folder that has a connection file, or pass "
-    "-config-dir / -root to point at one. See docs/README.md and `adtai doctor -init`."
+    "-config-dir / -root to point at one. See docs/config.md and `adtai doctor -init`."
 )
 
 # Header and remedy both branch on the error CLASS, so a raise site says which
@@ -88,6 +89,7 @@ def _print_database_error(error: Exception) -> None:
     sql = getattr(error, "adt_sql", None)
     is_connection = sql is None and _is_database_connection_error(error)
     header = "DATABASE CONNECTION FAILED:" if is_connection else "DATABASE QUERY FAILED:"
+    settle_screen_before_error()
     print_adt_header(header, file=sys.stderr)
     if sql is not None:
         print("Query:", file=sys.stderr)
@@ -128,6 +130,7 @@ def _print_config_error(error: Exception) -> None:
         _print_database_error(error)
         return
     header, remedy = _config_error_screen(error)
+    settle_screen_before_error()
     print_adt_header(header, file=sys.stderr)
     print(_display(error), file=sys.stderr)
     print(file=sys.stderr)
@@ -142,6 +145,7 @@ def _print_sqlcl_error(error: Exception) -> None:
     # message IS the captured transcript: printed on its own lines, never after
     # a type name, because whatever line lands beside the type reads as the
     # diagnosis (ADT #271).
+    settle_screen_before_error()
     print_adt_header("SQLCL SCRIPT FAILED:", file=sys.stderr)
     print(_display(error), file=sys.stderr)
     print(file=sys.stderr)
@@ -152,6 +156,7 @@ def _print_unexpected_error(error: Exception) -> None:
     # Catch-all for any failure that is not a recognised config/database error.
     # The command banner has already printed (it is the first handler statement),
     # so this only adds a friendly framing instead of leaking a raw traceback.
+    settle_screen_before_error()
     print_adt_header("UNEXPECTED ERROR:", file=sys.stderr)
     message = _display(error)
     if "\n" in message:

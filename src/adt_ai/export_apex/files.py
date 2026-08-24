@@ -7,14 +7,19 @@ from typing import Any
 
 from adt_ai.export_apex.inventory import ApexApplication
 from adt_ai.shared.config import reject_unresolved_placeholders
-from adt_ai.shared.path_template import contains_run, render_path_template
+from adt_ai.shared.path_template import (
+    APEX_APP_TOKEN_NAMES,
+    DEFAULT_PATH_APP,
+    contains_run,
+    render_path_template,
+)
 
 
 @dataclass(frozen=True)
 class ApexFileResolver:
     root          : Path
     path_apex     : str = "apex/"
-    path_app      : str = "{$APP_ID}_{$APP_ALIAS}"
+    path_app      : str = DEFAULT_PATH_APP
     path_files    : str = "files/"
     path_rest     : str = "workspace/rest/"
     workspace_dir : str = "workspace/"
@@ -34,7 +39,19 @@ class ApexFileResolver:
                 key     = "path_apex",
                 allowed = ("schema",),
             ),
-            path_app      = str(config.get("apex_path_app") or "{$APP_ID}_{$APP_ALIAS}"),
+            # `apex_path_app` is the one key written in the old-ADT `{$NAME}`
+            # dialect, and it went through no guard at all until ADT #474:
+            # measured on `'{$APP_ID}_{$APP_VERSION}'`, the export built a folder
+            # literally called `100_{$APP_VERSION}`, which is exactly what the
+            # other two keys have been refusing since #411. Angle brackets
+            # resolve nothing here, so `allowed` is empty and one reaching this
+            # template is a typo rather than a token.
+            path_app      = reject_unresolved_placeholders(
+                str(config.get("apex_path_app") or DEFAULT_PATH_APP),
+                key           = "apex_path_app",
+                allowed       = (),
+                curly_allowed = APEX_APP_TOKEN_NAMES,
+            ),
             path_files    = str(config.get("apex_path_files") or "files/"),
             path_rest     = str(config.get("apex_path_rest") or "workspace/rest/"),
             workspace_dir = str(config.get("apex_workspace_dir") or "workspace/"),
@@ -138,15 +155,18 @@ class ApexFileResolver:
 
 
 def _render_app_folder(template: str, application: ApexApplication) -> Path:
-    rendered = template
-    replacements = {
-        "{$APP_ID}": str(application.app_id),
-        "{$APP_ALIAS}": application.app_alias,
-        "{$APP_NAME}": application.app_name,
-        "{$APP_GROUP}": application.app_group,
+    # Keyed on `APEX_APP_TOKEN_NAMES` so the vocabulary this writer substitutes,
+    # the one the guard accepts and the one `patch/layout.py` reads back are one
+    # list rather than three (ADT #474).
+    values = {
+        "APP_ID"   : str(application.app_id),
+        "APP_ALIAS": application.app_alias,
+        "APP_NAME" : application.app_name,
+        "APP_GROUP": application.app_group,
     }
-    for token, value in replacements.items():
-        rendered = rendered.replace(token, value or "")
+    rendered = template
+    for name in APEX_APP_TOKEN_NAMES:
+        rendered = rendered.replace(f"{{${name}}}", values[name] or "")
     return _clean_relative(rendered)
 
 

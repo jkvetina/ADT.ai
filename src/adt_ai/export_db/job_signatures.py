@@ -2,7 +2,7 @@
 
 A JOB is the one exported type the data dictionary cannot date. `user_objects`
 carries a JOB row, but its `LAST_DDL_TIME` is the last **run**: measured on
-CORE26/APPS 2026-08-20 with a dummy job, a scheduler execution carrying no DDL
+the local container 2026-08-20 with a dummy job, a scheduler execution carrying no DDL
 moved it from 11:26:31 to 11:27:31 while `CREATED` stayed at 11:26:31, and a later
 in-place `SET_ATTRIBUTE` moved it again and left `CREATED` alone. `CREATED` is
 stable but only sees a create or a drop+create, never an in-place edit, and

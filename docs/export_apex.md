@@ -1,174 +1,246 @@
 # Export APEX Applications (adtai export_apex)
 
-`export_apex` discovers and exports Oracle APEX workspaces and applications into your project folder, the APEX counterpart to `export_db`. `-reveal` answers "what workspaces, groups, and apps live in this environment?"; the format flags (`-full`, `-split`, `-readable`, `-rest`, `-files`, `-files_ws`, `-embedded`, `-apexlang`) then export an application as a single SQL file, split per-component files, readable YAML, APEXlang `.apx` source, REST module definitions, or static application/workspace files, so app changes are diffable in Git like any other code.
+`export_apex` brings APEX workspaces and applications out of the database and into your repository, so an application change is diffable in git like any other code. It is the APEX counterpart to [`export_db`](export_db.md).
 
-Reveal APEX workspaces and applications from the current folder:
+`-reveal` answers "what workspaces and applications live in this environment?". The format flags then export an application as one SQL file, as split per-component files, as readable YAML, as APEXlang source, as REST definitions, or as static files. Nothing is exported unless a format was named.
+
+<br>
+
+## Examples
+
+See what is there before exporting anything:
 
 ```bash
-cd ~/Dropbox/PROJECTS/CORE23
 adtai export_apex -reveal
-```
-
-The initial `export_apex` slice discovers applications only. In `-reveal` mode, it lists the workspace inventory once at the top, then lists applications for every schema configured in the selected connection environment unless `-schema` narrows the scan. Reveal keeps one APEX connection open and switches APEX workspace/security context for each schema's configured workspace before querying that schema's APEX applications. For normal exports, it uses the APEX schema default from the connection file. Workspace, application group, and application id scope still come from each connection schema's `apex:` section unless overridden on the command line.
-
-When you export by application id (`-app <id>`, without `-schema`/`-reveal`), `export_apex` first reads the cached `config/internal/apex.db` (written by earlier exports). If an app's recorded `owner` schema differs from the default APEX schema, it connects straight to that owner schema and skips both the wasted default-schema connection and the live owner-discovery round-trip. Multiple `-app` ids that map to different owners each connect to their own owner schema. Apps not yet recorded in the file, a missing file, or `-schema`/`-reveal` fall back to connecting to the default schema and discovering the owner live.
-
-A multi-schema export (`-schema DA GSN -full`, outside `-reveal`) executes schema by schema: connect to DA, discover and export its applications, print its own `TIMER`, then connect to GSN and repeat, exactly as if you had run the command once per schema, with the banner printed only once. If `-app <id>` names an app whose owner is not among the requested schemas, the owner lookup runs once, inside the last requested schema's own segment, and the owner schema it finds becomes its own appended segment (connection block, `APEX APPLICATIONS:` table, export, timer) rather than being folded into an already-printed segment. `-reveal` is unaffected, it stays a single connection with one shared inventory screen. See `docs/README.md` §Console Output Contract for the full multi-schema shape.
-
-Limit the reveal to one workspace, group, and application list:
-
-```bash
+adtai export_apex -reveal -owners -max_app_id 10000
 adtai export_apex -ws HUB -group CORE -app 100 200 -reveal
 ```
 
-Show owner/application counts for all owners instead of only configured schemas, while hiding high-id temporary or backup apps:
+Export one application, or a whole range, in the formats you name:
 
 ```bash
-adtai export_apex -reveal -owners -max_app_id 10000
-```
-
-Export every application in an id range, or from a minimum id upward:
-
-```bash
+adtai export_apex -app 100 -full -split
 adtai export_apex -app 0-9999 -all
-adtai export_apex -app 0+ -all
-adtai export_apex -app 0-99 100-999 -all
+adtai export_apex -app 100+ -apexlang -files
 ```
 
-Choose export sections explicitly:
+Export only some pages or shared components:
 
 ```bash
-adtai export_apex -full -split -readable -rest -files
-```
-
-ADT.ai exports only the sections named on the command line. Use `-all` to export every supported format explicitly. ADT.ai does not read configured format defaults and does not support old ADT's `-only` or `-no...` format suppressor flags.
-
-Export only selected pages and shared components from component-based formats:
-
-```bash
-adtai export_apex -app 100 -split -readable -page 1-50 55,56 60-62
-adtai export_apex -app 100 -split -page 7
+adtai export_apex -app 100 -split -page 1-50 55,56
 adtai export_apex -app 100 -split -page 7 -deep
-adtai export_apex -app 100 -split -component LOV:NAME% LIST:MENU%
-adtai export_apex -app 100 -readable -component LOV:%
+adtai export_apex -app 100 -readable -component LOV:NAME% LIST:MENU%
 ```
 
-`-page` and `-component` filter split/readable/embedded collection output and matching page comment YAML. They do not select an export format on their own; pass `-split`, `-readable`, or `-embedded` explicitly. Add `-deep` to `-page` to also export components recorded for the selected pages in `config/internal/dependencies.db`, such as LOVs, lists, and authorization schemes, and to print a `DB OBJECTS` section with database objects used by the selected pages. Filtered component exports print the affected pages/components line by line instead of the dotted progress bar, and filtered runs do not update `config/internal/apex.db`. Full app SQL, REST services, application files, and workspace files are not component-filtered.
-
-Export APEXlang source, the `.apx` format APEX 26.1 introduced:
+Report what changed recently, by anyone or by you:
 
 ```bash
-adtai export_apex -app 100 -apexlang
-adtai export_apex -app 100 -apx
+adtai export_apex -recent 3
+adtai export_apex -recent 3 -my
 ```
 
-`-apexlang` (short alias `-apx`) writes the APEXlang folder tree into `apexlang/` in the application folder, beside `readable/` and `embedded_code/`: `application.apx`, `pages/pNNNNN-<alias>.apx`, `shared-components/…`, `workspace-components/…`, `deployments/default.json`, and `.apex/apexlang.json`. Members land verbatim, `.apx` is compiler input, so ADT.ai applies none of the SQL-export postprocessing (no component-ID enrichment, no `p_default_id_offset` rewrite, no `-release` override).
+<br>
 
-The folder is recreated on every export, so a component deleted in APEX leaves no stale `.apx` behind. APEXlang is a whole-app format in this version: `-page`, `-component`, and `-recent` never filter it, and an APEXlang run never advances a `-recent` watermark.
+## Output
 
-**Static files are deliberately not included.** An APEXlang export carries the app's static files as binary payloads under `shared-components/static-files/`; ADT.ai skips those members so the repo never holds two copies of the same file, `-files` remains the single static-file channel. The `shared-components/static-files.apx` metadata that references them is still exported. That makes `apexlang/` a source and review surface rather than a directly importable artifact; deployment stays on full-app SQL patches.
+`-reveal` prints the connection block, then the workspace inventory once, then the applications of every schema in scope:
 
-That last sentence has a measured mechanism behind it (`#163`). Validating the same real application twice, once complete, once with only the payload folder removed, the complete tree passes and the stripped one fails with one `REFERENCE_NOT_FOUND` per referenced file, because `static-files.apx` names each payload in a `fileName` property. Since `apex import` validates first and proceeds only on a clean run, the committed `apexlang/` folder cannot be imported on its own.
+```text
+APEX DEPLOYMENT TOOL - EXPORT_APEX
+----------------------------------
 
-**It does not have to be.** `validate` assembles the complete application on demand instead (`#165`): `files/<X>` maps 1:1 onto `shared-components/static-files/<X>`, so a staging tree under the gitignored `config/temp/apexlang/` **hardlinks** the metadata and the payloads together, one inode per file, no bytes copied, nothing added to git. The export stays single-copy and the compiler still sees a whole application. That is also why exporting the payloads a second time was rejected rather than deferred: the same staged tree is what a future import command should be handed.
+CONNECTING TO SCHEMA SANDBOX, DEV:
+----------------------------------
+              APEX | 26.1.0
+          DATABASE | 23.26.1.0.0 | FREEPDB1
 
-**Check it with [`adtai validate`](validate.md).** The point of APEXlang is that a compiler can tell you whether the tree is valid, and `validate` is that check, connectionless, so `adtai export_apex -app 100 -apexlang && adtai validate -app 100` is a complete export-and-verify gate. Run `-files` alongside `-apexlang` (or use `-all`) so the payloads exist to stage; without them the gate reports one `REFERENCE_NOT_FOUND` per referenced file plus a `NOTES:` row naming the command that fixes it.
 
-Version handling is one-way in both directions. `-apexlang` needs APEX 26.1+; on an older instance the slice is skipped and the run continues, so `-all` never fails on a pre-26.1 environment. The skip is *announced* only when you named the format yourself, `-apexlang` and `-apx` print `APEXLANG EXPORT SKIPPED, NEEDS APEX 26.1`, and under `-all` it is silent, because the note answers a question `-all` never asked. Conversely, APEX 26.1 folded `READABLE_YAML` into APEXlang, so on 26.1+ a requested `-readable` slice is skipped silently and writes nothing, a "readable" export there would just be APEXlang content in the wrong folder. Pre-26.1 `-readable` is unchanged.
+WORKSPACES:
+-----------
 
-## Where files land (path_apex)
+  WORKSPACE   WORKSPACE ID   OWNERS   APPLICATIONS   DEVELOPERS
+  ---------   ------------   ------   ------------   ----------
+  SANDBOX            90100        1              1            0
 
-`path_apex` in `config.yaml` is a path template, `'<schema>/apex/'` by default, and the schema token carries its own case exactly as `path_objects` does: `<SCHEMA>` writes `APP_OWNER/apex/`. The two keys are independent, so a project can spell them differently. It resolves the schema token and nothing else, so any other token there is refused before the export writes a folder named after it. See [export_db → The schema token carries its own case](export_db.md#the-schema-token-carries-its-own-case).
+
+APPLICATIONS PER LISTED OWNERS:
+-------------------------------
+
+  OWNER     APPLICATIONS
+  -------   ------------
+  SANDBOX              1
+
+
+APEX APPLICATIONS: SANDBOX | SANDBOX
+------------------
+
+  APP ID   NAME                                       PAGES   UPDATED AT
+  ------   ----------------------------------------   -----   ----------
+     100   Order Tracker                                  4
+
+
+TIMER: 0s
+```
+
+- A schema mapped to no workspace prints the `WORKSPACES:` header and stops. That is what a fresh environment looks like, not an error.
+- `UPDATED AT` stays blank for an application nobody has edited since it was installed.
+
+An export keeps that overview and puts a block under an `EXPORTING APP <id>/<alias>:` header, one dotted row per action, each countdown seeded from what that action last cost. The banner and connection block above it are the same lines `-reveal` prints:
+
+```text
+APEX APPLICATIONS: SANDBOX | SANDBOX
+------------------
+
+  APP ID   NAME                                       PAGES   UPDATED AT
+  ------   ----------------------------------------   -----   ----------
+     100   Order Tracker                                  4
+
+
+EXPORTING APP 100/ORDERS:
+-------------------------
+
+  FULL APP EXPORT  0%                                                  0:00:01
+  FULL APP EXPORT  1%                                                  0:00:01
+  FULL APP EXPORT .............................................. 100%  0:00:01
+
+  SPLIT COMPONENTS  0%                                                 0:00:01
+  SPLIT COMPONENTS ............................................. 100%  0:00:01
+```
+
+- Each action row repaints in place. The lines above are those repaints, one per line.
+- `-compact` replaces the per-application blocks with **one bar per schema segment**, under `EXPORTING <SCHEMA> APPS:`, keeping the overview above it. The bar is time-weighted rather than action-counted, so a full export and a REST slice each take the share of the bar they really take. It never spans schemas, and neither `-reveal` nor a report-only `-recent` draws one, since neither exports anything.
+- The label names the slice in flight, `APP 100 | SPLIT COMPONENTS`, or the action alone for schema-level work that belongs to no application.
+- A multi-schema export runs schema by schema, each with its own connection block and `TIMER`, banner printed once.
+- Filtered component exports print the affected pages and components line by line instead of the dotted bar.
+
+<br>
+
+## Reveal, and how a schema is reached
+
+`-reveal` lists the workspace inventory once, then the applications of every schema configured in the selected environment, unless `-schema` narrows the scan. It keeps one APEX connection open and switches the workspace and security context per schema rather than reconnecting.
+
+Workspace, application group, and application id scope come from each schema's own `apex:` block in the connection file unless the command line overrides them.
+
+For a normal export by application id, with no `-schema` and no `-reveal`, ADT.ai first reads the cached `config/internal/apex.db`. When an application's recorded owner differs from the default APEX schema, the run connects straight to that owner and skips the wasted default connection. Several ids that map to different owners each connect to their own.
+
+An application not yet recorded, a missing cache, or an explicit `-schema` or `-reveal` all fall back to the default schema and discover the owner live.
+
+When `-app` names an application whose owner is not among the requested schemas, that lookup runs once inside the last requested schema's segment, and the owner it finds becomes its own appended segment.
+
+<br>
+
+## Formats are explicit
+
+ADT.ai exports only the formats named on the command line. There are no configured format defaults and no suppressor flags: `-all` is how you ask for everything.
+
+| Flag | What it writes |
+| ---- | -------------- |
+| `-full` | The whole application as one SQL file. |
+| `-split` | Per-component source files. |
+| `-readable` | Readable YAML. Skipped silently on APEX 26.1+, which folded it into APEXlang. |
+| `-embedded` | The embedded code report. |
+| `-apexlang`, `-apx` | APEXlang `.apx` source under `apexlang/`. Needs APEX 26.1+. |
+| `-rest` | REST module definitions. Schema-level. |
+| `-files` | Static application files. |
+| `-files_ws` | Static workspace files. Schema-level. |
+
+`-page` and `-component` narrow the split, readable and embedded output and the matching page comment YAML. They select no format on their own, so name one. Filtered runs do not update the application cache.
+
+`-deep` beside `-page` also exports the components recorded for those pages in the dependency mirror, LOVs, lists and authorization schemes among them, and prints a `DB OBJECTS` section of the database objects those pages use.
+
+Version handling is one-way in both directions, read from the one APEX version the connection block already printed. `-apexlang` on an older instance is skipped and the run continues, so `-all` never fails on a pre-26.1 environment. The skip is announced only when you named the format yourself, and is silent under `-all`.
+
+<br>
+
+## APEXlang is a whole-app format
+
+`-apexlang` writes the folder tree beside `readable/` and `embedded_code/`: `application.apx`, `pages/`, `shared-components/`, `workspace-components/`, and the deployment and project metadata. Members land verbatim, since `.apx` is compiler input, so none of the SQL-export postprocessing applies.
+
+The folder is recreated on every export, so a component deleted in App Builder leaves no stale `.apx`. `-page`, `-component` and `-recent` never filter it, and an APEXlang run never advances a `-recent` watermark.
+
+**Static files are deliberately left out.** An APEXlang export carries the application's static files as binary payloads, and ADT.ai skips those members so the repository never holds two copies, `-files` being the single static-file channel. The metadata that references them is still exported.
+
+That makes `apexlang/` a source and editing surface rather than a directly importable artifact. It does not have to be one: [`validate`](validate.md) assembles the complete application on demand by hardlinking the metadata and the `files/` export into one staging tree.
+
+So the export stays single-copy and the compiler still sees a whole application. Run `-files` alongside `-apexlang`, or use `-all`, so the payloads exist to stage.
+
+<br>
 
 ## The application checksum
 
-Every export records the application's checksum, an ID-independent SHA-256 fingerprint of the whole app, in `config/internal/apex.db` beside the owner, alias and page count already cached there:
+Every export records the application's checksum in `config/internal/apex.db`, beside the owner, alias and page count already cached there:
 
 ```yaml
 100:
-  owner: APEX_OWNER
-  app_alias: CORE23
-  app_name: Core Hub
+  owner: APP
+  app_alias: DEMO
+  app_name: Demo Hub
   pages: 42
   checksum: SH256:lmQxPul9ecXpn+7m/IoFYckC3znD6BnvxnQw0RGnsqk=
 ```
 
-The value is stored exactly as APEX returns it, algorithm prefix included, so it reads `SH256:` followed by base64 rather than bare hex. The fingerprint ignores internal component ids, so it changes when the application definition changes and stays stable across imports and environments. It answers "did anything actually change?" without diffing a full export.
+The value is stored exactly as APEX returns it, algorithm prefix included. It ignores internal component ids, so it moves when the application definition moves and stays stable across imports and environments. It answers "did anything actually change?" without diffing a full export.
 
-It is not a format and there is no flag for it. APEX computes it over the whole application, so `-page`, `-component`, and `-recent` never narrow it, a narrowed export records the same value a full one does, and collecting it never advances a `-recent` watermark.
+It is not a format and there is no flag for it. APEX computes it over the whole application, so `-page`, `-component` and `-recent` never narrow it, and collecting it never advances a watermark. A static file genuinely named `checksum.txt` is left alone, since `-files` owns everything under the static-files folder.
 
-It used to be the `-checksum` format, which wrote one line to `checksum.txt` in the application folder. That flag is rejected now and the file is no longer written; any left behind by an older ADT, including ones a colleague generated for applications the run does not touch, are removed by the next export of that schema. A static application file genuinely named `checksum.txt` is left alone: `-files` owns everything under the static-files folder.
+<br>
 
-Export recent changes by one developer, or by the current git user:
+## Where files land
 
-```bash
-adtai export_apex -recent 3
-adtai export_apex -recent 3 -by JANE.DEV
-adtai export_apex -recent 3 -my
-```
+`path_apex` in `config.yaml` is a path template, `'<schema>/apex/'` by default, and the schema token carries its own case, so `<SCHEMA>` writes `APP/apex/`. It resolves that token and nothing else, so any other token is refused before the export writes a folder named after it. `path_objects` is independent, and a project may spell the two differently.
 
-`-my` compares `git config user.name` and `git config user.email` with the workspace developers in `config/internal/apex.db` and the developers discovered from APEX. This covers short APEX account names (initials-style logins) as well as email-form authors.
-When no explicit export format is selected, non-reveal `-recent` requests print only the recent-change report and do not export files. When `-by` or `-my` covers multiple apps, the `APEX APPLICATIONS` list remains complete, but apps with no matching developer changes are skipped in the detailed `CHANGES SINCE` sections below it.
+`apex_path_app` names the per-application folder under it and resolves `{$APP_ID}`, `{$APP_ALIAS}`, `{$APP_NAME}` and `{$APP_GROUP}`. Any other token is refused.
+
+<br>
+
+## Recent changes, by author
+
+`-recent DAYS` prints the components changed in that window. DAYS may be a fraction of a day, `1/24` for the past hour. A whole-day window runs from midnight, so `-recent 1` means changed today, while a shorter one measures back from now. Bare `-recent` uses the application's stored watermark instead, keyed per environment, application and format.
+
+Without an explicit format, a non-reveal `-recent` is report-only: it exports nothing and advances no watermark. With split, readable or embedded selected it also limits the output to those components, and each format advances its own watermark key. With `-reveal` it filters the application list to applications changed in that window, with no per-application detail.
+
+`-by` filters by exact APEX developer username. `-my` compares your `git config user.name` and `user.email` against the workspace developers, which covers short initials-style logins as well as email-form authors. Either one leaves the application list complete and skips applications with no matching change in the detail sections below it. Developer-filtered exports do not update the application cache.
+
+<br>
+
+## Schema-level formats on their own
+
+`-rest` and `-files_ws` write under a path carrying no application id, so both belong to the schema rather than to an application. That gives a run two shapes, and which one you get depends on whether a per-application format was selected too.
+
+**Only schema-level formats selected.** The run exports no application, so it lists none: no `APEX APPLICATIONS:` table, no per-application block, and one bare `EXPORTING:` header over the progress rows in each schema segment. The schema is not repeated in that header, since the connection block three lines above already names it. Nothing per-application runs, so a schema with seventeen applications costs one workspace export rather than seventeen passes. One application is still used, silently and never named, to put the workspace security context in place, and a schema hosting none needs no context at all.
+
+**A per-application format selected too.** The screen is unchanged: the overview, a block per application, and the schema-level row inside the **first** application's block among its other rows, so one row does not cost a section of its own. A schema hosting no application has no block for that row to sit in, and is the one case that prints its own `SCHEMA <name>, EXPORTING:` header.
+
+Either way the slices run once per schema, and both are timed under the workspace slot rather than under whichever application carried the row. A report-only `-recent` exports nothing and so reaches neither shape.
+
+<br>
 
 ## Arguments
 
 | Argument       | Repeatable | Default | Description |
 | -------------- | ---------- | ------- | ----------- |
-| `-root`, `--root` | No | `.` | Project or output root folder. This can be any ordinary folder and does not need to be a Git repository. |
-| `-config-dir`, `--config-dir` | Yes | none | Folder containing project config YAML. ADT.ai always loads repo defaults first, then overlays these project configs. |
-| `-env`, `--env` | No | connection default | Connection environment to use, for example `DEV`. |
-| `-schema`, `--schema` | Yes | all configured schemas in `-reveal`; environment default APEX schema for exports | APEX owner schema(s). Pass multiple times, space-separate (`-schema DA GSN`), use comma lists, or use `%` patterns. In `-reveal`, omitting it scans every schema configured for the environment. |
 | `-ws`, `--ws` | No | connection `apex.workspace` | APEX workspace scope. |
 | `-group`, `--group` | No | connection `apex.group` | APEX application group scope. |
-| `-app`, `--app` | Yes | connection `apex.app` | Application ids to reveal or export. Each value may be a plain id, a closed range `MIN-MAX`, or an open range `MIN+` (no upper bound); combine freely, e.g. `-app 0-99 100-999 5000 9000+`. When any range is given, ADT.ai scans without an id filter and selects matching apps in Python. |
-| `-page`, `--page` | Yes | none | Page ids to include in split/readable/embedded component exports. Each value may be a plain id, a closed range `MIN-MAX`, or an open range `MIN+`; comma-separated values are accepted. Requires an explicit component-based export format. Page-filtered exports print affected components and do not update `apex.db`. |
-| `-deep`, `--deep` | No | off | Modifier valid only with `-page`. Reads `config/internal/dependencies.db`, adds exportable components recorded for the selected pages to the page-scoped split/readable/embedded export, and prints database objects used by those pages. |
-| `-component`, `--component` | Yes | none | Shared component filters to include in split/readable/embedded component exports, written as `TYPE:NAME_PATTERN`. `%` and `*` are wildcards, for example `LOV:NAME%`, `LOV:%`, or `LIST:MENU%`. Requires an explicit component-based export format. Component-filtered exports print affected components and do not update `apex.db`. |
-| `-max_app_id`, `--max_app_id`, `--max-app-id` | No | none | In reveal mode, list only applications with `application_id` below the value; also scopes workspace owner/application counts and per-owner application counts. |
-| `-recent [DAYS]`, `--recent [DAYS]` | No | off | Print components changed in the last DAYS days. DAYS may be a fraction of a day, `1/24` for the past hour and `5/1440` for the past 5 minutes; a whole-day window runs from midnight so `-recent 1` means "changed today", while a shorter one measures back from now. Bare `-recent` uses the app's stored watermark instead of a day window, "changed since the last export of this app in this format", keyed per environment/app/format in `config/internal/apex.db`; an app+format with no watermark yet falls back to a full pull that seeds it. With selected split/readable/embedded formats, also limits output to those components, and each exported format advances its own watermark key. Without an explicit export format, non-reveal `-recent` is report-only and never advances a watermark; with `-reveal`, it filters the application list to apps changed in that window without printing component details. |
-| `-by`, `--by` | No | none | Filter the recent component report and recent export set by exact APEX developer username. Developer-filtered exports do not update `apex.db`. |
-| `-my`, `--my` | No | off | Filter the recent component report and recent export set to the current git user, resolving APEX author aliases from `config/internal/apex.db` and discovered workspace developers. Developer-filtered exports do not update `apex.db`. |
-| `-release`, `--release` | No | none | Override `p_release` values in exported SQL files, matching old ADT upgrade-recovery behavior. |
-| `-reveal`, `--reveal` | No | off | Show matching APEX workspaces and applications. |
-| `-owners`, `--owners` | No | off | In reveal mode, list application counts for all APEX owners instead of only configured/scanned schemas. |
-| `-all`, `--all` | No | off | Export all APEX formats. |
-| `-full`, `--full` | No | off | Export full application SQL. |
+| `-app`, `--app` | Yes | connection `apex.app` | Application ids to reveal or export. Each value is a plain id, a closed range `MIN-MAX`, or an open range `MIN+`; combine freely. Any range makes the scan run without an id filter and select the matches locally. |
+| `-page`, `--page` | Yes | none | Page ids for the split, readable and embedded exports. Plain ids, closed ranges, open ranges, comma-separated values. Requires an explicit component-based format. |
+| `-deep`, `--deep` | No | off | Valid only with `-page`. Adds the components recorded for those pages to the export and prints the database objects they use. |
+| `-component`, `--component` | Yes | none | Shared component filters as `TYPE:NAME_PATTERN`, with `%` and `*` as wildcards. Requires an explicit component-based format. |
+| `-max_app_id`, `--max_app_id`, `--max-app-id` | No | none | In reveal mode, list only applications below this id, and scope the owner and application counts the same way. |
+| `-recent [DAYS]`, `--recent [DAYS]` | No | off | Report components changed in the last DAYS days, or since the stored watermark when bare. Report-only without an explicit format. See above. |
+| `-by`, `--by` | No | none | Filter the recent report and export set by exact APEX developer username. |
+| `-my`, `--my` | No | off | Filter them to the current git user, resolving author aliases from the cache and the discovered workspace developers. |
+| `-release`, `--release` | No | none | Override `p_release` values in the exported SQL. |
+| `-reveal`, `--reveal` | No | off | Show the matching workspaces and applications, exporting nothing. |
+| `-owners`, `--owners` | No | off | In reveal mode, count applications for all APEX owners rather than only the configured schemas. |
+| `-all`, `--all` | No | off | Export every supported format. |
+| `-full`, `--full` | No | off | Export the full application SQL. |
 | `-split`, `--split` | No | off | Export split application source. |
-| `-readable`, `--readable` | No | off | Export readable YAML source. On APEX 26.1+ this format no longer exists, APEX folded `READABLE_YAML` into APEXlang, so the slice is skipped silently and writes nothing; use `-apexlang` there. |
-| `-embedded`, `--embedded` | No | off | Export embedded code report. |
-| `-apexlang`, `--apexlang`, `-apx`, `--apx` | No | off | Export APEXlang (`.apx`) source into `apexlang/` in the app folder. Requires APEX 26.1+; on an older instance the slice prints `APEXLANG EXPORT SKIPPED, NEEDS APEX 26.1`, no dotted leader, since nothing ran, and the rest of the run continues (the release the instance is on is not repeated; the connection block above already prints it). That line appears **only when the format was named by flag**: under `-all` the skip is silent, because it answers a question only `-apexlang`/`-apx` asked. Whole-app format: `-page`, `-component`, and `-recent` never filter it, and it never advances a `-recent` watermark. Static-file payloads are skipped by design, `-files` stays the single static-file channel. |
-| `-rest`, `--rest` | No | off | Export REST services. **Schema-level, not per-application**: it writes `apex/workspace/rest/` **once per schema**, and runs even when the schema hosts no APEX application at all. Where its row sits depends on what else the run asked for, see [Schema-level formats on their own](#schema-level-formats-on-their-own) below. Runs through SQLcl using a named `ADT_…` connection (auto-registered, wallet included), see [connection.md](connection.md#named-sqlcl-connections). A schema that publishes no REST modules exports an empty folder and succeeds; a session that could not connect, or a `rest export` reporting an `ORA-`/`SP2-`/`PLS-` error, fails the run with the **full SQLcl output** attached, no `-debug` rerun needed to see the cause. Bounded by `rest_timeout_seconds` (default 60); past it SQLcl is killed and the run reports the timeout. |
-| `-files`, `--files` | No | off | Export application files. |
-| `-files_ws`, `--files_ws`, `--files-ws` | No | off | Export workspace files. **Schema-level, not per-application**, exactly like `-rest`: `apex/workspace/files/` carries no app id, so it exports once per schema, including a schema hosting no application at all. See [Schema-level formats on their own](#schema-level-formats-on-their-own). |
-| `-compact`, `--compact` | No | off | Replace the per-application blocks and their per-action rows with **one progress bar for the whole schema segment**, under an `EXPORTING <SCHEMA> APPS:` header (`EXPORTING <SCHEMA> SCHEMA:` when the segment exports no application, which covers both a schema hosting none and a run selecting only `-rest`/`-files_ws`). The row is labelled with the slice in flight, `APP 133 | SPLIT COMPONENTS`, or the action alone for schema-level work that belongs to no application. The `APEX APPLICATIONS:` overview that opens every run is unchanged, so the screen is the table of what is being exported and then one line that moves. The bar is **time-weighted, not action-counted**: its budget is the sum of what each application/format pair cost last time, read from `config/internal/apex.db`, so a `FULL APP EXPORT` and a `REST SERVICES` slice occupy the share of the bar they actually take; a pair with no stored history falls back to a long placeholder rather than counting as free. The seconds field counts down what is left. One bar per schema, never spanning schemas: a multi-schema run renders one full segment per schema as always. `-reveal` and report-only `-recent` export nothing and draw no bar. |
-| `-debug`, `--debug` | No | off | Show input parameters and SQL queries with bind values. |
-| `-key`, `--key` | No | `ADT_KEY` | Encryption key value or path to a key file for encrypted connection passwords. |
-| `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |
-| `-nobeep`, `--nobeep` | No | off | Suppress completion sounds for this run; this wins over `chime_theme` and `-beep`. |
+| `-readable`, `--readable` | No | off | Export readable YAML. On APEX 26.1+ the format no longer exists, so the slice is skipped silently and writes nothing; use `-apexlang` there. |
+| `-embedded`, `--embedded` | No | off | Export the embedded code report. |
+| `-apexlang`, `--apexlang`, `-apx`, `--apx` | No | off | Export APEXlang source. Requires APEX 26.1+, and on an older instance the slice is skipped with a note, or silently under `-all`. Whole-app format, never filtered and never advancing a watermark. Static-file payloads are skipped by design. |
+| `-rest`, `--rest` | No | off | Export REST services. **Schema-level**, written once per schema, and it runs even when the schema hosts no application. Runs through SQLcl on a named `ADT_…` connection, wallet included. A schema publishing no REST modules exports an empty folder and succeeds; a session that could not connect, or one whose output carries a database error, fails the run with the full SQLcl output attached. Bounded by `rest_timeout_seconds` (default 60). |
+| `-files`, `--files` | No | off | Export the static application files. |
+| `-files_ws`, `--files_ws`, `--files-ws` | No | off | Export the static workspace files. **Schema-level**, exactly like `-rest`. |
+| `-compact`, `--compact` | No | off | Replace the per-application blocks and their rows with one time-weighted progress bar per schema segment, keeping the `APEX APPLICATIONS:` overview above it. |
 
-## Schema-level formats on their own
-
-`-rest` and `-files_ws` write under `apex/workspace/`, a path carrying no app id, so both belong to the schema rather than to an application. That gives a run two shapes, and which one you get depends on whether you asked for a per-application format as well.
-
-**Only schema-level formats selected** (`-rest`, `-files_ws`, or both). The run exports no application, so it lists none: there is no `APEX APPLICATIONS:` table, no per-application block, and one bare `EXPORTING:` header over the progress rows for each schema segment. The schema is not repeated in the header, the `CONNECTING TO SCHEMA <name>, <environment>:` block three lines above it already names it. Nothing per-application runs either, so a schema with seventeen applications costs one workspace export rather than seventeen passes through the application loop. One application is still used, silently and never named, to put the workspace security context in place; a schema hosting none needs no context at all and exports just the same.
-
-```text
-CONNECTING TO SCHEMA DA, DEV:
------------------------------
-              APEX | 24.2.11
-          DATABASE | 19.31.0.0.0 | GRZTST04
-             THICK | 23.3
-
-
-EXPORTING:
-----------
-  REST SERVICES ................................................ 100%  0:00:08
-```
-
-**A per-application format selected too** (`-split -rest`, `-full -files_ws`, `-all`, …). The screen is unchanged: the `APEX APPLICATIONS:` table, a block per application, and the schema-level row inside the **first** application's block among its other export rows, so a single row does not cost a section of its own. A schema hosting no application has no block for that row to sit under, and is the one case that prints a `SCHEMA <name>, EXPORTING:` header.
-
-Either way the slices run **once per schema**, and both time under the workspace slot `0` in `config/internal/apex.db` rather than under whichever application happened to carry the row. Report-only `-recent` exports nothing and so reaches neither shape.
-
----
-
-← [docs/README.md](README.md) index
+Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [arguments.md](arguments.md).

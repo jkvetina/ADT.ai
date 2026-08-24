@@ -200,8 +200,12 @@ def _collect_dependencies(
             result.append((key_path, _constraint_tree_row(connection, key_constraint)))
             for child_fk in child_fks:
                 key = (child_fk["OWNER"], child_fk["CONSTRAINT_NAME"])
+                # Unreachable: child_fk is looked up by its exact (R_OWNER,
+                # R_CONSTRAINT_NAME) pointer, so it can only ever appear in the one
+                # key_constraint's child_fks it truly references; the key_constraint's
+                # own seen-check above always catches a revisit before this can fire.
                 if key in seen:
-                    continue
+                    continue  # pragma: no cover — see comment above
                 seen.add(key)
                 child_path = key_path + (child_fk["CONSTRAINT_NAME"],)
                 result.append((child_path, _constraint_tree_row(connection, child_fk)))

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.shared.env_check import _first_line, _instant_client_version
+from adt_ai.shared.file_list import file_rows
 
 CommandRunner = Callable[[Sequence[str], Path | None, Mapping[str, str]], str]
 ExecutableResolver = Callable[[str], str | None]
@@ -38,6 +39,10 @@ JAVA_DOWNLOAD_PAGE = "https://www.oracle.com/java/technologies/downloads/"
 INSTANT_CLIENT_PAGE = "https://www.oracle.com/database/technologies/instant-client.html"
 PYPI_PACKAGE_URL = "https://pypi.org/pypi/{package}/json"
 ADT_AI_GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/jkvetina/ADT.ai/releases/latest"
+# Where a pinned `-update <version>` looks for the release when the install is a
+# plain package rather than a git checkout. The public repo carries a `v<version>`
+# tag per release, so one ref names every version in both directions.
+ADT_AI_GITHUB_REPO_URL = "https://github.com/jkvetina/ADT.ai"
 
 # Each action renders as a single line: a two-space indent, the label, a run of
 # dots, and the outcome whose final character lands on column 72.
@@ -83,18 +88,35 @@ def format_status_line(label: str, value: str, status: str | None = None) -> str
 
 
 def _init_group_lines(label: str, root: Path, paths: Sequence[Path]) -> list[str]:
+    """`doctor -init`'s `CREATED:`/`SKIPPED:` groups, one file per row.
+
+    The rows go through the shared renderer since ADT #504, at the depth below
+    the group label, so this block and the `patch` sections share one indent rule.
+    Flat rather than grouped by folder: a scaffold is a handful of root-relative
+    paths and the reader is checking that each one exists, which a folder line
+    would put a level further from the eye.
+    """
     if not paths:
         return []
     root_name = root.name or root.anchor.rstrip("/") or "."
-    lines = ["", f"  {label}:"]
-    for relative_path in sorted(paths, key=lambda path: path.as_posix().lstrip(".").lower()):
-        lines.append(f"    - {root_name}/{relative_path.as_posix()}")
-    return lines
+    ordered = sorted(paths, key=lambda path: path.as_posix().lstrip(".").lower())
+    return [
+        "",
+        f"  {label}:",
+        *file_rows(
+            [f"{root_name}/{path.as_posix()}" for path in ordered],
+            nested = False,
+            depth  = 2,
+        ),
+    ]
 
 
 @dataclass(frozen=True)
 class DoctorRequest:
     update: bool = False
+    # The release `-update` was asked to land on, or None for the latest one.
+    # It scopes to the ADT.ai step alone; requirements and SQLcl are unaffected.
+    update_version: str | None = None
     sqlcl : bool = False
     offline: bool = False
     init  : bool = False
@@ -135,6 +157,25 @@ def _version_key(version: str) -> tuple[int, ...]:
     return tuple(int(part) for part in re.findall(r"\d+", version))
 
 
+# A release number, optionally spelled with the tag's own `v` prefix.
+_TARGET_VERSION_RE = re.compile(r"^v?\d+(?:\.\d+)*$", re.IGNORECASE)
+
+
+def _normalize_target_version(value: str) -> str:
+    """The bare release number `-update <version>` asked for, or "" when the
+    value is not a version at all.
+
+    The empty return is what keeps a typo (`-update latest`) from reaching git as
+    a ref: the value becomes an argument to `git checkout`, so a token starting
+    with a dash would be read as a flag, and a token naming a branch would move
+    the checkout somewhere no release lives.
+    """
+    text = str(value).strip()
+    if not _TARGET_VERSION_RE.match(text):
+        return ""
+    return text.removeprefix("v").removeprefix("V")
+
+
 def _is_newer_version(latest: str, current: str) -> bool:
     latest_key = _version_key(latest)
     current_key = _version_key(current)
@@ -171,6 +212,7 @@ def _certificate_error(url: str, error: Exception) -> RuntimeError:
 __all__ = [
     "ActionReporter",
     "ADT_AI_GITHUB_LATEST_RELEASE_URL",
+    "ADT_AI_GITHUB_REPO_URL",
     "ACTION_LINE_WIDTH",
     "STATUS_LINE_WIDTH",
     "STATUS_LABEL_WIDTH",
@@ -198,6 +240,7 @@ __all__ = [
     "_normalize_java_version",
     "_normalize_oracledb_version",
     "_version_key",
+    "_normalize_target_version",
     "_is_newer_version",
     "_is_certificate_error",
     "_certificate_error",

@@ -2,6 +2,33 @@
 
 All notable changes to the public ADT.ai release are recorded here, newest first.
 
+## 0.9.3 - 2026-08-24
+
+- **Breaking: in `search_repo`, `-type`, `-name` and `-by` are SQL LIKE patterns.** `%` and `_` mean what they mean on every other command, and the match is anchored. `-type PACKAGE` no longer returns package bodies, `-type "PACKAGE%"` does, and a partial author address is written `-by "bob%"`.
+- **Breaking: `search_repo` `-recent N` covers N whole days, today included.** It compared against `today - N` and so reached one calendar day further back than every export command's `-recent`. Sub-day windows are unchanged.
+- **Breaking: `-schema APP_%` reads `_` as SQL LIKE's single-character wildcard.** It was a literal underscore, the one filter in the tool that disagreed with all the others. A `*` is still accepted.
+- **Every command was broken on Windows, and is fixed.** The optional SQLcl-only transport imported Unix-only modules at load time, so `adtai --help` died with `ModuleNotFoundError: No module named 'termios'` on any Windows install, whether or not the project ever turned that transport on.
+- **`sqlcl_only` runs on Windows.** SQLcl draws no prompt in a Windows console, so each statement runs as its own script with its own connect. `export_apex`, and `ut` when it measures coverage, need one session across statements and refuse there by name rather than returning nothing.
+- **`export_apex -rest` handed back a Java stack trace instead of the REST export on Windows.** The child process was given `NUL` as its input, which cannot answer the call SQLcl's console makes at startup, so SQLcl died and still exited zero.
+- **A SQLcl run that died before its script started is an error, not an answer.** The failed transcript used to be written into the export as though it were the data.
+- **`doctor -update` takes a version.** `adtai doctor -update 0.9.1` lands exactly that release, in either direction, with no confirmation. Requirements and SQLcl still update after it, and a version with no release leaves the checkout where it was.
+- **`validate` reports a compile error as an error again.** SQLcl 26.2.1 spells one marker `APEXlang Compile Errors:` where 26.1.2 spelled it `APEXLang`, and the match was case-sensitive, so every real finding was reported as output the parser could not read.
+- **`export_data` honours the `{folder, extension}` spelling of `object_types.DATA`.** It accepted only the two-item list and fell back to a hardcoded `data/` and `.sql`, so a project using the mapping form had its data written where nothing else looked for it.
+- **`export.prefix` and `export.ignore` split on commas the same way for `export_db` and `export_data`.** `ignore: ['TMP_%,BAK_%']` was one pattern on one command and two on the other, so the filter silently matched nothing. An empty value now means no filter on both.
+- **A comment inside exported DDL no longer breaks the scan around it.** A semicolon in `-- add the index; then grant` split a `CREATE TABLE` in two, and an apostrophe in a comment flipped the quote state. The `export_db` normalizers and `discovery` read one tokenizer now.
+- **`apex_path_app` refuses a token it cannot resolve.** Writing `'{$APP_ID}_{$APP_VERSION}'` created a folder literally called `100_{$APP_VERSION}`; it is an error now, like the other two path templates.
+- **`config/IDENTITY.yaml` answers who you are for git as well.** Its `email` and `apex_account` keys were documented and unread. `search_repo`, `rebuild`, `calendar` and `export_apex` read them for `-my` and `-by` now, falling back to `git config`, and `export_apex -my` matches workspace developers on `apex_account`.
+- **A store that cannot set up its schema closes the connection it opened.** A stale or truncated cache file connects fine and fails on the first statement, so the APEX, commit and `dependencies` caches each leaked a connection the caller was designed to swallow the error from.
+- **Console lists of files group under their folder.** Rows sit under a folder line, indented one level further, instead of repeating the same path prefix on every row. `nested_files: False` in `config.yaml` restores the flat list.
+- **Every listing of database objects prints one shape.** `export_db` and `recompile` drew the same type-and-name row three different ways; names pad and a separator closes each type group on all of them now.
+- **An `export_db` run that changed nothing prints nothing under its header.** The overview used to draw two heading lines over no rows, then `EXPORTING 0 OBJECTS:` over nothing, then the timer.
+- **Every section header opens on exactly two blank lines, and the first one on a screen opens on one.** The gap used to be a property of whatever printed above it, so one header could render one, two or three blank lines on different screens.
+- **A file hash is a property of the content, not of the machine that wrote it.** Line endings collapse to LF and the payload is trimmed once before hashing, so the same object exported on Windows and on macOS hashes the same.
+- **The documentation is sixteen pages on one shape.** Purpose, examples, output, topics, then arguments last. The flags every command shares live on one page instead of being restated sixteen times.
+- **Five documentation pages are new.** `config.md`, `console.md`, `connection_passwords.md`, `export_db_layout.md` and `ut_coverage.md` take the topics that had been buried inside command pages running to five hundred lines.
+- **Every transcript in the documentation came off a live database.** The pages show what the commands actually printed against a real schema rather than output written from memory, and three documented behaviours were corrected as a result.
+- **The README stops being the manual.** Installation, a per-command reference table and the walkthroughs moved to the pages that own them.
+
 ## 0.9.2 - 2026-08-20
 
 - **A windowed `export_db` exports every object type again, `JOB` and `MVIEW LOG` included.** Neither carries a change timestamp, so a run with `-recent` used to drop both in silence. Two scheduler jobs live on a database had never reached its repo.

@@ -16,6 +16,7 @@ from adt_ai.shared.connection_errors import (
     InvalidConnectionError,
 )
 from adt_ai.shared.dict_merge import deep_merge
+from adt_ai.shared.file_list import file_rows
 from adt_ai.shared.schema_selection import (
     expand_schema_patterns,
     match_schema,
@@ -287,7 +288,7 @@ class ConnectionResult:
             return [f"Edit connection file: {self.files[0]}"]
         return [
             "Edit one of these connection files:",
-            *[f"  - {path}" for path in self.files],
+            *file_rows([str(path) for path in self.files], nested=False),
         ]
 
     def _available_environment_line(self) -> str:
@@ -328,7 +329,9 @@ class ConnectionLoader:
 
         chosen = next((path for path in candidates if path.is_file()), None)
         if chosen is None:
-            searched_text = "\n".join(f"  - {path}" for path in candidates)
+            searched_text = "\n".join(
+                file_rows([str(path) for path in candidates], nested=False)
+            )
             raise ConnectionNotFoundError(
                 "Connection file not found. Searched:\n" + searched_text
             )
@@ -365,7 +368,7 @@ def _available_list(label: str, values: Any) -> str:
     items = sorted((str(value) for value in values), key=str.upper)
     if not items:
         items = ["<none>"]
-    return "\n".join([f"{label}:", *[f"  - {item}" for item in items]])
+    return "\n".join([f"{label}:", *file_rows(items, nested=False)])
 
 
 def _resolve_wallet_path(value: Any, wallet_roots: list[Path]) -> str | None:

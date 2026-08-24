@@ -113,9 +113,22 @@ class ApexStore:
     @classmethod
     def open(cls, db_path: Path | str) -> ApexStore:
         connection = _connect(db_path)
-        connection.executescript(queries.APEX_STORE_SCHEMA)
-        connection.execute(queries.APEX_META_UPSERT, (SCHEMA_VERSION,))
-        connection.commit()
+        # Setup can raise, and until ADT #510 nothing closed the connection when
+        # it did: `sqlite3.connect` succeeds against any readable path and only
+        # the first statement discovers the bytes are not a database. The caller
+        # that finds this is `migrate_apex_files`, which catches `sqlite3.Error`
+        # by design so a corrupt cache never stops a command, so the failure was
+        # handled, the run continued, and the connection stayed open until the
+        # collector reached it and reported an unclosed database against whatever
+        # test was running by then. `CommitStore` and `DependencyStore` are the
+        # same shape and carry the same guard.
+        try:
+            connection.executescript(queries.APEX_STORE_SCHEMA)
+            connection.execute(queries.APEX_META_UPSERT, (SCHEMA_VERSION,))
+            connection.commit()
+        except BaseException:
+            connection.close()
+            raise
         return cls(connection)
 
     @classmethod

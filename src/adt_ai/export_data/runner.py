@@ -20,8 +20,10 @@ from adt_ai.shared.config import (
     reject_unresolved_placeholders,
 )
 from adt_ai.shared.db import QueryGateway
+from adt_ai.shared.object_files import object_layouts
 from adt_ai.shared.path_template import object_type_token, render_path_template
 from adt_ai.shared.row_values import row_value
+from adt_ai.shared.sql_like import split_patterns
 
 _SIDE_CAR_DATA_TYPES = {
     "BLOB"   : "bin",
@@ -289,15 +291,33 @@ def _data_path(root: Path, config: dict[str, Any], table_name: str, schema: str 
     return _data_folder(root, config, schema) / f"{table_name.lower()}.csv"
 
 
+DEFAULT_DATA_LAYOUT = ("data", ".sql")
+
+
+def _data_layout(config: dict[str, Any]) -> tuple[str, str]:
+    """The configured `object_types.DATA` folder and extension (ADT #474, row C).
+
+    `object_types` accepts two spellings, the two-item list the shipped config
+    uses and the `{folder, extension}` mapping, and both canonical readers take
+    either. This module had a third reading that accepted only the list, in two
+    predicates each carrying its own literal fallback, so a project spelling
+    `DATA: {folder: csv_data/, extension: .dat}` had its data written to `data/`
+    under `.sql` at exit `0` while `export_db` and `patch` read `csv_data/.dat`
+    off the same key. `shared/object_files.object_layouts` is the reader now, and
+    a row neither spelling can parse falls back here rather than raising mid
+    export, which is the one thing this call site needs that `_parse_layout` does
+    not offer.
+    """
+    return object_layouts(config.get("object_types")).get("DATA", DEFAULT_DATA_LAYOUT)
+
+
 def _data_folder(root: Path, config: dict[str, Any], schema: str = "") -> Path:
     # Data lands beside its database objects, so both go through the one shared
     # renderer rather than two copies of the same substitution. Placeholders in
     # ``path_objects``:
     #   <schema>       schema / owner name, cased the way the token is spelled
     #   <object_type>  the DATA layout folder (e.g. data/); auto-appended if absent
-    layout = (config.get("object_types") or {}).get("DATA", ["data", ".sql"])
-    folder = str(layout[0]) if isinstance(layout, list | tuple) and layout else "data"
-    folder = folder.strip("/")
+    folder = _data_layout(config)[0]
     template = reject_unresolved_placeholders(
         str(config.get("path_objects") or DEFAULT_PATH_OBJECTS)
     )
@@ -308,8 +328,7 @@ def _data_folder(root: Path, config: dict[str, Any], schema: str = "") -> Path:
 
 
 def _data_extension(config: dict[str, Any]) -> str:
-    layout = (config.get("object_types") or {}).get("DATA", ["data", ".sql"])
-    return str(layout[1]) if isinstance(layout, list | tuple) and len(layout) > 1 else ".sql"
+    return _data_layout(config)[1]
 
 
 def _existing_data_names(root: Path, config: dict[str, Any], schema: str = "") -> list[str]:
@@ -482,14 +501,6 @@ def _commented_where_filter(where_filter: str, skip_delete: str) -> str:
     return ("\n" + skip_delete).join(where_filter.splitlines())
 
 
-def _split_patterns(value: object) -> list[str] | None:
-    if not value:
-        return None
-    if isinstance(value, list | tuple):
-        return [
-            part.strip()
-            for item in value
-            for part in str(item).split(",")
-            if part.strip()
-        ]
-    return [part.strip() for part in str(value).split(",") if part.strip()]
+# One splitter with `export_db`, which read the same config key its own way
+# (ADT #474). Re-exported under the old private name so no call site moved.
+_split_patterns = split_patterns

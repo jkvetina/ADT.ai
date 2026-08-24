@@ -17,8 +17,11 @@ def add_admin_parsers(subparsers) -> None:
     )
     doctor.add_argument(
         "-update",
-        action="store_true",
-        help="run full ADT.ai, requirements, and SQLcl upgrade",
+        nargs   = "?",
+        const   = True,
+        metavar = "VERSION",
+        help    = "run full ADT.ai, requirements, and SQLcl upgrade; a version "
+                  "moves ADT.ai to that release instead of the latest one",
     )
     doctor.add_argument(
         "-sqlcl",

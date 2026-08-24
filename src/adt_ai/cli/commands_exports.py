@@ -48,7 +48,7 @@ from adt_ai.export_apex.deep import ApexDeepFilterError
 from adt_ai.export_apex.schema_level import schema_level_only
 from adt_ai.export_db.config import AuthorFilterError, resolve_author_filter
 from adt_ai.export_db.groups import resolve_group_inputs
-from adt_ai.shared import git_identity
+from adt_ai.shared import identity
 from adt_ai.shared.object_types import normalize_object_type_patterns
 
 
@@ -145,11 +145,13 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
                 changed_by    = changed_by,
                 my_changes    = my_changes,
                 authors       = authors,
+                baseline      = False,
             )
         )
         return 0
 
-    return run_schema_sections(schemas, run_one, first_started_at=handler_started_at)
+    exit_code = run_schema_sections(schemas, run_one, first_started_at=handler_started_at)
+    return exit_code
 
 
 def _run_export_apex(
@@ -216,7 +218,16 @@ def _run_export_apex(
     explicit_actions = _apex_explicit_actions(args)
     recent_days = args.recent
     recent_report_only = _apex_recent_report_only(args, actions, recent_days)
-    my_name, my_email = git_identity.current_git_identity() if args.my else (None, None)
+    # `IDENTITY.yaml` first, git as the fallback (ADT #469). `apex_account` is the
+    # name half here rather than `git config user.name`, and it is the key that
+    # makes this work at all on a workspace whose developer logins are
+    # `FIRST.LAST` rather than addresses; it had been documented and unread since
+    # the file was introduced.
+    my_name, my_email = (
+        identity.resolve_commit_identity(startup.config_search_paths, root)
+        if args.my
+        else (None, None)
+    )
     if args.debug:
         _print_startup_debug(startup)
     if not args.reveal and not any(actions.values()) and not recent_report_only:

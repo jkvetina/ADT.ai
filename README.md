@@ -1,6 +1,6 @@
 # ADT.ai
 
-![Version](https://img.shields.io/badge/version-0.9.2-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Python](https://img.shields.io/badge/python-3.11%2B-blue) [![CI](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml/badge.svg)](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml)
+![Version](https://img.shields.io/badge/version-0.9.3-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Python](https://img.shields.io/badge/python-3.11%2B-blue) [![CI](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml/badge.svg)](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml)
 
 Get your Oracle database and APEX applications into Git, and get your changes back out to the next environment.
 
@@ -12,7 +12,7 @@ ADT.ai is a Python command-line tool for Oracle developers, and it closes that g
 
 Nothing is installed in the database. It is a command you run from your project folder, against a connection you configure, so there is no schema to create and nothing to uninstall when you are done with it.
 
-Build verified by 3730 private unit tests.
+Build verified by 5347 private unit tests.
 
 <br>
 
@@ -76,8 +76,9 @@ None of the above runs until the tool knows how to reach your database, so this 
 
 ![No problem for the AI, humans don't read manuals anyway](images/docs.png)
 
-- [SETUP.md](SETUP.md) covers install and environment setup.
+- SETUP.md covers install and environment setup.
 - [docs/README.md](docs/README.md) is the command index; every command in the Commands section above links straight to its own page.
+- [docs/arguments.md](docs/arguments.md) documents the flags every command shares, once, so no command page repeats them.
 
 <br>
 
@@ -85,7 +86,7 @@ None of the above runs until the tool knows how to reach your database, so this 
 
 ![Real tools, real flags, first try](images/skills.png)
 
-If you work with an AI agent (Claude Code, Codex, Cursor and friends), install [SKILLS/adt/SKILL.md](SKILLS/adt/SKILL.md): it teaches the agent the whole command surface, so it drives the exports, checks and patches for you and gets the flags right on the first try. [SKILLS/adt-setup/SKILL.md](SKILLS/adt-setup/SKILL.md) does the same for setting the machine up, and [SKILLS/README.md](SKILLS/README.md) says which of the two to install when.
+If you work with an AI agent (Claude Code, Codex, Cursor and friends), install SKILLS/adt/SKILL.md: it teaches the agent the whole command surface, so it drives the exports, checks and patches for you and gets the flags right on the first try. SKILLS/adt-setup/SKILL.md does the same for setting the machine up, and [SKILLS/README.md](SKILLS/README.md) says which of the two to install when.
 
 <br>
 
@@ -127,7 +128,7 @@ Export your first objects:
 adtai export_db
 ```
 
-If an AI agent runs your machine setup, point it at [SKILLS/adt-setup/SKILL.md](SKILLS/adt-setup/SKILL.md) and let it walk through the whole thing itself.
+If an AI agent runs your machine setup, point it at SKILLS/adt-setup/SKILL.md and let it walk through the whole thing itself.
 
 <br>
 

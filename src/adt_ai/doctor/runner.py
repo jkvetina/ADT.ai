@@ -7,6 +7,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Iterable, Mapping, Sequence
+from functools import partial
 from pathlib import Path
 
 from adt_ai.doctor._base import (
@@ -155,7 +156,7 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
 
         self._begin_actions_section(lines)
         for action in (
-            self._upgrade_adt_ai,
+            partial(self._upgrade_adt_ai, target_version=request.update_version),
             self._install_requirements,
             self._upgrade_sqlcl,
         ):

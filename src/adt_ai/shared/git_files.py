@@ -5,6 +5,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from adt_ai.shared import text_files
+
 
 @dataclass(frozen=True)
 class ChangedFile:
@@ -85,10 +87,48 @@ def _blob_contents(root: Path, commit_hash: str, paths: list[str]) -> dict[str, 
 
 
 def file_payload_hash(payload: bytes | str, encoding: str = "utf-8") -> str:
-    if isinstance(payload, str):
-        payload = payload.encode(encoding)
-    value = hashlib.sha1(payload).hexdigest()
+    """One content, one hash, on every platform (ADT #454).
+
+    A SHA-1 over a CANONICAL form of the payload rather than over the bytes as
+    they sit: line endings collapsed to LF, then the whole payload trimmed once.
+    Both callers depend on that being the same rule. `changed_files` hashes a git
+    blob and `patch.hashes.hash_working_tree` hashes a file on disk, and a
+    baseline compares one against the other, so the moment the two sides can
+    disagree about a line ending the baseline reports every file as MODIFIED.
+
+    That is not hypothetical. `file_crlf` exists because Oracle hands back
+    whatever was compiled (`shared/text_files.py`), so the same project exports
+    CRLF on one machine and LF on another, and ADT.ai now runs on Windows.
+    Jan, 2026-08-21: *"strip all leading and trailing spaces (from the file
+    payload, not from each line) and normalize line endings to LF so the file
+    hash will match on win/mac."*
+
+    The trim is ONE strip of the whole payload, never a strip per line: a body
+    that differs only in indentation is a different body, and per-line trimming
+    would hash the two the same.
+
+    This is a deliberate divergence from old ADT, whose `util.get_hash()` is a
+    plain SHA-1 of the bytes and carries the same win/mac defect. The empty
+    sentinel is unchanged, and now also answers for a whitespace-only file,
+    because trimming empties it.
+    """
+    value = hashlib.sha1(_canonical_payload(payload, encoding)).hexdigest()
     return "" if value == "da39a3ee5e6b4b0d3255bfef95601890afd80709" else value
+
+
+def _canonical_payload(payload: bytes | str, encoding: str) -> bytes:
+    if isinstance(payload, bytes):
+        try:
+            text = payload.decode(encoding)
+        except UnicodeDecodeError:
+            # Not text at all. `_blob_contents` reads binary blobs deliberately
+            # and says so, so a payload that cannot be decoded hashes the bytes
+            # it has rather than raising at a hash site. Hashing raw keeps two
+            # different binaries apart, which returning a blank would not.
+            return payload
+    else:
+        text = payload
+    return text_files.normalize(text).strip().encode(encoding)
 
 
 def run_git(root: Path, args: list[str]) -> str:
@@ -123,8 +163,14 @@ def git_config_value(key: str, root: Path | None = None) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-def git_user_email(root: Path) -> str:
-    return git_config_value("user.email", root)
+# `git_user_email` stood here until ADT #469, and `shared/git_identity.py` held a
+# `current_git_identity` beside it. Both were one line over `git_config_value`,
+# and between them they gave the tool three names for one lookup: five call sites
+# in four modules asked git who the user was, while `config/IDENTITY.yaml` sat
+# there declaring `email` and `apex_account` with no reader anywhere in the tree.
+# The question has one answer now, `shared/identity.resolve_commit_identity`, and
+# this module supplies the git FALLBACK it reaches for when the file states
+# nothing.
 
 
 def fetch_origin(root: Path) -> None:

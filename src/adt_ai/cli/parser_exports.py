@@ -249,7 +249,11 @@ def add_export_parsers(subparsers) -> None:
         "--my",
         "-my",
         action = "store_true",
-        help   = "limit to components changed by you, matched against your git user",
+        # The one `-my` reading BOTH halves of the commit identity: an APEX
+        # workspace login is `FIRST.LAST` rather than an address, which is what
+        # `apex_account` is for, so the row names the account key as well.
+        help   = "limit to components changed by you, matched against "
+                 "IDENTITY.yaml apex_account and email, or your git user",
     )
     export_apex.add_argument("--release", "-release", help="override APEX release in SQL exports")
     export_apex.add_argument(

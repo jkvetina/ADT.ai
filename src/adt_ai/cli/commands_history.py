@@ -24,11 +24,18 @@ from adt_ai.cli.constants import (
     SearchRepoRequest,
     SearchRepoRunner,
 )
-from adt_ai.cli.context import _config_search_paths, _display, _flatten_arg_groups, _repo_root
+from adt_ai.cli.context import (
+    _config_search_paths,
+    _flatten_arg_groups,
+    _project_relative,
+    _repo_root,
+)
+from adt_ai.patch.object_folders import object_folder_resolver
 from adt_ai.rebuild.render import ConsoleRebuildReporter
 from adt_ai.shared.commit_cache import DEFAULT_COMMITS_TEMPLATE, open_store
 from adt_ai.shared.commit_window import resolve_history_floor
 from adt_ai.shared.dates import resolve_since
+from adt_ai.shared.file_list import file_rows, nested_files, print_file_rows
 from adt_ai.shared.recent_state import is_bare_recent
 
 
@@ -156,8 +163,10 @@ def _run_rebuild_verify(args: argparse.Namespace, root: Path) -> int:
     if problems:
         print_adt_header("PROBLEMS:")
         print()
-        for problem in problems:
-            print(f"  - {problem}"[:VERIFY_LINE_WIDTH])
+        # Flat, and not a file list: a problem is a sentence about the commit
+        # store, so there is no folder to group it under (ADT #504).
+        for line in file_rows(problems, nested=False):
+            print(line[:VERIFY_LINE_WIDTH])
         print()
         return 1
     return 0
@@ -168,11 +177,17 @@ def _run_search_repo(args: argparse.Namespace) -> int:
     try:
         file_limit = _search_repo_file_limit(args)
         root = Path(args.root).resolve()
+        # One read for both: the store location and the `object_types`
+        # vocabulary `-type`/`-name` are matched against (ADT #471).
+        config = _history_config(args, root)
         result = SearchRepoRunner().run(
             SearchRepoRequest(
                 root          = root,
                 branch        = args.branch,
-                cache_file_template = _commits_template(args, root),
+                config        = config,
+                cache_file_template = str(
+                    config.get("repo_commits_file") or DEFAULT_COMMITS_TEMPLATE
+                ),
                 commit_limit  = None if args.limit == 0 else args.limit,
                 show_files    = file_limit > 0,
                 file_limit    = file_limit,
@@ -199,6 +214,8 @@ def _run_search_repo(args: argparse.Namespace) -> int:
         print(f"Error: {exc}")
         print()
         return 1
+    nested = nested_files(config)
+    folder_of = object_folder_resolver(config)
     if result.records:
         print_adt_header("COMMITS:")
         for record in result.records:
@@ -208,10 +225,22 @@ def _run_search_repo(args: argparse.Namespace) -> int:
                 f"{record.commit_hash[:8]}"
             )
             if file_limit > 0:
-                file_paths = record.files[:file_limit]
-                for file_path in file_paths:
-                    status = record.file_statuses.get(file_path, "M")
-                    print(f"    - {status} | {file_path}")
+                # `depth=2` rather than the default 1: this is a per-record
+                # stanza, not a section list. The subject sits at column 0 and
+                # the author line at 2, so the files open one level below that
+                # pair, which is the `    - M | <path>` shape `#504` inherited
+                # and kept (`PROJECTS/ADT.ai/DELIVERABLES/SOP` §rebuild and
+                # search_repo). Grouping adds the folder line at 2 levels and the
+                # files at 3, the same plus-one rule as everywhere else.
+                print_file_rows(
+                    record.files[:file_limit],
+                    nested    = nested,
+                    folder_of = folder_of,
+                    decorate  = lambda path, leaf, statuses=record.file_statuses: (
+                        f"{statuses.get(path, 'M')} | {leaf}"
+                    ),
+                    depth     = 2,
+                )
             print()
     else:
         print("No commits found.")
@@ -219,14 +248,16 @@ def _run_search_repo(args: argparse.Namespace) -> int:
     if result.restored_files:
         print_adt_header("RESTORED FILES:")
         root = Path(args.root).resolve()
-        for path in result.restored_files:
-            print(f"  - {_relative_display(root, path)}")
+        print_file_rows(
+            [_project_relative(path, root) for path in result.restored_files],
+            nested    = nested,
+            folder_of = folder_of,
+        )
     if result.failed_restores:
         # A stale cache entry can make `git show` miss; a partial restore must
         # never look like a full one.
         print_adt_header("COULD NOT RESTORE:")
-        for file_path in result.failed_restores:
-            print(f"  - {file_path}")
+        print_file_rows(result.failed_restores, nested=nested, folder_of=folder_of)
     return 0
 
 
@@ -288,19 +319,29 @@ def _resolve_calendar_month(value: str) -> str:
     return value
 
 
-def _commits_template(args: argparse.Namespace, root: Path) -> str:
-    """`repo_commits_file`, or the shipped default when there is no config.
+def _history_config(args: argparse.Namespace, root: Path) -> dict:
+    """The merged config, or an empty mapping when it cannot be read.
 
-    Reading history must never fail because the project has no config file:
-    `rebuild` already falls back to the default, so a reader that raised here
-    would disagree with the writer about where the store is.
+    Reading history must never fail because the project has no config file, so
+    every caller here degrades rather than raising. The search paths include
+    ADT's own repo root, so a project with no config of its own still gets the
+    shipped `object_types` and `repo_commits_file`.
     """
     try:
-        config = ConfigLoader(
+        return ConfigLoader(
             _config_search_paths(getattr(args, "config_dir", None), root, _repo_root())
         ).load().data
     except Exception:
-        return DEFAULT_COMMITS_TEMPLATE
+        return {}
+
+
+def _commits_template(args: argparse.Namespace, root: Path) -> str:
+    """`repo_commits_file`, or the shipped default when there is no config.
+
+    `rebuild` already falls back to the default, so a reader that raised here
+    would disagree with the writer about where the store is.
+    """
+    config = _history_config(args, root)
     return str(config.get("repo_commits_file") or DEFAULT_COMMITS_TEMPLATE)
 
 
@@ -313,13 +354,6 @@ def _search_repo_file_limit(args: argparse.Namespace) -> int:
 
 def _display_commit_date(value: str) -> str:
     return value[:16].replace("T", " ")
-
-
-def _relative_display(root: Path, path: Path) -> str:
-    try:
-        return str(path.relative_to(root))
-    except ValueError:
-        return _display(path)
 
 
 def _rebuild_branch_label(root: Path, branches: list[str]) -> str:

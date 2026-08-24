@@ -45,7 +45,8 @@ from typing import Any
 
 from adt_ai.shared.connections import Connection
 from adt_ai.shared.db import OracleGateway, _attach_sql
-from adt_ai.shared.sqlcl_session import SqlclSession, SqlclSessionError, error_in
+from adt_ai.shared.sqlcl_script_session import open_session
+from adt_ai.shared.sqlcl_session import SqlclSessionError, error_in
 
 # A statement that opens a PL/SQL block is terminated with `/` on its own line,
 # everything else with `;`. Leading comments and blank lines are skipped, because
@@ -95,12 +96,29 @@ class SqlclGateway(OracleGateway):
             startup_sql  = startup_sql,
             config       = config,
         )
-        self.session = SqlclSession(
+        # The transport is a platform choice, not a gateway one (ADT #449):
+        # POSIX drives one held-open SQLcl process, Windows runs one script per
+        # request because SQLcl draws no prompt inside a Windows console. The
+        # gateway only cares that both answer `run`, and passes on
+        # `holds_a_session` so a session-scoped flow can ask before it relies on
+        # one.
+        self.session = open_session(
             connection,
             project_root = project_root,
             startup_sql  = startup_sql,
             config       = dict(config or {}),
         )
+
+    @property
+    def holds_a_session(self) -> bool:
+        """Whether two calls through this gateway reach one database session.
+
+        Forwarded from the transport rather than stored, so it can never fall out
+        of step with the thing that actually decides it. `shared/session_scope`
+        is the only reader, and `OracleGateway` needs no such property: a driver
+        connection always holds a session, which is the default that helper takes.
+        """
+        return bool(getattr(self.session, "holds_a_session", True))
 
     def connect(self) -> Any:
         raise SqlclSessionError(

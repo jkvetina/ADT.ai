@@ -2,21 +2,58 @@
 
 Split out of ``shared.db`` (ADT #148) to keep both modules context-sized. The
 public entry point stays re-exported from ``adt_ai.shared.db``.
+
+**Windows needs a pipe on stdin, and that is measured** (ADT #457). The
+reporting customer ran the same script both ways against his own SQLcl install
+on 2026-08-21: with ``stdin`` pointed at ``DEVNULL``, which is the ``NUL``
+device there, SQLcl died inside its own console builder with
+``java.io.IOException: Fonction incorrecte`` and exited **0**, having never run
+a line; with an empty closed pipe the script ran and returned its output.
+``SqlclConsole.<init>`` calls ``available()`` on stdin at startup and ``NUL``
+does not answer that syscall, while a pipe answers on every platform. So the
+non-streaming path below hands SQLcl an empty closed pipe, which keeps ADT
+#188's property (the child never inherits the caller's terminal, and a fallback
+username prompt hits EOF immediately) and drops the device.
+
+The measurement is his, on hardware ADT.ai has none of. What is verified here
+is the platform-neutral property that fails there: SQLcl's stdin is a pipe and
+is at EOF, pinned by ``tests/shared/test_sqlcl_script_windows.py``.
+
+The live-reader transports moved to ``shared.sqlcl_stream`` in the same card,
+when Windows gained a second one and this module went over the context-size
+guard; the error classes moved to ``shared.sqlcl_errors`` so that module can
+raise a timeout without an import cycle. Both are re-exported here, which is
+where callers have always found them.
 """
 
 from __future__ import annotations
 
-import contextlib
 import os
 import re
-import select
 import subprocess
 import tempfile
-import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable
 from pathlib import Path
 
 from adt_ai.shared import text_files
+from adt_ai.shared.sqlcl_errors import (
+    SqlclNotConnectedError,
+    SqlclScriptError,
+    SqlclTimeoutError,
+)
+from adt_ai.shared.sqlcl_stream import open_stream
+
+# Re-exported: every caller has always imported these from here, and the split
+# into `sqlcl_errors` (ADT #457) is about an import cycle, not about moving the
+# public surface.
+__all__ = [
+    "SQLCL_HIDDEN_VARIABLES",
+    "SQLCL_NOT_CONNECTED_CODE",
+    "SqlclNotConnectedError",
+    "SqlclScriptError",
+    "SqlclTimeoutError",
+    "run_sqlcl_script",
+]
 
 _TEMP_GITIGNORE_ENTRY = "config/temp/"
 
@@ -77,30 +114,39 @@ SQLCL_HIDDEN_VARIABLES = ("ORACLE_HOME",)
 SQLCL_NOT_CONNECTED_CODE = "SP2-0640"
 
 
-class SqlclNotConnectedError(RuntimeError):
-    """SQLcl ran the whole script without ever holding a session."""
-
-
-class SqlclTimeoutError(RuntimeError):
-    """SQLcl outlived the deadline the caller gave it and was killed."""
-
-
-class SqlclScriptError(RuntimeError):
-    """SQLcl exited non-zero; the message is its whole captured transcript.
-
-    Named so the CLI can tell it apart from an internal surprise. As a bare
-    ``RuntimeError`` it landed under the ``UNEXPECTED ERROR:`` catch-all, which
-    renders ``<type>: <message>`` on one line and so promoted the transcript's
-    FIRST line to the diagnosis, reporting `Connection <name> has been deleted`
-    (SQLcl echoing the script's own `CONNMGR DELETE` preamble) for a deploy that
-    actually died on `SP2-0556` several lines later (ADT #271).
-    """
-
-
 def _ran_without_a_session(output: str) -> bool:
     return any(
         line.lstrip().startswith(SQLCL_NOT_CONNECTED_CODE)
         for line in output.splitlines()
+    )
+
+
+# The second way a run exits 0 having done nothing: it never reached SQLcl at
+# all. A JVM that dies in startup prints a stack trace and exits 0, so neither
+# the exit code nor the ``SP2-0640`` check above sees it, and the trace was
+# handed back as the transcript. That is how ``export_apex -rest`` reported
+# ``Rest output: java.io.IOException...`` under a progress bar at 67% on the
+# customer's Windows machine (ADT #457).
+#
+# **The condition is the whole transcript, never a substring.** A legitimate
+# transcript may quote stack-trace text: an exported package body, a spooled
+# log, a row whose value contains it. So a run is only a startup failure when
+# it carries a Java failure line AND produced nothing else at all.
+_JAVA_FAILURE = re.compile(
+    r"^\s*(?:Exception in thread|Caused by:|[a-z][\w.]*\.[A-Z]\w*(?:Exception|Error))\b"
+)
+_STACK_FRAME = re.compile(r"^\s*at\s+\S+\(")
+# The JVM's own notice when JAVA_TOOL_OPTIONS is set, which ADT.ai sets itself.
+_JVM_NOTICE = re.compile(r"^\s*Picked up [A-Z_]+:")
+
+
+def _died_before_the_script_ran(output: str) -> bool:
+    lines = [line for line in output.splitlines() if line.strip()]
+    if not lines or not any(_JAVA_FAILURE.match(line) for line in lines):
+        return False
+    return all(
+        _JAVA_FAILURE.match(line) or _STACK_FRAME.match(line) or _JVM_NOTICE.match(line)
+        for line in lines
     )
 
 
@@ -188,108 +234,10 @@ def _sqlcl_command(script_path: Path, oci: bool) -> list[str]:
 
     Its own function so a test can stand a different child in front of the
     transport, which is the only way to prove the streaming half without a
-    database (ADT #434). Everything about the invocation stays here, so the two
-    transports below cannot drift on the flags they pass.
+    database (ADT #434). Everything about the invocation stays here, so the
+    three paths out of `run_sqlcl_script` cannot drift on the flags they pass.
     """
     return ["sql", *(["-L", "-oci"] if oci else []), "-S", "/nolog", f"@{script_path}"]
-
-
-def _stream_on_pty(
-    command: Sequence[str],
-    root: Path,
-    environment: Mapping[str, str],
-    timeout_seconds: float | None,
-    on_line: Callable[[str], None],
-) -> tuple[str, int]:
-    """Run ``command`` with its output on a pty, handing over each finished line.
-
-    A pipe cannot serve a live reader, and that is measured rather than assumed:
-    `shared/sqlcl_session.py` established it on 2026-08-19 against SQLcl 26.2 --
-    "The JVM block-buffers stdout when it is not a terminal ... Measured: 60
-    seconds, not one byte." So `patch -deploy` was never withholding progress, it
-    had none to print, and moving a print statement could not have fixed it.
-
-    Three mechanics come straight from that module, for the same reasons it gives:
-    `TERM=dumb` plus the JLine property, or SQLcl writes a cursor-position query
-    at startup and blocks until something answers it; terminal echo off, or the
-    script comes back as its own output. The fourth is this function's own.
-    **`stdin` stays `DEVNULL` while only stdout and stderr take the pty**: a
-    failed CONNECT makes SQLcl fall back to prompting for a username, and on a
-    terminal that prompt has nothing to end it, which is the hang ADT #188 fixed
-    by pointing stdin at `DEVNULL` in the first place. `sqlcl_session` needs a
-    writable stdin because it drives statements; a script run does not.
-
-    Returns the transcript and the exit code, so the caller classifies a failure
-    exactly as it does on the pipe path.
-    """
-    # POSIX-only, imported here rather than at module scope: this module is
-    # imported by every command and only a live reader ever reaches the pty.
-    import pty
-    import termios
-
-    environment = dict(environment)
-    environment["TERM"] = "dumb"
-    environment["JAVA_TOOL_OPTIONS"] = (
-        environment.get("JAVA_TOOL_OPTIONS", "") + " -Dorg.jline.terminal.dumb=true"
-    ).strip()
-
-    master, slave = pty.openpty()
-    attributes = termios.tcgetattr(slave)
-    attributes[3] &= ~termios.ECHO
-    termios.tcsetattr(slave, termios.TCSANOW, attributes)
-    process = subprocess.Popen(
-        list(command),
-        cwd    = root,
-        stdin  = subprocess.DEVNULL,
-        stdout = slave,
-        stderr = slave,
-        env    = environment,
-    )
-    os.close(slave)
-
-    collected: list[str] = []
-    buffer = b""
-    deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
-
-    def emit(raw: bytes) -> None:
-        # A pty turns every `\n` into `\r\n`, so the marker has to come back off
-        # or the transcript stops matching what the pipe path returned and every
-        # parser reading it (`_deployment_succeeded`, the progress echoes) sees a
-        # different string.
-        line = raw.decode("utf-8", "replace").rstrip("\r")
-        collected.append(line)
-        on_line(line)
-
-    try:
-        while True:
-            remaining = None if deadline is None else deadline - time.monotonic()
-            if remaining is not None and remaining <= 0:
-                process.kill()
-                process.wait()
-                raise SqlclTimeoutError(
-                    f"SQLcl did not finish within {timeout_seconds:g} seconds and was killed."
-                    + (f"\n{chr(10).join(collected).strip()}" if collected else "")
-                )
-            if not select.select([master], [], [], remaining if remaining else 1.0)[0]:
-                continue
-            try:
-                chunk = os.read(master, 65536)
-            except OSError:
-                # The child closed its end. Linux reports EIO here where macOS
-                # returns empty; both mean the same thing.
-                chunk = b""
-            if not chunk:
-                break
-            buffer += chunk
-            *complete, buffer = buffer.split(b"\n")
-            for raw in complete:
-                emit(raw)
-        if buffer.strip():
-            emit(buffer)
-    finally:
-        with contextlib.suppress(OSError):
-            os.close(master)
-    return "\n".join(collected), process.wait()
 
 
 def run_sqlcl_script(
@@ -334,11 +282,12 @@ def run_sqlcl_script(
     environment = _sqlcl_environment(oci, client_lib_dir, tns_admin)
     try:
         if on_line is not None:
-            # A live reader, so the child goes on a pty. Every line is scrubbed
-            # on the way out rather than at the end, because the callback prints
-            # to the user's terminal and a credential SQLcl echoed would be on
-            # screen long before the returned transcript was scrubbed.
-            raw_output, returncode = _stream_on_pty(
+            # A live reader, so the child goes on this platform's streaming
+            # transport. Every line is scrubbed on the way out rather than at
+            # the end, because the callback prints to the user's terminal and a
+            # credential SQLcl echoed would be on screen long before the
+            # returned transcript was scrubbed.
+            raw_output, returncode = open_stream(
                 command,
                 root,
                 environment,
@@ -350,13 +299,22 @@ def run_sqlcl_script(
             # not print the connect line in the first place; the scrub below is
             # the belt-and-braces backstop for the cases where it still does.
             #
-            # ``stdin=DEVNULL`` is not cosmetic. A CONNECT that fails makes SQLcl
-            # fall back to prompting for a username, and without this the child
-            # inherits the caller's terminal, so it sat at a prompt that
-            # ``capture_output`` had already swallowed, waiting forever while
-            # ``export_apex -rest`` printed nothing but a crawling progress bar
-            # (ADT #188). At EOF the prompt fails immediately instead, and the
-            # ``WHENEVER SQLERROR EXIT FAILURE`` guard turns that into a real error.
+            # Refusing the child the caller's stdin is not cosmetic. A CONNECT
+            # that fails makes SQLcl fall back to prompting for a username, and
+            # without this the child inherits the caller's terminal, so it sat
+            # at a prompt that ``capture_output`` had already swallowed, waiting
+            # forever while ``export_apex -rest`` printed nothing but a crawling
+            # progress bar (ADT #188). At EOF the prompt fails immediately
+            # instead, and ``WHENEVER SQLERROR EXIT FAILURE`` turns that into a
+            # real error.
+            #
+            # ``input=""`` and not ``stdin=DEVNULL``, which is the same property
+            # through a pipe rather than a device (ADT #457). Both are at EOF at
+            # once and neither is the caller's terminal, so nothing about #188
+            # changes; what changes is that SQLcl can ask this handle how many
+            # bytes are available. ``NUL`` cannot answer that and the whole run
+            # died there on Windows. See the module docstring for the
+            # measurement.
             try:
                 completed = subprocess.run(
                     command,
@@ -364,7 +322,7 @@ def run_sqlcl_script(
                     check          = False,
                     capture_output = True,
                     text           = True,
-                    stdin          = subprocess.DEVNULL,
+                    input          = "",
                     env            = environment,
                     timeout        = timeout_seconds,
                 )
@@ -385,6 +343,16 @@ def run_sqlcl_script(
     finally:
         script_path.unlink(missing_ok=True)
     output = _scrub_secrets(raw_output, secrets)
+    if _died_before_the_script_ran(output):
+        # Exit code 0 with a JVM stack trace and nothing else: SQLcl never
+        # started, so the transcript is the failure rather than the answer. It
+        # used to be returned, and `_write_rest_export` wrote it into the REST
+        # export (ADT #457). Reported in full for the same reason the
+        # not-connected error is: the cause is one of these lines.
+        raise SqlclScriptError(
+            "SQLcl failed before it ran the script "
+            f"(exit code {returncode}). Full SQLcl output:\n{output.strip()}"
+        )
     if _ran_without_a_session(output):
         # Reported in full, not as the one line a regex picked: the cause is
         # always some earlier line in this same transcript, and asking the user

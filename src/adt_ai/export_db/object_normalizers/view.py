@@ -128,85 +128,47 @@ def _top_level_view_select_index(lines: list[str]) -> int | None:
     return None
 
 def _sql_parenthesis_depth_after_line(line: str, depth: int) -> int:
-    in_quoted_identifier = False
-    in_string = False
-    index = 0
-    while index < len(line):
+    for index in _code_positions(line):
         char = line[index]
-        if in_string:
-            index += 1
-            if char == "'":
-                if index < len(line) and line[index] == "'":
-                    index += 1
-                    continue
-                in_string = False
-            continue
-
-        if char == "'":
-            in_string = True
-            index += 1
-            continue
-
-        if char == '"':
-            in_quoted_identifier = not in_quoted_identifier
-            index += 1
-            continue
-
-        if not in_quoted_identifier and line[index : index + 2] == "--":
-            break
-
-        if not in_quoted_identifier and char == "(":
+        if char == "(":
             depth += 1
-        elif not in_quoted_identifier and char == ")" and depth > 0:
+        elif char == ")" and depth > 0:
             depth -= 1
-        index += 1
     return depth
 
+def _code_positions(payload: str) -> list[int]:
+    """Every index of `payload` that is SQL rather than string, comment or identifier.
+
+    The one scan for all three questions this module asks of DDL text, where each
+    used to carry its own `in_string` walk against the rule `#299` wrote (ADT
+    #474). A quoted identifier is opaque here on purpose: a `(`, a top-level `,`
+    and the `from` keyword are all SQL structure, and `"A(B"`, `"X,Y"` and
+    `"FROM"` are names that merely look like it.
+    """
+    return [
+        index
+        for kind, start, end in sql_spans(payload, identifiers=True)
+        if kind == "code"
+        for index in range(start, end)
+    ]
+
 def _find_from_keyword(payload: str) -> int | None:
-    in_quoted_identifier = False
-    in_string = False
     depth = 0
-    index = 0
-    while index < len(payload):
+    for index in _code_positions(payload):
         char = payload[index]
-        if in_string:
-            index += 1
-            if char == "'":
-                if index < len(payload) and payload[index] == "'":
-                    index += 1
-                    continue
-                in_string = False
-            continue
-
-        if char == "'":
-            in_string = True
-            index += 1
-            continue
-
-        if char == '"':
-            in_quoted_identifier = not in_quoted_identifier
-            index += 1
-            continue
-
-        if not in_quoted_identifier and char == "(":
+        if char == "(":
             depth += 1
-            index += 1
             continue
-
-        if not in_quoted_identifier and char == ")" and depth > 0:
+        if char == ")" and depth > 0:
             depth -= 1
-            index += 1
             continue
-
         if (
-            not in_quoted_identifier
-            and depth == 0
+            depth == 0
             and payload[index : index + 4].lower() == "from"
             and (index == 0 or not _is_identifier_char(payload[index - 1]))
             and (index + 4 == len(payload) or not _is_identifier_char(payload[index + 4]))
         ):
             return index
-        index += 1
     return None
 
 def _is_identifier_char(char: str) -> bool:
@@ -268,50 +230,20 @@ def _compact_unquoted_view_columns(projection: str) -> list[str] | None:
 
 def _split_top_level_projection_items(projection: str) -> list[str]:
     items: list[str] = []
-    current: list[str] = []
-    in_quoted_identifier = False
-    in_string = False
     depth = 0
-    index = 0
-    while index < len(projection):
-        char = projection[index]
-        if in_string:
-            current.append(char)
-            index += 1
-            if char == "'":
-                if index < len(projection) and projection[index] == "'":
-                    current.append(projection[index])
-                    index += 1
-                    continue
-                in_string = False
+    start = 0
+    code = set(_code_positions(projection))
+    for index, char in enumerate(projection):
+        if index not in code:
             continue
-
-        if char == "'":
-            in_string = True
-            current.append(char)
-            index += 1
-            continue
-
-        if char == '"':
-            in_quoted_identifier = not in_quoted_identifier
-            current.append(char)
-            index += 1
-            continue
-
-        if not in_quoted_identifier and char == "(":
+        if char == "(":
             depth += 1
-        elif not in_quoted_identifier and char == ")" and depth > 0:
+        elif char == ")" and depth > 0:
             depth -= 1
-        elif not in_quoted_identifier and depth == 0 and char == ",":
-            items.append("".join(current))
-            current = []
-            index += 1
-            continue
-
-        current.append(char)
-        index += 1
-
-    items.append("".join(current))
+        elif char == "," and depth == 0:
+            items.append(projection[start:index])
+            start = index + 1
+    items.append(projection[start:])
     return items
 
 def _simple_view_projection_column(token: str) -> str | None:
@@ -325,7 +257,8 @@ def _simple_view_projection_column(token: str) -> str | None:
 
     column = _normalize_simple_view_identifier(match.group("column"))
     if not re.fullmatch(r"[a-z][a-z0-9_$#]*", column):
-        return None
+        # pragma: no cover reason: unreachable, `column` already matched `identifier`'s charset
+        return None  # pragma: no cover
 
     alias = match.group("alias")
     if not alias:
@@ -333,7 +266,8 @@ def _simple_view_projection_column(token: str) -> str | None:
 
     normalized_alias = _normalize_simple_view_identifier(alias)
     if not re.fullmatch(r"[a-z][a-z0-9_$#]*", normalized_alias):
-        return None
+        # pragma: no cover reason: unreachable, `alias` already matched `identifier`'s charset
+        return None  # pragma: no cover
     return f"{normalized_alias}.{column}"
 
 def _normalize_simple_view_identifier(name: str) -> str:
@@ -343,4 +277,5 @@ def _normalize_simple_view_identifier(name: str) -> str:
         return quoted_match.group(1).lower()
     if re.fullmatch(r"[A-Za-z][A-Za-z0-9_$#]*", name):
         return name.lower()
-    return name.strip('"')
+    # pragma: no cover reason: both callers only pass a name matching one of the two patterns above
+    return name.strip('"')  # pragma: no cover

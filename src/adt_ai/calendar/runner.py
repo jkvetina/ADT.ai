@@ -9,7 +9,8 @@ from pathlib import Path
 from adt_ai.rebuild.models import RebuildRequest
 from adt_ai.rebuild.runner import RebuildRunner
 from adt_ai.shared.commit_cache import open_store
-from adt_ai.shared.git_files import default_branch_ref, fetch_origin, git_user_email, run_git
+from adt_ai.shared.git_files import default_branch_ref, fetch_origin, run_git
+from adt_ai.shared.identity import resolve_commit_email
 
 
 class CalendarError(Exception):
@@ -74,7 +75,7 @@ class CalendarRunner:
         prefix = (request.jira_prefix or "").strip() or None
         # Default author is the configured git user, "my commits" is the baseline,
         # so the calendar shows your own activity unless `-by` overrides it.
-        terms = [t for t in (request.authors or [git_user_email(root)]) if t]
+        terms = [t for t in (request.authors or [resolve_commit_email(root=root)]) if t]
 
         # Source commits from the rebuild module's commit cache instead of walking
         # every branch live. Only the default branch and the prefix-named branches

@@ -24,6 +24,7 @@ import uuid
 from dataclasses import replace
 
 from adt_ai.shared.db import QueryGateway
+from adt_ai.shared.session_scope import require_database_session
 from adt_ai.shared.sql_like import matches_sql_like
 from adt_ai.ut import queries
 from adt_ai.ut.coverage import build_coverage_report
@@ -102,6 +103,11 @@ class Ut3Runner:
         # coverage run" instead would pick up a concurrent session's rows.
         coverage_run_id = uuid.uuid4().hex.upper()
         if measures:
+            # The profiler is started here, fed by the test run, and read after
+            # it, so all three have to land in one database session. A transport
+            # that cannot promise that would report `0.0` for every package at
+            # exit 0, which reads exactly like untested code (ADT #449).
+            require_database_session(self.gateway, "ut coverage")
             self.gateway.execute(
                 queries.COVERAGE_START_STATEMENT,
                 {"coverage_run_id": coverage_run_id},

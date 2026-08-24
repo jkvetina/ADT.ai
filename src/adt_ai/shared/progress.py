@@ -8,7 +8,81 @@ from adt_ai.shared.announce import mark_announced, mark_finished
 DROPBOX_PATH_RE = re.compile(r"/Users/[^/]+/Library/CloudStorage/Dropbox/")
 
 
+# The header's own blank, which every header gets.
+OPENING_GAP = 1
+# Plus one for whatever closed above it, when something did.
+SECTION_GAP = 2
+
+
 def print_adt_header(message: str, append: str = "", file=None) -> None:
+    """A titled section: two blank lines above it when something closed above,
+    one when nothing did (ADT #468, corrected by #494).
+
+    **The gap is normalized, never added to whatever is already there**, and that
+    is the whole of it. An unconditional blank makes the gap a property of what
+    happened to print ABOVE the header: a section that closes itself leaves one
+    behind and a section ending on a bare row leaves none, so one header rendered
+    two blanks and the next rendered one, on the same screen, for a reason no
+    call site could see. `#443` added a ``lead_gap`` knob for the site that
+    wanted the wider gap, which fixed that site and moved the problem: with a
+    table above it the same knob rendered THREE. Jan, 2026-08-22: *"You invented
+    3 empty lines in between RECENT COMMITS: and PATCH FILES:"*, and on `#451`,
+    *"the looks of headers must be consistent!"*
+
+    `normalize_trailing_newlines` **caps as well as pads**, which is what lets
+    one call cover every starting shape: a closed section gets nothing added, a
+    bare row gets one, a crawling progress row gets its own line terminated
+    first. It is the mechanism the `TIMER` footer has used since `#269` and the
+    error banner since `#465` (`shared/announce.settle_screen_before_error`), and
+    the project SOP already states the rule in those words for the footer alone,
+    *"Spacing has one knob-free authority ... No per-call `pending_newlines`
+    overrides"*. Section headers are the surface that never got it.
+
+    **The count comes from Jan's own arithmetic on `#456`**: *"Every header must
+    have 1 empty line above, right. So why dont you print extra line after you
+    run the dependencies? That would match both cases."* One blank belongs to the
+    header, one to the section above it.
+
+    `#468` gave both halves to every header and exempted only the H1, on the
+    ground that it is first on the stream. That is true of the H1 and it is not
+    the whole of it: a module banner is the command's TITLE rather than a
+    section, so the first real section on a screen has no section above it
+    either, and its second blank was separating it from nothing on every screen
+    the tool prints. Jan, 2026-08-23: *"Two empty lines above first header is
+    wrong (We are not counting module header)"*. So the banner and the section
+    directly under it both open on `OPENING_GAP`, and everything below keeps the
+    pair.
+
+    **The predicate is a count, deliberately, and the wider one was written and
+    withdrawn.** Asking instead whether the section above printed any ROWS reads
+    as the more principled rule and reaches past the report: measured on the
+    `patch -deploy` screen, a connection block that renders no version rows made
+    `CONNECTING TO SCHEMA <s>:` and `DEPLOYING PATCH:` move too, headers nobody
+    complained about, and a gap that changes with what a section happened to find
+    is the opposite of `#451`'s *"the looks of headers must be consistent!"*.
+    `#372` is the standing form of this: a predicate finer than the instruction
+    ends up writing the design.
+
+    **Three limits, written here rather than found later.** The H1 also takes the
+    branch below on `had_output` alone, which is `False` on the first write of a
+    run, so it keeps its single blank whatever the tracker says. The
+    normalization needs the runtime's own `_StdoutTracker`, so a unit test
+    printing to a bare buffer gets one blank and no verdict, degrading exactly as
+    `announced` does; a stream carrying the normalizer but not the counter falls
+    back to the wider gap, which is the pre-`#494` shape. And it is applied to
+    stdout alone: an error screen renders its banner on stderr while the run's
+    output went to stdout, and only the interleaved result is a screen, which a
+    per-stream counter cannot see. That case keeps its own authority in
+    `settle_screen_before_error`, which normalizes stdout before the stderr
+    banner is written, and its own tests.
+    """
+    if (file is None or file is sys.stdout) and getattr(sys.stdout, "had_output", False):
+        normalize = getattr(sys.stdout, "normalize_trailing_newlines", None)
+        if callable(normalize):
+            # The banner is section 1, so a section above this one means 2 or
+            # more have already been opened.
+            opened = getattr(sys.stdout, "sections_opened", SECTION_GAP)
+            normalize(SECTION_GAP if opened > 1 else OPENING_GAP)
     print(file=file)
     print(f"{message}{(' ' + append).rstrip()}", file=file)
     print("-" * len(message), file=file)
