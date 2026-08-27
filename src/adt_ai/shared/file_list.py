@@ -12,7 +12,7 @@ the trailing slash kept so a folder line cannot be mistaken for a file::
 **One row is one directory** (ADT #507). `#504` gave the list exactly two levels,
 a folder row and a leaf row, so every directory the folder rule did not claim
 stayed glued onto one of them: `UT/be_between.sql` sat on a leaf and
-`patch_scripts/IVORY309/tables_after/` on a folder line. The renderer walks from
+`patch_scripts/APP309/tables_after/` on a folder line. The renderer walks from
 the ANCHOR folder down to the file instead, one row per level, which is what puts
 a script's slot and an `export_db -groups` sub-folder on rows of their own.
 
@@ -87,8 +87,8 @@ def parent_folder(path: str) -> str | None:
 
     **It answers one level higher than the file's own directory** (ADT #507), so
     that directory becomes a row of its own rather than the tail of a folder
-    line. Jan, 2026-08-24, on a per-patch script and an injected template: he
-    asked for `patch_scripts/IVORY309/` with `tables_after/` under it, and for
+    line. On a per-patch script and an injected template that means
+    `patch_scripts/APP309/` with `tables_after/` under it, and
     `config/patch_template/` with `db_end/` under it. `None` means there is
     nothing above to anchor on, and `file_rows` renders whatever directories the
     path itself carries, so a one-directory path comes out unchanged.

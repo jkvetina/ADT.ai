@@ -1,10 +1,10 @@
 # ADT.ai
 
-![Version](https://img.shields.io/badge/version-0.9.3-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Python](https://img.shields.io/badge/python-3.11%2B-blue) [![CI](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml/badge.svg)](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml)
+![Version](https://img.shields.io/badge/version-0.9.4-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Python](https://img.shields.io/badge/python-3.11%2B-blue) [![CI](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml/badge.svg)](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml)
 
 Get your Oracle database and APEX applications into Git, and get your changes back out to the next environment.
 
-![Database in, Git-friendly files out](images/cover.png)
+![Database in, Git-friendly files out](docs/images/cover.png)
 
 Your Oracle code does not live in files. A package body is a row in a dictionary view and an APEX application comes out as one enormous export, so there is nothing for Git to hold and not much anyone can review. The honest answer to what is running in UAT is usually a shrug, and the deployment is a folder of scripts somebody ordered by hand.
 
@@ -12,7 +12,7 @@ ADT.ai is a Python command-line tool for Oracle developers, and it closes that g
 
 Nothing is installed in the database. It is a command you run from your project folder, against a connection you configure, so there is no schema to create and nothing to uninstall when you are done with it.
 
-Build verified by 5347 private unit tests.
+Build verified by 5573 private unit tests.
 
 <br>
 
@@ -24,7 +24,7 @@ Every command below links to its own page in [docs/](docs/README.md), and each d
 
 ### Export
 
-![Get it into the repo](images/export.png)
+![Get it into the repo](docs/images/export.png)
 
 The analysis is done and the change is made, so get it out of the database. Point ADT.ai at a schema and it writes the objects out as ordinary files, one per object, in a layout you configure. Same input, same bytes, every run, so what shows up in version control is a real change and not the export moving things around. APEX applications and table data come out the same way.
 
@@ -36,7 +36,7 @@ The analysis is done and the change is made, so get it out of the database. Poin
 
 ### Check
 
-![Prove it still works](images/check.png)
+![Prove it still works](docs/images/check.png)
 
 Before it ships, prove it. Run the schema's utPLSQL suites and read the coverage per package, validate exported APEXlang without a database at all, and recompile what went invalid. The exit code is the deliverable, so CI can gate on it.
 
@@ -48,7 +48,7 @@ Before it ships, prove it. Run the schema's utPLSQL suites and read the coverage
 
 ### Explore
 
-![Ask questions offline](images/ask.png)
+![Ask questions offline](docs/images/explore.png)
 
 A task starts with questions. What breaks if I change this table? Which pages link to that one? ADT.ai mirrors the dependency and navigation data into local SQLite, so you can ask with the database disconnected and get the answer straight away. The same read-only mirror is what makes it safe to hand to an AI agent: it answers its own questions without touching the database, for a fraction of the tokens a live schema crawl would cost.
 
@@ -63,7 +63,7 @@ A task starts with questions. What breaks if I change this table? Which pages li
 
 ### Set up
 
-![Nothing to install in the database](images/setup.png)
+![Nothing to install in the database](docs/images/setup.png)
 
 None of the above runs until the tool knows how to reach your database, so this is where a project starts. ADT.ai checks the machine it is sitting on and tells you which piece is missing or too old, then scaffolds a project folder with the config and the ignore rules already written. Connections live in files you keep out of the repository.
 
@@ -74,25 +74,25 @@ None of the above runs until the tool knows how to reach your database, so this 
 
 ## Documentation
 
-![No problem for the AI, humans don't read manuals anyway](images/docs.png)
+![No problem for the AI, humans don't read manuals anyway](docs/images/docs.png)
 
-- SETUP.md covers install and environment setup.
+- [SETUP.md](SETUP.md) covers install and environment setup.
 - [docs/README.md](docs/README.md) is the command index; every command in the Commands section above links straight to its own page.
-- [docs/arguments.md](docs/arguments.md) documents the flags every command shares, once, so no command page repeats them.
+- [docs/console.md](docs/console.md#shared-arguments) documents the flags every command shares, once, so no command page repeats them.
 
 <br>
 
 ### Skills
 
-![Real tools, real flags, first try](images/skills.png)
+![Real tools, real flags, first try](docs/images/skills.png)
 
-If you work with an AI agent (Claude Code, Codex, Cursor and friends), install SKILLS/adt/SKILL.md: it teaches the agent the whole command surface, so it drives the exports, checks and patches for you and gets the flags right on the first try. SKILLS/adt-setup/SKILL.md does the same for setting the machine up, and [SKILLS/README.md](SKILLS/README.md) says which of the two to install when.
+If you work with an AI agent (Claude Code, Codex, Cursor and friends), install [skills/adt/SKILL.md](skills/adt/SKILL.md): it teaches the agent the whole command surface, so it drives the exports, checks and patches for you and gets the flags right on the first try. [skills/adt-setup/SKILL.md](skills/adt-setup/SKILL.md) does the same for setting the machine up, and [skills/README.md](skills/README.md) says which of the two to install when.
 
 <br>
 
 ### Install
 
-![One command, then it runs](images/install.png)
+![One command, then it runs](docs/images/install.png)
 
 Open a terminal, clone the production repository, and install the tool:
 
@@ -122,19 +122,19 @@ adtai connection -create -env DEV -schema APP -user APP \
   -host db.example.com -service DEVDB -default -go
 ```
 
-Export your first objects:
+Suggested next steps, each with its own page:
 
-```bash
-adtai export_db
-```
+1) [Export database objects](docs/export_db.md)
+2) [Export table data](docs/export_data.md)
+3) [Export APEX applications](docs/export_apex.md)
 
-If an AI agent runs your machine setup, point it at SKILLS/adt-setup/SKILL.md and let it walk through the whole thing itself.
+If an AI agent runs your machine setup, point it at [skills/adt-setup/SKILL.md](skills/adt-setup/SKILL.md) and let it walk through the whole thing itself.
 
 <br>
 
 ### Quick Start
 
-![TLDR, nobody reads the manual](images/quickstart.png)
+![TLDR, nobody reads the manual](docs/images/quickstart.png)
 
 <br>
 
@@ -195,7 +195,7 @@ adtai discovery -env DEV -sql "SELECT table_name FROM user_tables ORDER BY table
 
 ## Articles
 
-![A thousand ideas, nothing published](images/articles.png)
+![A thousand ideas, nothing published](docs/images/articles.png)
 
 Longer write-ups on what ADT.ai does and how it is used in real Oracle and APEX projects are published on One Oracle Developer:
 

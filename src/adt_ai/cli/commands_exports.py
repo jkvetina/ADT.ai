@@ -41,6 +41,7 @@ from adt_ai.cli.export_apex_owners import (
     _resolve_apex_app_owners,
     resolve_apex_owner_routes,
 )
+from adt_ai.cli.export_apex_reveal import print_reveal_screen
 from adt_ai.cli.export_reporters import ConsoleApexRevealReporter
 from adt_ai.cli.gateways import build_gateway
 from adt_ai.cli.schema_sections import run_schema_sections
@@ -268,12 +269,22 @@ def _run_export_apex(
         # read, so the screen names the inventory being gathered instead of
         # parking on the connection block (`#372`).
         reporter.begin_workspaces()
+        # -reveal is an inventory screen, so only an explicit -ws narrows it
+        # (`#564`, Jan: "-reveal should always reveal all workspaces and apps,
+        # UNLESS -ws is passed"). `apex.workspace` still scopes the per-schema
+        # EXPORT below; here it only marks the ACTIVE row, because a wrong value
+        # in that key used to filter both reads to nothing and leave the screen
+        # empty at exit 0. `-group` and `-app` keep reading the file either way.
+        reveal_workspace = args.ws or None
+        configured_workspace = _apex_scope(
+            schema_connections[connection_schema].apex
+        ).workspace
         for schema in schemas:
             discovery = ApexDiscovery(export_apex_gateway_factory(schema))
             scope = schema_scope[schema]
             applications = discovery.applications(
                 owner     = schema,
-                workspace = scope.workspace,
+                workspace = reveal_workspace,
                 group     = scope.group,
                 app_ids   = scope.app_ids,
                 recent_days = recent_days,
@@ -286,34 +297,17 @@ def _run_export_apex(
                     if _app_in_selection(application.app_id, app_selection)
                 ]
             applications_by_schema[schema] = applications
-        discovery = ApexDiscovery(export_apex_gateway_factory(connection_schema))
-        workspace = schema_scope[connection_schema].workspace
-        is_filtered = bool(args.app) or bool(args.schema)
-        active_workspaces = {
-            app.workspace
-            for apps in applications_by_schema.values()
-            for app in apps
-        }
-        schema_filter = None if is_filtered else schemas
-        all_workspaces = discovery.workspaces(
-            workspace=workspace, schemas=schema_filter, max_app_id=args.max_app_id
+        print_reveal_screen(
+            ApexDiscovery(export_apex_gateway_factory(connection_schema)),
+            reporter,
+            schemas,
+            applications_by_schema,
+            workspace            = reveal_workspace,
+            configured_workspace = configured_workspace,
+            is_filtered          = bool(args.app) or bool(args.schema),
+            widen_owner_counts   = bool(args.owners),
+            max_app_id           = args.max_app_id,
         )
-        owner_filter = None if args.owners else schemas
-        all_owner_counts = discovery.owner_app_counts(owner_filter, max_app_id=args.max_app_id)
-        # Every read first, then every table: reporting between two reads put a
-        # row under a header it had nothing to do with (`#360`, live run). The
-        # rows those two reads grew are gone (`#372`); this ordering is the fix.
-        reporter.workspaces(
-            [w for w in all_workspaces if w.workspace in active_workspaces]
-            if (is_filtered and active_workspaces) else all_workspaces
-        )
-        active_owners = {s for s, apps in applications_by_schema.items() if apps}
-        reporter.owner_counts(
-            [oc for oc in all_owner_counts if oc.owner in active_owners]
-            if (is_filtered and active_owners) else all_owner_counts
-        )
-        for schema in schemas:
-            reporter.applications(schema, applications_by_schema[schema])
         return 0
 
     # Export mode: each schema is its own console segment (connection block

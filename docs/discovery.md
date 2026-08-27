@@ -131,4 +131,4 @@ To run the same query against several schemas separately, run discovery once per
 | `-limit`, `--limit` | No | `200` | Maximum rows rendered per query. |
 | `-nolog`, `--no-log` | No | off | Run without writing a report or touching `.gitignore`. Does not affect the `-file` write-back. |
 
-Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [arguments.md](arguments.md).
+Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

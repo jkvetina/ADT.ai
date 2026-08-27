@@ -41,6 +41,31 @@ NAME_WIDTH = 54
 EMPTY_TYPE_CELL = " " * TYPE_WIDTH
 
 
+def listing_gap() -> list[str]:
+    """The blank line between a section's dashed rule and its first object row.
+
+    Jan, 2026-08-24, holding an `export_db` screen beside a `patch` one:
+    *"Export_db correct, Patch wrong - no line above"*. `EXPORTING <n> OBJECTS:`
+    opened on this blank and the three other object listings did not, because
+    the gap was a bare `print()` at the foot of `export_db`'s `start_export`,
+    owned by one call site instead of by the listing.
+
+    **A listing has two shapes and they share the gap rather than agreeing on
+    it.** A batched listing takes it from `object_rows`, which covers every
+    caller holding its objects up front; a streamed one takes it from
+    `print_listing_gap`, because `export_db` opens its rows one at a time around
+    the DDL pull and has no list to prepend to. Both read this function, so the
+    count lives in one place and a listing written later inherits it.
+    """
+    return [""]
+
+
+def print_listing_gap() -> None:
+    """`listing_gap` straight to the screen, for a listing built row by row."""
+    for row in listing_gap():
+        print(row)
+
+
 def type_separator() -> str:
     """The bare `                     |` row that closes a type group.
 
@@ -126,6 +151,12 @@ def object_rows(objects: Iterable[tuple[str, str]]) -> list[str]:
         rows.extend(formatter.stream_rows(object_type, object_name))
     if rows:
         rows.append(type_separator())
+        # The opening gap rides with the rows rather than being printed by the
+        # caller, which is what `export_db`'s streamed listing did and the
+        # reason no other listing had one (ADT #524). Inside the `if` because a
+        # listing with no objects prints nothing at all, and a lone blank under
+        # a dashed rule is a section that says it found something.
+        rows = listing_gap() + rows
     return rows
 
 

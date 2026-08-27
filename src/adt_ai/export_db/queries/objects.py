@@ -235,6 +235,16 @@ FROM user_scheduler_jobs
 WHERE job_name = :object_name
 """.strip()
 
+# A SCHEDULE hits the same DBMS_METADATA limitation as a JOB above: GET_DDL
+# rejects the literal 'SCHEDULE' object type with ORA-31600, because a
+# scheduler SCHEDULE is stored as a procedural object and fetched through the
+# shared 'PROCOBJ' token like every other DBMS_SCHEDULER object.
+SCHEDULE_DDL_QUERY = """
+SELECT DBMS_METADATA.GET_DDL('PROCOBJ', schedule_name) AS ddl
+FROM user_scheduler_schedules
+WHERE schedule_name = :object_name
+""".strip()
+
 DBMS_METADATA_SETUP_QUERY = """
 BEGIN
     DBMS_METADATA.SET_TRANSFORM_PARAM(DBMS_METADATA.SESSION_TRANSFORM, 'PARTITIONING', TRUE);

@@ -1,5 +1,7 @@
 # Edit the Connection File (adtai connection)
 
+![One file. Your key. Never in git.](images/connection.png)
+
 `connection` manages a project's connection file from the command line instead of by hand-editing YAML. Reach for it to bootstrap a project's first connection, to add an environment or a schema, and to set or rotate a password without ever typing one into a shell.
 
 It resolves the same connection file every other command uses, through `-root` and `-config-dir`, and applies one structural change to it. `-create` can create that file when it is missing; the other actions edit an existing one.
@@ -98,6 +100,8 @@ A filter genuinely holding a value is never overwritten; change one by editing t
 
 Both filters take several patterns, and the two spellings mean the same thing: `ignore: 'TMP_%, BAK_%'` and `ignore: ['TMP_%', 'BAK_%']` read identically, a comma being a separator inside a list item as well as inside a string. A key left blank, or holding only blanks, is no filter at all rather than a filter nothing matches.
 
+Each pattern is SQL LIKE, so a literal `_` or `%` in a name is escaped with `\`. `ignore: 'LEGACY\_%'` skips only names starting `LEGACY_`; unescaped, `LEGACY_%` would skip every name `LEGACY` plus one character plus anything.
+
 There is no shipped connection template, and there never will be: `connections/*` is gitignored because a connection file holds credentials, and `doctor -init` writes only the folder placeholders. Bootstrap your first file with `-create`, which writes the whole structure for you.
 
 For a wallet or APEX project the same action carries the rest:
@@ -178,4 +182,4 @@ Exactly one action flag is required, and each names the further arguments it nee
 | `-encrypt`, `--encrypt` | No | off | With a password-writing action, encrypt the stored value using `-key` or `ADT_KEY`. |
 | `-go`, `--go` | No | off | Apply the change. Without it the command previews and writes nothing. |
 
-Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [arguments.md](arguments.md).
+Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

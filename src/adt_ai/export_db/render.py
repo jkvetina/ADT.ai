@@ -32,6 +32,7 @@ from adt_ai.shared.object_list import (
     EMPTY_TYPE_CELL,
     NAME_WIDTH,
     ObjectRowFormatter,
+    print_listing_gap,
     print_object_rows,
     type_separator,
 )
@@ -43,7 +44,6 @@ __all__ = [
     "ADT_TABLE_INDENT",
     "ConsoleExportDbReporter",
     "ExportDbReporter",
-    "GRANT_OVERVIEW_ROW",
     "OVERVIEW_COLUMNS",
     "_AdtTableLayout",
     "_adt_cell",
@@ -92,7 +92,7 @@ class ExportDbReporter:
     ) -> None:
         pass
 
-    def overview_grants(self, changed: bool) -> None:
+    def overview_grants(self, changed: bool, count: int) -> None:
         pass
 
     def recent_note(self, message: str) -> None:
@@ -135,10 +135,6 @@ class ExportDbReporter:
 # headers; `#442` retired that reading, and a table with no rows in it now
 # prints nothing at all.
 OVERVIEW_COLUMNS = ("object_type", "count")
-
-# The overview row for the grant artifacts, appended once the reads that decide
-# whether it prints have answered (`#437`, `#442`). Read only, never mutated.
-GRANT_OVERVIEW_ROW: Mapping[str, object] = {"object_type": GRANT_OBJECT_TYPE, "count": ""}
 
 class ConsoleExportDbReporter(ExportDbReporter):
     def __init__(self, silent: bool = False, compact: bool = False) -> None:
@@ -227,7 +223,7 @@ class ConsoleExportDbReporter(ExportDbReporter):
         # because there is no longer such a thing as a late row.
         self._overview_rows = rows
 
-    def overview_grants(self, changed: bool) -> None:
+    def overview_grants(self, changed: bool, count: int) -> None:
         """Render the overview table, now that the `GRANT` row is settled.
 
         ``changed`` is what the four reads came back with: at least one artifact
@@ -236,9 +232,15 @@ class ConsoleExportDbReporter(ExportDbReporter):
         rule `#437` was filed on, *"A row must not claim work it might not
         perform"*.
 
-        **A row, and deliberately still no number** (`#382`): `grants_received`
-        writes one file per owner, so the figure a reader would compare against
-        the schema is not the count of anything on screen.
+        ``count`` is how many artifacts this schema exports, filling the cell
+        `#382` left blank because `grants_received` writes one file per owner
+        and no figure compares against the schema. Jan, 2026-08-26: *"You dont
+        list count for grants, cant you do that?"* That objection was to the
+        wrong number, not to a number, since a `VIEW` row counts what the
+        export writes rather than what the schema holds, and one
+        `DatabaseObject` per file is the formula on both (`#565`). The two
+        arguments stay separate: the row PRINTS on what moved and SAYS what is
+        written.
 
         Two ways this prints nothing. No rows and no `GRANT` row means the run
         found nothing at all, and `#442` retired the empty two-line table that
@@ -251,7 +253,7 @@ class ConsoleExportDbReporter(ExportDbReporter):
         if rows is None:
             return
         if changed:
-            rows = [*rows, GRANT_OVERVIEW_ROW]
+            rows = [*rows, {"object_type": GRANT_OBJECT_TYPE, "count": count}]
         if not rows:
             return
         print_adt_table(rows, columns=list(OVERVIEW_COLUMNS))
@@ -338,7 +340,11 @@ class ConsoleExportDbReporter(ExportDbReporter):
             )
             self._bar.begin()
             return
-        print()
+        # This bare `print()` was the ONLY object listing in the tool that
+        # opened on a blank line, and the three that go through `object_rows`
+        # had none, which is the defect ADT #524 was filed on. The gap is the
+        # renderer's now; this call is the streamed half of it.
+        print_listing_gap()
 
     def export_object(
         self,

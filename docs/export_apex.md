@@ -2,7 +2,7 @@
 
 `export_apex` brings APEX workspaces and applications out of the database and into your repository, so an application change is diffable in git like any other code. It is the APEX counterpart to [`export_db`](export_db.md).
 
-`-reveal` answers "what workspaces and applications live in this environment?". The format flags then export an application as one SQL file, as split per-component files, as readable YAML, as APEXlang source, as REST definitions, or as static files. Nothing is exported unless a format was named.
+`-reveal` answers "what workspaces and applications live in this environment?". The format flags decide what an export writes, and nothing is exported unless a format was named.
 
 <br>
 
@@ -58,17 +58,17 @@ CONNECTING TO SCHEMA SANDBOX, DEV:
 WORKSPACES:
 -----------
 
-  WORKSPACE   WORKSPACE ID   OWNERS   APPLICATIONS   DEVELOPERS
-  ---------   ------------   ------   ------------   ----------
-  SANDBOX            90100        1              1            0
+  WORKSPACE   WORKSPACE ID   OWNERS   APPS   DEVELOPERS   ACTIVE
+  ---------   ------------   ------   ----   ----------   ------
+  SANDBOX            90100        1      1            0   Y
 
 
 APPLICATIONS PER LISTED OWNERS:
 -------------------------------
 
-  OWNER     APPLICATIONS
-  -------   ------------
-  SANDBOX              1
+  OWNER     WORKSPACE   APPS
+  -------   ---------   ----
+  SANDBOX   SANDBOX        1
 
 
 APEX APPLICATIONS: SANDBOX | SANDBOX
@@ -82,7 +82,8 @@ APEX APPLICATIONS: SANDBOX | SANDBOX
 TIMER: 0s
 ```
 
-- A schema mapped to no workspace prints the `WORKSPACES:` header and stops. That is what a fresh environment looks like, not an error.
+- `ACTIVE` marks the workspace your connection file names in `apex.workspace`; one no workspace matches gets a `WARNING - WORKSPACE NOT FOUND:` line instead of an empty table.
+- An empty `WORKSPACES:` header means a fresh environment or a `-ws` this instance lacks. Without `-ws`, a workspace the registry withholds is read off the applications, `DEVELOPERS` blank.
 - `UPDATED AT` stays blank for an application nobody has edited since it was installed.
 
 An export keeps that overview and puts a block under an `EXPORTING APP <id>/<alias>:` header, one dotted row per action, each countdown seeded from what that action last cost. The banner and connection block above it are the same lines `-reveal` prints:
@@ -117,9 +118,9 @@ EXPORTING APP 100/ORDERS:
 
 ## Reveal, and how a schema is reached
 
-`-reveal` lists the workspace inventory once, then the applications of every schema configured in the selected environment, unless `-schema` narrows the scan. It keeps one APEX connection open and switches the workspace and security context per schema rather than reconnecting.
+`-reveal` scans every schema configured in the environment unless `-schema` narrows it, keeping one APEX connection open rather than reconnecting per schema. Names match case-insensitively.
 
-Workspace, application group, and application id scope come from each schema's own `apex:` block in the connection file unless the command line overrides them.
+Application group and application id scope come from each schema's own `apex:` block unless the command line overrides them. Workspace scope does too, except under `-reveal`, which lists the whole instance and narrows only to `-ws`.
 
 For a normal export by application id, with no `-schema` and no `-reveal`, ADT.ai first reads the cached `config/internal/apex.db`. When an application's recorded owner differs from the default APEX schema, the run connects straight to that owner and skips the wasted default connection. Several ids that map to different owners each connect to their own.
 
@@ -148,7 +149,7 @@ ADT.ai exports only the formats named on the command line. There are no configur
 
 `-deep` beside `-page` also exports the components recorded for those pages in the dependency mirror, LOVs, lists and authorization schemes among them, and prints a `DB OBJECTS` section of the database objects those pages use.
 
-Version handling is one-way in both directions, read from the one APEX version the connection block already printed. `-apexlang` on an older instance is skipped and the run continues, so `-all` never fails on a pre-26.1 environment. The skip is announced only when you named the format yourself, and is silent under `-all`.
+Version handling reads the one APEX version the connection block already printed. `-apexlang` on an older instance is skipped and the run continues, so `-all` never fails on a pre-26.1 environment. The skip is announced only when you named the format yourself, and is silent under `-all`.
 
 <br>
 
@@ -160,9 +161,7 @@ The folder is recreated on every export, so a component deleted in App Builder l
 
 **Static files are deliberately left out.** An APEXlang export carries the application's static files as binary payloads, and ADT.ai skips those members so the repository never holds two copies, `-files` being the single static-file channel. The metadata that references them is still exported.
 
-That makes `apexlang/` a source and editing surface rather than a directly importable artifact. It does not have to be one: [`validate`](validate.md) assembles the complete application on demand by hardlinking the metadata and the `files/` export into one staging tree.
-
-So the export stays single-copy and the compiler still sees a whole application. Run `-files` alongside `-apexlang`, or use `-all`, so the payloads exist to stage.
+That makes `apexlang/` a source and editing surface rather than a directly importable artifact. It does not have to be one: [`validate`](validate.md) assembles the complete application on demand by hardlinking the metadata and the `files/` export into one staging tree. Run `-files` alongside `-apexlang`, or `-all`, so the payloads exist to stage.
 
 <br>
 
@@ -207,7 +206,7 @@ Without an explicit format, a non-reveal `-recent` is report-only: it exports no
 
 `-rest` and `-files_ws` write under a path carrying no application id, so both belong to the schema rather than to an application. That gives a run two shapes, and which one you get depends on whether a per-application format was selected too.
 
-**Only schema-level formats selected.** The run exports no application, so it lists none: no `APEX APPLICATIONS:` table, no per-application block, and one bare `EXPORTING:` header over the progress rows in each schema segment. The schema is not repeated in that header, since the connection block three lines above already names it. Nothing per-application runs, so a schema with seventeen applications costs one workspace export rather than seventeen passes. One application is still used, silently and never named, to put the workspace security context in place, and a schema hosting none needs no context at all.
+**Only schema-level formats selected.** The run exports no application, so it lists none: no `APEX APPLICATIONS:` table, no per-application block, and one bare `EXPORTING:` header over the progress rows in each schema segment. The schema is not repeated there: the connection block three lines above already names it. Nothing per-application runs, so a schema with seventeen applications costs one workspace export rather than seventeen passes. One application is still used, silently and never named, to put the workspace security context in place, and a schema hosting none needs no context at all.
 
 **A per-application format selected too.** The screen is unchanged: the overview, a block per application, and the schema-level row inside the **first** application's block among its other rows, so one row does not cost a section of its own. A schema hosting no application has no block for that row to sit in, and is the one case that prints its own `SCHEMA <name>, EXPORTING:` header.
 
@@ -231,7 +230,7 @@ Either way the slices run once per schema, and both are timed under the workspac
 | `-my`, `--my` | No | off | Filter them to the current git user, resolving author aliases from the cache and the discovered workspace developers. |
 | `-release`, `--release` | No | none | Override `p_release` values in the exported SQL. |
 | `-reveal`, `--reveal` | No | off | Show the matching workspaces and applications, exporting nothing. |
-| `-owners`, `--owners` | No | off | In reveal mode, count applications for all APEX owners rather than only the configured schemas. |
+| `-owners`, `--owners` | No | off | In reveal mode, count applications for all APEX owners rather than only the configured schemas. It widens the counts, never the list. |
 | `-all`, `--all` | No | off | Export every supported format. |
 | `-full`, `--full` | No | off | Export the full application SQL. |
 | `-split`, `--split` | No | off | Export split application source. |
@@ -243,4 +242,4 @@ Either way the slices run once per schema, and both are timed under the workspac
 | `-files_ws`, `--files_ws`, `--files-ws` | No | off | Export the static workspace files. **Schema-level**, exactly like `-rest`. |
 | `-compact`, `--compact` | No | off | Replace the per-application blocks and their rows with one time-weighted progress bar per schema segment, keeping the `APEX APPLICATIONS:` overview above it. |
 
-Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [arguments.md](arguments.md).
+Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

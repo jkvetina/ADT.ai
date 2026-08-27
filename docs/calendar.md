@@ -96,4 +96,4 @@ The default author is your own `git config user.email`, and activity is sourced 
 | `-calendar [OFFSET]`, `--calendar [OFFSET]` | No | `0` | Month selector by offset. Bare `-calendar` is the current month; an integer is that many months back. |
 | `-by`, `--by` | Yes | your `git config user.email` | Author email or name substring, repeatable. Replaces the default "my commits" author. |
 
-Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [arguments.md](arguments.md).
+Shared options (-root, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

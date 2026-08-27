@@ -32,6 +32,8 @@ adtai search_repo -type "PACKAGE%"
 adtai search_repo -name "SHOP%"
 ```
 
+A literal `_` or `%` in a name is escaped with `\`, the same character SQL LIKE always has: `-name 'CORE\_LOCK'` matches only that name, where `-name CORE_LOCK` would also match `COREXLOCK`. Quote the flag, or the shell eats the backslash before ADT.ai ever sees it.
+
 Search by author, branch, commit reference, hash prefix, or date. `-by` is a pattern too, so a partial address needs its own `%`:
 
 ```bash
@@ -136,4 +138,4 @@ Terms inside one flag are AND-matched, and different flags are AND-matched with 
 | `-restore`, `--restore` | No | off | Write the matched historical versions beside the originals. |
 | `-stage`, `--stage` | No | off | With `-restore`, write to the original paths and `git add` them. |
 
-Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [arguments.md](arguments.md).
+Shared options (-root, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

@@ -29,6 +29,7 @@ class ObjectDiscovery:
     MVIEW_LOGS_QUERY       = queries.MVIEW_LOGS_QUERY
     MVIEW_LOG_DDL_QUERY    = queries.MVIEW_LOG_DDL_QUERY
     JOB_DDL_QUERY          = queries.JOB_DDL_QUERY
+    SCHEDULE_DDL_QUERY     = queries.SCHEDULE_DDL_QUERY
     DBMS_METADATA_SETUP_QUERY = queries.DBMS_METADATA_SETUP_QUERY
     GRANTS_MADE_QUERY      = queries.GRANTS_MADE_QUERY
     GRANTS_RECEIVED_QUERY  = queries.GRANTS_RECEIVED_QUERY
@@ -496,6 +497,11 @@ def _ddl_query(database_object: DatabaseObject) -> tuple[str, dict[str, str]]:
     if object_type == "MVIEW LOG":
         return (
             queries.MVIEW_LOG_DDL_QUERY,
+            {"object_name": database_object.name},
+        )
+    if object_type == "SCHEDULE":
+        return (
+            queries.SCHEDULE_DDL_QUERY,
             {"object_name": database_object.name},
         )
     return (

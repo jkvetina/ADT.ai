@@ -168,6 +168,26 @@ def add_export_parsers(subparsers) -> None:
         action = "store_true",
         help   = "show input parameters and SQL queries with bind values",
     )
+    export_data.add_argument(
+        "--groups",
+        "-groups",
+        nargs  = "*",
+        default= None,
+        metavar= "PREFIX",
+        help   = "list how exported tables would reorganize into data/<group>/ "
+                 "subfolders, moving nothing and never connecting; PREFIX lists only "
+                 "those groups, bare -groups auto-detects by prefix",
+    )
+    export_data.add_argument(
+        "--force",
+        "-force",
+        nargs   = "?",
+        const   = True,
+        default = False,
+        metavar = "GROUP",
+        help    = "with -groups, apply the listed moves; -force GROUP lands every "
+                  "prefix -groups named in one data/GROUP/ folder",
+    )
     add_connection_key_argument(export_data)
 
     export_apex = subparsers.add_parser(

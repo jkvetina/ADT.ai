@@ -240,10 +240,10 @@ The rebuild is the slowest thing this command can be asked to do. It runs under 
 
 | Argument | Repeatable | Default | Description |
 | -------- | ---------- | ------- | ----------- |
-| `-name`, `--name` | Yes | everything | Name pattern or patterns, comma- or space-separated, with `%` and `_` LIKE wildcards. Selects the suites to run, and names itself in the `RUNNING TESTS FOR <PATTERNS>:` header. LIKE wildcards, not regex; `ut_pattern` is what uses regular expressions. |
+| `-name`, `--name` | Yes | everything | Name pattern or patterns, comma- or space-separated, with `%` and `_` LIKE wildcards (`\` escapes a literal one, quoted: `-name 'APP\_INT%'`). Selects the suites to run, and names itself in the `RUNNING TESTS FOR <PATTERNS>:` header. LIKE wildcards, not regex; `ut_pattern` is what uses regular expressions. |
 | `-refresh`, `--refresh` | No | off | Rebuild utPLSQL's annotation cache for the schema before discovery, so a suite compiled since the last run is found. |
 | `-gate [N]`, `--gate [N]` | No | off | Fail the run when a tested package's `COVERAGE` is below a threshold. With a number that number is the threshold; bare it comes from `ut_coverage_gate`; absent nothing gates. See [ut_coverage.md](ut_coverage.md). |
 | `-silent`, `--silent` | No | off | Suppress whatever the mode prints between the connection block and `SUMMARY PER SUITE:`. The banner, connection block, `ERRORS & FAILURES:` when a run has any, the summaries and the timer stay. Outranks `-verbose`. |
 | `-verbose`, `--verbose` | No | off | Print `UNIT TESTS SUITES:` and then `TEST RESULTS:`, a row per test under its package heading, instead of the progress bar. The heading is streamed before the suite runs and its rows land once the verdict is known. Ignored under `-silent`. |
 
-Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [arguments.md](arguments.md).
+Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

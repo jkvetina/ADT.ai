@@ -2,7 +2,7 @@
 
 `doctor` tells you whether this machine can run ADT.ai, and what is out of date. Run it after installing, after a toolchain upgrade, or whenever a command fails in a way that smells environmental rather than like a bug. It also owns the explicit updates and the project scaffolding, since neither should ever happen behind your back.
 
-Installation and environment setup are in SETUP.md; this page owns what the command does.
+Installation and environment setup are in [SETUP.md](../SETUP.md); this page owns what the command does.
 
 <br>
 
@@ -48,7 +48,7 @@ APEX DEPLOYMENT TOOL - DOCTOR
 
 CURRENT VERSIONS:
 -----------------
-  ADT.ai               | 0.9.2 + WIP
+  ADT.ai               | 0.9.3
   Python               | 3.13.5
   Git                  | 2.50.1 (Apple Git-155)
   Java                 | 20 2023-03-21
@@ -67,7 +67,6 @@ ENVIRONMENT:
   NLS_LANG             | AMERICAN_AMERICA.AL32UTF8
   ORACLE_HOME          | /Users/dev/.instantclient_23_3
   SQLCL                | /Users/dev/.instantclient_23_3/sqlcl/bin/sql
-  HYDRATED             | ADT_ENV, ADT_KEY, ORACLE_HOME from ~/.zshrc
 
 
 TIMER: 1s
@@ -75,7 +74,7 @@ TIMER: 1s
 
 - A bare version row is good news: that value was detected and no newer one was found, or online checks were skipped.
 - `ADT_KEY` is never printed. A value renders as `<redacted>` and a missing one as `<empty>`.
-- `HYDRATED` appears only when ADT.ai had to fill its own environment in, which is the usual case under an AI tool whose shell never sourced your startup file. It names variables and never values.
+- The `ENVIRONMENT:` rows are what the process actually holds, so a run under an AI tool shows the values ADT.ai filled in for itself from your startup file. How that works is on [config.md](config.md#environment-variables).
 - Status words append after a dot leader, capped at 78 characters.
 
 <br>
@@ -91,18 +90,6 @@ TIMER: 1s
 Plain `doctor` is read-only. It never runs `git pull`, never installs anything, never fetches or replaces SQLcl, and never stashes your work. By default it does check online for newer ADT.ai, Java, SQLcl, `oracledb` and Instant Client, which `-offline` turns off.
 
 For ADT.ai itself, an editable or git install is compared against its own configured `origin`, and a normal install against the latest public GitHub release before falling back to PyPI metadata. Update subprocesses force English and UTF-8 settings, so a local language override cannot change what SQLcl, Oracle or pip report back.
-
-<br>
-
-## The version row and its WIP marker
-
-The `ADT.ai` row reports the package's own version, which is the last published release. In a git checkout, an editable install, or the repository itself, the row appends a marker:
-
-```text
-  ADT.ai               | 0.9.2 + WIP
-```
-
-The checkout is that release plus whatever landed since, so it does not claim to *be* the release. An installed copy has nothing beyond it and shows the bare number. The marker is display-only: the online comparison and the upgrade paths use the bare version, so a checkout level with its release is never reported as out of date.
 
 <br>
 
@@ -142,10 +129,12 @@ ACTIONS:
 
 Which way the number moves is not this command's business. An older release is checked out exactly like a newer one, with no confirmation and no override flag, which is how you step back off a release that broke you and how you match the version a colleague is running. `v0.9.1` and `0.9.1` are the same request.
 
-How the release is found depends on the install:
+**A shorter version names a LINE, not one release.** `-update 0.3` lands the newest `0.3.x` release, whichever one that is; `-update 0.9.1` still lands exactly that one and only that one. Every ADT.ai release has always been three-part, so a shorter request can only ever mean "the newest on this line."
 
-- **A git checkout**, the documented install, fetches tags from its own `origin` and checks out `v<version>`, falling back to a bare `<version>` tag. Release tags live in the public repository, so a checkout that carries none cannot resolve one. A pinned checkout sits on a detached HEAD, and a later bare `-update` returns it to the remote's default branch before pulling, so latest is always one command away.
-- **Anything else** installs the tagged release with pip.
+How the release is found depends on the install, and both spellings, `v<version>` and a bare `<version>`, work either way:
+
+- **A git checkout**, the documented install, fetches tags from its own `origin` and resolves the release against them. Release tags live in the public repository, so a checkout that carries none (an editable install backed by the private DEV repository, for instance) cannot resolve one; this is a real limitation of that install, not a bug, since there is nothing else to check out. A pinned checkout sits on a detached HEAD, and a later bare `-update` returns it to the remote's default branch before pulling, so latest is always one command away.
+- **Anything else** resolves the release against the public repository's own tags (no local checkout to ask) and installs it with pip. A fully-specified release tries the `v`-prefixed tag first and falls back to the bare spelling with no extra network round trip; a shorter one always asks the public repository which release the line's newest tag is, since pip cannot resolve an ambiguous ref on its own.
 
 A version with no release **fails and stays put**. The `ADT.ai` row reads `FAILED` with the version and the remote it was looked for in underneath, the run exits non-zero, and the checkout does not move.
 
@@ -173,7 +162,9 @@ Between two releases that both carry the flag, `-update <version>` and bare `-up
 
 ## Scaffolding a project
 
-`-init` writes the project override config, copies ADT.ai's current root `.gitignore` and the `config/patch_template/` scaffold verbatim, and writes the `connections/.gitkeep` and `connections/wallets/.gitkeep` placeholders. It creates no cache folders, no APEX credential folders, no connection YAML and no wallet contents. Existing generated files are skipped, and `-force` overwrites them.
+`-init` writes the project override config and `config/IDENTITY.yaml`, copies ADT.ai's current root `.gitignore` and the `config/patch_template/` scaffold verbatim, and writes the `connections/.gitkeep` and `connections/wallets/.gitkeep` placeholders. It creates no cache folders, no APEX credential folders, no connection YAML and no wallet contents. Existing generated files are skipped, and `-force` overwrites them.
+
+`config/IDENTITY.yaml` is prefilled from the project folder's own `git config user.name`/`user.email` where it has one, and ships with a commented `db_schema` placeholder either way, the database half has no git equivalent to read. See [Developer identity](config.md#developer-identity).
 
 The patch templates are scaffolded because `patch -create` reads them from the **project** root, so a folder that only ships with ADT.ai is a folder nobody has. All eight land verbatim, see patch templates for the slots and what each file does.
 
@@ -192,7 +183,7 @@ Patch *scripts* are not scaffolded: `patch_scripts/` is per patch code and gener
 | `-offline` | No | off | Skip the online update checks and show local versions only. |
 | `-update [VERSION]` | No | off | Run the full ADT.ai, Python requirements and SQLcl update. A version lands ADT.ai on that release, up or down, instead of the latest. Cannot be combined with `-sqlcl`. |
 | `-sqlcl` | No | off | Upgrade SQLcl only, reading Oracle's own download page for the current release and replacing the resolved install folder. Runs immediately, and cannot be combined with `-update`. |
-| `-init` | No | off | Scaffold the project config, the root `.gitignore`, `config/patch_template/`, and the connection and wallet placeholders. |
+| `-init` | No | off | Scaffold the project config, `config/IDENTITY.yaml`, the root `.gitignore`, `config/patch_template/`, and the connection and wallet placeholders. |
 | `-force`, `--force` | No | off | With `-init`, overwrite generated template files that already exist. |
 
-Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [arguments.md](arguments.md).
+Shared options (-root, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

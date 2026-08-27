@@ -121,7 +121,7 @@ Each heading doubles as the verdict's definition:
 - **SOURCE**, the object's own text does not parse (`PLS-00103`). Nothing upstream to fix, so no list follows it.
 - **UNKNOWN**, invalid with no compile error to explain it. Also listless.
 
-The knock-ons are classified but not listed again: `INVALID OBJECTS:` above already names every one of them.
+The knock-ons are classified but not listed again: `INVALID OBJECTS:` above already names them.
 
 The ranking reads three sources, because no one of them is enough:
 
@@ -232,8 +232,8 @@ What the sweep guarantees:
 
 | Argument       | Repeatable | Default | Description |
 | -------------- | ---------- | ------- | ----------- |
-| `-type`, `--type` | Yes | `%` | Object type pattern or patterns, repeatable, comma- or space-separated, with `%` wildcards. Oracle type names, so a bare `PACKAGE` means specifications only. See [Object types](#object-types). |
-| `-name`, `--name` | Yes | `%` | Object name pattern or patterns, repeatable, comma- or space-separated, with `%` wildcards. |
+| `-type`, `--type` | Yes | `%` | Object type pattern or patterns, comma- or space-separated, `%`/`_` wildcards, `\`-escaped. Oracle type names, so a bare `PACKAGE` means specifications only. See [Object types](#object-types). |
+| `-name`, `--name` | Yes | `%` | Object name pattern or patterns, comma- or space-separated, `%`/`_` wildcards, `\`-escaped: `-name 'CORE\_LOCK'`. |
 | `-force`, `--force` | No | off | Recompile all matching objects, not just invalid ones. Beside a compile modifier it narrows to the objects whose settings drift from the requested state. |
 | `-level`, `--level` | No | none | PL/SQL optimize level (1-3). |
 | `-native`, `--native` | No | off | Compile PL/SQL to native code. |
@@ -247,4 +247,4 @@ What the sweep guarantees:
 | `-trailing`, `--trailing` | No | off | Strip trailing whitespace from stored source through `CREATE OR REPLACE`, scoped by `-type` and `-name`. |
 | `-silent`, `--silent` | No | off | Suppress object overview details while keeping the banner, connection block and final timer. |
 
-Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [arguments.md](arguments.md).
+Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

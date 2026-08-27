@@ -142,4 +142,4 @@ Targets are collected in this order, and `-input` and `-app` can be combined:
 | `-app`, `--app` | Yes | none | Application id or ids whose exported `apexlang/` folder to validate, resolved offline through `config/internal/apex.db`. |
 | `-silent`, `--silent` | No | off | Suppress the per-folder rows; keep the banner, the message sections and the timer. |
 
-Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [arguments.md](arguments.md).
+Shared options (-root, -config-dir, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

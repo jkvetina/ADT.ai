@@ -161,8 +161,8 @@ class Ut3Runner:
         # the schema's own package list can say whether that name is a package,
         # so the pairing is finished in there and the corrected suites replace
         # the ones discovery guessed (`#436`). Everything downstream reads a
-        # suite's target — the `COVERAGE` cell, the module roll-up's line count,
-        # the change table — so re-pointing it in one place re-points all of them.
+        # suite's target (the `COVERAGE` cell, the module roll-up's line count,
+        # the change table), so re-pointing it in one place re-points all of them.
         outcome = build_coverage_report(
             self.gateway,
             owner,

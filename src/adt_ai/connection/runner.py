@@ -408,7 +408,7 @@ class ConnectionEditor:
         password: str | None,
     ) -> None:
         if password is None:
-            return  # pragma: no cover — dead guard: every call site already checks truthiness first
+            return  # pragma: no cover, dead guard: every call site already checks truthiness first
         if request.encrypt:
             try:
                 key = crypto.resolve_key(request.key)

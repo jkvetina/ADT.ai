@@ -1,5 +1,7 @@
 # Where the Password Lives (adtai)
 
+![Plain text, encrypted, your vault, or no password at all.](images/connection_passwords.png)
+
 A connection file can hold a password as cleartext, hold it encrypted, hold a command that fetches it from your own vault, or hold no password at all. This page covers the stored format, the four ways of not storing one, how a loaded credential is masked, and how to change the encryption key.
 
 [connection.md](connection.md) covers the command that writes these values, and [connection_security.md](connection_security.md) states the same ground for a security reviewer rather than a developer.
@@ -67,7 +69,6 @@ The wallet password has the same key on the wallet block as `wallet_pwd_cmd:`, a
 pwd_cmd: op read op://Engineering/DEV_APP/password
 pwd_cmd: vault kv get -field=password secret/oracle/dev/app
 pwd_cmd: pass show oracle/dev/app
-pwd_cmd: az keyvault secret show --vault-name adt-dev --name app-password --query value -o tsv
 ```
 
 <br>
@@ -155,10 +156,7 @@ It is declared as a Windows-only dependency, so an ordinary install on Windows a
 
 What that costs is one database session per statement instead of one per run. Almost nothing notices, because every statement carries its own connect and its own session setup, so the output and the files are the same.
 
-Two commands do notice, since they need two statements to land in one session. On Windows they stop with a message saying so rather than handing back an empty answer:
-
-- `export_apex` fills an APEX collection with one statement and reads it with the next.
-- `ut` starts a coverage profiler, runs the tests, then reads the profile.
+Two commands do notice, since they need two statements to land in one session, `export_apex` (fills an APEX collection with one statement, reads it with the next) and `ut` (starts a coverage profiler, runs the tests, then reads the profile). On Windows they stop with a message saying so rather than handing back an empty answer.
 
 Run those two with the switch off, or from macOS or Linux.
 
@@ -196,7 +194,7 @@ mkstore -wrl /secure/seps_prod -create
 mkstore -wrl /secure/seps_prod -createCredential ADT_PROD_APP APP
 ```
 
-Two requirements come with the mode, and both are the driver's rather than ours. It is **thick mode only**, so ADT.ai turns thick on for you when it sees `auth: external` rather than making you set two things that only work together. And it needs the **Oracle client libraries** on the machine, which SETUP.md covers; point `client_lib_dir` at them.
+Two requirements come with the mode, and both are the driver's rather than ours. It is **thick mode only**, so ADT.ai turns thick on for you when it sees `auth: external` rather than making you set two things that only work together. And it needs the **Oracle client libraries** on the machine, which [SETUP.md](../SETUP.md) covers; point `client_lib_dir` at them.
 
 Being exact about what it is: SEPS is still password authentication, and the database reports the authentication method as `PASSWORD` rather than external. What changes is who holds the password.
 

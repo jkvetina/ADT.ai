@@ -14,6 +14,26 @@ from adt_ai.doctor._base import (
 )
 
 
+def _matching_tag(tags: set[str], release: str) -> str:
+    """The tag `release` names, or the newest tag on the LINE it names, or "".
+
+    An exact spelling wins outright when it exists, `v{release}` preferred
+    over the bare form, matching what `_release_tag` has always done for a
+    fully-specified release. Failing that, every tag whose own release prefix
+    equals `release` at a genuine version-segment boundary is a candidate
+    (`0.3` names the line `v0.3.0`/`v0.3.1`/... starts, never `v0.30.0`, which
+    shares the string `0.3` but not the version), and the highest by
+    `_version_key` wins, the answer to "the newest 0.3.x release" once `tags`
+    actually carries the 0.3.x line.
+    """
+    exact = {candidate for candidate in (f"v{release}", release) if candidate in tags}
+    if exact:
+        return f"v{release}" if f"v{release}" in exact else release
+    prefix = f"{release}."
+    matching = [tag for tag in tags if tag.removeprefix("v").startswith(prefix)]
+    return max(matching, key=_version_key) if matching else ""
+
+
 class DoctorUpgradeMixin:
     def _install_requirements(self, lines: list[str]) -> DoctorResult:
         label = "Python requirements"
@@ -85,11 +105,15 @@ class DoctorUpgradeMixin:
                 tag = self._release_tag(repo_root, release)
                 if not tag:
                     origin = self._origin_url(repo_root)
+                    wanted = (
+                        f"v{release}.* or {release}.*"
+                        if release.count(".") < 2
+                        else f"v{release} or {release}"
+                    )
                     return self._fail_action(  # type: ignore[attr-defined]
                         lines,
                         label,
-                        f"no release {release} in {origin}: it carries no tag "
-                        f"v{release} and no tag {release}.",
+                        f"no release {release} in {origin}: it carries no tag matching {wanted}.",
                     )
             # The user may have local edits in the ADT.ai checkout. Stash them
             # (tracked + untracked) so the update lands cleanly, then re-apply
@@ -149,19 +173,62 @@ class DoctorUpgradeMixin:
         label  : str,
         release: str,
     ) -> DoctorResult:
-        command = (
-            ["pip3", "install", f"git+{ADT_AI_GITHUB_REPO_URL}@v{release}"]
-            if release
-            else ["pip3", "install", "--upgrade", "adt-ai"]
-        )
+        if release and release.count(".") < 2:
+            # A short version (`0.3`) names a LINE, and pip's `git+URL@ref`
+            # cannot resolve an ambiguous ref itself, so the exact tag is
+            # settled first, against the public repo, the only one that ever
+            # carries a release tag.
+            tag = self._public_release_tag(release)
+            if not tag:
+                return self._fail_action(  # type: ignore[attr-defined]
+                    lines,
+                    label,
+                    f"no release {release} in {ADT_AI_GITHUB_REPO_URL}: it carries no "
+                    f"tag matching v{release}.* or {release}.*.",
+                )
+            return self._run_pip_install(lines, label, f"git+{ADT_AI_GITHUB_REPO_URL}@{tag}")
+        if not release:
+            return self._run_pip_install(lines, label, "--upgrade", "adt-ai")
+        # A fully-specified release still tries the `v`-prefixed spelling
+        # first and falls back to the bare one, the two spellings a real tag
+        # has ever used, with no extra network round trip to tell them apart.
         try:
             output = self.command_runner(  # type: ignore[attr-defined]
-                command,
+                ["pip3", "install", f"git+{ADT_AI_GITHUB_REPO_URL}@v{release}"],
+                None,
+                self._command_env(),  # type: ignore[attr-defined]
+            )
+        except Exception:
+            return self._run_pip_install(lines, label, f"git+{ADT_AI_GITHUB_REPO_URL}@{release}")
+        return self._pip_install_result(lines, label, output)
+
+    def _public_release_tag(self, release: str) -> str:
+        """`_matching_tag` against the PUBLIC repo's own tags, fetched with no
+        local checkout: `pip install` never has one to ask."""
+        listed = self.command_runner(  # type: ignore[attr-defined]
+            ["git", "ls-remote", "--tags", ADT_AI_GITHUB_REPO_URL],
+            None,
+            self._command_env(),  # type: ignore[attr-defined]
+        )
+        tags = {
+            ref.rsplit("refs/tags/", 1)[-1]
+            for ref in listed.splitlines()
+            if "refs/tags/" in ref and not ref.endswith("^{}")
+        }
+        return _matching_tag(tags, release)
+
+    def _run_pip_install(self, lines: list[str], label: str, *args: str) -> DoctorResult:
+        try:
+            output = self.command_runner(  # type: ignore[attr-defined]
+                ["pip3", "install", *args],
                 None,
                 self._command_env(),  # type: ignore[attr-defined]
             )
         except Exception as error:
             return self._fail_action(lines, label, str(error))  # type: ignore[attr-defined]
+        return self._pip_install_result(lines, label, output)
+
+    def _pip_install_result(self, lines: list[str], label: str, output: str) -> DoctorResult:
         version, upgraded = self._parse_pip_upgrade(output)
         if upgraded:
             self._end_action(lines, label, self._updated_outcome(version))  # type: ignore[attr-defined]
@@ -177,18 +244,24 @@ class DoctorUpgradeMixin:
         )
 
     def _release_tag(self, repo_root: Path, release: str) -> str:
-        """The tag naming this release, preferring the `v` form, or "" for none.
+        """The tag naming this release, or the newest one on that line, or "".
 
-        Both spellings are asked for in one `git tag --list`, so a repo that
-        tags either way answers in a single command and a repo that tags neither
-        (any checkout that is not the public one) answers with nothing.
+        A fully-specified release (`0.9.1`, three parts) asks for exactly the
+        two spellings `git tag --list` might carry, unchanged from before this
+        query ever had to consider anything shorter. A shorter one (`0.3`,
+        `-update`'s whole point per Jan, 2026-08-24: *"any version support
+        upgrading to latest version and from that he can downgrade to anything
+        again"*) asks the same two plus their `.*` extensions, since ADT.ai has
+        never tagged a two-part release and never will, every real tag is
+        three parts, so a two-part ask is a LINE, not a release, and
+        `_matching_tag` picks the newest one on it.
         """
-        listed = self._git(repo_root, "tag", "--list", f"v{release}", release)
+        queries = [f"v{release}", release]
+        if release.count(".") < 2:
+            queries = [f"v{release}.*", f"{release}.*", *queries]
+        listed = self._git(repo_root, "tag", "--list", *queries)
         tags = {line.strip() for line in listed.splitlines() if line.strip()}
-        for candidate in (f"v{release}", release):
-            if candidate in tags:
-                return candidate
-        return ""
+        return _matching_tag(tags, release)
 
     def _origin_url(self, repo_root: Path) -> str:
         try:

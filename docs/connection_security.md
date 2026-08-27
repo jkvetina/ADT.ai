@@ -1,5 +1,7 @@
 # Credential Handling (how ADT.ai treats your database passwords)
 
+![No credential store hides a secret from software already allowed to use it.](images/connection_security.png)
+
 This page is written for the person who has to approve ADT.ai, not for the developer using it. It says where a credential lives, what protects it, and what to change if storing the password at all is unacceptable to you.
 
 It also states plainly the two things ADT.ai does not protect against, because a tool that overclaims on credentials is not one you should trust with them. Nothing here is aspirational: every control below is shipped.
@@ -104,4 +106,4 @@ A credential that can only read a development schema, only from one host, only d
 
 If your reviewer needs something not covered here, ask. A requirement we can implement is more useful to us than a workaround you have to maintain, and every control on this page got here because a customer asked for exactly that.
 
-Related: [connection.md](connection.md) for the `connection` command, [connection_passwords.md](connection_passwords.md) for the stored formats and the vault options, and SETUP.md for installation.
+Related: [connection.md](connection.md) for the `connection` command, [connection_passwords.md](connection_passwords.md) for the stored formats and the vault options, and [SETUP.md](../SETUP.md) for installation.

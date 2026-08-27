@@ -252,7 +252,7 @@ class CompactApexProgressReporter:
         """How far along the segment reads right now, in budget seconds.
 
         The estimate carries the row while the run keeps up with it, and the
-        wall clock takes over when it does not — the same blend the per-action
+        wall clock takes over when it does not, the same blend the per-action
         bar uses (`min(max(progress, elapsed), target)`), lifted from one action
         to the whole segment. Without the clock floor, a run twice as slow as
         its history would freeze mid-slice with a countdown that never moved.

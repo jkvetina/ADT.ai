@@ -10,6 +10,10 @@ from adt_ai.cli.constants import (
 )
 from adt_ai.shared.progress import FixedWidthProgressPrinter, schema_label
 
+#: A constant rather than a literal at the call site, so a rename sweeps through
+#: one edit and the docs grep for it has something to find (`#509`, `#555`).
+WORKSPACE_NOT_FOUND_HEADER = "WARNING - WORKSPACE NOT FOUND:"
+
 
 class ConsoleApexRevealReporter:
     def begin_workspaces(self) -> None:
@@ -24,19 +28,45 @@ class ConsoleApexRevealReporter:
         """
         print_adt_header("WORKSPACES:")
 
-    def workspaces(self, workspaces: list[ApexWorkspace]) -> None:
+    def workspaces(
+        self,
+        workspaces: list[ApexWorkspace],
+        configured_workspace: str | None = None,
+    ) -> None:
+        """The instance's workspaces, with the configured one marked `ACTIVE`.
+
+        `configured_workspace` is `apex.workspace` from the connection file. It
+        stopped narrowing this screen on `#564` and now only marks a row, so a
+        value naming nothing marks nothing rather than emptying the table.
+        Matched case-blind: both sides are Oracle identifiers, and the file
+        spells them however the person who wrote it felt like.
+        """
+        configured = (configured_workspace or "").upper()
         print_adt_table(
             [
                 {
                     "workspace": workspace.workspace,
                     "workspace_id": workspace.workspace_id,
                     "owners": workspace.owners,
-                    "applications": workspace.applications,
+                    "apps": workspace.applications,
                     "developers": workspace.developers,
+                    "active": "Y" if workspace.workspace.upper() == configured else "",
                 }
                 for workspace in workspaces
             ]
         )
+
+    def workspace_not_found(self, workspace: str, source: str) -> None:
+        """Someone named a workspace this instance does not have (`#564`).
+
+        Before this the screen simply came back empty at exit `0`, which is what
+        Jan hit on 2026-08-26 with a schema name sitting in `apex.workspace`,
+        and read as ADT failing to identify a workspace it had just listed
+        applications for.
+        """
+        print_adt_header(WORKSPACE_NOT_FOUND_HEADER)
+        print(f"  {workspace} ({source}) matches no workspace on this instance")
+        print()
 
     def owner_counts(self, owner_counts: list[ApexOwnerCount]) -> None:
         if not owner_counts:
@@ -46,7 +76,8 @@ class ConsoleApexRevealReporter:
             [
                 {
                     "owner": owner_count.owner,
-                    "applications": owner_count.applications,
+                    "workspace": owner_count.workspace,
+                    "apps": owner_count.applications,
                 }
                 for owner_count in owner_counts
             ]

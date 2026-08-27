@@ -96,6 +96,22 @@ A null or empty value writes no file. Every non-empty payload also gets a SQL-on
 
 `export_data` writes no `.gitignore` of its own. `adtai doctor -init` puts `**/data/*/*.sql` in the project root's, which keeps the generated payload scripts ignored while the table MERGE stays trackable.
 
+**That pattern is depth-based and was written before groups existed.** A grouped table's own `data/<GROUP>/<table>.sql` sits at the same one-directory depth the pattern ignores. Grouping a table that also has sidecar columns needs its own gitignore exception, `!data/<GROUP>/<table>.sql`, until this is revisited.
+
+<br>
+
+## Groups
+
+Table exports reorganize into `data/<GROUP>/` subfolders the same way `export_db -groups` does: `-groups` previews the moves and makes none, `-force` applies them. A table's CSV, its `.sql` MERGE (when it has one), and its sidecar folder (when it has one) always move together, so a grouped table never strands the BLOB/CLOB payloads beside it.
+
+```bash
+adtai export_data -groups INV_
+adtai export_data -groups INV_ -force
+adtai export_data -groups INV_ INV_ARCHIVE -force INVOICING
+```
+
+Bare `-groups` auto-detects groups by prefix across the flat CSVs already on disk, the same `groups_min` config threshold `export_db` reads. Once a table is grouped, later `export_data` runs keep writing it there: the group is re-learned from the folder it is already sitting in, never remembered separately.
+
 <br>
 
 ## Narrowing rows and shaping the MERGE
@@ -138,7 +154,9 @@ The `export:` block in the connection file applies here too, so a pattern in `ig
 
 | Argument       | Repeatable | Default | Description |
 | -------------- | ---------- | ------- | ----------- |
-| `-name`, `--name` | Yes | tables with an existing DATA file | Table name pattern or patterns to export, with SQL-like `%` and `_` wildcards, resolved by table discovery in the database. |
+| `-name`, `--name` | Yes | tables with an existing DATA file | Table name pattern or patterns to export, with SQL-like `%` and `_` wildcards, resolved by table discovery in the database. `\` escapes a literal `_` or `%`, quoted: `-name 'APP\_SETTINGS'`. |
 | `-silent`, `--silent` | No | off | Suppress the per-table rows, keeping the banner, connection block, header and timer. |
+| `-groups`, `--groups` | No | off | Move action: reorganize already-exported table files into `data/<group>/` subfolders. Never connects or exports, and moves nothing until `-force`. See [Groups](#groups) above. |
+| `-force [GROUP]`, `--force [GROUP]` | No | off | With `-groups`, apply the listed moves. `-force GROUP` lands every prefix named in one uppercased folder instead of one per prefix, so it needs named prefixes. Without `-groups` it is an error, exit `2`. |
 
-Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [arguments.md](arguments.md).
+Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

@@ -254,7 +254,10 @@ class ExportDbRunner:
                     request, schema, discovery, _split_patterns, writer
                 )
                 grant_contents.extend(schema_grants)
-                reporter.overview_grants(grants_changed)
+                # This schema's artifacts, not the accumulated list above: the
+                # overview is rendered once per schema segment, so a second
+                # schema's row would otherwise count the first one's files too.
+                reporter.overview_grants(grants_changed, len(schema_grants))
             reporter.diff_tables_dropped(dropped_diff_tables)
             if not _has_runtime_filter(request) and not request.baseline:
                 # A measured run reports no deletions and makes none: a file the

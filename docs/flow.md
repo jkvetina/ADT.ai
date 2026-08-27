@@ -139,4 +139,4 @@ A store written before the report-column label fix can still hold rendered HTML 
 | `-refresh`, `--refresh` | No | off | Resolve the owner schema, rescrape the application, rewrite its stored edges, and write the Mermaid, DOT and JSON diagrams. |
 | `-delete`, `--delete` | No | off | Delete the application, its pages and its edges from the store. |
 
-Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [arguments.md](arguments.md).
+Shared options (-root, -env, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

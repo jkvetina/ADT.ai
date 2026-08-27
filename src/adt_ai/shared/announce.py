@@ -187,7 +187,7 @@ def _caller() -> str:
             name = frame.f_globals.get("__name__", "?")
             return f"{name}:{frame.f_lineno}"
         frame = frame.f_back
-    return "?"  # pragma: no cover — unreachable: guard() always has a caller outside this module
+    return "?"  # pragma: no cover, unreachable: guard() always has a caller outside this module
 
 
 def first_line(operation: object) -> str:

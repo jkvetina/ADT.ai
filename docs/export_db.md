@@ -1,5 +1,7 @@
 # Export Database Objects (adtai export_db)
 
+![export_db running against a schema and writing files to disk](images/export_db.svg)
+
 `export_db` brings an Oracle schema out of the database and into your repository as one DDL file per object, in a folder tree you configure. Run it after making database changes and version control shows exactly what moved, per object.
 
 The output is normalized, so repeated exports of an unchanged object are byte-identical and a change on screen is a real change rather than the export moving things around. Where the files land, and how to reorganize them, is on [export_db_layout.md](export_db_layout.md).
@@ -58,11 +60,10 @@ The run prints the connection block, an overview of what it found, and then a ro
 APEX DEPLOYMENT TOOL - EXPORT_DB
 --------------------------------
 
-
 CONNECTING TO SCHEMA SANDBOX, DEV:
 ----------------------------------
               APEX | 26.1.0
-          DATABASE | 23.26.1.0.0 | FREEPDB1
+          DATABASE | 23.26.3.0.0 | FREEPDB1
 
 
 OBJECTS OVERVIEW:
@@ -74,7 +75,7 @@ OBJECTS OVERVIEW:
   TABLE             1
   TRIGGER           1
   VIEW              1
-  GRANT
+  GRANT             4
 
 
 EXPORTING 6 OBJECTS:
@@ -96,7 +97,7 @@ TIMER: 1s
 ```
 
 - `Ctrl+C` stops the export cleanly.
-- **`GRANT` is in the overview and not in the header count.** The four grant artifacts (grants made, grants received, user privileges, directories) export like any other file, so the type belongs in the listing, but they are not schema objects and have no `USER_OBJECTS` row. Its count is blank because grants received write one file per owner.
+- **`GRANT` is in the overview and not in the header count.** The four grant artifacts (grants made, grants received, user privileges, directories) export like any other file, so the type belongs in the listing, but they are not schema objects and have no `USER_OBJECTS` row. Its count is the number of files the type writes, one for grants made, one per owner for grants received, and one each for privileges and directories, so it reads exactly like every row above it.
 - **The `GRANT` row prints only when a grant actually moved.** None of the four has a `LAST_DDL_TIME`, so every run re-reads all four and the comparison against what is on disk decides what the screen says. The files are rewritten either way.
 - **The whole table waits on those reads.** The header goes up first and the reads run under it. A run where neither an object nor a privilege changed prints its header and stops: no column headings over an empty table, and no `EXPORTING 0 OBJECTS:` under it.
 - A multi-schema run executes schema by schema, with its own connection block and its own `TIMER`, and prints the banner once.
@@ -220,8 +221,8 @@ EXPORTING 6 OBJECTS:
 
 | Argument       | Repeatable | Default | Description |
 | -------------- | ---------- | ------- | ----------- |
-| `-type`, `--type` | Yes | configured object types | Object type pattern or patterns to export, with SQL-like `%` and `_` wildcards plus comma lists. Oracle type names, resolved exactly as on `recompile`: a bare `PACKAGE` exports specifications only, `PACKAGE BODY` bodies only, and `MVIEW`/`MATERIALIZED` both mean `MATERIALIZED VIEW`. See [recompile](recompile.md#object-types). |
-| `-name`, `--name` | Yes | all names | Object name pattern or patterns to export, with SQL-like `%` and `_` wildcards plus comma lists, for example `APP_%,TMP_%`. |
+| `-type`, `--type` | Yes | configured object types | Object type pattern or patterns to export, with SQL-like `%` and `_` wildcards plus comma lists (`\` escapes a literal one, quoted: `-type 'PACKAGE\_%'`). Oracle type names, resolved exactly as on `recompile`: a bare `PACKAGE` exports specifications only, `PACKAGE BODY` bodies only, and `MVIEW`/`MATERIALIZED` both mean `MATERIALIZED VIEW`. See [recompile](recompile.md#object-types). |
+| `-name`, `--name` | Yes | all names | Object name pattern or patterns to export, with SQL-like `%` and `_` wildcards plus comma lists, for example `APP_%,TMP_%`. `\` escapes a literal `_` or `%`, quoted: `-name 'APP\_SETTINGS'`. |
 | `-recent [DAYS]`, `--recent [DAYS]` | No | all objects | Export objects changed in the last `DAYS` days, or a fraction of a day (`1/24` is the past hour). Bare `-recent` exports everything changed since that schema's last covering export. Narrowed runs never advance the watermark. `JOB` is filtered on a content signature instead of a timestamp. |
 | `-by`, `--by` | No | all authors | Export only objects an author has changed, resolved by joining the export set against the configured `audit:` source. Requires that block in `config.yaml`. |
 | `-my`, `--my` | No | off | Export only objects you have changed, taking the schema from `config/IDENTITY.yaml`. Same audit resolution as `-by`. |
@@ -231,4 +232,4 @@ EXPORTING 6 OBJECTS:
 | `-silent`, `--silent` | No | off | Suppress per-object names and progress callbacks, keeping the banner, connection block, overview, export header and timer. |
 | `-compact`, `--compact` | No | off | Replace the per-object rows with one dotted progress bar per schema, labelled with the plural of the type being pulled. `-silent` outranks it. |
 
-Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [arguments.md](arguments.md).
+Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).
