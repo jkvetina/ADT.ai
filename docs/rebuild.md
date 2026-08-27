@@ -188,4 +188,4 @@ COMMITS:
 | `-verify`, `--verify` | No | off | Read-only check: each branch store's commit count, its floor-to-ceiling range, and whether the numbering is `CONTIGUOUS`. Never scans git and never writes. Exits `1` when any branch reports a problem. |
 | `-switch [N]`, `--switch [N]` | No | `1` when given | With `-reveal`, check the tree out to the Nth branch in the filtered order and print that branch and its own commits instead of the list. Errors without `-reveal`, and errors on a rank outside the range without switching. |
 
-Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [arguments.md](arguments.md).
+Shared options (-root, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

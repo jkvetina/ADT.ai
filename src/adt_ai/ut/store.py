@@ -206,7 +206,7 @@ def baseline_percents(
 
     **Not simply the newest run.** A `ut` run changes no coverage by itself, so
     consecutive runs of unchanged code record identical figures and comparing
-    against the immediately previous one reports nothing moved — on the run
+    against the immediately previous one reports nothing moved, on the run
     after a deploy, which is the one a reader opens the table for. Walking back
     to the last run that was actually different is what makes the table say what
     the reader came to find out, and it costs nothing when the previous run

@@ -36,7 +36,9 @@ For how a stored password is protected and what to configure when storing one is
 
 ## Developer identity
 
-`config/IDENTITY.yaml` answers "who am I", for the database and for git alike. It is optional, gitignored, and never committed. There is deliberately no committed sample: create it by hand in the ADT.ai `config/` folder or a project one, and the first found on the search path wins.
+`config/IDENTITY.yaml` answers "who am I", for the database and for git alike. It is optional, gitignored, and never committed. The first copy found on the search path wins, so a project's own file overrides one sitting in the ADT.ai install root.
+
+`doctor -init` scaffolds it, prefilling `apex_account` and `email` from `git config user.name`/`user.email` in the project folder when that folder has a git identity to read. `db_schema` has no git equivalent and always ships as a commented placeholder. An existing file survives untouched unless `-init -force` is given.
 
 ```yaml
 db_schema               : YOUR_SCHEMA       # your Oracle working schema
@@ -179,10 +181,10 @@ So ADT.ai fills them in itself. On every run, when `ADT_ENV` or `ORACLE_HOME` is
 - **Your startup file is parsed, not executed.** `export VAR=value` lines are read as text, with `~` and `$VAR` expansion. Only when a sentinel is still unresolved afterwards does ADT.ai fall back to running your shell, which also sees variables set inside a function, a conditional or an `eval`.
 - **Which file follows `$SHELL`.** zsh reads `~/.zshrc`, `~/.zprofile` and `~/.zshenv`; bash reads `~/.bash_profile`, `~/.bashrc` and `~/.profile`. An unknown shell falls back to all three of the common ones.
 - **Nothing here can fail your command.** A missing file, an unreadable one, or a shell that will not run leaves the environment untouched and the command proceeds.
-- **`ADT_KEY` is never printed.** Hydration reports variable names only, and [`doctor`](doctor.md) keeps showing the key as `<redacted>`.
+- **`ADT_KEY` is never printed.** Hydration carries variable names only, and [`doctor`](doctor.md) keeps showing the key as `<redacted>`.
 - **macOS and Linux only.** On Windows hydration is a no-op, so set the variables yourself.
 
-`adtai doctor` shows what happened: its `ENVIRONMENT:` section carries a `HYDRATED` row naming the variables and the file when hydration filled anything in, and no row when nothing needed it.
+Hydration announces nothing of its own. What it did is visible where it matters: [`adtai doctor`](doctor.md#output) prints the values the process actually holds, so an `ENVIRONMENT:` section carrying your real `ADT_ENV` and `ORACLE_HOME` under an AI tool is hydration having worked.
 
 Which variable does the real work, in case you are debugging a connection rather than reading for pleasure:
 

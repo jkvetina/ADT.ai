@@ -103,7 +103,7 @@ def _parse_app_group_blocks(text: str) -> list[tuple[str, str]]:
         while block_lines and not block_lines[-1].strip():
             block_lines.pop()
         if not block_lines:
-            continue  # pragma: no cover — unreachable: every block's first line is the
+            continue  # pragma: no cover, unreachable: every block's first line is the
             # "- " line that started it (only non-blank lines ever open `current`), so
             # trimming trailing blanks can never empty it.
         block_id = None

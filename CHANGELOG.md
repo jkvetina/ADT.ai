@@ -2,6 +2,28 @@
 
 All notable changes to the public ADT.ai release are recorded here, newest first.
 
+## 0.9.4 - 2026-08-27
+
+- **Breaking: `SKILLS/` is now `skills/`.** It was the only uppercase folder beside `config/`, `connections/`, `docs/` and `src/`, and lowercase is what agent tooling expects of a shipped skill folder. Every external link to `SKILLS/adt/SKILL.md` has to be rewritten, GitHub redirects nothing.
+- **Breaking: `docs/arguments.md` is now part of `docs/console.md`.** The shared flags are console surface, so what each one does sits on the same page that says where it appears on a help screen and in what order. Every command page links the merged section.
+- **Breaking: `images/` is now `docs/images/`.** The artwork sat one level above the pages that link it, so a documentation page and the README spelled the same folder two different ways.
+- **`export_apex` found no APEX applications at all when the connection file spells the schema in lowercase.** The name was bound straight into a dictionary predicate, where Oracle stores it uppercase, so `-reveal` printed an empty screen and exit `0`. Both sides are compared case-insensitively now.
+- **`export_apex -reveal` names a workspace the registry cannot show you.** A restricted schema may not read `apex_workspaces`, so the screen could list an application beside no workspace at all. The missing rows are filled in from the applications themselves, with a blank developer count rather than a zero.
+- **`apex.workspace` in a connection file no longer narrows `-reveal`.** That screen exists to say what is there, so only `-ws` narrows it now. The key marks an `ACTIVE` column instead, and a workspace nothing matches is reported by name rather than silently emptying the screen.
+- **The `-reveal` tables gain a column and lose a word.** The owner table carries `WORKSPACE`, so an owner with applications in two workspaces is two honest rows. The workspaces table carries `ACTIVE`, and both `APPLICATIONS` columns now read `APPS`.
+- **`export_data` takes `-groups` and `-force`, the same way `export_db` does.** A table's CSV, its merge script and its sidecar directory move together as one unit, and a table already sitting in a group folder keeps landing there on every later export.
+- **`export_db` no longer crashes exporting a DBMS_SCHEDULER `SCHEDULE`.** `DBMS_METADATA.GET_DDL` rejects that literal object type with `ORA-31600`, exactly the limitation `JOB` already worked around, so both are fetched through the same shared token.
+- **The `GRANT` row in the `export_db` overview carries a count again.** It counts what the run writes, one for grants made, one per owner received, one for schema privileges and one for directories, the same formula every other row on that table uses.
+- **`doctor -update` reaches any release.** A shorter version resolves to the newest on that line, so `-update 0.3` lands the newest `0.3.x`. Both tag spellings now work from a pip install as well as from a checkout, where only the checkout had the fallback.
+- **`doctor -init` scaffolds `config/IDENTITY.yaml`, prefilled from the project folder's git identity.** A folder with no git identity gets a commented placeholder rather than an invented value, and an existing file is skipped without `-force` like every other scaffold entry.
+- **`doctor` drops two rows it wrote about itself, the `HYDRATED` line and the version row's `+ WIP` marker.** Neither was ever part of the documented environment report. Hydration still runs and still fills in `ADT_ENV`, `ADT_KEY` and `ORACLE_HOME`, it simply prints nothing about it.
+- **Every listing of database objects opens on a blank line under its dashed rule.** `export_db` had one and `recompile` did not, so the same section rendered two ways depending on which command happened to draw it.
+- **The shared-options footer on every command page promised flags the command rejects.** Nine of the sixteen pages advertised between two and five arguments their own parser answers with an error. That sentence is derived from the parser now.
+- **Every reference in the documentation is a link, and the index links every page the release ships.** Six pages were reachable from nowhere on the published site, and five real links had been flattened to plain text by the release build itself.
+- **The escape character for a literal `_` or `%` in a pattern is documented, on every page whose flags take one.** Writing `-name "APP\_%"` matches a real underscore. The mechanism was always there and had never been written down.
+- **The bundled `adt` skill stops teaching commands the release does not ship.** Every published tree since v0.8.7 carried a full section for a command that is not in the package, over documentation and source that are not there either.
+- **The README loses the recording and the text transcript of that same run, and the Install walk ends on linked next steps.** Three more documentation pages open on their own illustration, and the index gains the one it was alone in lacking.
+
 ## 0.9.3 - 2026-08-24
 
 - **Breaking: in `search_repo`, `-type`, `-name` and `-by` are SQL LIKE patterns.** `%` and `_` mean what they mean on every other command, and the match is anchored. `-type PACKAGE` no longer returns package bodies, `-type "PACKAGE%"` does, and a partial author address is written `-by "bob%"`.

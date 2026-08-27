@@ -9,9 +9,9 @@ was one whose first path segment was literally `database`, its schema was segmen
 and its object-type folder started at segment 2. That is the LEGACY layout, and it is
 not the shipped default, so for a project exporting to the default,
 `patch -create` matched no file at all, mapped nothing, and wrote an empty
-`files.txt` while reporting a patch folder and exiting 0. Found from the IVORY iCRM
-repo, where every commit in the project's history had silently produced an empty
-patch (Brain card IVORY #36).
+`files.txt` while reporting a patch folder and exiting 0. Found on a project
+exporting to the default layout, where every commit in its history had silently
+produced an empty patch.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from typing import Any
 # them from here.
 from adt_ai.patch.deploy_paths import deploy_log_folder as deploy_log_folder
 from adt_ai.patch.deploy_paths import ensure_deploy_log_folder as ensure_deploy_log_folder
-from adt_ai.shared.config import reject_unresolved_placeholders
+from adt_ai.shared.config import DEFAULT_PATH_OBJECTS, reject_unresolved_placeholders
 
 # `object_layouts` moved to `shared/` with the ownership rule it feeds (ADT #471),
 # so `search_repo` reads the same vocabulary. Re-exported: this module was its
@@ -68,8 +68,11 @@ def object_path_head(config: dict[str, Any]) -> tuple[str, ...]:
     # The fallback is the layout these helpers were written against, so a caller
     # that passes no config keeps its old answer exactly. Production always sets
     # `path_objects` from ADT's own config.yaml, where the default is schema-first.
+    # Spelled through the shared constant rather than again here: one key had
+    # three fallbacks written into three modules, and only a machine check on the
+    # literal would have caught the one that drifted (ADT #554).
     template = reject_unresolved_placeholders(
-        str(config.get("path_objects") or "database/<schema>/<object_type>/")
+        str(config.get("path_objects") or DEFAULT_PATH_OBJECTS)
     ).strip("/")
     head, _, _ = template.partition(object_type_token(template) or "<object_type>")
     return Path(head.strip("/")).parts if head.strip("/") else ()

@@ -138,6 +138,8 @@ The two axes combine freely:
 
 Object names or SQL wildcards after `-refresh` force a deep schema refresh for just those objects, deleting the matching rows in both directions first, and `-force` wipes the whole requested scope before reloading it.
 
+**Unlike every other command's pattern flag, `\` is not yet an escape here.** The dictionary read behind these names carries no `ESCAPE` clause, so a literal `_` still matches any single character.
+
 `-recent` reloads only what changed, either in a window of days you name or, bare, since that scope's own last-refresh stamp. `-force` and named deep refreshes ignore it. Only a full refresh detects dropped objects.
 
 The `-app` axis folds into its owning schema's segment when that schema is refreshed too, reading `REFRESHING <SCHEMA> SCHEMA AND APEX APP <id>/<alias>:`. Otherwise it becomes its own final segment, which is always the case for an app-only run.
@@ -211,4 +213,4 @@ The refresh connection is an ordinary ADT.ai connection and runs the ordinary se
 | `-app`, `--app` | Yes | none | APEX application ids whose dictionary to mirror, refresh only. Repeat, space-separate, or pass a range, `MIN-MAX` closed or `MIN+` open, resolved against the discovered applications. |
 | `-format`, `--format` | No | `table` | Output format: `table`, `yaml` or `md`. |
 
-Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [arguments.md](arguments.md).
+Shared options (-root, -env, -schema, -config-dir, -key, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

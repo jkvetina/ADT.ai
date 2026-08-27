@@ -205,7 +205,7 @@ def _collect_dependencies(
                 # key_constraint's child_fks it truly references; the key_constraint's
                 # own seen-check above always catches a revisit before this can fire.
                 if key in seen:
-                    continue  # pragma: no cover — see comment above
+                    continue  # pragma: no cover, see comment above
                 seen.add(key)
                 child_path = key_path + (child_fk["CONSTRAINT_NAME"],)
                 result.append((child_path, _constraint_tree_row(connection, child_fk)))

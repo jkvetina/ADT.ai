@@ -227,7 +227,7 @@ class RecompileRunner:
                     # runs with debug False. Kept for structural symmetry with that
                     # loop's except.
                     if request.debug:
-                        raise  # pragma: no cover — see comment above
+                        raise  # pragma: no cover, see comment above
                     pass
 
         # reconnect for the final re-check, mirroring old ADT

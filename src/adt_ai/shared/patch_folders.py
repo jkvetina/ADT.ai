@@ -44,14 +44,14 @@ class PatchFolder:
 def patch_id(patch_code: str) -> str | None:
     """The ticket/card number a patch code carries, or ``None``.
 
-    Jan, 2026-08-10: "ID should be number from the ticket/card. For ivory 65 it
-    should be 65, for SASDSG-5566 it should be 5566."
+    The ID is the number the ticket or card carries: `APP65` is 65 and
+    `ABCDEF-5566` is 5566, whatever the prefix in front of it says.
 
     The number lives in the FIRST underscore-separated segment, the ticket
     reference, and everything after it is the human label. Scanning the whole
     code would read `66_LAYER0_FIX` as `660`, because the `0` of `LAYER0` is not
     part of any card id. Within that segment the LAST digit run wins, so a
-    project-prefixed reference (`SASDSG-5566`, `IVORY67`) yields the number
+    project-prefixed reference (`ABCDEF-5566`, `APP67`) yields the number
     rather than a fragment of the prefix.
     """
     numbers = re.findall(r"\d+", patch_code.split("_", 1)[0])
@@ -104,8 +104,8 @@ def patch_folder_match_targets(folder: PatchFolder) -> list[str]:
     """Every spelling of a folder that a LIKE pattern is compared against.
 
     Three, and the third is the one that is not obvious. A folder is
-    ``yymmdd-seq-CODE``, so ``260813-13-IVORY123_NTF_SPINE`` carries its date
-    with a TWO-digit year, while Jan's own example pattern is ``202608%`` --
+    ``yymmdd-seq-CODE``, so ``260813-13-APP123_NTF_SPINE`` carries its date
+    with a TWO-digit year, while a person writing the month writes ``202608%`` --
     which matches that name nowhere. The day is therefore also offered in its
     ``YYYYMMDD`` spelling, so a pattern written the way a person writes a month
     selects the patches from it. The two-digit form still works: the literal

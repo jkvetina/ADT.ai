@@ -21,6 +21,7 @@ class ApexWorkspace:
 @dataclass(frozen=True)
 class ApexOwnerCount:
     owner       : str
+    workspace   : str
     applications: int
 
 
@@ -42,6 +43,7 @@ class ApexDiscovery:
     APPLICATION_OWNER_QUERY = queries.APPLICATION_OWNER_QUERY
     OWNER_APP_COUNTS_QUERY  = queries.OWNER_APP_COUNTS_QUERY
     WORKSPACES_QUERY        = queries.WORKSPACES_QUERY
+    WORKSPACES_FROM_APPLICATIONS_QUERY = queries.WORKSPACES_FROM_APPLICATIONS_QUERY
 
     def __init__(self, gateway: QueryGateway) -> None:
         self.gateway = gateway
@@ -88,6 +90,28 @@ class ApexDiscovery:
         )
         return [_workspace_from_row(row) for row in rows]
 
+    def workspaces_from_applications(
+        self,
+        schemas: Iterable[str] | None = None,
+        max_app_id: int | None = None,
+    ) -> list[ApexWorkspace]:
+        """The workspaces the schemas' own applications sit in (`#561`).
+
+        The fallback for a `workspaces()` that answered nothing: same row shape,
+        read from `apex_applications` instead of the registry, so a schema that
+        cannot see `apex_workspaces` still gets its workspace named. There is no
+        developer count on that view, so `developers` is `None` and the shared
+        table renders it blank.
+        """
+        rows = self.gateway.fetch_all(
+            self.WORKSPACES_FROM_APPLICATIONS_QUERY,
+            {
+                "schemas": _pipe_list(schemas),
+                "max_app_id": max_app_id,
+            },
+        )
+        return [_workspace_from_row(row) for row in rows]
+
     def applications(
         self,
         owner: str,
@@ -111,6 +135,53 @@ class ApexDiscovery:
         return [_application_from_row(row) for row in rows]
 
 
+def with_derived_workspaces(
+    discovery: ApexDiscovery,
+    registry: list[ApexWorkspace],
+    configured_workspace: str | None,
+    named_by_applications: Iterable[str],
+    schemas: Iterable[str] | None = None,
+    max_app_id: int | None = None,
+) -> list[ApexWorkspace]:
+    """The `-reveal` workspace list, with the registry's blind spots filled in.
+
+    `#561`. Two things gate the extra read, and both matter. An explicit `-ws`
+    returns the registry answer untouched, empty included: a scope the user
+    typed that matches nothing means nothing matched, and a filter that widens
+    itself when it comes back empty is a flag with two meanings (Jan,
+    2026-08-26). `apex.workspace` was the same gate until `#564` widened
+    `-reveal` past the connection file entirely, so `configured_workspace` here
+    is now only ever `-ws`. And a registry that already accounted for every
+    workspace the applications named returns untouched too, so the common run
+    costs no round trip and prints the same bytes it printed before.
+
+    Only what the registry MISSED is added, never a whole second list, so a
+    workspace it did answer keeps its own `apex_developers` count rather than
+    losing it to a derived row that has none. Names are matched case-blind
+    because both sides are Oracle identifiers reached through different views.
+    """
+    if configured_workspace:
+        return registry
+    known = {workspace.workspace.upper() for workspace in registry}
+    missing = {
+        name.upper()
+        for name in named_by_applications
+        if name and name.upper() not in known
+    }
+    if not missing:
+        return registry
+    derived = [
+        workspace
+        for workspace in discovery.workspaces_from_applications(
+            schemas=schemas, max_app_id=max_app_id
+        )
+        if workspace.workspace.upper() in missing
+    ]
+    if not derived:
+        return registry
+    return sorted([*registry, *derived], key=lambda workspace: workspace.workspace)
+
+
 def _workspace_from_row(row: dict[str, Any]) -> ApexWorkspace:
     return ApexWorkspace(
         workspace    = str(row_value(row, "WORKSPACE") or ""),
@@ -124,6 +195,7 @@ def _workspace_from_row(row: dict[str, Any]) -> ApexWorkspace:
 def _owner_count_from_row(row: dict[str, Any]) -> ApexOwnerCount:
     return ApexOwnerCount(
         owner        = str(row_value(row, "OWNER") or ""),
+        workspace    = str(row_value(row, "WORKSPACE") or ""),
         applications = int(row_value(row, "APP_COUNT") or 0),
     )
 

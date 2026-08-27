@@ -1,10 +1,10 @@
 ---
 created: 2026-06-10
-updated: 2026-08-24 17:40
+updated: 2026-08-27 10:20
 name: adt
-version: 1.9.7
+version: 1.9.8
 tags: [oracle, apex, deployment, cli, database]
-description: "ADT.ai usage guide for Oracle/APEX work: export database objects, APEX apps and data, validate APEXlang source, run utPLSQL test suites, run read-only SQL discovery, search Git history, query the dependency graph, recompile, and build/deploy patches. Use for any ADT.ai command help."
+description: "ADT.ai usage guide for Oracle/APEX work: export database objects, APEX apps and data, validate APEXlang source, run utPLSQL test suites, run read-only SQL discovery, search Git history, query the dependency graph, and recompile. Use for any ADT.ai command help."
 ---
 # ADT.ai
 
@@ -17,7 +17,7 @@ Run commands from the project root (the folder holding `config/` and the export 
 ## Conventions in this skill
 
 - Pick one quick-reference line and run it as its own shell call.
-- Show the user the full console output of export/recompile/patch commands, the overview tables and progress are the point.
+- Show the user the full console output of export/recompile commands, the overview tables and progress are the point.
 - `-debug` on any command prints the resolved parameters and the SQL with bind values.
 - `--help` (or `-h`) on any command prints its full argument list.
 
@@ -63,7 +63,7 @@ adtai export_db -silent -name APP_% -recent 7
 adtai export_db -silent -type JOB
 ```
 
-**`config/IDENTITY.yaml` is the one place ADT.ai asks who you are**, gitignored and never committed, and it answers both halves of that question. `db_schema` is the DATABASE identity, read by `export_db -my` and by every connection's `SET_IDENTIFIER`. `email` and `apex_account` are the COMMIT identity, read by every git-backed `-my`/`-by`: `patch`, `search_repo`, `rebuild -reveal`, `calendar`, and `export_apex -my`, which matches APEX workspace logins on `apex_account` because those are `FIRST.LAST` rather than addresses. **Git is the fallback, not a second source of truth:** state nothing and each half falls back independently to `git config user.email` and `user.name`, so a checkout with no file behaves exactly as it always has. Set `email` whenever your git author is not the identity your work should be attributed to, the ordinary case on a machine account, a shared runner, or a laptop carrying a corporate address. Full shape: `docs/config.md` §Developer Identity.
+**`config/IDENTITY.yaml` is the one place ADT.ai asks who you are**, gitignored and never committed, and it answers both halves of that question. `db_schema` is the DATABASE identity, read by `export_db -my` and by every connection's `SET_IDENTIFIER`. `email` and `apex_account` are the COMMIT identity, read by every git-backed `-my`/`-by`: `search_repo`, `rebuild -reveal`, `calendar`, and `export_apex -my`, which matches APEX workspace logins on `apex_account` because those are `FIRST.LAST` rather than addresses. **Git is the fallback, not a second source of truth:** state nothing and each half falls back independently to `git config user.email` and `user.name`, so a checkout with no file behaves exactly as it always has. Set `email` whenever your git author is not the identity your work should be attributed to, the ordinary case on a machine account, a shared runner, or a laptop carrying a corporate address. Full shape: `docs/config.md` §Developer Identity.
 
 Filter by author in a shared schema worked through proxy users, `-by <NAME>` for a specific db user/schema, `-my` for yourself (the `db_schema` above). Both resolve authorship against the project's configured `audit:` source (a DDL-log table/view), so they need no DBA audit-trail access; without an `audit:` block in `config.yaml` they exit `2`:
 
@@ -147,7 +147,7 @@ The countdown opens on a real figure: the budget is the sum of what each app/for
 - Check an APEXlang export with `adtai validate` (below), it is the compiler check that makes `.apx` safe to edit.
 - The ID-independent SHA-256 application fingerprint is recorded by every export under `checksum:` in `config/internal/apex.db`. It answers "did anything actually change?" without diffing a full export. There is no flag: `-checksum` was removed and is now rejected, no row prints for it, `-page`/`-component`/`-recent` never narrow it, and it never advances a `-recent` watermark. An export also deletes any `checksum.txt` the old format left in an application folder, sparing static files of that name.
 - `-recent N`, `-page`, and `-component TYPE:NAME%` filter split/readable/embedded component output. Bare `-recent` means "changed since the last export of this app in this format", a watermark keyed per environment/app/format in the gitignored `config/internal/apex.db`; each exported format advances its own key, report-only `-recent` never does. `-page` or `-component` without an explicit format defaults to `-split`. Add `-deep` only with `-page` when the export should include components recorded for those pages in `config/internal/dependencies.db`, such as LOVs, lists, and authorization schemes. Filtered component exports print affected rows instead of dotted progress and do not update `apex.db`. Full app SQL, REST services, app files, and workspace files stay broad. With `-reveal`, `-recent` filters the listed apps.
-- If apps don't appear, the connection's APEX schema likely doesn't match the owner, narrow or widen with `-schema`, or use `-owners` in reveal.
+- **`-reveal` shows the whole instance unless `-ws` narrows it.** `apex.workspace` in the connection file scopes an export but not this screen: it only puts `Y` in the ACTIVE column, and a value no workspace matches prints `WARNING - WORKSPACE NOT FOUND:` naming it rather than emptying the table. A workspace `apex_workspaces` withholds from the schema is read off `apex_applications` instead, and that row's DEVELOPERS cell is blank because the applications view carries no developer count. Widen the schema side with `-schema`; `-owners` cannot do it, it widens the owner counts alone and will report an owner with applications while listing none of them. Owner, workspace, and schema names match without regard to case, so a connection file keyed `app_owner` finds `APP_OWNER`.
 - `-by NAME`/`-my` narrow the `-recent` report (and the split/readable/embedded output it filters) to components changed by one developer or by yourself, the same author filter `export_db -by`/`-my` uses.
 - `-rest` runs through SQLcl with a named `ADT_…` connection: registered automatically on first use (password in SQLcl's secure store, wallet included), recorded as `sqlcl:`/`sqlcl_sync:` in the connection YAML, re-registered automatically after a credential change. Opt out with `sqlcl_named_connections: false` in `config.yaml`. Details: `docs/connection.md` §Named SQLcl connections.
 - **Asking only for `-rest` and/or `-files_ws` is its own shape.** Both write under `apex/workspace/`, a path with no app id, so a run that names nothing else exports no application: no `APEX APPLICATIONS:` table, no application block, one bare `EXPORTING:` header per schema segment with the progress rows under it, and no per-application work at all. One application is used silently for the workspace security context and never named. Add a per-application format (`-split -rest`) and the ordinary screen is back, with the schema-level row inside the first app's block. Details: `docs/export_apex.md` §Schema-level formats on their own.
@@ -201,6 +201,13 @@ adtai export_data -silent
 ```
 
 **Limitations:** BLOB/CLOB/XMLTYPE/JSON columns are exported to table-named sidecar folders as `<primary-key>.<column>.<ext>`; audit columns are dropped per config; set correct NLS date formats on the target before running the generated SQL.
+
+**`-groups` reorganizes tables that are already exported and never connects or exports.** Same contract as `export_db -groups`: bare `-groups` auto-detects a per-prefix layout and lists it, `-groups PREFIX ...` lists only the prefixes named, and nothing moves until `-force` is added. A table's CSV, its `.sql` MERGE, and its sidecar folder move together. `-force GROUP` needs named prefixes, so `-groups -force GROUP` is refused at exit `2`:
+
+```bash
+adtai export_data -groups INV_
+adtai export_data -groups INV_ INV_ARCHIVE -force INVOICING
+```
 
 ## discovery: safe read-only SQL exploration
 
@@ -384,125 +391,6 @@ Output order is the point, and **no wait is spent on a finished screen** (`#359`
 
 **`-gate [N]` turns that column into a pass/fail condition.** `-gate 90` sets the threshold for this run, bare `-gate` reads config `ut_coverage_gate` (ships at `80`), and no `-gate` at all gates nothing, the flag is opt-in and its absence is not a threshold of zero. The whole report prints first and a `COVERAGE BELOW <n>:` table closes it, listing the packages under the bar worst first; one is enough to make the run non-zero, and it fails a run whose tests all passed. Only a package with a **measured** figure is compared: a blank cell has nothing to compare, while `0.0` is a real measurement and does gate. At the boundary `>=` passes. There are no per-package thresholds, `-name` already narrows a run, so `-name CORE% -gate 90` sets a stricter bar for one group.
 
-## patch: build and deploy patches from commits
-
-Reads commits, resolves dependencies, orders objects, and generates deployment scripts. Group order follows `patch_map` in `config.yaml`; within a group, objects are ordered from `config/internal/dependencies.db`, **both** halves of it: `USER_DEPENDENCIES` for PL/SQL and views, and `USER_CONSTRAINTS` for the table-to-table foreign keys Oracle does not record there, so a table always follows the table it references.
-
-The graph has to describe the objects it orders. `-create` **refreshes the stale schemas itself** and continues, opening the standard `CONNECTING TO SCHEMA <schema>, <environment>:` block and an `UPDATING DEPENDENCIES:` section over that schema's count rows as it goes; `-install` still **refuses to run** on a `config/internal/dependencies.db` that is missing, unreadable, or older than what it would order, because it orders every install target and so has no narrower scope to refresh. Either way a run that cannot produce a usable graph exits non-zero without writing, naming each stale schema, the stamp it was measured against (the same `last_refresh` rows `dependencies -age` prints), the object that outran it, and a scoped `adtai dependencies -refresh -schema <OWNER>`. Read-only previews are never gated, and a run with no objects to order needs no graph.
-
-A schema is one scope whatever case its name was spelled in, and a mirror written by an older ADT that holds both `ICT_OWNER` and `ict_owner` is folded to the newer of the two on the next `dependencies -refresh`. Until then the gate reads the newer stamp, so a repeat of the same `-create` cannot refuse a graph it just refreshed.
-
-Every `patch` run also levels the branch's commit store from git before it does anything, `-install` and `-archive` included, so the commit NUMBERS it writes into a patch folder always describe the repository you are looking at.
-
-Rebuilding a patch folder that has already been deployed is refused, because its deploy logs record what a database received. `-force` gets past that as a refresh: the install scripts are regenerated and the deploy logs and `patch_scripts/` are kept.
-
-Regenerate the database install script from the exported objects, no patch code, no connection:
-
-```bash
-adtai patch -install
-```
-
-It writes one `INSTALL.sql` per exported schema at the schema's objects root (`<schema>/database/INSTALL.sql` under the default `path_objects` template), and prints an objects overview plus the path per schema rather than the script body.
-
-Three verbs, one job each: `-name` looks and acts on nothing, `-create` builds, `-deploy` ships, and the name sits on whichever one is acting. Running it bare answers "what is going on", the recent commits and then the patch folders:
-
-```bash
-adtai patch
-```
-
-Inspect one patch, its commits, its contents and its files, building and deploying nothing:
-
-```bash
-adtai patch -target UAT -name TASK_ID
-```
-
-Create, then deploy, two runs, never one:
-
-```bash
-adtai patch -target UAT -name TASK_ID -create
-adtai patch -target UAT -name TASK_ID -deploy
-```
-
-Read the patch first and then append `-deploy` to the same line, which is the other half of that habit. `-deploy` takes its name from `-create` or from `-name` when it carries none of its own, so neither review has to be retyped:
-
-```bash
-adtai patch -target UAT -name TASK_ID
-adtai patch -target UAT -name TASK_ID -deploy
-```
-
-`-deploy` ships the patch as it stands on disk: it never creates a folder, rewrites a script or re-orders files, so what deploys is what was reviewed. Pass `-hash`, `-baseline`, `-local`, `-head`, or `-nosnap` alongside it and they are ignored, named under an `IGNORING WITH -deploy:` header rather than silently dropped. `-name NAME -create -deploy` is not refused work either: it is how the name arrives, and an existing folder still deploys unchanged, so only a name with no folder behind it is built first and then deployed. A name on `-deploy` itself always wins over a borrowed one, and `-create` never borrows, so `-name NAME -create` is still an error. A target that already recorded `SUCCESS` for this patch is skipped on redeploy; `-force` re-runs it anyway.
-
-Cherry-pick commits and ignore some. `-commit` and `-ignore` both take a number or hash prefix, an open-ended `20+` (that commit and everything newer), and a closed `1-20` span:
-
-```bash
-adtai patch -target UAT -name TASK_ID -create -commit 1-20 -ignore 5
-```
-
-The commit scan walks the checked-out branch by default; `-branch NAME` walks a different branch's history instead, an unknown name stops the run rather than falling back to `HEAD`. The run reads its limits from `patch_scan_commits` (how far the scan walks, and the reach of `-commit N`), `patch_show_commits` and `patch_show_patches` (how much prints).
-
-**Three flags narrow the whole preview screen, both tables of it, not the commits alone.** `-my` limits it to your own work and `-by NAME` to one author's, matched as a case-insensitive substring of the commit author **email**, which is the identity the shared commit store records (`-by "Jan Kvetina"` matches nothing; `-by kvetina` matches the address). A patch folder carries no author of its own, so it is attributed through the commit numbers its install script records, and one of your commits is enough; a folder nothing can attribute, because it predates the header or its commits fall outside `patch_scan_commits`, is dropped rather than shown under a filtered heading:
-
-```bash
-adtai patch -target UAT -my
-```
-
-`-recent` is the third, and it takes the same window `export_db` takes, whole days or a fraction of one. **A whole-day window counts today as one of its days**, so `-recent 1` is today, `-recent 7` is today plus the six before it, and yesterday needs `-recent 2`; bare `-recent` is `1`. Folders are dated by the `yymmdd-` prefix in their name rather than by an mtime, so the window survives a copy; a folder whose name carries no parsable day is kept rather than hidden:
-
-```bash
-adtai patch -target UAT -recent 1
-adtai patch -target UAT -my -recent 7
-```
-
-`patch_commit_pattern` in `config.yaml` is a project-wide subject filter, set it to something like `'([A-Z0-9]+\-[0-9]+\-?[0-9]*)'` and a commit carrying no ticket reference is never patched. Empty is the default. An explicit `-search` or `-commit` bypasses it.
-
-`-create` snapshots the **committed** version of each file, the blob at its newest commit inside the patch window, so an uncommitted working-tree edit cannot leak into a deployment. Three mutually exclusive flags override that: `-local` snapshots the working-tree file, `-head` snapshots the file at git `HEAD` (and suppresses the newer-commit warning), and `-nosnap` writes no snapshots at all, linking each repo file where it already lives. Passing two exits `2`.
-
-`-create` opens with `RELEVANT COMMITS:` (and `RECENT UNPATCHED COMMITS:` when the window still holds unpatched ones), then prints a section per schema as it builds: `ALTER STATEMENTS:` for generated `ALTER` scripts and `DELETED OBJECTS:` for what the window dropped, then `PROCESSED FILES: <s>`, every row a plain dash with nothing trailing it. **A file list groups under its folder**: one `  - <schema>/database/<type>/` line, trailing slash kept, with each file two spaces further in and any `export_db -groups` sub-folder left on the leaf (`    - CORE/core_logs.sql`). Anything hanging off a row sits two spaces further again, so the newer commits under `WARNING - OUTDATED FILES:` land at six. `nested_files: False` in `config.yaml` gives the flat one-path-per-row list instead, and it governs `export_db` and `search_repo` lists too. Each warning is a section of its own: `WARNING - UNCOMMITTED FILES:` only when a listed file genuinely has uncommitted changes in git and never under `-local`, and `WARNING - OUTDATED FILES:` naming any file whose shipped version is older than a commit that already exists, with those newer commits listed under it. Two more sit below the schema loop and describe the patch rather than a schema: `WARNING - OBJECTS CHANGED:` names every object the database has moved past since it was exported, `  - <TYPE> <NAME>` and nothing else, meaning this patch ships the older exported body for it, and `WARNING - NO DATABASE CLOCK:` names an owner whose mirror predates `#394` so that comparison could not be made at all. Neither stops the build. `PATCH FILES:` closes the screen. `-name <name>` and `-deploy` print `PATCH CONTENTS: <SCHEMA>`, one section per schema in install order.
-
-**Every section header on that screen carries exactly two blank lines above it**, whatever printed above it, the command's own `APEX DEPLOYMENT TOOL - PATCH` banner excepted. It is the renderer that guarantees it, so the rule holds for every command, not just `patch`.
-
-Per-patch scripts in `patch_scripts_dir/<CODE>/` **move** into the patch folder on `-create`, generated helpers and hand-written one-offs alike, and each statement is wrapped in an existence check on the way, so a second deploy is a no-op instead of ORA-01430. A later `-create` for the same patch code recovers them from the previous patch folder. A script no selected commit touched stays put under `WARNING - IGNORED SCRIPTS:`; one in a slot no `patch_map` group can produce stays put under `WARNING - UNKNOWN SCRIPTS:`. Templates in `patch_template_dir` are unaffected: they are linked where they live, never moved.
-
-`-archive` zips delivered patch folders into `patch_archive/` and removes them from `patch/`. A ref is the patch's card number when it is all digits, read off the first segment of the patch code and so visible in the `FOLDER` column itself (`260809-1-66_LAYER0_FIX` is patch `66`), and a SQL LIKE pattern otherwise, matched against the folder name, the patch code, and the folder name with its `yymmdd` day rewritten as `YYYYMMDD`, so a whole month goes in one command:
-
-```bash
-adtai patch -target UAT -archive 202608%
-adtai patch -target UAT -archive 66 67
-adtai patch -target UAT -archive %
-adtai patch -target UAT -archive
-```
-
-**Omitting refs archives nothing** (`#513`): a bare `-archive` only lists what is on disk, so you can read the inventory and then name what should go. `-archive %` is the sweep. Refs that match nothing archive nothing and exit 0, because a sweep over a pattern that is legitimately empty is not a failure (`#355`).
-
-The receipt is one table, `FOLDER | STATUS`, the same columns `ALL PATCH FOLDERS:` prints under it (`#513`, replacing the `ID | PATCH CODE | FOLDER` shape `#346` had restored). That listing holds every folder still on disk, newest first, uncapped and unfiltered, so the next pattern has something to aim at (`#510`). A run whose refs matched nothing therefore answers with the whole inventory, and a run that named nothing prints only the listing.
-
-### Hash mode: patch what no longer matches the baseline
-
-A patch built from what your repo no longer agrees with the target about, rather than from commits. Record a baseline, work for as long as you like, then patch whatever moved. The help screen groups the two flags under their own `HASH MODE:` section, `-hash` first:
-
-```bash
-adtai patch -target UAT -baseline
-adtai patch -target UAT -hash
-adtai patch -target UAT -name TASK_ID -create -hash
-adtai patch -target UAT -name TASK_ID -deploy
-```
-
-`-baseline` means hash everything: every file the layout resolves, written whole to `patch_hashes/<TARGET_ENV>/baseline.log`, one `file | commit | hash` line each. Keep it in git, its history is the record of what each environment holds. It needs no database and builds nothing.
-
-`-hash` compares the working tree against that file and reports each difference as `MODIFIED`, `NEW` or `DELETED` under `CHANGED FILES:`; `-create ... -hash` builds a patch of exactly those. Nothing is bounded by `patch_scan_commits`, so a file changed long ago and never deployed is still patched, and an uncommitted edit is a change like any other. The mode forces the `local` content mode, so what was compared is what ships and `-head`/`-nosnap` beside it exit `2`.
-
-Both flags take an optional FILE, which is then the whole address and makes `-target` unnecessary:
-
-```bash
-adtai patch -target UAT -name TASK_ID -create -hash hashes/alternative.log
-```
-
-**A successful deploy advances the baseline, for a hash-built patch only.** `-create -hash` records what it shipped in the patch folder's `hashes.log`, and that file's presence is what marks the patch; the deploy merges only those files, only for install scripts that succeeded, and a commit-built patch advances nothing. Do not mix the two modes. Handing the patch to a DBA instead means running `-baseline` yourself once it is in, and doing it before further work, since a full snapshot records the tree as it stands.
-
-A table whose baseline version is no longer in the scanned history gets no `ALTER` helper and is named under `WARNING: NO TABLE BASELINE`; the column change is yours to write into `patch_scripts/`.
-
-Full flag set in `docs/patch.md`. ADT.ai no longer accepts old placeholder source flags; use the default commit-resolved files, hash mode, or the explicit create/deploy/install/archive actions.
-
 ## search_repo: search Git history
 
 Git-only history search for commit summaries, changed file paths, ADT-style database object type/name, authors, dates, numbers, and hashes. It searches the shared `adtai rebuild` commit store at `repo_commits_file` (default `config/commits/<branch>.db`); no Oracle connection is required.
@@ -522,7 +410,7 @@ adtai search_repo -by bob@example.com -since 2026-06-01 -until 2026-06-10
 adtai search_repo -by "bob%"
 ```
 
-Select commits by git hash prefix, repeatable. `patch -hash` is the other flag of that name and means something else entirely, the baseline file hash mode compares against, so the two never take the same kind of value:
+Select commits by git hash prefix, repeatable:
 
 ```bash
 adtai search_repo -hash a1b2c3 9f8e7d
@@ -537,7 +425,7 @@ adtai search_repo -file order_v -commit 42 -restore -stage
 
 ## rebuild: refresh the commit store
 
-Incremental by default; one store per branch at `config/commits/<branch>.db`, shared with `patch`, `search_repo` and `calendar`. To rebuild a branch from scratch, delete its `.db` and re-run. A commit's number is allocated once and never re-derived, so a merge, a bounded window, or a full rebuild all leave existing numbers where they are. `patch_history_bottom_days` (default 365) bounds how far back a from-scratch build reaches. `-verify` reports a store's numbering read-only; `-reveal` is a read-only remote-branch inspector; `-reveal -switch N` checks out the Nth filtered branch.
+Incremental by default; one store per branch at `config/commits/<branch>.db`, shared with `search_repo` and `calendar`. To rebuild a branch from scratch, delete its `.db` and re-run. A commit's number is allocated once and never re-derived, so a merge, a bounded window, or a full rebuild all leave existing numbers where they are. `patch_history_bottom_days` (default 365) bounds how far back a from-scratch build reaches. `-verify` reports a store's numbering read-only; `-reveal` is a read-only remote-branch inspector; `-reveal -switch N` checks out the Nth filtered branch.
 
 ```bash
 adtai rebuild
@@ -551,7 +439,7 @@ Plain `doctor` is read-only: it checks local tools, environment variables, Pytho
 
 The closing `ACTIONS:` section lists only upgrades an online check actually found: `-update` appears when ADT.ai, `oracledb`, or SQLcl is behind, `-sqlcl` only when SQLcl is. With everything current, or under `-offline`, where nothing was checked, the section is absent entirely.
 
-The `ADT.ai` version row reads `<version> + WIP` when you are running from a git checkout: `__version__` is the last released number, and a checkout carries commits that release never shipped. An installed copy shows the bare version.
+The `ADT.ai` version row reads the package's own version and nothing else, the same from a git checkout as from an installed copy.
 
 ```bash
 adtai doctor
@@ -569,7 +457,7 @@ Run the full explicit update flow only when requested:
 adtai doctor -update
 ```
 
-Land one named release instead of the latest one. The version scopes to the ADT.ai step alone, so requirements and SQLcl still follow it, and a version older than the one installed is installed like any other: this is how you step back off a release that broke you, or match the version a colleague is running. A git checkout resolves the release tag in its own `origin`, so the DEV repo, which carries no release tags, refuses the run naming the version and the remote rather than falling back to latest. Going below the release that added the flag leaves you on that release's own `doctor`, which rejects a version argument and cannot pull off its detached HEAD; `git checkout main && git pull && pip install -e .` is the way back and loses nothing:
+Land one named release instead of the latest one. The version scopes to the ADT.ai step alone, so requirements and SQLcl still follow it, and a version older than the one installed is installed like any other: this is how you step back off a release that broke you, or match the version a colleague is running. A shorter version (`0.3`) names a whole line and lands the newest release on it; every ADT.ai release has always been three-part, so a shorter request can only mean that. A git checkout resolves the release tag in its own `origin`, so the DEV repo, which carries no release tags, refuses the run naming the version and the remote rather than falling back to latest; a pip install has no checkout to ask and resolves against the public repository's own tags instead, `v`-prefixed or bare either way. Going below the release that added the flag leaves you on that release's own `doctor`, which rejects a version argument and cannot pull off its detached HEAD; `git checkout main && git pull && pip install -e .` is the way back and loses nothing:
 
 ```bash
 adtai doctor -update 0.9.1
@@ -597,8 +485,7 @@ adtai doctor -init
    - `adtai export_apex -app 100 -split -readable -recent 1`
    - `adtai export_data -name TABLE_NAME` (if data changed)
 3. Stage and commit with the task-id prefix.
-4. Build the patch: `adtai patch -target UAT -name TASK-123 -create`.
-5. Commit the patch folder and open a pull request.
+4. Open a pull request.
 
 ## Examples
 
@@ -618,11 +505,4 @@ Find everything that depends on a table before changing it:
 
 ```bash
 adtai dependencies -impact "TABLE.CORE_LOGS"
-```
-
-Create and deploy a UAT patch for a task:
-
-```bash
-adtai patch -target UAT -name TASK-123 -create
-adtai patch -target UAT -name TASK-123 -deploy
 ```

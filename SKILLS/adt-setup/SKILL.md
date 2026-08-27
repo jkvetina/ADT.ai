@@ -1,6 +1,6 @@
 ---
 created: 2026-06-10
-updated: 2026-06-11
+updated: 2026-08-24
 name: adt-setup
 version: 1.0.0
 tags: [oracle, apex, deployment, setup, doctor]
@@ -75,9 +75,9 @@ On Windows use `setx NAME "value"` for each of these (takes effect in new shells
 
 Claude Code, Codex, and similar agents spawn a non-login, non-interactive shell, which never sources `~/.zshrc`, so none of the variables above reach ADT.ai, and you see encrypted connections failing to open, thick mode unavailable, and SQLcl reported as `not found`.
 
-You do not have to do anything about it. On every run, if `ADT_ENV` or `ORACLE_HOME` is unset, ADT.ai reads your shell startup file itself and fills in the ADT/Oracle variables, appending `$ORACLE_HOME` and `$ORACLE_HOME/sqlcl/bin` to `PATH`. A variable you set explicitly is never overwritten. `adtai doctor` shows a `HYDRATED` row naming what it filled in and from which file; no row means nothing was needed. This is macOS/Linux only, on Windows, set the variables yourself. Full behavior: `docs/README.md` §Environment Variables.
+You do not have to do anything about it. On every run, if `ADT_ENV` or `ORACLE_HOME` is unset, ADT.ai reads your shell startup file itself and fills in the ADT/Oracle variables, appending `$ORACLE_HOME` and `$ORACLE_HOME/sqlcl/bin` to `PATH`. A variable you set explicitly is never overwritten. This is macOS/Linux only, on Windows, set the variables yourself. Full behavior: [config.md](../../docs/config.md#environment-variables) §Environment variables.
 
-So if a command fails under an agent with a missing-credential or missing-client error, run `adtai doctor -offline` first and read the `HYDRATED` row: it tells you whether your startup file was found and what came out of it.
+So if a command fails under an agent with a missing-credential or missing-client error, run `adtai doctor -offline` first and read the `ENVIRONMENT:` section: the values on those rows are what the process actually holds, so an empty `ADT_ENV` or `ORACLE_HOME` there tells you your startup file was never found.
 
 ## Connections and wallets
 

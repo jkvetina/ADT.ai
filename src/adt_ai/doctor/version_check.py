@@ -19,16 +19,6 @@ from adt_ai.doctor._base import (
 from adt_ai.doctor.version_fetch import DoctorLatestVersionMixin
 from adt_ai.shared.env_check import CheckResult
 
-# `__version__` is the last *released* number, so a git checkout printing it
-# bare claims to be that release while sitting on commits the release never
-# shipped. The suffix is display-only: the bare version is what the online
-# comparison and the upgrade paths see.
-WIP_VERSION_SUFFIX = " + WIP"
-
-# Stand-ins for a version we could not read. A marker on top of one of these
-# would read as a version rather than as the failure it is.
-_UNRESOLVED_VERSIONS = frozenset({"", "unknown", "not found", "not installed"})
-
 # The components `doctor` actually checks online. `-update` also reinstalls
 # requirements.txt, which is what a stale `oracledb` needs.
 _FULL_UPDATE_COMPONENTS = frozenset({"adt-ai", "oracledb", "sqlcl"})
@@ -130,14 +120,12 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
     def _adt_ai_display_version(self, version: str) -> str:
         """The ADT.ai version as the `CURRENT VERSIONS:` row shows it.
 
-        A wheel install is exactly the release it says it is. A git checkout is
-        that release plus whatever has landed since, so it gets the WIP marker,
-        which is also the honest answer for the dev box, where `__version__`
-        only moves at release time.
+        The package's own number, whatever it is installed from. A checkout
+        carried a `+ WIP` suffix here between ADT #242 and #539; the row
+        reports a version, and where the code sits is a different question
+        that nobody asked this row.
         """
-        if not version or version in _UNRESOLVED_VERSIONS:
-            return version or "unknown"
-        return f"{version}{WIP_VERSION_SUFFIX}" if self._is_git_repo() else version  # type: ignore[attr-defined]
+        return version or "unknown"
 
     def _status_action_lines(self) -> list[str]:
         """The upgrade commands worth offering, given what the online checks found.
@@ -164,7 +152,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         # SQLCL_HOME env var (which may be unset). This is also the exact path the
         # SQLcl upgrade replaces, so the displayed location and the upgrade target
         # are always the same.
-        lines = [
+        return [
             "ENVIRONMENT:",
             format_status_line(
                 "ADT_ENV",
@@ -191,26 +179,6 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
                 None if sqlcl_executable else "WARN",
             ),
         ]
-        hydrated = self._hydrated_line()
-        if hydrated:
-            lines.append(hydrated)
-        return lines
-
-    def _hydrated_line(self) -> str | None:
-        """Name the variables this run filled in from the shell startup file.
-
-        Names only, ``ADT_KEY`` is a password and its value never prints here
-        or anywhere else. Absent when nothing was hydrated, which is the normal
-        case in a real terminal.
-        """
-        from adt_ai.shared.env_bootstrap import last_result
-        result = last_result()
-        if not result.applied:
-            return None
-        return format_status_line(
-            "HYDRATED",
-            f"{', '.join(result.applied)} from {result.display_source()}",
-        )
 
     def _check_results(self) -> list[CheckResult]:
         from adt_ai.shared.env_check import EnvironmentChecker

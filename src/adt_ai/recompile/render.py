@@ -16,7 +16,11 @@ from adt_ai.export_db.runner import (
 )
 from adt_ai.recompile.queries import mview_type_code
 from adt_ai.recompile.runner import RecompileReporter
-from adt_ai.shared.object_list import ObjectRowFormatter, type_separator
+from adt_ai.shared.object_list import (
+    ObjectRowFormatter,
+    print_listing_gap,
+    type_separator,
+)
 from adt_ai.shared.progress import schema_label
 
 
@@ -164,7 +168,7 @@ def print_trailing_updated_objects(trailing, trailing_actions, silent: bool = Fa
     """
     _print_trailing_updated_header(len(trailing))
     if not silent:
-        print()
+        print_listing_gap()
         formatter = ObjectRowFormatter()
         for action in trailing_actions:
             for row in formatter.stream_rows(action.object_type, action.object_name):
@@ -211,7 +215,7 @@ class _ConsoleTrailingReporter(RecompileReporter):
         _print_trailing_updated_header(len(candidates))
         if self._silent:
             return
-        print()
+        print_listing_gap()
         _commit_stdout()
 
     def trailing_object(self, candidate) -> None:

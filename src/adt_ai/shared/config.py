@@ -16,7 +16,14 @@ from adt_ai.shared.path_template import (
 )
 
 # Default export layout when `path_objects` is not configured. Shared by
-# export_db and export_data so both land files in the same tree.
+# export_db, export_data and patch (`patch/layout.py`, `patch/files.py`) so every
+# reader of the key lands on one tree.
+#
+# `patch` spelled its own fallback twice until ADT #554, and the two disagreed:
+# `layout.py` matched this string, `files.py` read a bare `database` carrying no
+# placeholder at all, so an unconfigured project collapsed every schema into one
+# unscoped INSTALL.sql. A default spelled per module is a default nothing can
+# check, which is the whole reason this constant exists rather than a literal.
 DEFAULT_PATH_OBJECTS = "database/<schema>/<object_type>"
 
 

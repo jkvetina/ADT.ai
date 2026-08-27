@@ -41,14 +41,20 @@ def adt_table_line_width(widths: Sequence[int]) -> int:
         return 0
     return len(ADT_TABLE_INDENT) + sum(widths) + len(ADT_TABLE_GUTTER) * (len(widths) - 1)
 
+def _cell_text(value: object) -> str:
+    """What a cell actually prints: the one place a value becomes text.
+
+    Coalesce only None to "", a legitimate falsy value such as the int 0
+    (e.g. a sub-second duration) must still render. ``str(value or "")``
+    disagreed with the width/numeric detection and silently dropped the cell.
+    Rendering and MEASURING both come through here so a column can never be
+    sized for characters the row will not print.
+    """
+    return DROPBOX_PATH_RE.sub("Dropbox/", "" if value is None else str(value))
+
 def _adt_cell(value: object, width: int, numeric: bool) -> str:
-    # coalesce only None to "", a legitimate falsy value such as the int 0
-    # (e.g. a sub-second duration) must still render. ``str(value or "")``
-    # disagreed with the width/numeric detection and silently dropped the cell.
-    cell = "" if value is None else str(value)
-    text = DROPBOX_PATH_RE.sub("Dropbox/", cell)
     align = ">" if numeric else "<"
-    return f"{text:{align}{width}}{ADT_TABLE_GUTTER}"
+    return f"{_cell_text(value):{align}{width}}{ADT_TABLE_GUTTER}"
 
 @dataclass(frozen=True)
 class _AdtTableLayout:
@@ -93,11 +99,17 @@ def _compute_adt_layout(
     numeric_columns: Sequence[str] = (),
 ) -> _AdtTableLayout:
     columns = list(columns)
+    # `_cell_text` rather than `str(...)`: a `None` cell renders blank, so it
+    # must MEASURE blank too. Sizing it as `str(None)` reserved four characters
+    # for text no reader ever sees, and the numeric sniff below already spells
+    # `None` out as an empty cell, so this line was the one consumer of the rule
+    # that disagreed with the other two (`#561`, first exercised by a derived
+    # workspace row whose developer count is genuinely unknown).
     widths = [
         max(
             len(column),
             min_widths.get(column, 0),
-            *(len(DROPBOX_PATH_RE.sub("Dropbox/", str(row.get(column, "")))) for row in rows),
+            *(len(_cell_text(row.get(column, ""))) for row in rows),
         )
         for column in columns
     ]

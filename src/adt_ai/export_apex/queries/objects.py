@@ -1,5 +1,17 @@
 from __future__ import annotations
 
+# A schema or workspace name reaches these queries as the user typed it, a
+# connection-file key or a `-schema`/`-ws` argument, and meets an Oracle
+# identifier on the column side, so every name comparison here goes through
+# UPPER on both sides (`#560`). This module is where that matters and the rest
+# of ADT.ai is not: every other command connects AS the schema and reads the
+# `user_*` views, where the name never appears in a predicate at all, which is
+# why a connection file keyed `ict_owner` exported its database objects for
+# months and revealed no APEX application ever. The bind, not the source, is
+# what gets normalized: the same `schema_name` renders `<schema>` into
+# `path_objects` and `path_apex`, so uppercasing it upstream would move
+# exported files on disk.
+#
 # The `-recent` window is day-aligned, from tomorrow midnight backwards, which
 # is what makes `-recent 1` mean "changed today". A window shorter than a day
 # has no day to align to and that cutoff would sit in the future
@@ -18,8 +30,8 @@ SELECT
     TO_CHAR(a.last_updated_on, 'YYYY-MM-DD HH24:MI') AS updated_at
 FROM apex_applications a
 WHERE 1 = 1
-    AND a.owner                 = :owner
-    AND (a.workspace            = :workspace    OR :workspace IS NULL)
+    AND UPPER(a.owner)          = UPPER(:owner)
+    AND (UPPER(a.workspace)     = UPPER(:workspace)    OR :workspace IS NULL)
     AND (a.application_group    = :group_id     OR :group_id IS NULL)
     AND ('|' || :app_id || '|' LIKE '%|' || a.application_id || '|%' OR :app_id IS NULL)
     AND (a.application_id < :max_app_id OR :max_app_id IS NULL)
@@ -38,16 +50,25 @@ FROM apex_applications a
 WHERE a.application_id = :app_id
 """.strip()
 
+# Grouped by workspace as well as owner since `#564`, so the owner table can
+# name the workspace each count sits in. An owner with applications in two
+# workspaces is two rows here, which is the honest shape: the single row it used
+# to be summed across workspaces and then said nothing about which.
 OWNER_APP_COUNTS_QUERY = """
 SELECT
     t.owner,
+    t.workspace,
     COUNT(*)    AS app_count
 FROM apex_applications t
 WHERE t.is_working_copy = 'No'
-    AND ('|' || :owners || '|' LIKE '%|' || t.owner || '|%' OR :owners IS NULL)
+    AND (UPPER('|' || :owners || '|') LIKE '%|' || UPPER(t.owner) || '|%' OR :owners IS NULL)
     AND (t.application_id < :max_app_id OR :max_app_id IS NULL)
-GROUP BY t.owner
-ORDER BY t.owner
+GROUP BY
+    t.owner,
+    t.workspace
+ORDER BY
+    t.owner,
+    t.workspace
 """.strip()
 
 WORKSPACES_QUERY = """
@@ -71,14 +92,48 @@ FROM apex_workspaces t
 WHERE 1 = 1
     AND t.workspace     NOT IN ('INTERNAL')
     AND t.workspace     NOT LIKE 'COM.ORACLE.%'
-    AND (t.workspace    = :workspace    OR :workspace IS NULL)
+    AND (UPPER(t.workspace) = UPPER(:workspace)    OR :workspace IS NULL)
     AND (:schemas IS NULL OR EXISTS (
         SELECT 1 FROM apex_workspace_schemas s
         WHERE  s.workspace_id = t.workspace_id
-            AND '|' || :schemas || '|' LIKE '%|' || s.schema || '|%'
+            AND UPPER('|' || :schemas || '|') LIKE '%|' || UPPER(s.schema) || '|%'
     ))
 ORDER BY
     t.workspace
+""".strip()
+
+# The same inventory question asked of the applications instead of the registry
+# (`#561`). `apex_workspaces` is authoritative and is what `-reveal` reads
+# first, but a schema can be unable to see its own workspace there while
+# `apex_applications` hands it every application with `workspace` and
+# `workspace_id` on the row, which is a screen reporting applications beside no
+# workspace at all. There is no `apex_developers` column to read here, so a
+# derived row carries no developer count rather than a zero nobody counted.
+#
+# It is a fallback and never a replacement: `-reveal` runs it only when nothing
+# is configured AND the registry left a workspace the applications named
+# unaccounted for. A configured `-ws` / `apex.workspace` keeps filtering exactly
+# as it did (Jan, 2026-08-26), so an explicit scope carries one meaning in every
+# mode instead of quietly widening itself the moment it matches nothing. The two
+# exclusions are the registry query's own, kept here so one source cannot list a
+# workspace the other hides.
+WORKSPACES_FROM_APPLICATIONS_QUERY = """
+SELECT
+    a.workspace,
+    a.workspace_id,
+    COUNT(DISTINCT a.owner) AS owners,
+    COUNT(*)                AS applications
+FROM apex_applications a
+WHERE 1 = 1
+    AND a.workspace     NOT IN ('INTERNAL')
+    AND a.workspace     NOT LIKE 'COM.ORACLE.%'
+    AND (UPPER('|' || :schemas || '|') LIKE '%|' || UPPER(a.owner) || '|%' OR :schemas IS NULL)
+    AND (a.application_id < :max_app_id OR :max_app_id IS NULL)
+GROUP BY
+    a.workspace,
+    a.workspace_id
+ORDER BY
+    a.workspace
 """.strip()
 
 EXPORT_START_QUERY = """

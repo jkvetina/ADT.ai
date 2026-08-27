@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from adt_ai.export_data import queries
+from adt_ai.export_data.groups import GroupRules, group_for, resolve_data_group_rules
 from adt_ai.export_data.inventory import DataColumn, DataDiscovery, DataTable
 from adt_ai.export_data.lob_update_scripts import (
     include_update_scripts,
@@ -41,6 +42,10 @@ class ExportDataRequest:
     schema_export: dict[str, dict[str, Any]] | None = None
     names        : list[str] | None = None
     reporter     : ExportDataReporter | None = None
+    #: Seed rules (`config/groups.yaml`), merged with whatever `data/` already
+    #: has learned about itself before each schema's export (ADT #520), same
+    #: split as `export_db`'s own `_resolve_group_rules`.
+    group_rules  : GroupRules | None = None
 
 
 GatewayFactory = Callable[[str], QueryGateway]
@@ -67,10 +72,14 @@ class ExportDataRunner:
     def run(self, request: ExportDataRequest) -> list[Path]:
         written: list[Path] = []
         export_items: list[tuple[DataDiscovery, DataTable]] = []
+        group_rules_by_schema: dict[str, GroupRules] = {}
         for schema in request.schemas:
             gateway = self.gateway_factory(schema)
             discovery = DataDiscovery(gateway)
             schema_export = (request.schema_export or {}).get(schema, {})
+            group_rules_by_schema[schema] = resolve_data_group_rules(
+                _data_folder(request.root, request.config, schema), request.group_rules
+            )
             # default the name list per schema – data folders may be schema-scoped
             names = request.names or _existing_data_names(request.root, request.config, schema)
             for table_name in discovery.table_names(
@@ -86,7 +95,9 @@ class ExportDataRunner:
         for discovery, table in export_items:
             if request.reporter:
                 request.reporter.export_table(table)
-            path, row_count = self._write_table(request, discovery, table)
+            path, row_count = self._write_table(
+                request, discovery, table, group_rules_by_schema[table.schema]
+            )
             written.append(path)
             if request.reporter:
                 request.reporter.finish_table(table, row_count)
@@ -99,6 +110,7 @@ class ExportDataRunner:
         request: ExportDataRequest,
         discovery: DataDiscovery,
         table: DataTable,
+        group_rules: GroupRules | None = None,
     ) -> tuple[Path, int]:
         table = (
             table
@@ -128,7 +140,7 @@ class ExportDataRunner:
         order_by = ", ".join(_key_columns(table, query_columns)) or "ROWID"
         where_filter = _where_filter(request.config, table.name, csv_columns)
         rows = discovery.rows(table.name, query_columns, where_filter, order_by)
-        path = _data_path(request.root, request.config, table.name, table.schema)
+        path = _data_path(request.root, request.config, table.name, table.schema, group_rules)
         path.parent.mkdir(parents=True, exist_ok=True)
         if sidecar_columns:
             _clear_sidecar_folder(path.with_suffix(""))
@@ -287,8 +299,18 @@ def _sidecar_name_part(value: Any) -> str:
     return safe or "value"
 
 
-def _data_path(root: Path, config: dict[str, Any], table_name: str, schema: str = "") -> Path:
-    return _data_folder(root, config, schema) / f"{table_name.lower()}.csv"
+def _data_path(
+    root: Path,
+    config: dict[str, Any],
+    table_name: str,
+    schema: str = "",
+    group_rules: GroupRules | None = None,
+) -> Path:
+    folder = _data_folder(root, config, schema)
+    group = group_for("DATA", table_name, group_rules)
+    if group:
+        folder = folder / group.upper()
+    return folder / f"{table_name.lower()}.csv"
 
 
 DEFAULT_DATA_LAYOUT = ("data", ".sql")
@@ -331,13 +353,23 @@ def _data_extension(config: dict[str, Any]) -> str:
     return _data_layout(config)[1]
 
 
+
+
 def _existing_data_names(root: Path, config: dict[str, Any], schema: str = "") -> list[str]:
     data_folder = _data_folder(root, config, schema)
     extension = _data_extension(config)
     if not data_folder.exists():
         return []
     names: list[str] = []
-    for file_path in sorted(data_folder.glob(f"*{extension}")):
+    # Flat, then exactly one level down: a table `-groups -force` (or a hand
+    # arrangement) already moved into `data/<GROUP>/` is still a previously
+    # exported table, and a bare re-export with no `-name` has to find it the
+    # same way `export_db`'s own discovery retries one level for a grouped
+    # object (ADT #498, #520).
+    candidates = sorted(data_folder.glob(f"*{extension}")) + sorted(
+        data_folder.glob(f"*/*{extension}")
+    )
+    for file_path in candidates:
         if not file_path.is_file():
             continue
         name = file_path.name
