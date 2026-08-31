@@ -1,5 +1,7 @@
 # Environment Check and Updates (adtai doctor)
 
+![It only looks. It never touches.](images/doctor.png)
+
 `doctor` tells you whether this machine can run ADT.ai, and what is out of date. Run it after installing, after a toolchain upgrade, or whenever a command fails in a way that smells environmental rather than like a bug. It also owns the explicit updates and the project scaffolding, since neither should ever happen behind your back.
 
 Installation and environment setup are in [SETUP.md](../SETUP.md); this page owns what the command does.
@@ -73,7 +75,7 @@ TIMER: 1s
 ```
 
 - A bare version row is good news: that value was detected and no newer one was found, or online checks were skipped.
-- `ADT_KEY` is never printed. A value renders as `<redacted>` and a missing one as `<empty>`.
+- Encryption key material is never printed. A direct `ADT_KEY` renders as `<redacted>`, a configured command as `<from ADT_KEY_CMD>`, and no source as `<empty>`. Setting both sources is ambiguous and renders a warning without showing either value.
 - The `ENVIRONMENT:` rows are what the process actually holds, so a run under an AI tool shows the values ADT.ai filled in for itself from your startup file. How that works is on [config.md](config.md#environment-variables).
 - Status words append after a dot leader, capped at 78 characters.
 
@@ -84,12 +86,14 @@ TIMER: 1s
 | Status | Meaning |
 | ------ | ------- |
 | `UPDATE` | A newer version was found online. |
-| `WARN` | Read-only `doctor` still runs, but optional setup is missing or uncertain: Java, SQLcl, Instant Client, `ADT_ENV`, `ADT_KEY` or `JAVA_TOOL_OPTIONS`. |
+| `WARN` | Read-only `doctor` still runs, but optional setup is missing, uncertain or contradictory: Java, SQLcl, Instant Client, `ADT_ENV`, the encryption-key source or `JAVA_TOOL_OPTIONS`. |
 | `FAIL` | A required prerequisite is missing or broken, Git or the `oracledb` module for instance. The run exits non-zero. |
 
 Plain `doctor` is read-only. It never runs `git pull`, never installs anything, never fetches or replaces SQLcl, and never stashes your work. By default it does check online for newer ADT.ai, Java, SQLcl, `oracledb` and Instant Client, which `-offline` turns off.
 
 For ADT.ai itself, an editable or git install is compared against its own configured `origin`, and a normal install against the latest public GitHub release before falling back to PyPI metadata. Update subprocesses force English and UTF-8 settings, so a local language override cannot change what SQLcl, Oracle or pip report back.
+
+A normal wheel installed inside another repository's `.venv` is still a package install. `doctor` does not mistake that enclosing repository for an editable ADT.ai checkout, and therefore cannot pull, stash, or switch the wrong project.
 
 <br>
 
@@ -136,6 +140,8 @@ How the release is found depends on the install, and both spellings, `v<version>
 - **A git checkout**, the documented install, fetches tags from its own `origin` and resolves the release against them. Release tags live in the public repository, so a checkout that carries none (an editable install backed by the private DEV repository, for instance) cannot resolve one; this is a real limitation of that install, not a bug, since there is nothing else to check out. A pinned checkout sits on a detached HEAD, and a later bare `-update` returns it to the remote's default branch before pulling, so latest is always one command away.
 - **Anything else** resolves the release against the public repository's own tags (no local checkout to ask) and installs it with pip. A fully-specified release tries the `v`-prefixed tag first and falls back to the bare spelling with no extra network round trip; a shorter one always asks the public repository which release the line's newest tag is, since pip cannot resolve an ambiguous ref on its own.
 
+Every pip action runs as `<current Python> -m pip`. It therefore updates the environment that is running ADT.ai, even when a different `pip3` happens to appear first on `PATH`.
+
 A version with no release **fails and stays put**. The `ADT.ai` row reads `FAILED` with the version and the remote it was looked for in underneath, the run exits non-zero, and the checkout does not move.
 
 So a downgrade can never quietly install something newer than what it reached for. A value that is not a version at all is refused before any git command runs.
@@ -162,17 +168,23 @@ Between two releases that both carry the flag, `-update <version>` and bare `-up
 
 ## Scaffolding a project
 
-`-init` writes the project override config and `config/IDENTITY.yaml`, copies ADT.ai's current root `.gitignore` and the `config/patch_template/` scaffold verbatim, and writes the `connections/.gitkeep` and `connections/wallets/.gitkeep` placeholders. It creates no cache folders, no APEX credential folders, no connection YAML and no wallet contents. Existing generated files are skipped, and `-force` overwrites them.
+![Blank folder in. Project out.](images/doctor_init.png)
+
+`-init` writes the project override config and `config/IDENTITY.yaml`, copies ADT.ai's current root `.gitignore` and the `config/patch_template/` scaffold verbatim, and writes the `connections/.gitkeep` and `connections/wallets/.gitkeep` placeholders. Those source files are bundled in the wheel as package resources, so the same scaffold is available from a normal install with no source checkout beside it.
+
+It creates no cache folders, no APEX credential folders, no connection YAML and no wallet contents. Existing generated files are skipped, and `-force` overwrites them.
 
 `config/IDENTITY.yaml` is prefilled from the project folder's own `git config user.name`/`user.email` where it has one, and ships with a commented `db_schema` placeholder either way, the database half has no git equivalent to read. See [Developer identity](config.md#developer-identity).
 
-The patch templates are scaffolded because `patch -create` reads them from the **project** root, so a folder that only ships with ADT.ai is a folder nobody has. All eight land verbatim, see patch templates for the slots and what each file does.
+The patch templates are scaffolded because `patch -create` reads them from the **project** root, so a folder that only ships with ADT.ai is a folder nobody has. All six source files land verbatim; see patch templates for the slots and what each file does.
 
 **Read `db_end/` before your first deploy.** Those three refresh every materialized view, gather schema statistics, and run every enabled daily job with a 60-second wait, and the APEX pair carries `<APEX_WORKSPACE>`, `<APEX_APP_ID>` and `<APEX_VERSION>` placeholders you fill in once. Delete what your deploy should not do.
 
 Patch *scripts* are not scaffolded: `patch_scripts/` is per patch code and generated per patch, so there is nothing fixed to seed.
 
 `adtai update`, `adtai upgrade` and `adtai init` are not commands. Each prints the generic error banner and points at the `doctor` flag that does the job.
+
+Before replacing SQLcl, `doctor` downloads, extracts, validates, and makes the new launcher executable in a staging directory beside the live install. Promotion is a same-filesystem rename. If that final swap fails, both the live install and any pre-existing backup are restored; a corrupt or incomplete archive never moves the live install at all.
 
 <br>
 

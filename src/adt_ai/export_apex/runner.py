@@ -146,13 +146,21 @@ class ApexExportRunner(
         self.gateway_factory = gateway_factory
 
     def run(self, request: ApexExportRequest) -> None:
+        if request.apex_store is not None:
+            # An injected store is owned by its caller, which may use it for
+            # several runs or assertions after this one returns.
+            self._run(request, request.apex_store)
+            return
+        with ApexStore.load(request.root) as store:
+            self._run(request, store)
+
+    def _run(self, request: ApexExportRequest, store: ApexStore) -> None:
         base_resolver = ApexFileResolver.from_config(request.root, dict(request.config))
         reporter = request.reporter or ConsoleApexProgressReporter()
         # One store for the whole run: every ETA read, every ETA write and the
         # developer merge below all address `config/internal/apex.db`, and
         # reopening it per action would pay the connect cost once per exported
         # format per application.
-        store = request.apex_store or ApexStore.load(request.root)
         timers = store.timers()
         if not request.recent_report_only:
             _store_application_metadata(

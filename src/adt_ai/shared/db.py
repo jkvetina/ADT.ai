@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Protocol
@@ -63,6 +64,13 @@ def _attach_sql(error: BaseException, sql: str) -> None:
         pass
 
 
+def _close_resource(resource: object) -> None:
+    """Close a DB-API resource while tolerating deliberately minimal fakes."""
+    close = getattr(resource, "close", None)
+    if callable(close):
+        close()
+
+
 class QueryGateway(Protocol):
     def fetch_all(
         self,
@@ -94,6 +102,9 @@ class QueryGateway(Protocol):
     ) -> str:
         ...
 
+    def close(self) -> None:
+        ...
+
 
 class FakeGateway:
     def __init__(
@@ -108,6 +119,7 @@ class FakeGateway:
         self.statements: list[tuple[str, dict[str, Any]]] = []
         self.sqlcl_requests: list[tuple[str, Path]] = []
         self.sqlcl_timeouts: list[float | None] = []
+        self.closed = False
 
     def fetch_all(
         self,
@@ -150,6 +162,9 @@ class FakeGateway:
                 on_line(line)
         return self.sqlcl_output
 
+    def close(self) -> None:
+        self.closed = True
+
 
 class OracleGateway:
     FETCH_ARRAYSIZE = 5000
@@ -184,16 +199,33 @@ class OracleGateway:
 
         driver = self._driver()
         self._initialize_thick_client(driver)
-        self._connection = driver.connect(**self._connect_kwargs(driver))
-        # Bound every round-trip on the established connection so a dead socket
-        # mid-query aborts quickly instead of hanging on the OS default, while a
-        # legitimate long-running query gets its own independent budget.
-        self._connection.call_timeout = self.query_timeout_seconds * 1000
-        self._install_output_type_handler(self._connection, driver)
-        self._apply_default_session_settings(self._connection)
-        if self.startup_sql:
-            apply_startup(self._connection, self.startup_sql)
-        return self._connection
+        connection = driver.connect(**self._connect_kwargs(driver))
+        try:
+            # Bound every round-trip on the established connection so a dead
+            # socket mid-query aborts quickly instead of hanging on the OS
+            # default, while a legitimate long-running query gets its own
+            # independent budget.
+            connection.call_timeout = self.query_timeout_seconds * 1000
+            self._install_output_type_handler(connection, driver)
+            self._apply_default_session_settings(connection)
+            if self.startup_sql:
+                apply_startup(connection, self.startup_sql)
+        except BaseException:
+            # Teardown is best-effort on the failing path: its own driver error
+            # must not replace the STARTUP/connect failure the user can act on.
+            with contextlib.suppress(Exception):
+                _close_resource(connection)
+            raise
+        # Do not cache a half-initialized session. A failed STARTUP.sql or
+        # default-session statement closes the new connection above; a later
+        # call gets a genuinely fresh attempt rather than the broken object.
+        self._connection = connection
+        return connection
+
+    def close(self) -> None:
+        connection, self._connection = self._connection, None
+        if connection is not None:
+            _close_resource(connection)
 
     def fetch_all(
         self,
@@ -204,11 +236,13 @@ class OracleGateway:
         cursor.arraysize = self.FETCH_ARRAYSIZE
         try:
             cursor.execute(sql, dict(params or {}))
+            columns = [column[0] for column in cursor.description or []]
+            return [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()]
         except Exception as error:
             _attach_sql(error, sql)
             raise
-        columns = [column[0] for column in cursor.description or []]
-        return [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()]
+        finally:
+            _close_resource(cursor)
 
     def read_only_fetch_all(
         self,
@@ -217,16 +251,18 @@ class OracleGateway:
     ) -> list[dict[str, Any]]:
         """Fetch rows under a ``READ ONLY`` transaction.
 
-        Issues ``SET TRANSACTION READ ONLY`` on the session before the query so the
-        database itself rejects any write a side-effecting function might attempt
-        (ORA-01456), then rolls back to end the transaction, the committing
-        ``execute`` path is never used.
+        Issues ``SET TRANSACTION READ ONLY`` on the session before the query,
+        then rolls back to end the transaction; the committing ``execute`` path
+        is never used. This constrains the caller's transaction. It cannot undo
+        work committed independently by an autonomous-transaction function
+        invoked from an otherwise valid SELECT, so callable-code grants remain
+        the outer security boundary.
         """
         connection = self.connect()
         cursor = connection.cursor()
         cursor.arraysize = self.FETCH_ARRAYSIZE
-        cursor.execute("SET TRANSACTION READ ONLY")
         try:
+            cursor.execute("SET TRANSACTION READ ONLY")
             cursor.execute(sql, dict(params or {}))
             columns = [column[0] for column in cursor.description or []]
             return [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()]
@@ -234,7 +270,10 @@ class OracleGateway:
             _attach_sql(error, sql)
             raise
         finally:
-            connection.rollback()
+            try:
+                connection.rollback()
+            finally:
+                _close_resource(cursor)
 
     def execute(
         self,
@@ -245,10 +284,12 @@ class OracleGateway:
         cursor = connection.cursor()
         try:
             cursor.execute(sql, dict(params or {}))
+            connection.commit()
         except Exception as error:
             _attach_sql(error, sql)
             raise
-        connection.commit()
+        finally:
+            _close_resource(cursor)
 
     def sqlcl_request(
         self,
@@ -334,7 +375,11 @@ class OracleGateway:
         )
 
     def _apply_default_session_settings(self, connection: Any) -> None:
-        connection.cursor().execute(DDL_LOCK_TIMEOUT_STATEMENT)
+        cursor = connection.cursor()
+        try:
+            cursor.execute(DDL_LOCK_TIMEOUT_STATEMENT)
+        finally:
+            _close_resource(cursor)
 
     def _driver(self) -> Any:
         if self.driver is not None:

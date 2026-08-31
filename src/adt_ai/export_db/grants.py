@@ -24,6 +24,7 @@ from adt_ai.export_db.content import (
 )
 from adt_ai.export_db.files import ObjectFileWriter, ObjectWriteRequest
 from adt_ai.export_db.inventory import DatabaseObject, ObjectDiscovery
+from adt_ai.shared.config import is_enabled
 
 # The object type all four artifacts already carry. Named once so the yield
 # below, the overview row and the compact label cannot drift onto three
@@ -116,14 +117,18 @@ def grant_contents(
     schema_export = (request.schema_export or {}).get(schema, {})
     prefix = request.prefix or schema_export.get("prefix")
     ignore = request.ignore or split_patterns(schema_export.get("ignore"))
+    keep_owner = is_enabled(request.config.get("keep_owner", False))
     yield DatabaseObject(schema, GRANT_OBJECT_TYPE, schema), _render_grants_made(
         discovery.grants_made(schema, prefix=prefix, ignore=ignore),
-        prefix = prefix,
-        ignore = ignore,
+        prefix     = prefix,
+        ignore     = ignore,
+        schema     = schema,
+        keep_owner = keep_owner,
     )
     for owner, content in _render_grants_received(
         discovery.grants_received(schema),
-        schema = schema,
+        schema     = schema,
+        keep_owner = keep_owner,
     ).items():
         yield DatabaseObject(schema, GRANT_OBJECT_TYPE, f"received/{owner.upper()}"), content
     yield (
@@ -132,5 +137,9 @@ def grant_contents(
     )
     yield (
         DatabaseObject(schema, GRANT_OBJECT_TYPE, f"{schema.upper()}_directories"),
-        _render_directories(discovery.directories(schema), schema=schema),
+        _render_directories(
+            discovery.directories(schema),
+            schema     = schema,
+            keep_owner = keep_owner,
+        ),
     )

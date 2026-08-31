@@ -42,6 +42,7 @@ from adt_ai.shared.sqlcl_errors import (
     SqlclTimeoutError,
 )
 from adt_ai.shared.sqlcl_stream import open_stream
+from adt_ai.shared.subprocess_env import safe_subprocess_environment
 
 # Re-exported: every caller has always imported these from here, and the split
 # into `sqlcl_errors` (ADT #457) is about an import cycle, not about moving the
@@ -98,7 +99,8 @@ def _sqlcl_temp_dir(project_root: Path | None) -> Path | None:
 # SQLcl echoes back into stdout/stderr.
 _CONNECT_PWD_RE = re.compile(r'/"(?P<pwd>[^"\n]+)"@')
 
-# Variables withheld from SQLcl's environment; ``_sqlcl_environment`` says why.
+# Variables withheld from ordinary SQLcl sessions. ADT's encryption-key names
+# are removed for OCI and thin sessions alike by ``safe_subprocess_environment``.
 SQLCL_HIDDEN_VARIABLES = ("ORACLE_HOME",)
 
 # The one diagnostic that means "this script ran against no session at all".
@@ -176,7 +178,7 @@ def _sqlcl_environment(
     documents. ``PATH`` is untouched, so the launcher is still found, and the
     parent environment is not mutated, so python-oracledb keeps its client.
     """
-    environment = dict(os.environ)
+    environment = safe_subprocess_environment()
     if oci:
         # The one connection shape that needs the opposite of everything above:
         # a Secure External Password Store is read by the OCI client, so SQLcl

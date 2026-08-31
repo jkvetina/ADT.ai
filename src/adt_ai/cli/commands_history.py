@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import re
-import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -264,15 +263,7 @@ def _run_search_repo(args: argparse.Namespace) -> int:
 def _run_calendar(args: argparse.Namespace) -> int:
     print_module_banner("CALENDAR")
     root = Path(args.root).resolve()
-    try:
-        config = ConfigLoader(
-            _config_search_paths(getattr(args, "config_dir", None), root, _repo_root())
-        ).load().data
-    except Exception as exc:
-        # The calendar works without a config (no jira_prefix, default cache
-        # path), but a broken config must not be indistinguishable from none.
-        print(f"Warning: could not read config ({exc}); using defaults", file=sys.stderr)
-        config = {}
+    config = _history_config(args, root)
     jira_prefix = config.get("jira_prefix") or None
     cache_file_template = config.get("repo_commits_file") or DEFAULT_COMMITS_TEMPLATE
     try:
@@ -320,19 +311,10 @@ def _resolve_calendar_month(value: str) -> str:
 
 
 def _history_config(args: argparse.Namespace, root: Path) -> dict:
-    """The merged config, or an empty mapping when it cannot be read.
-
-    Reading history must never fail because the project has no config file, so
-    every caller here degrades rather than raising. The search paths include
-    ADT's own repo root, so a project with no config of its own still gets the
-    shipped `object_types` and `repo_commits_file`.
-    """
-    try:
-        return ConfigLoader(
-            _config_search_paths(getattr(args, "config_dir", None), root, _repo_root())
-        ).load().data
-    except Exception:
-        return {}
+    """Load history configuration; malformed configuration is never downgraded."""
+    return ConfigLoader(
+        _config_search_paths(getattr(args, "config_dir", None), root, _repo_root())
+    ).load().data
 
 
 def _commits_template(args: argparse.Namespace, root: Path) -> str:

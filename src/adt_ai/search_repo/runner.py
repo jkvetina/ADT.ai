@@ -8,6 +8,7 @@ from typing import Any
 
 from adt_ai.patch.layout import database_object_name, database_object_type
 from adt_ai.rebuild.runner import REVEAL_DEFAULT_LIMIT
+from adt_ai.shared import text_files
 from adt_ai.shared.commit_cache import (
     DEFAULT_COMMITS_TEMPLATE,
     current_branch,
@@ -128,10 +129,9 @@ class SearchRepoRunner:
             files = [path for path in record.files if path]
             deleted = [path for path in record.deleted if path]
             # Git's own letters, which the store carries because `rebuild` no
-            # longer throws them away. The fallback below is only for rows
-            # imported from a YAML cache that never held them: there, A and M
-            # are genuinely indistinguishable, so the old approximation is the
-            # honest answer rather than a letter invented to look precise.
+            # longer throws them away. A store written by an early SQLite build
+            # may still have NULL statuses; there A and M are genuinely
+            # indistinguishable, so the old approximation is the honest answer.
             file_statuses = {path: status for path, status in record.statuses.items() if path}
             for path in files:
                 file_statuses.setdefault(path, "M" if path in existing_paths else "A")
@@ -218,7 +218,11 @@ class SearchRepoRunner:
                 if not request.stage:
                     target = _versioned_restore_path(target, record.number)
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(payload)
+                # Through the shared writer, so restoring a file that already
+                # holds the requested bytes leaves its mtime alone (`#593`). It
+                # is still a restore either way: what the row reports is that
+                # the path now carries that commit's content.
+                text_files.write_bytes(target, payload)
                 restored.append(target)
                 if request.stage:
                     run_git(root, ["add", file_path])

@@ -2,7 +2,7 @@
 
 ![Plain text, encrypted, your vault, or no password at all.](images/connection_passwords.png)
 
-A connection file can hold a password as cleartext, hold it encrypted, hold a command that fetches it from your own vault, or hold no password at all. This page covers the stored format, the four ways of not storing one, how a loaded credential is masked, and how to change the encryption key.
+A connection file can hold cleartext, encrypted text, a vault command, or no password. This page covers those formats, masking and rekeying. It remains a local secret file in every mode: keep connection files, key files and wallets out of Git.
 
 [connection.md](connection.md) covers the command that writes these values, and [connection_security.md](connection_security.md) states the same ground for a security reviewer rather than a developer.
 
@@ -24,7 +24,7 @@ Unquoted, it can be rewritten as `inf` the next time anything edits the file, wh
 
 Each secret carries its own 16-byte random salt, so encrypting one password twice gives two different values and no table built against one project helps against another.
 
-The salt lives inside the value rather than beside it, which keeps the round trip stateless: the connection file is still the only thing that has to travel, and a colleague or a CI runner holding nothing but the key can read it. Key derivation runs at 600000 PBKDF2-HMAC-SHA256 iterations, current OWASP guidance, costing roughly 160 ms per secret.
+The salt lives inside the value rather than beside it, which keeps the encrypted value self-contained. A colleague or a CI runner receiving the file through an approved secret channel can read it with the separately supplied key. Key derivation runs at 600000 PBKDF2-HMAC-SHA256 iterations, current OWASP guidance, costing roughly 160 ms per secret.
 
 **Older files keep working.** A value with no version prefix is read as the earlier format, and nothing rewrites it underneath you. Writing that secret again with `-encrypt`, or running a rekey, moves it to the current format.
 
@@ -42,7 +42,7 @@ Wrong encryption key for DEV.APP pwd: the stored value carries key fingerprint
 ADT_KEY to the key this value was encrypted with.
 ```
 
-The digest is derived from that value's own salted key material rather than from the key by itself. That is what makes it safe to commit: testing a guessed key against the fingerprint costs the same 600000 iterations as testing it against the ciphertext beside it.
+The digest comes from that value's salted key material, not the key alone. Testing a guess against it therefore costs the same 600000 iterations as testing the ciphertext. The fingerprint does not weaken the encrypted value, but the whole connection file still stays out of Git.
 
 It also means two secrets encrypted with one key have different fingerprints, which is the property that lets a rekey be verified secret by secret rather than trusted in bulk.
 
@@ -101,14 +101,17 @@ That covers the marker and the fingerprint too, and it counts what the schema ac
 
 A `-key` on the command line still wins over both, because that is an override for one run rather than a second piece of configuration.
 
+**Keep secrets out of command arguments.** A literal `-key VALUE`, a token inside `ADT_KEY_CMD`, or a token inside `pwd_cmd` can be visible in shell history and process listings before ADT.ai starts. Prefer `-key /secure/adt.key`, set `ADT_KEY` to that owner-only path, or use a provider command whose authentication is held by the provider rather than written in its arguments.
+
 **The command must be able to finish on its own.** Its input is closed, so a command that stops to ask something fails immediately rather than hanging behind a pipe nobody can see, and it gets 60 seconds before ADT.ai gives up on it. Biometric and desktop unlock prompts are fine; a command that wants an answer typed into the terminal is not.
 
-**A failure names the command, never its output.** Standard output is where the secret arrives, so it is never quoted back at you. Standard error is, because that is where a vault CLI writes the actual cause:
+**A failure names only the executable, never its arguments or output.** Standard output is where the secret arrives, and provider arguments or standard error can also contain tokens. All three are suppressed. The diagnostic retains the context, executable and exit status:
 
 ```text
-DEV.APP pwd: command failed with exit status 1: op read op://Engineering/DEV_APP/password
-  [ERROR] you are not currently signed in
+DEV.APP pwd: command failed with exit status 1: op
 ```
+
+Run the provider command directly in a trusted terminal when its own detailed diagnostic is needed. ADT.ai also removes `ADT_KEY` and `ADT_KEY_CMD` from the environment of the provider process; provider-owned variables such as `VAULT_TOKEN` are left intact.
 
 One trailing newline is dropped from the output, since every CLI above adds one. Nothing else is trimmed, so a password ending in a space survives.
 
@@ -214,7 +217,7 @@ A contract test pins that list, so a fourth unwrap fails the test suite rather t
 
 Two limits, stated rather than implied. This does not hide a credential from an agent allowed to run `adtai` at all, because such an agent can open its own database session without ever reading a password.
 
-The guarantee is the narrower and more useful one: ADT.ai itself never puts a plaintext credential where something else reads it back. And it is not encryption at rest, which is what `-encrypt` above is for.
+ADT.ai masks credentials by default, contracts the deliberate plaintext exits, scrubs SQLcl output and removes its encryption keys from child environments. This is not isolation from software running as the same user, and masking is not encryption at rest; `-encrypt` provides the latter.
 
 <br>
 

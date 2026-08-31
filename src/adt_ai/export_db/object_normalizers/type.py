@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from adt_ai.export_db.normalizers import NormalizationContext, _drop_create_wrap
+from adt_ai.export_db.normalizers import (
+    NormalizationContext,
+    _drop_create_wrap,
+    qualified,
+)
 
 
 def normalize_type(lines: list[str], context: NormalizationContext) -> list[str]:
@@ -17,5 +21,5 @@ def _normalize_type_with_drop(
     *,
     drop_clause: str,
 ) -> list[str]:
-    object_name = context.object_name.upper()
+    object_name = qualified(context.object_name.upper(), context)
     return _drop_create_wrap(lines, f"DROP {drop_clause} {object_name}")

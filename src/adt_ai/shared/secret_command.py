@@ -21,11 +21,10 @@ Three properties are load bearing and each is pinned by a test:
 * **The value is a** :class:`~adt_ai.shared.secret.Secret` **at the point of
   capture**, never a plain ``str`` handed around for someone downstream to wrap.
   :func:`read_key_text` is the one exception and says why in its own docstring.
-* **A failure never echoes stdout.** stdout is the channel the secret arrives
-  on, so a diagnostic that quoted it would put the credential on the error
-  stream. stderr is the diagnostic channel by convention (``op`` writes "not
-  signed in" there) and is reported, bounded, because without it a caller sees
-  an exit status and no cause.
+* **A failure never echoes output or arguments.** stdout is the channel the
+  secret arrives on, while arguments and stderr are controlled by the secret
+  provider and may contain tokens or credentials. A diagnostic therefore names
+  only the executable and the failure class or exit status.
 
 stdin is closed. A command that stops to prompt fails at once instead of hanging
 behind a captured pipe, which is the ``#188`` shape, and the timeout below is the
@@ -40,14 +39,11 @@ from collections.abc import Sequence
 from typing import Any
 
 from adt_ai.shared.secret import Secret
+from adt_ai.shared.subprocess_env import safe_subprocess_environment
 
 # Generous for a vault round trip over a VPN, short enough that an unattended run
 # reports a cause instead of sitting there.
 DEFAULT_TIMEOUT_SECONDS = 60.0
-
-# Enough of stderr to carry the real cause, capped so a chatty CLI cannot turn one
-# connection failure into a screenful.
-_STDERR_LIMIT = 500
 
 # Per secret: the keys that name a command, and the stored-value keys that cannot
 # stand beside one. The wallet password has two accepted spellings already, so
@@ -161,7 +157,7 @@ def _argv(command: Any, *, context: str) -> list[str]:
 
 def _capture(command: Any, *, context: str, timeout_seconds: float) -> str:
     argv = _argv(command, context=context)
-    rendered = shlex.join(argv)
+    program = shlex.quote(argv[0])
     try:
         completed = subprocess.run(
             argv,
@@ -170,41 +166,28 @@ def _capture(command: Any, *, context: str, timeout_seconds: float) -> str:
             stdin          = subprocess.DEVNULL,
             timeout        = timeout_seconds,
             check          = False,
+            env            = safe_subprocess_environment(),
         )
     except FileNotFoundError as error:
-        raise SecretCommandError(
-            f"{context}: command not found: {argv[0]} (from {rendered})"
-        ) from error
+        raise SecretCommandError(f"{context}: command not found: {program}") from error
     except PermissionError as error:
         raise SecretCommandError(
-            f"{context}: command is not executable: {argv[0]} (from {rendered})"
+            f"{context}: command is not executable: {program}"
         ) from error
     except subprocess.TimeoutExpired as error:
         raise SecretCommandError(
-            f"{context}: command timed out after {timeout_seconds:g} seconds: {rendered}"
+            f"{context}: command timed out after {timeout_seconds:g} seconds: {program}"
         ) from error
 
     if completed.returncode != 0:
         raise SecretCommandError(
             f"{context}: command failed with exit status {completed.returncode}: "
-            f"{rendered}{_stderr_tail(completed.stderr)}"
+            f"{program}"
         )
 
     # One line ending, and only one. A password may legitimately end in a space,
     # so a blanket strip would quietly change the credential.
     value = completed.stdout.removesuffix("\n").removesuffix("\r")
     if not value:
-        raise SecretCommandError(
-            f"{context}: command produced no output: {rendered}"
-            f"{_stderr_tail(completed.stderr)}"
-        )
+        raise SecretCommandError(f"{context}: command produced no output: {program}")
     return value
-
-
-def _stderr_tail(stderr: str | None) -> str:
-    text = (stderr or "").strip()
-    if not text:
-        return ""
-    if len(text) > _STDERR_LIMIT:
-        text = text[:_STDERR_LIMIT] + " ..."
-    return "\n" + "\n".join(f"  {line}" for line in text.splitlines())

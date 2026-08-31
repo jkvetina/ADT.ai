@@ -9,6 +9,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from adt_ai.shared.subprocess_env import safe_subprocess_environment
+
 CommandRunner = Callable[[Sequence[str]], str]
 ExecutableResolver = Callable[[str], str | None]
 
@@ -29,6 +31,7 @@ class EnvironmentChecker:
         "ADT_BRANCH",
         "ADT_SCHEMA",
         "ADT_KEY",
+        "ADT_KEY_CMD",
     )
 
     def __init__(
@@ -150,6 +153,7 @@ def _run_command(command: Sequence[str]) -> str:
         check        = True,
         capture_output = True,
         text         = True,
+        env          = safe_subprocess_environment(),
     )
     return (completed.stdout or completed.stderr).strip()
 

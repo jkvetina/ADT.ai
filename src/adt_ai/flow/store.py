@@ -140,7 +140,12 @@ class ApexFlowStore:
     def open(cls, db_path: str | Path) -> ApexFlowStore:
         path = Path(db_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        return cls(sqlite3.connect(str(path)))
+        connection = sqlite3.connect(str(path))
+        try:
+            return cls(connection)
+        except BaseException:
+            connection.close()
+            raise
 
     def refresh_app(
         self,

@@ -1,5 +1,7 @@
 # Project Configuration (adtai)
 
+![Configure once. Every tool reads it.](images/config.png)
+
 ADT.ai is configured by files in your project rather than by flags you retype. This page covers where those files are looked for, the identity and timeout keys, how line endings are written, the session startup script, and the environment variables ADT.ai fills in for itself when a tool starts it outside your shell.
 
 The shipped `config/config.yaml` comments every key it carries, so that file is the reference. What follows is the part a comment cannot explain.
@@ -72,6 +74,26 @@ Those two bound the Python driver. SQLcl is a separate child process and is deli
 The one exception is `rest_timeout_seconds`, which bounds `export_apex -rest`, whose SQLcl call could otherwise sit for many minutes showing nothing but a crawling bar. Past the budget SQLcl is killed and the run reports the timeout with whatever it printed first.
 
 A missing, non-numeric or non-positive value falls back to the default rather than removing the bound.
+
+<br>
+
+## Naming the owning schema
+
+Generated SQL is **schema-neutral by default**: a package body exports as `CREATE OR REPLACE PACKAGE BODY a_blacklist_j`, never `comm_base.a_blacklist_j`. The file lands in whichever schema the deploying session connects as, which is what lets one repository install into DEV, TEST and PROD without the files knowing which is which.
+
+Set `keep_owner` to write the owner in front of every generated object name instead:
+
+```yaml
+keep_owner              : False
+```
+
+Under `true` the prefix appears in four places, so a repository is consistent rather than half-qualified: the `CREATE` line of every exported object, the `MERGE`/`DELETE` and per-row LOB `UPDATE` statements `export_data` writes, the object a `GRANT` names, and directories.
+
+Pick it by how the deployment targets a schema. Leave it `false` where the connection or an `ALTER SESSION SET CURRENT_SCHEMA` already selects the target. That is the common case, and the only one that survives being deployed into a differently-named schema.
+
+Turn it `true` where the deploying user is not the owner and installs into several schemas in one session, so each statement carries its own target and nothing depends on session state.
+
+Flipping the key rewrites the definition line of every object on the next export, so it is a one-time whole-repository change rather than a per-object choice. Directories are the one object type that carried the owner before this key existed and now follow it like everything else.
 
 <br>
 
@@ -167,7 +189,7 @@ That cuts both ways while you are testing a change, since a default matching the
 
 ## Environment variables
 
-ADT.ai reads `ADT_KEY`, which decrypts connection passwords, then `ADT_ENV`, `ADT_REPO`, `ADT_CLIENT`, `ADT_PROJECT`, `ADT_BRANCH` and `ADT_SCHEMA`.
+`ADT_KEY` decrypts passwords; `ADT_KEY_CMD` prints that key. Set one, preferably an owner-only file path or safe provider command. ADT.ai reads `ADT_ENV`, `ADT_REPO`, `ADT_CLIENT`, `ADT_PROJECT`, `ADT_BRANCH` and `ADT_SCHEMA`.
 
 It also reads the Oracle variables an Instant Client setup exports: `ORACLE_HOME`, `TNS_ADMIN`, `NLS_LANG`, `DBVERSION`, `DYLD_LIBRARY_PATH`, `LD_LIBRARY_PATH`, `OCI_LIB_DIR`, `OCI_INC_DIR` and `JAVA_TOOL_OPTIONS`.
 
@@ -181,7 +203,7 @@ So ADT.ai fills them in itself. On every run, when `ADT_ENV` or `ORACLE_HOME` is
 - **Your startup file is parsed, not executed.** `export VAR=value` lines are read as text, with `~` and `$VAR` expansion. Only when a sentinel is still unresolved afterwards does ADT.ai fall back to running your shell, which also sees variables set inside a function, a conditional or an `eval`.
 - **Which file follows `$SHELL`.** zsh reads `~/.zshrc`, `~/.zprofile` and `~/.zshenv`; bash reads `~/.bash_profile`, `~/.bashrc` and `~/.profile`. An unknown shell falls back to all three of the common ones.
 - **Nothing here can fail your command.** A missing file, an unreadable one, or a shell that will not run leaves the environment untouched and the command proceeds.
-- **`ADT_KEY` is never printed.** Hydration carries variable names only, and [`doctor`](doctor.md) keeps showing the key as `<redacted>`.
+- **Encryption keys are not printed or inherited.** [`doctor`](doctor.md) shows only whether a source exists; ordinary child processes receive neither key variable.
 - **macOS and Linux only.** On Windows hydration is a no-op, so set the variables yourself.
 
 Hydration announces nothing of its own. What it did is visible where it matters: [`adtai doctor`](doctor.md#output) prints the values the process actually holds, so an `ENVIRONMENT:` section carrying your real `ADT_ENV` and `ORACLE_HOME` under an AI tool is hydration having worked.

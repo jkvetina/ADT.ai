@@ -4,6 +4,7 @@ import argparse
 import sys
 import time
 from collections.abc import Callable, Sequence
+from contextlib import ExitStack
 from pathlib import Path
 from typing import TextIO
 
@@ -38,6 +39,7 @@ from adt_ai.cli.context import (
     _print_sqlcl_error,
     _print_unexpected_error,
 )
+from adt_ai.cli.gateways import gateway_scope
 from adt_ai.cli.help import format_command_help
 from adt_ai.cli.parser import (
     _command_parser,
@@ -213,11 +215,17 @@ def main(
     )
     sys.stdout = tracked_stdout
     sys.stderr = tracked_stderr
+    resources = ExitStack()
+    gateway_resources = resources.enter_context(gateway_scope())
     if gateway_factory is not None and strict_mode():
         # The one place every command's injected gateway passes through, so the
         # console guard is armed for all of them from here rather than enrolled
         # per command. The real gateway is wrapped in cli.gateways.build_gateway.
         gateway_factory = announced_factory(gateway_factory)
+    if gateway_factory is not None:
+        # Injected gateways obey the same command lifetime as real ones. The
+        # wrapper deduplicates cached factories by identity before teardown.
+        gateway_factory = gateway_resources.track_factory(gateway_factory)
     started_at = time.monotonic()
     timer_stdout = _command_timer_stdout(args, tracked_stdout)
     exit_code = 0
@@ -269,6 +277,7 @@ def main(
         else:
             _print_unexpected_error(error)
     finally:
+        resources.close()
         # A completed multi-schema run (run_schema_sections) already printed
         # its own per-segment TIMER footers and set this latch on loop
         # completion only, a mid-loop failure leaves it unset, so the shared

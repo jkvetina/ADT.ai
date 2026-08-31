@@ -8,7 +8,7 @@ from pathlib import Path
 
 from adt_ai.rebuild.models import RebuildRequest
 from adt_ai.rebuild.runner import RebuildRunner
-from adt_ai.shared.commit_cache import open_store
+from adt_ai.shared.commit_cache import DEFAULT_COMMITS_TEMPLATE, open_store
 from adt_ai.shared.git_files import default_branch_ref, fetch_origin, run_git
 from adt_ai.shared.identity import resolve_commit_email
 
@@ -31,7 +31,7 @@ class CalendarRequest:
     # Where the rebuild module stores its per-branch commit cache. The calendar
     # reads commit metadata from this cache instead of re-walking every branch
     # live, and tops it up for the default + prefix branches before reading.
-    cache_file_template: str = "./config/commits/#BRANCH#.yaml"
+    cache_file_template: str = DEFAULT_COMMITS_TEMPLATE
 
 
 @dataclass(frozen=True)

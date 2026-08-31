@@ -7,6 +7,14 @@ suites roll-up and then a verdict per test; a default run prints neither and
 watches one dotted progress bar instead (`progress.py`); `-silent` prints none
 of them. The last two print in every mode.
 
+**The run-wide roll-ups are next door in `rollup.py`**, split off at the same
+context budget as everything else here: `SUMMARY PER MODULE:`, and the single
+`RESULTS:` row `-compact` puts in place of both tallies. Their unit is the run,
+where every shape in this file is a suite or a test, and they share one row
+builder so the short form and the long one cannot disagree. `-compact` reaches
+neither the third section nor the gate below it, so the flag makes a green run
+short rather than a red one unreadable, the line `-silent` already draws.
+
 Three shapes carry all four. The suites roll-up and the tally are tables because
 every value in them is bounded, a package name and counts. The verdicts are
 fixed-width status rows grouped under their package, because a run prints one
@@ -38,19 +46,11 @@ from adt_ai.ut.cells import (
     SUMMARY_NUMERIC,
     count_cell,
     coverage_cell,
-    module_cell,
     percent_cell,
     seconds_cell,
     test_status_cell,
 )
-from adt_ai.ut.grouping import (
-    by_module,
-    count,
-    flatten,
-    outcomes_by_package,
-    target_packages,
-    total_seconds,
-)
+from adt_ai.ut.grouping import count, outcomes_by_package
 from adt_ai.ut.inventory import (
     RESULT_ERRORED,
     RESULT_FAILED,
@@ -58,7 +58,6 @@ from adt_ai.ut.inventory import (
     PackageCoverage,
     SuitePackage,
     TestOutcome,
-    coverage_percent,
 )
 from adt_ai.ut.layout import DETAIL_INDENT, HEADING_INDENT
 from adt_ai.ut.runner import Ut3Result
@@ -72,31 +71,12 @@ _SUITE_COLUMNS = ("SUITE_PACKAGE", "TESTS")
 # filter is stated once, by the section the run happened under (`progress.py`).
 SUITES_TITLE = "UNIT TESTS SUITES:"
 SUMMARY_TITLE = "SUMMARY PER SUITE:"
-MODULE_SUMMARY_TITLE = "SUMMARY PER MODULE:"
 
 # **`COVERAGE` closes the row, after `TIMER`.** Jan's 2026-08-11 shape: the
 # verdicts say whether the suite is green, `TIMER` what it cost, and `COVERAGE`
 # how much of the code it actually reached, the three questions in the order a
 # reader asks them.
 _SUMMARY_COLUMNS = ("SUITE_PACKAGE", "PASS", "FAIL", "ERROR", "TIMER", "COVERAGE")
-
-
-# `SUMMARY PER SUITE:` again, one row per `ut_module` group instead of per suite package.
-# `PACKAGES` and `LINES` are the two columns the per-suite table does not have,
-# and they are the pair that makes the rest honest: a group of one and a group of
-# nine are the same row without the count, and forty lines and four thousand are
-# the same row without the size. They sit together, ahead of the verdicts, because
-# both describe the group rather than what this run did to it.
-_MODULE_COLUMNS = (
-    "MODULE_NAME",
-    "PACKAGES",
-    "LINES",
-    "PASS",
-    "FAIL",
-    "ERROR",
-    "TIMER",
-    "COVERAGE",
-)
 
 
 def print_suites(packages: tuple[SuitePackage, ...]) -> None:
@@ -327,77 +307,6 @@ def print_summary_rows(result: Ut3Result) -> None:
         columns = list(_SUMMARY_COLUMNS),
         numeric = SUMMARY_NUMERIC,
     )
-
-
-def print_module_summary(result: Ut3Result) -> None:
-    """The same run grouped by `ut_module`, the second table of a run.
-
-    **It answers a different question from the table above it.** The per-suite
-    table says which suite is red; this says which *area* is. On a schema with
-    ninety suites the per-suite table is a list you scroll and this is the one
-    you read, which is why it is a table of its own rather than a sort order on
-    the first. The two headings are a matched pair for that reason, `SUMMARY PER
-    SUITE:` then `SUMMARY PER MODULE:`, so the difference between them is the
-    first thing on each screen rather than something to work out from a column.
-
-    `PACKAGES` is the group size and `LINES` is how much code that adds up to,
-    and together they are what make the rest honest: four failures spread over
-    nine suites and four in one are not the same news, and neither are ninety
-    percent of forty lines and ninety percent of four thousand.
-
-    **`LINES` counts the packages the group's suites test, not the suites.** It
-    is the same deduplicated set `COVERAGE` beside it is computed over, two
-    suites testing one package contribute one body once, so the two columns can
-    never describe two different sets. A group whose suites pair to nothing has
-    no lines to count and blanks, exactly where its `COVERAGE` blanks too.
-
-    **The last row is the whole run, with a blank module name.** A `TOTAL` label
-    would be a value in a column of module names, it would sort among them and
-    read as one, so the total is placed rather than labelled. A suite whose name
-    `ut_module` cannot parse groups at the top, and reads `?` rather than blank:
-    two unnamed rows in one table say nothing about which is which, which is the
-    defect card `#248` fixed.
-
-    **`COVERAGE` is the group's own figure, over the packages its suites test.**
-    Every column on the row describes one set of suites, `COVERAGE` included, so
-    a group is never a mix of this run's verdicts and some wider schema's
-    coverage. The one shared `coverage_percent` helper computes the groups and
-    the total alike, so the total can never disagree with the rows above it, and
-    a target Oracle measured nothing for still counts its body lines, which pulls
-    the group down in proportion to how much of it went unreached.
-
-    Prints only when `ut_module` is configured. A project without one sees the
-    output it saw before this existed, not a table of empty groups.
-    """
-    grouped = by_module(outcomes_by_package(result), result)
-    print_adt_header(MODULE_SUMMARY_TITLE)
-    print_adt_table(
-        [_module_row(module_cell(module), rows) for module, rows in grouped]
-        + [_module_row("", flatten(grouped))],
-        columns = list(_MODULE_COLUMNS),
-        numeric = SUMMARY_NUMERIC,
-    )
-
-
-def _module_row(name: str, rows: list[dict[str, object]]) -> dict[str, object]:
-    """One `SUMMARY PER MODULE:` row, a named group, or the unnamed total over every row.
-
-    The two go through one builder so the total can never be a different
-    calculation from the rows it sits under. That was already true of `COVERAGE`,
-    which has always shared `coverage_percent`; writing the group and the total
-    out twice is what let `LINES` be the next column with two ways to be right.
-    """
-    packages = target_packages(rows)
-    return {
-        "MODULE_NAME" : name,
-        "PACKAGES"    : len(rows),
-        "LINES"       : count_cell(sum(package.lines for package in packages)),
-        "PASS"        : count_cell(sum(row["passed"] for row in rows)),
-        "FAIL"        : count_cell(sum(row["failed"] for row in rows)),
-        "ERROR"       : count_cell(sum(row["errored"] for row in rows)),
-        "TIMER"       : seconds_cell(total_seconds(rows)),
-        "COVERAGE"    : percent_cell(coverage_percent(packages)),
-    }
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

@@ -27,6 +27,10 @@ connection does is now an edit to one function, and every command inherits it.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
+import threading
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -38,6 +42,62 @@ from adt_ai.shared.sqlcl_gateway import SqlclGateway
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle guard, typing only
     from adt_ai.cli.context import StartupContext
+
+
+class GatewayScope:
+    """Own every gateway created during one top-level command."""
+
+    def __init__(self) -> None:
+        self._gateways: dict[int, QueryGateway] = {}
+        self._lock = threading.Lock()
+
+    def track(self, gateway: QueryGateway) -> QueryGateway:
+        # A schema factory may cache and return the same gateway many times.
+        # Identity deduplication closes that shared session exactly once.
+        with self._lock:
+            self._gateways.setdefault(id(gateway), gateway)
+        return gateway
+
+    def track_factory(
+        self, factory: Callable[..., QueryGateway]
+    ) -> Callable[..., QueryGateway]:
+        def build(*args: object, **kwargs: object) -> QueryGateway:
+            return self.track(factory(*args, **kwargs))
+
+        return build
+
+    def close(self) -> None:
+        with self._lock:
+            gateways = list(self._gateways.values())
+            self._gateways.clear()
+        # Reverse construction order, matching ExitStack and nested resource
+        # ownership. Cleanup is best-effort: a close error after a command has
+        # already failed must not replace the actionable failure screen.
+        for gateway in reversed(gateways):
+            with contextlib.suppress(Exception):
+                gateway.close()
+
+
+_ACTIVE_SCOPE: contextvars.ContextVar[GatewayScope | None] = contextvars.ContextVar(
+    "adt_gateway_scope", default=None
+)
+
+
+@contextlib.contextmanager
+def gateway_scope() -> Iterator[GatewayScope]:
+    """Install the lifecycle owner used by :func:`build_gateway`."""
+    scope = GatewayScope()
+    token = _ACTIVE_SCOPE.set(scope)
+    try:
+        yield scope
+    finally:
+        _ACTIVE_SCOPE.reset(token)
+        scope.close()
+
+
+def _track(gateway: QueryGateway) -> QueryGateway:
+    scope = _ACTIVE_SCOPE.get()
+    return scope.track(gateway) if scope is not None else gateway
 
 
 def build_gateway(
@@ -75,4 +135,5 @@ def build_gateway(
     # Outermost, so the console guard sees the call before -debug renders it.
     # This is the real path; the injected-factory path is wrapped in
     # cli.runtime.main, and between the two every command is covered.
-    return AnnouncedGateway(wired) if strict_mode() else wired
+    final = AnnouncedGateway(wired) if strict_mode() else wired
+    return _track(final)

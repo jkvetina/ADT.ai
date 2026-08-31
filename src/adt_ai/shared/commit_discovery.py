@@ -276,7 +276,7 @@ def _as_record(stored: StoredCommit, request: PatchRequest) -> CommitRecord:
 
     The store holds every changed file, because what a commit touched is a fact
     about history. Whether `apex/<app>/f<id>.sql` counts is a fact about the run
-    (`-fullapp`), so it is decided here, on the way out, and the same store
+    (`-app`), so it is decided here, on the way out, and the same store
     serves a run that wants it and one that does not.
     """
     return CommitRecord(

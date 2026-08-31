@@ -22,7 +22,8 @@ above its own first read:
 ``-refresh``                 the run's own heading, opened early
 discovery                    the same heading, or `UNIT TESTS SUITES:` verbose
 each suite                   the package heading, or one bump of the dotted bar
-coverage                     `SUMMARY PER SUITE:`, the table the read fills
+coverage                     `SUMMARY PER SUITE:`, the table the read fills,
+                             or `RESULTS:` under `-compact`
 ============================ ==================================================
 
 **The last row is what `#379` changed, and it is why the report's front half is
@@ -52,6 +53,7 @@ from adt_ai.ut.render import (
     print_summary_header,
     print_test_rows,
 )
+from adt_ai.ut.rollup import print_compact_header
 from adt_ai.ut.runner import Ut3Reporter, Ut3Result
 from adt_ai.ut.store import (
     RunSnapshot,
@@ -89,6 +91,7 @@ class ConsoleUt3Reporter(Ut3Reporter):
         silent: bool = False,
         verbose: bool = False,
         *,
+        compact: bool = False,
         names: tuple[str, ...] = (),
         previous_seconds: float = 0.0,
         started_at: float | None = None,
@@ -97,6 +100,11 @@ class ConsoleUt3Reporter(Ut3Reporter):
     ) -> None:
         self._silent = silent
         self._verbose = verbose
+        # `-compact` owns the REPORT region, where `-silent` and `-verbose` own
+        # the run's own. Two different halves of the screen, so the three
+        # compose instead of one outranking another: `-silent -compact` is a run
+        # that says nothing until it says one row.
+        self._compact = compact
         # `#251`: what earlier runs measured, read from `config/internal/ut.db`
         # BEFORE this run records itself. Empty on a first run, on a fresh root,
         # and whenever the store could not be read, and each of those renders the
@@ -181,6 +189,8 @@ class ConsoleUt3Reporter(Ut3Reporter):
         self._changes_lead = self._reports_changes()
         if self._changes_lead:
             print_coverage_changes_header()
+        elif self._compact:
+            print_compact_header()
         else:
             print_summary_header()
 
@@ -234,8 +244,15 @@ class ConsoleUt3Reporter(Ut3Reporter):
         once the profiler has been read, and the heading has to be on screen
         before that read to announce it (`#379`), so a run with history prints
         the heading and then prints however many rows the comparison produced.
+
+        `-compact` is a fourth veto, and it is the one place that flag does
+        outrank `-verbose`: the change table is per-package detail inside the
+        region `-compact` collapses to a single row, so printing it there would
+        be the mode reporting more than the report it replaced.
         """
-        return bool(self._verbose and not self._silent and self._history)
+        return bool(
+            self._verbose and not self._silent and not self._compact and self._history
+        )
 
     def discovered(self, packages: tuple[SuitePackage, ...]) -> None:
         # Kept for the change table: a row is per suite, and the suite-to-package

@@ -30,7 +30,7 @@ each one contradicted the POSIX habit it replaced:
 
 The fourth question, whether SQLcl reaches a `SQL>` prompt here at all, was
 measured on 2026-08-22 across six settings, same runner and same versions, and
-the answer is **no, under every one of them**. `TEST_SCENARIOS/scripts/
+the answer is **no, under every one of them**. `tests/tools/
 windows_console_probe.py` varied the three settings this module had been
 choosing without knowing: the dumb terminal, the `-S` on the launcher, and the
 line ending sent after each statement. No combination produced a prompt, and in
@@ -119,19 +119,40 @@ class PtyConsole:
         import termios
 
         master, slave = pty.openpty()
-        attributes = termios.tcgetattr(slave)
-        attributes[3] &= ~termios.ECHO
-        termios.tcsetattr(slave, termios.TCSANOW, attributes)
-        self._process = subprocess.Popen(
-            list(self.launcher),
-            stdin  = slave,
-            stdout = slave,
-            stderr = slave,
-            env    = self.environment,
-        )
-        os.close(slave)
+        process: subprocess.Popen[bytes] | None = None
+        writer: Any = None
+        try:
+            attributes = termios.tcgetattr(slave)
+            attributes[3] &= ~termios.ECHO
+            termios.tcsetattr(slave, termios.TCSANOW, attributes)
+            process = subprocess.Popen(
+                list(self.launcher),
+                stdin  = slave,
+                stdout = slave,
+                stderr = slave,
+                env    = self.environment,
+            )
+            writer_descriptor = os.dup(master)
+            try:
+                writer = os.fdopen(writer_descriptor, "wb", buffering=0)
+            except BaseException:
+                os.close(writer_descriptor)
+                raise
+        except BaseException:
+            if process is not None:
+                with contextlib.suppress(Exception):
+                    process.kill()
+                with contextlib.suppress(Exception):
+                    process.wait()
+            with contextlib.suppress(OSError):
+                os.close(master)
+            raise
+        finally:
+            with contextlib.suppress(OSError):
+                os.close(slave)
+        self._process = process
         self._master = master
-        self._writer = os.fdopen(os.dup(master), "wb", buffering=0)
+        self._writer = writer
 
     def read(self, size: int) -> bytes:
         assert self._master is not None
@@ -166,6 +187,13 @@ class PtyConsole:
             with contextlib.suppress(OSError):
                 os.close(self._master)
             self._master = None
+        if self._process is not None:
+            if self._process.poll() is None:
+                with contextlib.suppress(Exception):
+                    self._process.kill()
+            with contextlib.suppress(Exception):
+                self._process.wait()
+            self._process = None
 
 
 class ConPtyConsole:

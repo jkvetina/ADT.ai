@@ -19,6 +19,7 @@ ACTION_DESTS = {
     "delete",
     "disabled",
     "deploy",
+    "drop",
     "embedded",
     "files",
     "files_ws",
@@ -81,8 +82,9 @@ FILTER_DESTS = {
     # `patch_code` sat beside this until ADT #465 renamed `patch -patch` to
     # `-name`, which is the dest already listed here. It stays, because `-name`
     # genuinely narrows a list on `ut`, `recompile`, `export_db` and
-    # `search_repo`; `patch` overrides it to MODIFIERS below, where it names the
-    # one thing the run acts on instead of filtering anything (ADT #494).
+    # `search_repo`; `patch` overrides it to ACTIONS below, where it names the
+    # one thing the run acts on instead of filtering anything (ADT #494, moved
+    # again by `#598`).
     "name",
     "prefix",
     "recent",

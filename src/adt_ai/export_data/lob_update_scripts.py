@@ -8,7 +8,7 @@ from adt_ai.export_data import queries
 from adt_ai.export_data.inventory import DataColumn
 from adt_ai.shared import text_files
 from adt_ai.shared.row_values import row_value
-from adt_ai.shared.sql_identifiers import safe_identifier
+from adt_ai.shared.sql_identifiers import safe_identifier, safe_qualified_identifier
 
 _BASE64_CHUNK_SIZE = 30000
 _TEXT_DATA_TYPES = {"CLOB", "JSON", "XMLTYPE"}
@@ -68,7 +68,7 @@ def _blob_update_sql(
     row: dict[str, Any],
     key_columns: list[str],
 ) -> str:
-    table = _sql_name(table_name)
+    table = _sql_table_name(table_name)
     column = _sql_name(column_name)
     where = _where_clause(row, key_columns)
     writes = "\n".join(
@@ -101,7 +101,7 @@ def _text_update_sql(
     row: dict[str, Any],
     key_columns: list[str],
 ) -> str:
-    table = _sql_name(table_name)
+    table = _sql_table_name(table_name)
     column = _sql_name(column_name)
     value = _text_assignment(column, data_type)
     where = _where_clause(row, key_columns)
@@ -166,4 +166,14 @@ def _where_condition(column_name: str, value: Any) -> str:
 
 def _sql_name(name: str) -> str:
     safe_identifier(name, role="identifier")
+    return name.lower()
+
+
+def _sql_table_name(name: str) -> str:
+    """The UPDATE target, which carries its owner when `keep_owner` is set.
+
+    Separate from `_sql_name` on purpose: a column is never owner-qualified, so
+    the looser guard applies to the table alone.
+    """
+    safe_qualified_identifier(name, role="table name")
     return name.lower()

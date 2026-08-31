@@ -178,17 +178,22 @@ def apply_startup(connection: Any, text: str) -> StartupResult:
     """
     result = StartupResult()
     cursor = connection.cursor()
-    for statement in split_statements(text):
-        if statement.kind == "sqlplus":
-            emulation = _emulation_for(statement)
-            if emulation is None:
-                result.skipped.append(statement)
+    try:
+        for statement in split_statements(text):
+            if statement.kind == "sqlplus":
+                emulation = _emulation_for(statement)
+                if emulation is None:
+                    result.skipped.append(statement)
+                    continue
+                _execute(cursor, emulation, statement)
+                result.emulated.append(statement)
                 continue
-            _execute(cursor, emulation, statement)
-            result.emulated.append(statement)
-            continue
-        _execute(cursor, statement.text, statement)
-        result.executed.append(statement)
+            _execute(cursor, statement.text, statement)
+            result.executed.append(statement)
+    finally:
+        close = getattr(cursor, "close", None)
+        if callable(close):
+            close()
     return result
 
 

@@ -1,5 +1,7 @@
 # Export Table Data (adtai export_data)
 
+![Rows become CSV, keys become MERGE, big values become sidecars.](images/export_data.png)
+
 `export_data` exports the *rows* of selected tables as CSV, plus a MERGE script that replays them into any environment. Reach for it when reference data, settings, lookup lists or seed rows should live in git beside the DDL rather than in somebody's memory. It complements [`export_db`](export_db.md), which exports object definitions and never data.
 
 <br>
@@ -78,6 +80,8 @@ sandbox/database/data/adt_fixture_ddl_log.csv
 Beside each CSV, `<table>.sql` holds the generated MERGE. **It is written only when the table has key columns to match rows on**, a primary key first and a unique constraint otherwise. A table with neither gets its CSV alone, because a MERGE with nothing to join on would have no way to tell an update from an insert.
 
 Each MERGE statement covers at most `merge_batch_size` rows (project `config.yaml`, default `10000`); a larger export becomes consecutive MERGE statements in the same file.
+
+The MERGE, the DELETE beside it and the per-row LOB UPDATEs all name the table without its schema, so the file installs into whichever schema the session connects as. Set `keep_owner` to write `owner.table` in every one of them instead; see [config.md](config.md#naming-the-owning-schema) for when that is the right trade.
 
 <br>
 

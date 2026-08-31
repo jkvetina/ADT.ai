@@ -8,6 +8,7 @@ from adt_ai.export_db.normalizers import (
     _matching_parenthesis_index,
     _normalize_definition_line_only,
     _split_top_level_commas,
+    qualified,
 )
 from adt_ai.export_db.object_normalizers.table_folds import _collect_index_backed_constraints
 from adt_ai.export_db.object_normalizers.table_items import (
@@ -19,7 +20,7 @@ from adt_ai.export_db.object_normalizers.table_suffix import _format_table_suffi
 
 def normalize_table(lines: list[str], context: NormalizationContext) -> list[str]:
     payload = "\n".join(_normalize_definition_line_only(lines, context))
-    table_name = context.object_name.lower()
+    table_name = qualified(context.object_name.lower(), context)
     is_global_temporary = bool(
         re.search(r"CREATE\s+GLOBAL\s+TEMPORARY\s+TABLE\b", payload, flags=re.IGNORECASE)
     )

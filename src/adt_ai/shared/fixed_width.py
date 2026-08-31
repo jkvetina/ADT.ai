@@ -30,10 +30,9 @@ LEADER_DOTS_MINIMUM = 2
 
 #: What marks the piece of a label the grid could not hold.
 #:
-#: Three dots rather than a single character, and the same spelling
-#: ``secret_command`` already truncates stderr with. It cannot be confused with
-#: the leader run beside it: a leader is surrounded by spaces and this is
-#: surrounded by the name's own characters.
+#: Three dots rather than a single character. It cannot be confused with the
+#: leader run beside it: a leader is surrounded by spaces and this is surrounded
+#: by the name's own characters.
 LABEL_ELISION = "..."
 
 #: What a streamed row assumes its value will need when nobody says.

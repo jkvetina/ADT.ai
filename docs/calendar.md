@@ -1,5 +1,7 @@
 # Git Activity Calendar (adtai calendar)
 
+![A month of commits. One glance.](images/calendar.png)
+
 `calendar` shows who committed what, when, as a month grid of tickets and commit counts. Reach for it when you need to account for a month of work, your own or a colleague's, without scrolling a git log. It reads the commit store `rebuild` maintains rather than walking every branch live, and it never connects to Oracle.
 
 <br>

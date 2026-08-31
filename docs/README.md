@@ -1,6 +1,6 @@
 # ADT.ai Documentation
 
-This is the public documentation index for ADT.ai `0.9.4`.
+This is the public documentation index for ADT.ai `0.9.5`.
 
 <br>
 
@@ -18,13 +18,16 @@ This is the public documentation index for ADT.ai `0.9.4`.
 | [dependencies](dependencies.md) | Query or refresh the dependency mirror. |
 | [discovery](discovery.md) | Run read-only SELECT discovery queries. |
 | [export_apex](export_apex.md) | Reveal and export APEX workspaces and applications. |
+| [export_apex / the formats](export_apex_formats.md) | What each format flag writes, the APEX version gates, and the schema-level shapes. |
 | [export_data](export_data.md) | Export table data as CSV plus generated MERGE SQL. |
 | [flow](flow.md) | Map APEX page navigation into a queryable flow store. |
 | [rebuild](rebuild.md) | Refresh the Git commit cache. |
 | [recompile](recompile.md) | Recompile invalid database objects. |
+| [recompile / trailing whitespace](recompile_trailing.md) | What `-trailing` rewrites, the separate path a view takes, and what the sweep guarantees. |
 | [search_repo](search_repo.md) | Search cached Git commit history. |
 | [ut](ut.md) | Run the schema's utPLSQL test suites; non-zero on failures, and on a zero-test run. |
 | [ut / coverage](ut_coverage.md) | The coverage column, the module figure, the gate, and what moved since the last run. |
+| [ut / choosing what runs](ut_discovery.md) | The naming convention, the `-name` patterns, and utPLSQL's annotation cache. |
 | [validate](validate.md) | Validate exported APEXlang folders with the APEXlang compiler. |
 
 <br>

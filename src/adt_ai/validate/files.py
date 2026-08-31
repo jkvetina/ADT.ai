@@ -15,9 +15,9 @@ from typing import Any
 
 from adt_ai.export_apex.files import ApexFileResolver
 from adt_ai.export_apex.inventory import ApexApplication
+from adt_ai.shared.apex_paths import APEXLANG_DIR
 from adt_ai.shared.apex_store import ApexStore
 
-APEXLANG_DIR = "apexlang"
 APPS_METADATA = "config/internal/apex.db"
 
 

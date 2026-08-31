@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.export_apex.inventory import ApexApplication
+from adt_ai.shared.apex_paths import APEXLANG_DIR
 from adt_ai.shared.config import reject_unresolved_placeholders
 from adt_ai.shared.path_template import (
     APEX_APP_TOKEN_NAMES,
@@ -100,7 +101,7 @@ class ApexFileResolver:
         return self.app_root(application) / "embedded_code" / _clean_relative(relative_path)
 
     def apexlang_root(self, application: ApexApplication) -> Path:
-        return self.app_root(application) / "apexlang"
+        return self.app_root(application) / APEXLANG_DIR
 
     def apexlang_export(self, application: ApexApplication, relative_path: str) -> Path:
         # APEXlang member names are already the folder tree APEX wants

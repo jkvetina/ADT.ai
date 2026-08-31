@@ -14,8 +14,25 @@ class NormalizationContext:
     object_name      : str
     object_owner     : str | None = None
     add_if_not_exists: bool = True
+    keep_owner       : bool = False
 
 Normalizer = Callable[[list[str], NormalizationContext], list[str]]
+
+def qualified(name: str, context: NormalizationContext) -> str:
+    """`name` with the object's owner in front, when `keep_owner` is set.
+
+    Every normalizer that builds its own `CREATE` or `DROP` line rather than
+    editing the one the dictionary returned goes through this, because those
+    lines are assembled from `context.object_name` and would otherwise be the
+    only unqualified statements in an otherwise qualified repository.
+
+    The owner follows the case of `name`, so a lower-cased `CREATE` line and an
+    upper-cased `DROP` stay internally consistent.
+    """
+    if not (context.keep_owner and context.object_owner):
+        return name
+    owner = context.object_owner
+    return f"{owner.upper() if name.isupper() else owner.lower()}.{name}"
 
 BODY_PRESERVING_OBJECT_TYPES = {
     "FUNCTION",
@@ -93,6 +110,7 @@ def normalize_ddl(
     object_name: str,
     registry: NormalizerRegistry | None = None,
     add_if_not_exists: bool = True,
+    keep_owner: bool = False,
 ) -> str:
     registry = registry or NormalizerRegistry.builtin()
     normalized_payload = payload.replace("\t", "    ").strip()
@@ -102,6 +120,7 @@ def normalize_ddl(
         object_name       = object_name,
         object_owner      = _extract_definition_owner(normalized_payload, object_type),
         add_if_not_exists = add_if_not_exists,
+        keep_owner        = keep_owner,
     )
     normalizer = registry.get(object_type)
     if normalizer is not None and context.object_type in RAW_NORMALIZER_OBJECT_TYPES:
@@ -173,14 +192,15 @@ def _normalize_common(
             chunk,
         ),
     )
-    payload = _replace_outside_sql_strings(
-        payload,
-        lambda chunk: re.sub(
-            rf"\b[A-Za-z0-9_$#]+\.(?={re.escape(context.object_name.lower())}\b)",
-            "",
-            chunk,
-        ),
-    )
+    if not context.keep_owner:
+        payload = _replace_outside_sql_strings(
+            payload,
+            lambda chunk: re.sub(
+                rf"\b[A-Za-z0-9_$#]+\.(?={re.escape(context.object_name.lower())}\b)",
+                "",
+                chunk,
+            ),
+        )
     payload = re.sub(r"\s+(NON)?EDITIONABLE\b", "", payload, flags=re.IGNORECASE)
     payload = re.sub(
         r"\s+DEFAULT\s+COLLATION\s+\S+",
@@ -234,7 +254,7 @@ def _normalize_definition_line(line: str, context: NormalizationContext) -> str:
     if not match:
         return line
 
-    name = _normalize_definition_name(match.group("name"))
+    name = _normalize_definition_name(match.group("name"), keep_owner=context.keep_owner)
     return f"{line[:match.start('name')]}{name}{line[match.end('name'):]}"
 
 def _extract_definition_owner(payload: str, object_type: str) -> str | None:
@@ -250,14 +270,36 @@ def _extract_definition_owner(payload: str, object_type: str) -> str | None:
         return None
     return _identifier_key(match.group("name").split(".")[0])
 
-def _normalize_definition_name(name: str) -> str:
-    object_name = name.split(".")[-1]
-    quoted_match = re.fullmatch(r'"([A-Z][A-Z0-9_$#]*)"', object_name)
+_QUALIFIED_DEFINITION_NAME = re.compile(
+    r'^(?P<owner>"[^"]+"|[A-Za-z0-9_$#]+)\.(?P<object>"[^"]+"|[A-Za-z0-9_$#]+)$'
+)
+
+def _split_definition_name(name: str) -> tuple[str | None, str]:
+    """Split ``owner.object`` without splitting a dot INSIDE a quoted name.
+
+    ``"Comm.Base"."X"`` is one owner and one object, so the naive
+    ``name.split(".")`` this replaced read it as three parts and kept the wrong
+    half. The alternation here is the same one the definition-line regex uses.
+    """
+    match = _QUALIFIED_DEFINITION_NAME.fullmatch(name.strip())
+    if not match:
+        return None, name.strip()
+    return match.group("owner"), match.group("object")
+
+def _normalize_definition_name(name: str, keep_owner: bool = False) -> str:
+    owner, object_name = _split_definition_name(name)
+    normalized = _normalize_definition_name_part(object_name)
+    if keep_owner and owner is not None:
+        return f"{_normalize_definition_name_part(owner)}.{normalized}"
+    return normalized
+
+def _normalize_definition_name_part(part: str) -> str:
+    quoted_match = re.fullmatch(r'"([A-Z][A-Z0-9_$#]*)"', part)
     if quoted_match:
         return quoted_match.group(1).lower()
-    if re.fullmatch(r"[A-Z][A-Z0-9_$#]*", object_name):
-        return object_name.lower()
-    return object_name
+    if re.fullmatch(r"[A-Z][A-Z0-9_$#]*", part):
+        return part.lower()
+    return part
 
 def sql_spans(payload: str, *, identifiers: bool = False) -> list[tuple[str, int, int]]:
     """Split SQL text into ``code``, ``string``, ``comment`` and ``quoted`` spans.
@@ -286,6 +328,7 @@ def sql_spans(payload: str, *, identifiers: bool = False) -> list[tuple[str, int
     length = len(payload)
     index = 0
     start = 0
+    q_closers = {"(": ")", "[": "]", "{": "}", "<": ">"}
 
     while index < length:
         if identifiers and payload[index] == '"':
@@ -294,6 +337,21 @@ def sql_spans(payload: str, *, identifiers: bool = False) -> list[tuple[str, int
             closing = payload.find('"', index + 1)
             end = length if closing < 0 else closing + 1
             spans.append(("quoted", index, end))
+            index = start = end
+            continue
+
+        if (
+            payload[index] in "qQ"
+            and index + 2 < length
+            and payload[index + 1] == "'"
+        ):
+            if start < index:
+                spans.append(("code", start, index))
+            opener = payload[index + 2]
+            closer = q_closers.get(opener, opener)
+            closing = payload.find(closer + "'", index + 3)
+            end = length if closing < 0 else closing + 2
+            spans.append(("string", index, end))
             index = start = end
             continue
 

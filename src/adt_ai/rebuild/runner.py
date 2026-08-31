@@ -6,7 +6,6 @@ from adt_ai.rebuild.cache import (
     _build_records as _cache_build_records,
 )
 from adt_ai.rebuild.cache import (
-    _cache_path,
     _commit_files,
     _current_branch,
     _require_branches_exist,

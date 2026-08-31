@@ -134,6 +134,11 @@ class DoctorLatestVersionMixin:
             pass
 
     def _is_git_repo(self) -> bool:
+        # A wheel inside a project's .venv is physically below that project's
+        # .git directory. It is still a package install, never an editable ADT.ai
+        # checkout that doctor may pull, stash, or check out to a release tag.
+        if not self._package_root_is_checkout:  # type: ignore[attr-defined]
+            return False
         try:
             inside_work_tree = self.command_runner(  # type: ignore[attr-defined]
                 ["git", "rev-parse", "--is-inside-work-tree"],

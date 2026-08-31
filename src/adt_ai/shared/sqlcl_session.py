@@ -52,6 +52,7 @@ reasoned rather than measured.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import threading
 import time
@@ -171,34 +172,34 @@ class SqlclSession:
             named_connections = self.config.get("sqlcl_named_connections") is not False,
         )
         self._secrets = _connect_secrets(plan.script)
-        self._spawn()
-        self._await_prompt()
-        # The connect line is the ONE exchange that can carry a credential, so it
-        # is the one whose reply is scrubbed. Scrubbing every reply looks safer and
-        # is worse: the password is a database password, so it can equal a schema
-        # name, a workspace name or any other value a query legitimately returns,
-        # and a four character one measured here turned `export_apex -reveal`'s
-        # workspace column into `***`. The same short-credential trap ADT #397 hit
-        # from the other side.
-        connected = self._exchange(
-            plan.script, timeout_seconds=START_TIMEOUT_SECONDS, scrub=True
-        )
-        if _ran_without_a_session(connected):
-            # A failure to connect is a CONNECTION failure, not a configuration
-            # one: §Console output contract routes those to the shared database
-            # banner with its wallet and credential advice. The class is what
-            # carries that, so this raise picks it deliberately (ADT #407). As a
-            # plain `ConnectionError` an `SP2-0640` printed under `CONFIGURATION
-            # NOT FOUND:` and told the reader to run from a project folder, with
-            # their connection file found, read and sitting right there.
-            raise ConnectFailedError(
-                "SQLcl did not connect: "
-                + (connected.strip().splitlines() or ["no output"])[-1]
-                + ". A named connection resolves only from SQLcl's own store; "
-                "register it once with a run that has the password, or give the "
-                "connection file one."
+        # A retry after failed startup must not consume the EOF marker or prompt
+        # fragments left by the previous pump thread.
+        self._lines = Queue()
+        try:
+            self._spawn()
+            self._await_prompt()
+            # The connect line is the ONE exchange that can carry a credential,
+            # so it is the one whose reply is scrubbed. Scrubbing every reply
+            # looks safer and is worse: the password can equal a schema or
+            # workspace value a query legitimately returns (ADT #397).
+            connected = self._exchange(
+                plan.script, timeout_seconds=START_TIMEOUT_SECONDS, scrub=True
             )
-        self._exchange(_SESSION_PRELUDE, timeout_seconds=START_TIMEOUT_SECONDS)
+            if _ran_without_a_session(connected):
+                # A failure to connect is a CONNECTION failure, not a
+                # configuration one; the class selects the shared database
+                # banner and its credential advice (ADT #407).
+                raise ConnectFailedError(
+                    "SQLcl did not connect: "
+                    + (connected.strip().splitlines() or ["no output"])[-1]
+                    + ". A named connection resolves only from SQLcl's own store; "
+                    "register it once with a run that has the password, or give the "
+                    "connection file one."
+                )
+            self._exchange(_SESSION_PRELUDE, timeout_seconds=START_TIMEOUT_SECONDS)
+        except BaseException:
+            self._abort()
+            raise
 
     def close(self) -> None:
         console, self._console = self._console, None
@@ -209,7 +210,21 @@ class SqlclSession:
             console.wait(15)
         except Exception:
             console.kill()
+            with contextlib.suppress(Exception):
+                console.wait(5)
         finally:
+            console.close()
+
+    def _abort(self) -> None:
+        """Kill and reap a console that cannot become a usable session."""
+        console, self._console = self._console, None
+        if console is None:
+            return
+        with contextlib.suppress(Exception):
+            console.kill()
+        with contextlib.suppress(Exception):
+            console.wait(5)
+        with contextlib.suppress(Exception):
             console.close()
 
     def __enter__(self) -> SqlclSession:
@@ -240,26 +255,29 @@ class SqlclSession:
         assert self._console is not None
         console = self._console
         buffer = b""
-        while True:
-            chunk = console.read(65536)
-            if not chunk:
-                self._lines.put(None)
-                return
-            buffer += chunk
-            *complete, buffer = buffer.split(b"\n")
-            for line in complete:
-                # `clean` is the identity on a pty and takes the rendering
-                # escapes off a pseudo console, which puts cursor addressing
-                # around every line it draws (ADT #449). A whole line at a time,
-                # so an escape cannot straddle two reads.
-                self._lines.put(console.clean(line.decode("utf-8", "replace")).rstrip("\r"))
-            # The prompt carries no newline, so the tail is flushed when it ends
-            # in one. On a pseudo console the escapes sit AFTER the prompt text,
-            # so the test has to read the cleaned tail rather than the raw one.
-            tail = console.clean(buffer.decode("utf-8", "replace"))
-            if tail.rstrip().endswith(_PROMPT):
-                self._lines.put(tail)
-                buffer = b""
+        try:
+            while True:
+                chunk = console.read(65536)
+                if not chunk:
+                    self._lines.put(None)
+                    return
+                buffer += chunk
+                *complete, buffer = buffer.split(b"\n")
+                for line in complete:
+                    # `clean` is the identity on a pty and takes the rendering
+                    # escapes off a pseudo console (ADT #449).
+                    self._lines.put(
+                        console.clean(line.decode("utf-8", "replace")).rstrip("\r")
+                    )
+                # The prompt carries no newline, so flush a tail ending in one.
+                tail = console.clean(buffer.decode("utf-8", "replace"))
+                if tail.rstrip().endswith(_PROMPT):
+                    self._lines.put(tail)
+                    buffer = b""
+        except BaseException:
+            # A dead reader must wake startup/the active exchange. Without the
+            # EOF marker the foreground waits until its full 90/1200s deadline.
+            self._lines.put(None)
 
     def _await_prompt(self, timeout: float = START_TIMEOUT_SECONDS) -> None:
         deadline = time.monotonic() + timeout
@@ -305,7 +323,7 @@ class SqlclSession:
             except Empty:
                 continue
             if line is None:
-                self._console = None
+                self._abort()
                 raise SqlclSessionError("SQLcl exited mid-statement")
             if _is_sentinel(line, marker):
                 break

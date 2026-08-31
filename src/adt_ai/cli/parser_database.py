@@ -361,6 +361,18 @@ def add_database_parsers(subparsers) -> None:
                  "roll-up and per-test results under -verbose; keep the summary, "
                  "the errors and failures detail, and command chrome",
     )
+    # Same argparse shape as `export_db -compact` and `export_apex -compact`, so
+    # the shared-argument contract needs no exception for it. The effect differs
+    # and may: there the flag collapses the per-object listing, here the report,
+    # and both are the same promise, one line where a list of rows would be.
+    ut.add_argument(
+        "--compact",
+        "-compact",
+        action = "store_true",
+        help   = "replace both summary tables with one RESULTS row: the run's "
+                 "PACKAGES, LINES, TIMER, COVERAGE and a PASS or ERROR status; "
+                 "the errors and failures detail and the coverage gate stay",
+    )
     ut.add_argument(
         "--verbose",
         "-verbose",

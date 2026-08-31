@@ -10,6 +10,7 @@ commits it found and in what order.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 
 # Aliased: `date` is a loop variable in the assembly loop below, and a bare
@@ -19,9 +20,6 @@ from datetime import timedelta
 from pathlib import Path
 
 from adt_ai.rebuild.models import RebuildError, RebuildReporter, RebuildRequest
-from adt_ai.shared.commit_cache import (
-    cache_path as history_cache_path,
-)
 from adt_ai.shared.commit_cache import (
     current_branch as history_current_branch,
 )
@@ -71,6 +69,23 @@ def _build_records(
     branches: list[str],
     reporter: RebuildReporter,
 ) -> tuple[dict[str, dict[int, CommitRecord]], dict[str, Path]]:
+    stores: dict[str, CommitStore] = {}
+    try:
+        return _build_records_with_stores(request, branches, reporter, stores)
+    finally:
+        # A git/hash failure can happen after several branch stores have opened
+        # but before the assembly loop reaches their old per-branch close.
+        for store in reversed(list(stores.values())):
+            with contextlib.suppress(Exception):
+                store.close()
+
+
+def _build_records_with_stores(
+    request: RebuildRequest,
+    branches: list[str],
+    reporter: RebuildReporter,
+    stores: dict[str, CommitStore],
+) -> tuple[dict[str, dict[int, CommitRecord]], dict[str, Path]]:
     # Phase 1, cheap counting pass: read commit metadata per branch (git log
     # only, no content hashing). Each branch keeps its own oldest-first commit
     # order; the unique set drives the progress total and dedupes hashing work.
@@ -79,7 +94,6 @@ def _build_records(
     # are reused as-is (never re-hashed) and only commits after the last stored
     # id are fetched. A branch with no usable store falls back to a full window.
     branch_lines: dict[str, list[tuple[str, str, str, str]]] = {}
-    stores: dict[str, CommitStore] = {}
     store_paths: dict[str, Path] = {}
     seeds: dict[str, int] = {}
     unique_order: list[str] = []
@@ -87,8 +101,10 @@ def _build_records(
     resumed_any = False
 
     for branch in branches:
-        store = open_store(request.root, branch, request.cache_file_template)
-        stores[branch] = store
+        store = stores.get(branch)
+        if store is None:
+            store = open_store(request.root, branch, request.cache_file_template)
+            stores[branch] = store
         store_paths[branch] = store_path(request.root, request.cache_file_template, branch)
         since = _resume_point(request, store, branch)
         if since is not None:
@@ -193,7 +209,6 @@ def _build_records(
         branch_records[branch] = {
             stored.number: _as_commit_record(stored) for stored in store.records(branch)
         }
-        store.close()
 
     return branch_records, store_paths
 
@@ -255,10 +270,10 @@ def _commit_files(request: RebuildRequest, commit_hash: str) -> _CommitFiles:
     changed = changed_files(request.root, commit_hash)
     return _CommitFiles(
         # The store holds git's answer unfiltered. `include_full_exports` is a
-        # per-run reading policy (`patch -fullapp`), not a property of history,
+        # per-run reading policy (`patch -app`), not a property of history,
         # and a store that dropped `apex/<app>/f<id>.sql` at write time could
         # never serve the run that wanted it: nothing ever set the flag, so
-        # `-fullapp` reading the cache lost those files silently. Store the data,
+        # the reading run lost those files silently. Store the data,
         # classify at read time, where the policy is actually known.
         files    = {i.path: i.content_hash for i in changed if i.content_hash is not None},
         deleted  = [i.path for i in changed if i.status == "D"],
@@ -268,10 +283,6 @@ def _commit_files(request: RebuildRequest, commit_hash: str) -> _CommitFiles:
         statuses = {i.path: i.status for i in changed},
         patch    = _detected_patch(changed),
     )
-
-def _cache_path(root: Path, cache_file_template: str, branch: str) -> Path:
-    return history_cache_path(root, cache_file_template, branch)
-
 
 def _history_floor_date(bottom_days: int | None) -> str | None:
     """`patch_history_bottom_days` as the ISO date `git log --since` wants."""

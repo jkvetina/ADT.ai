@@ -176,10 +176,23 @@ def _render_job_arguments(rows: list[dict[str, Any]]) -> str:
         )
     return "\n".join(lines)
 
+def _qualified(owner: str, object_name: str, keep_owner: bool) -> str:
+    """Render an object name with or without its owner, per `keep_owner`.
+
+    One spelling for every GRANT and DIRECTORY line, so the three renderers
+    below cannot disagree about what the key means.
+    """
+    name = object_name.lower()
+    if not keep_owner or not owner:
+        return name
+    return f"{owner.lower()}.{name}"
+
 def _render_grants_made(
     rows: list[dict[str, Any]],
     prefix: str | None,
     ignore: list[str] | None,
+    schema: str = "",
+    keep_owner: bool = False,
 ) -> str:
     if any(row.get("SQL") or row.get("sql") for row in rows):
         return _render_grants_made_sql_rows(rows)
@@ -196,7 +209,8 @@ def _render_grants_made(
         privileges, grantees = grouped[(object_type, object_name, grantable)]
         grant_option = " WITH GRANT OPTION" if grantable == "YES" else ""
         lines.append(
-            f"GRANT {', '.join(sorted(privileges))} ON {object_name.lower()} "
+            f"GRANT {', '.join(sorted(privileges))} "
+            f"ON {_qualified(schema, object_name, keep_owner)} "
             f"TO {', '.join(_sort_oracle_names(grantees))}{grant_option};"
         )
         last_type = object_type
@@ -256,6 +270,7 @@ def _group_grants_made(
 def _render_grants_received(
     rows: list[dict[str, Any]],
     schema: str,
+    keep_owner: bool = False,
 ) -> dict[str, str]:
     grouped: dict[str, dict[str, dict[str, list[str]]]] = {}
     for row in rows:
@@ -264,7 +279,10 @@ def _render_grants_received(
         object_name = str(row.get("OBJECT_NAME") or row.get("TABLE_NAME") or "")
         privilege = str(row.get("PRIVILEGE") or "")
         grantable = " WITH GRANT OPTION" if row.get("GRANTABLE") == "YES" else ""
-        sql = f"GRANT {privilege} ON {object_name.lower()} TO {schema.lower()}{grantable};"
+        sql = (
+            f"GRANT {privilege} ON {_qualified(owner, object_name, keep_owner)} "
+            f"TO {schema.lower()}{grantable};"
+        )
         grouped.setdefault(owner, {}).setdefault(object_type, {}).setdefault(
             object_name,
             [],
@@ -297,13 +315,23 @@ def _render_user_privileges(rows: list[dict[str, Any]], schema: str) -> str:
         lines.extend(f"GRANT {privilege:<33} TO {schema.lower()};" for privilege in privileges)
     return "\n".join(lines).lstrip("-\n") + ("\n\n" if lines else "")
 
-def _render_directories(rows: list[dict[str, Any]], schema: str) -> str:
-    lines = [
-        "CREATE OR REPLACE DIRECTORY "
-        f"{str(row.get('OWNER') or schema).lower()}."
-        f"{str(row.get('DIRECTORY_NAME') or '').lower():<31} "
-        f"AS '{_escape_sql_text(str(row.get('DIRECTORY_PATH') or ''))}';"
+def _render_directories(
+    rows: list[dict[str, Any]],
+    schema: str,
+    keep_owner: bool = False,
+) -> str:
+    names = [
+        _qualified(
+            str(row.get("OWNER") or schema),
+            str(row.get("DIRECTORY_NAME") or ""),
+            keep_owner,
+        )
         for row in rows
+    ]
+    lines = [
+        f"CREATE OR REPLACE DIRECTORY {name:<31} "
+        f"AS '{_escape_sql_text(str(row.get('DIRECTORY_PATH') or ''))}';"
+        for name, row in zip(names, rows, strict=True)
     ]
     return "\n".join(sorted(lines)).lstrip() + ("\n" if lines else "")
 

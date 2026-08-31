@@ -79,9 +79,16 @@ class ConfigLoader:
         if path in stack:
             raise ConfigCycleError(f"Config inheritance cycle detected: {path}")
 
-        raw_data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        try:
+            raw_data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError) as error:
+            raise InvalidConfigValueError(
+                f"Could not read config file {path}: {error}"
+            ) from error
         if not isinstance(raw_data, dict):
-            raise ConfigError(f"Config file must contain a YAML mapping: {path}")
+            raise InvalidConfigValueError(
+                f"Config file must contain a YAML mapping: {path}"
+            )
 
         result = ConfigResult(data={}, files=[])
         for parent in _as_list(raw_data.get("extends")):

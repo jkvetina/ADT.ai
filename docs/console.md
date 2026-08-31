@@ -1,5 +1,7 @@
 # Console Output (adtai)
 
+![Same chrome. Clear next move.](images/console.png)
+
 Every ADT.ai command prints the same chrome, and a refusal is written to tell you where to go and fix it. This page is what those screens mean: how to read `--help`, what the banner, sections and timer are, which failure header you are looking at, and how the completion sound is decided.
 
 The eight flags every command shares are documented at the end of it, so a command page can list only the flags that are its own.
@@ -164,7 +166,7 @@ Eight flags mean the same thing wherever they are accepted, so they are document
 | `-config-dir`, `--config-dir` | Yes | none | Folder holding project config YAML. ADT.ai loads the shipped defaults first, then overlays these. |
 | `-env`, `--env` | No | connection default environment | Connection environment to use, for example `DEV`. |
 | `-schema`, `--schema` | Yes (one per run on `connection` and `discovery`) | environment default schema | Schema to work on. Where it repeats, pass it several times, space-separate it (`-schema APP CORE`), use comma lists, or use `%` patterns such as `CORE%`. A literal `_` or `%` is escaped with `\`, quoted so the shell leaves it alone: `-schema 'APP\_%'`. |
-| `-key`, `--key` | No | `ADT_KEY` | Encryption key value, or the path to a key file, for encrypted connection passwords. |
+| `-key`, `--key` | No | `ADT_KEY` or `ADT_KEY_CMD` | Encryption key value or path to a key file. Prefer a file path; a literal value is visible in shell history and the process list. |
 | `-debug`, `--debug` | No | off | Show the input parameters and the SQL behind the run, and keep Python tracebacks for troubleshooting. |
 | `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |
 | `-nobeep`, `--nobeep` | No | off | Suppress completion sounds for this run; this wins over `chime_theme` and `-beep`. |

@@ -162,7 +162,7 @@ def run_history(
     if not path.is_file():
         return ()
     try:
-        with _connect(path) as connection:
+        with contextlib.closing(_connect(path)) as connection, connection:
             _migrate(connection)
             runs = connection.execute(queries.RUNS_QUERY, (_key(schema), variant)).fetchall()
             return tuple(
@@ -246,7 +246,7 @@ def record_run(
     path = store_path(root)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with _connect(path) as connection:
+        with contextlib.closing(_connect(path)) as connection, connection:
             connection.executescript(queries.STORE_SCHEMA_SCRIPT)
             _migrate(connection)
             cursor = connection.execute(
@@ -285,7 +285,7 @@ def run_count(root: Path | str, schema: str) -> int:
     if not path.is_file():
         return 0
     try:
-        with _connect(path) as connection:
+        with contextlib.closing(_connect(path)) as connection, connection:
             row = connection.execute(
                 queries.RUN_COUNT_QUERY, (_key(schema),)
             ).fetchone()

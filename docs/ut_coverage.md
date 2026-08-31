@@ -1,5 +1,7 @@
 # Test Coverage (adtai ut)
 
+![0.0 is a finding. Blank is not.](images/ut_coverage.png)
+
 Every `ut` run measures code coverage. The figure lands as the `COVERAGE` column of the two summary tables, `-gate` turns it into a pass or fail condition, and `-verbose` reports what moved since the last run that was different. The command itself is on [ut.md](ut.md).
 
 <br>
@@ -27,6 +29,8 @@ SUMMARY PER MODULE:
 That suite's `COVERAGE` reads `?` because `ut_match` derives `ADT_FIXTURE` from its name and the schema holds no such package, which is the fourth of the four states below. `LINES` blanks for the same reason: a group whose suites pair to nothing has no code to count.
 
 `SUMMARY PER SUITE:` says which suite is red. `SUMMARY PER MODULE:`, which prints whenever `ut_module` is set, says which *area* is: on a schema of ninety suites the first is a list you scroll and the second is the one you read.
+
+`-compact` replaces both with the module total row alone, under a `RESULTS:` heading, plus a `PASS`/`ERROR` status: the same `LINES` and the same `COVERAGE` figure, over the same deduplicated set, through the same helper. See [The compact run](ut.md#the-compact-run).
 
 - **A zero renders as an empty cell** in the verdict columns. A column of zeroes competes for the eye with the counts that matter, and the row a reader scans for is the one that is not all-passed.
 - **There is no `TESTS` column.** Every test lands in exactly one verdict, so the total is derivable from the other three.
