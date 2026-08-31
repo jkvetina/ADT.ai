@@ -146,6 +146,16 @@ REMOVED_COMPATIBILITY_FLAGS = {
     # first time a name has come back: hash mode was rebuilt around one baseline
     # file, so the flag takes a FILE rather than a commit number and `-locked`
     # has nothing left to switch off.
+    # ADT #592 folded `-fullapp` into `-app`, so the name renamed by `#292` is
+    # itself now a removed name. It needs this entry for the reason `-full` did
+    # and then some: `-fullapp` is no longer a prefix of anything the parser
+    # declares, but `-app` IS a suffix nobody abbreviates to, and a removed name
+    # belongs on the removed list whatever today's parser does with it.
+    # ADT #598 withdrew `-fetch`, which is neither a rename nor a dead flag: the
+    # behaviour stays and loses its own spelling, because the run that wants a
+    # fetch is the run asking for the newest version of a file. `-head` does it
+    # now, so the entry is what makes the old name fail loudly instead of being
+    # read as an abbreviation of `-force` on some future Python.
     # ADT #345, the same withdrawal on the other command the audit caught.
     # `calendar -list` selected a day-row format the task-centric report had
     # already replaced, so it filled `CalendarRequest.list_mode` and changed

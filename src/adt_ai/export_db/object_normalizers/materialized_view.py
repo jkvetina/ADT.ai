@@ -8,6 +8,7 @@ from adt_ai.export_db.normalizers import (
     _ensure_statement_semicolon,
     _matching_parenthesis_index,
     _trim_trailing_blank_lines,
+    qualified,
 )
 
 # Storage / physical / refresh-noise clauses DBMS_METADATA still emits for a
@@ -33,7 +34,7 @@ def normalize_materialized_view(
     source = text.splitlines()
     header, body = _split_mview_header_body(source)
 
-    kept = [f"CREATE MATERIALIZED VIEW {name}"]
+    kept = [f"CREATE MATERIALIZED VIEW {qualified(name, context)}"]
     for line in header[1:]:
         stripped = line.strip()
         if stripped and _MVIEW_KEEP_OPTION.match(stripped):
@@ -45,7 +46,7 @@ def normalize_materialized_view(
     kept = _ensure_statement_semicolon(kept)
     return _drop_create_wrap(
         kept,
-        f"DROP MATERIALIZED VIEW {context.object_name.upper()}",
+        f"DROP MATERIALIZED VIEW {qualified(context.object_name.upper(), context)}",
     )
 
 
@@ -56,7 +57,7 @@ def normalize_mview_log(
     master = context.object_name.lower()
     source = "\n".join(lines).splitlines()
 
-    kept = [f"CREATE MATERIALIZED VIEW LOG ON {master}"]
+    kept = [f"CREATE MATERIALIZED VIEW LOG ON {qualified(master, context)}"]
     for line in source[1:]:
         stripped = line.strip()
         if stripped and _MVIEW_LOG_KEEP_OPTION.match(stripped):
@@ -66,7 +67,7 @@ def normalize_mview_log(
     kept = _ensure_statement_semicolon(kept)
     return _drop_create_wrap(
         kept,
-        f"DROP MATERIALIZED VIEW LOG ON {context.object_name.upper()}",
+        f"DROP MATERIALIZED VIEW LOG ON {qualified(context.object_name.upper(), context)}",
     )
 
 

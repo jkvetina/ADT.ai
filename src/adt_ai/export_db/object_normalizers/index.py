@@ -11,6 +11,7 @@ from adt_ai.export_db.normalizers import (
     _replace_outside_sql_strings,
     _split_top_level_commas,
     _trim_trailing_blank_lines,
+    qualified,
 )
 
 
@@ -59,10 +60,13 @@ def normalize_index(
     option_lines = [line.rstrip() for line in lines[option_start:]]
     kind = "CREATE UNIQUE INDEX" if match.group("unique") else "CREATE INDEX"
     if_not_exists = " IF NOT EXISTS" if context.add_if_not_exists else ""
+    # Both names are re-derived here rather than edited in place, so both need
+    # the owner put back under `keep_owner`; the index and its table share one.
     result = [
-        f"{kind}{if_not_exists} {_normalize_sql_identifier(match.group('name'))}",
+        f"{kind}{if_not_exists} "
+        f"{qualified(_normalize_sql_identifier(match.group('name')), context)}",
     ]
-    table_name = _normalize_sql_identifier(match.group("table"))
+    table_name = qualified(_normalize_sql_identifier(match.group("table")), context)
     columns = _simple_index_columns(expression)
     expression_items = _index_expression_items(expression)
     has_options = bool(option_lines)

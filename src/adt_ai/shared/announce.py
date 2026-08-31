@@ -230,6 +230,9 @@ class AnnouncedGateway:
         guard(request)
         return self.wrapped.sqlcl_request(request, *args, **kwargs)
 
+    def close(self):
+        return self.wrapped.close()
+
     def __reduce__(self):
         """Survive being sent to a worker process, wrapper and all.
 

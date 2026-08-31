@@ -12,7 +12,7 @@ rather than about the table it sits in.
 
 from __future__ import annotations
 
-from adt_ai.ut.inventory import RESULT_PASSED, PackageCoverage, TestOutcome
+from adt_ai.ut.inventory import RESULT_ERRORED, RESULT_PASSED, PackageCoverage, TestOutcome
 
 
 def count_cell(count: int) -> object:
@@ -115,6 +115,25 @@ def coverage_cell(package: PackageCoverage | None, *, paired: bool = True) -> st
     if package is None or package.percent is None:
         return ""
     return f"{package.percent:.1f}"
+
+
+def status_cell(passed: bool) -> str:
+    """The `RESULTS:` row's verdict under `-compact`: the exit code, in words.
+
+    Two words only, `PASS` or `ERROR`, and they are the ones the four status
+    constants already spell, so the compact row cannot invent a fifth spelling
+    for a state a test row would report as `ERROR`. The distinction a result row
+    draws between `FAIL` and `ERROR` is deliberately not drawn here: a run is one
+    verdict, and which of the two made it red is what `ERRORS & FAILURES:` above
+    the row is for.
+
+    ``passed`` is the caller's whole exit-code expression rather than a count, so
+    a green row above a non-zero exit is not a state this command can reach. That
+    matters because the row answers for more than the tests: a zero-test run and
+    a package under `-gate` are both `ERROR` here, and neither is visible in any
+    verdict this module can see.
+    """
+    return RESULT_PASSED if passed else RESULT_ERRORED
 
 
 def test_status_cell(outcome: TestOutcome) -> str:

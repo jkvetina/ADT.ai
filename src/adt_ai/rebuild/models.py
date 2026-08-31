@@ -29,7 +29,7 @@ class RebuildRequest:
     commit_limit: int | None = None
     branches: list[str] | None = None
     # `include_full_exports` used to sit here and was never set by anything, so
-    # a `patch -fullapp` run reading the cache lost `apex/<app>/f<id>.sql`
+    # a `patch -app` run reading the cache lost `apex/<app>/f<id>.sql`
     # silently. The store keeps every changed file and the reading run applies
     # its own policy, which is where a per-run flag belongs.
     cache_file_template: str = DEFAULT_COMMITS_TEMPLATE

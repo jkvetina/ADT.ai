@@ -3,11 +3,14 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Iterable, Mapping, Sequence
 from functools import partial
+from importlib import resources
+from importlib.resources.abc import Traversable
 from pathlib import Path
 
 from adt_ai.doctor._base import (
@@ -25,6 +28,7 @@ from adt_ai.doctor.init import DoctorInitMixin
 from adt_ai.doctor.layout_check import schema_case_action_lines
 from adt_ai.doctor.upgrade import DoctorUpgradeMixin
 from adt_ai.doctor.version_check import DoctorVersionMixin
+from adt_ai.shared.subprocess_env import safe_subprocess_environment
 
 __all__ = [
     "DoctorRequest",
@@ -41,6 +45,19 @@ _FETCH_TIMEOUT_SECONDS = 30
 _DOWNLOAD_TIMEOUT_SECONDS = 120
 
 
+def _default_package_root() -> Path:
+    """Source checkout root when editable, package folder when installed."""
+    module = Path(__file__).resolve()
+    for candidate in module.parents:
+        if (candidate / "pyproject.toml").is_file() and (candidate / "src" / "adt_ai").is_dir():
+            return candidate
+    return module.parent
+
+
+def _is_source_checkout(root: Path) -> bool:
+    return (root / "pyproject.toml").is_file() and (root / "src" / "adt_ai").is_dir()
+
+
 def _run_command(
     command: Sequence[str],
     cwd    : Path | None = None,
@@ -49,7 +66,7 @@ def _run_command(
     completed = subprocess.run(
         command,
         cwd            = cwd,
-        env            = env,
+        env            = safe_subprocess_environment(env),
         check          = True,
         capture_output = True,
         text           = True,
@@ -90,6 +107,8 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
         oracle_mode        : str | None = None,
         instant_client     : str | None = None,
         package_root       : Path | None = None,
+        resource_root      : Traversable | None = None,
+        python_executable  : str | None = None,
         oracle_page_fetcher: object = None,
         file_downloader    : object = None,
         latest_version_fetcher: object = None,
@@ -105,7 +124,20 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
         self.oracledb_version    = oracledb_version
         self.oracle_mode         = oracle_mode
         self.instant_client      = instant_client
-        self.package_root        = package_root or Path(__file__).resolve().parents[3]
+        self.package_root        = package_root or _default_package_root()
+        self._package_root_is_checkout = package_root is not None or _is_source_checkout(
+            self.package_root
+        )
+        # Tests and editable installs intentionally keep using a supplied/source
+        # root. A wheel has no repository beside it, so Hatch places the same
+        # files under this package-owned resource folder instead.
+        if resource_root is not None:
+            self.resource_root = resource_root
+        elif self._package_root_is_checkout:
+            self.resource_root = self.package_root
+        else:
+            self.resource_root = resources.files("adt_ai.doctor").joinpath("resources")
+        self.python_executable   = python_executable or sys.executable
         self.oracle_page_fetcher = oracle_page_fetcher or _fetch_text
         self.file_downloader     = file_downloader or _download_file
         self.latest_version_fetcher = latest_version_fetcher
@@ -187,7 +219,7 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
         self._add(lines, "ACTIONS:")
 
     def _command_env(self) -> dict[str, str]:
-        env = dict(self.env)
+        env = safe_subprocess_environment(self.env)
         java_options = env.get("JAVA_TOOL_OPTIONS", "").strip()
         if "-Duser.language=en" not in java_options:
             java_options = f"{java_options} -Duser.language=en".strip()

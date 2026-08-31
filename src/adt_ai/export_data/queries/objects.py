@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from adt_ai.shared.sql_identifiers import safe_identifier, safe_identifiers
+from adt_ai.shared.sql_identifiers import (
+    safe_identifier,
+    safe_identifiers,
+    safe_qualified_identifier,
+)
 
 TABLES_QUERY = """
 WITH objects_prefix AS (
@@ -111,7 +115,7 @@ def merge_statement(
     skip_update: str,
     where_filter: str,
 ) -> str:
-    safe_identifier(table, role="table name")
+    safe_qualified_identifier(table, role="table name")
     safe_identifiers(columns, role="column name")
     all_columns = "t." + ",\n        t.".join(columns)
     all_values = "s." + ",\n        s.".join(columns)

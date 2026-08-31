@@ -1,5 +1,7 @@
 # Search Repository History (adtai search_repo)
 
+![Two matches, and the old file back.](images/search_repo.png)
+
 `search_repo` finds the commit that touched a database object, by object name, type, file path, author, or date. Reach for it when you know what changed but not when, and a `git log` over a repository of exported DDL would be too blunt.
 
 It reads the commit store [`rebuild`](rebuild.md) maintains, so run `rebuild` first. It never connects to Oracle.

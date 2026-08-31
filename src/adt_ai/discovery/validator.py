@@ -1,13 +1,15 @@
 """SELECT-only statement validation for the discovery module.
 
-This is safety layer 1 of 2 behind the "discovery never writes" guarantee: a
-static gate that admits exactly one read-only ``SELECT`` (or ``WITH ... SELECT``)
-statement and rejects everything else. Comments and string literals are scrubbed
-before the keyword scan so payloads such as ``'DROP TABLE x'`` or ``-- delete``
-cannot false-trigger. Layer 2 (a ``SET TRANSACTION READ ONLY`` session) defends
-even if this gate were ever fooled, but only against *DML*: it does not block
-DDL or autonomous-transaction PL/SQL, so this static gate must catch a non-SELECT
-statement hidden behind a ``WITH`` clause rather than leaning on layer 2 for it.
+This is the static half of discovery's narrow SQL surface: it admits the shape
+of one ``SELECT`` (or ``WITH ... SELECT``) and rejects direct write statements,
+PL/SQL blocks, inline ``WITH`` PL/SQL, row locking and multiple statements.
+Comments and string literals are scrubbed before the keyword scan so payloads
+such as ``'DROP TABLE x'`` or ``-- delete`` cannot false-trigger.
+
+It is not a parser or a sandbox. Oracle permits stored functions in a SELECT and
+discovery deliberately permits them; an autonomous-transaction function can
+commit outside the caller's read-only transaction. The database user's grants
+remain the security boundary for callable code.
 """
 
 from __future__ import annotations
@@ -63,7 +65,7 @@ _Q_CLOSERS = {"(": ")", "[": "]", "{": "}", "<": ">"}
 
 
 class DiscoveryValidationError(Exception):
-    """Raised when a discovery statement is not a single read-only SELECT."""
+    """Raised when a discovery statement is outside the SELECT-only surface."""
 
     def __init__(self, message: str, *, reason: str) -> None:
         super().__init__(message)
@@ -71,11 +73,11 @@ class DiscoveryValidationError(Exception):
 
 
 def validate_select_only(sql: str) -> str:
-    """Validate that ``sql`` is a single read-only SELECT.
+    """Validate that ``sql`` has the shape of a single SELECT.
 
     Returns the statement trimmed of surrounding whitespace and a single trailing
     semicolon, ready to execute. Raises :class:`DiscoveryValidationError` (with a
-    stable ``reason``) for anything that is not exactly one SELECT/WITH query.
+    stable ``reason``) for anything outside the accepted SELECT/WITH surface.
     """
     if not sql or not sql.strip():
         raise DiscoveryValidationError("empty statement", reason="empty")

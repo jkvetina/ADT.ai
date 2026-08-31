@@ -2,6 +2,16 @@
 
 All notable changes to the public ADT.ai release are recorded here, newest first.
 
+## 0.9.5 - 2026-08-31
+
+- **`export_db` and `export_data` can preserve owning schemas.** New opt-in `keep_owner` qualifies generated DDL, DML, grants and directories consistently while the default remains schema-neutral. Export destinations are confined to the project, writes are atomic, permissions and line endings are preserved, and unchanged files are not rewritten.
+- **`export_apex` and `validate` fail closed around files and resources.** Unsafe output paths and unrepresentable names are rejected, owned database and SQLcl resources close on errors, and generated artifacts are atomically replaced without disturbing identical content.
+- **`doctor` and `connection` tighten installation and credential handling.** Installed wheels can initialize projects without a source checkout, package updates use the active Python interpreter, SQLcl upgrades roll back on failure, child processes do not inherit ADT secrets, and connection files remain owner-only.
+- **`discovery` preserves its read-only boundary under malformed input.** SQL-aware parsing now handles comments, quoted strings and Oracle q-quotes consistently during execution and file write-back; each transaction is rolled back even when setup fails, and generated reports use atomic writes.
+- **`calendar`, `rebuild` and `search_repo` reject ambiguous Git history.** Truncated or malformed Git batch responses fail instead of returning partial records, each cache records its owning branch, legacy YAML history paths are refused with migration guidance, and branch-derived filenames accept only the documented safe form.
+- **`ut` `-compact` summarizes the run in one `RESULTS` row.** `recompile`, `validate` and `flow` also inherit deterministic store, stream and descriptor cleanup, so failures cannot leave owned resources open.
+- **Documentation is easier to scan and safer to publish.** Every shipped command page now has its own illustration, the index is sorted, oversized topics are split onto focused pages, and local SVG documentation assets are gone. The README reports the measured test count, cores, duration and coverage for this build.
+
 ## 0.9.4 - 2026-08-27
 
 - **Breaking: `SKILLS/` is now `skills/`.** It was the only uppercase folder beside `config/`, `connections/`, `docs/` and `src/`, and lowercase is what agent tooling expects of a shipped skill folder. Every external link to `SKILLS/adt/SKILL.md` has to be rewritten, GitHub redirects nothing.

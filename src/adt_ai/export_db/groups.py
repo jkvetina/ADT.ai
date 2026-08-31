@@ -11,6 +11,7 @@ from pathlib import Path
 from adt_ai.shared.object_files import extensions_by_folder as extensions_by_folder
 from adt_ai.shared.object_files import object_name_from_file as object_name_from_file
 from adt_ai.shared.object_files import owns_file as owns_file
+from adt_ai.shared.safe_paths import simple_component
 from adt_ai.shared.yaml_io import load_yaml_mapping, store_yaml_mapping
 
 
@@ -124,7 +125,7 @@ def group_for(object_type: str, name: str, rules: GroupRules | None) -> str | No
     if not candidates:
         return None
     candidates.sort(key=lambda candidate: (candidate[0], candidate[1]))
-    return candidates[-1][2]
+    return simple_component(candidates[-1][2], role="group name")
 
 
 def detect_groups_by_prefix(
@@ -168,6 +169,18 @@ def _common_prefix(names: Iterable[str], max_words: int = 2) -> str:
             break
         shared.append(next(iter(column)))
     return "_".join(shared)
+
+
+def resolve_group_rules(request, resolver) -> GroupRules:
+    """Seed with explicit/persisted rules, then learn from the tree on disk.
+
+    Both halves it joins already live here, so it moved off `ExportDbRunner`
+    (ADT `#605`) when that module reached its context cap; the runner keeps a
+    thin method delegating to this, which is what its callers still hold.
+    """
+    seed = request.group_rules or GroupRules.empty()
+    type_roots = resolver.iter_type_roots(request.schemas)
+    return seed.merged(detect_groups_from_tree(type_roots))
 
 
 def detect_groups_from_tree(

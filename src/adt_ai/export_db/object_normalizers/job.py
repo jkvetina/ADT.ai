@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from adt_ai.export_db.normalizers import NormalizationContext
+from adt_ai.export_db.normalizers import NormalizationContext, qualified
 
 
 def normalize_job(lines: list[str], context: NormalizationContext) -> list[str]:
@@ -40,7 +40,7 @@ def normalize_job(lines: list[str], context: NormalizationContext) -> list[str]:
     formatted_payload = formatted_payload.replace("{JOB_ACTION}", job_action)
 
     return _job_template(
-        job_name    = context.object_name.upper(),
+        job_name    = qualified(context.object_name.upper(), context),
         job_payload = formatted_payload,
         attributes  = _trailing_attributes(lines),
         enabled     = _is_enabled(lines),

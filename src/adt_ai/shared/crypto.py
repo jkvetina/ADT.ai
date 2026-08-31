@@ -7,13 +7,13 @@ from it.
 
 Before ``#399`` the derivation used an empty PBKDF2 salt, deliberately, so that
 ``ADT_KEY`` alone reproduced the same Fernet key on any machine with nothing
-stored beside the ciphertext. That stateless round trip is what lets an
-encrypted connection file be committed and read back by a colleague or a CI
-runner holding only the key, and it is preserved: the salt now travels *inside*
-the stored value, so the file is still the only thing that has to move. What the
-empty salt cost was offline resistance to a weak ``ADT_KEY``, because every ADT
-project shared one derivation and so one dictionary table covered all of them.
-A per-secret salt is what removes that shared table.
+stored beside the ciphertext. That stateless round trip is preserved for an
+encrypted connection file transferred through an approved secret channel: the
+salt now travels *inside* the stored value, so the recipient needs only the
+separately supplied key. Connection files remain local secret material and are
+never meant for Git. What the empty salt cost was offline resistance to a weak
+``ADT_KEY``, because every ADT project shared one derivation and so one
+dictionary table covered all of them. A per-secret salt removes that table.
 
 The version prefix does two more jobs. It makes the KDF raisable: ``adt2``
 derives at 600000 iterations, current OWASP guidance for PBKDF2-HMAC-SHA256,
@@ -34,10 +34,11 @@ apart from a corrupt ciphertext, two cases Fernet reports identically. It is
 recorded beside the secret as ``pwd_key:`` / ``wallet_pwd_key:``. Because it
 comes from the value's *salted* derivation, testing a candidate key against a
 recorded fingerprint costs the same 600000 iterations as testing it against the
-ciphertext, so publishing it in a committed file adds no attack the ciphertext
-did not already offer. A digest over the key alone would have been cheaper to
-attack than the thing it guards, and would have handed back exactly the single
-shared derivation the per-secret salt exists to remove.
+ciphertext, so it adds no cheaper attack than the ciphertext already offers.
+That property does not make either value suitable for Git. A digest over the
+key alone would have been cheaper to attack than the thing it guards, and would
+have handed back exactly the single shared derivation the per-secret salt exists
+to remove.
 """
 
 from __future__ import annotations

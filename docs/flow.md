@@ -1,5 +1,7 @@
 # Map APEX Page Navigation (adtai flow)
 
+![Every page has two stories.](images/flow.png)
+
 `flow` answers two questions about an application's navigation graph: which pages link **into** a page, and which pages you can reach **from** it. Reach for it before changing a page, when you need to know what will send users there and where they will go next. It scrapes the links once, stores them locally, and answers offline from then on.
 
 The store is a SQLite file at `config/internal/flow.db` (gitignored), and every refresh also writes Mermaid, Graphviz DOT and JSON diagrams under `config/flow/`.

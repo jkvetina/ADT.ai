@@ -56,7 +56,7 @@ def _apex_segment_index(
     every caller passing no heads gets, and the heads matter for a project whose
     `path_apex` puts `apex/` deeper than one level under the root. The cost of
     missing it is a full app export entering a patch that never asked for one
-    with `-fullapp` (ADT #429).
+    with `-app` (ADT #429, the flag renamed by #592).
     """
     for head in apex_heads:
         if len(parts) <= len(head):

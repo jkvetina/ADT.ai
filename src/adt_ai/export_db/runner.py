@@ -37,6 +37,7 @@ from adt_ai.export_db.grants import exports_grants, grant_artifacts
 from adt_ai.export_db.groups import (
     GroupRules,
     detect_groups_from_tree,
+    resolve_group_rules,
 )
 from adt_ai.export_db.inventory import (
     DatabaseObject,
@@ -92,7 +93,7 @@ class ExportDbRunner:
             config = _with_default_layout(request.config),
         )
         resolver.group_rules = self._resolve_group_rules(request, resolver)
-        writer = ObjectFileWriter(resolver, compare_existing=False)
+        writer = ObjectFileWriter(resolver)
         # Read by `_contents` under each schema's own overview table, written
         # here once that schema's objects are out. See the call site.
         grant_contents: list[tuple[DatabaseObject, str]] = []
@@ -127,11 +128,7 @@ class ExportDbRunner:
         request: ExportDbRequest,
         resolver: ObjectFileResolver,
     ) -> GroupRules:
-        # Seed with explicit/persisted rules, then always learn from how files were
-        # arranged into <type>/<group>/ subfolders by the move action (or by hand).
-        seed = request.group_rules or GroupRules.empty()
-        type_roots = resolver.iter_type_roots(request.schemas)
-        return seed.merged(detect_groups_from_tree(type_roots))
+        return resolve_group_rules(request, resolver)
 
     def _contents(
         self,
@@ -307,6 +304,7 @@ class ExportDbRunner:
             timer.setup_done()
             reports_objects = reporter.reports_objects
             add_if_not_exists = is_enabled(request.config.get("add_if_not_exists", True))
+            keep_owner = is_enabled(request.config.get("keep_owner", False))
             for index, database_object in enumerate(database_objects):
                 if reports_objects:
                     # A filename sitting in more than one place under the type
@@ -341,6 +339,7 @@ class ExportDbRunner:
                     object_name       = database_object.name,
                     registry          = self.normalizer_registry,
                     add_if_not_exists = add_if_not_exists,
+                    keep_owner        = keep_owner,
                 )
                 fix_content = (
                     build_table_fix_sql(raw_ddl, database_object.name)

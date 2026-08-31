@@ -41,6 +41,23 @@ def safe_identifiers(values: Iterable[str], *, role: str = "identifier") -> list
     return [safe_identifier(value, role=role) for value in values]
 
 
+def safe_qualified_identifier(value: str, *, role: str = "identifier") -> str:
+    """Validate a name that may carry its owner: ``object`` or ``owner.object``.
+
+    Generated DML names its table with the owner when ``keep_owner`` is set, and
+    a bare ``safe_identifier`` rejects that outright because of the dot. Both
+    halves are still validated individually, so the guard is exactly as strict
+    as before on each part; only the single separating dot is new. Anything
+    deeper (``a.b.c``) is not a name ADT ever writes and is rejected.
+    """
+    parts = str(value).split(".")
+    if len(parts) > 2:
+        raise ValueError(f"unsafe SQL {role}: {value!r}")
+    for part in parts:
+        safe_identifier(part, role=role)
+    return value
+
+
 def safe_object_type(value: str, *, role: str = "object type") -> str:
     """Validate a (possibly multi-word) object type, e.g. ``PACKAGE BODY``.
 

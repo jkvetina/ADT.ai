@@ -76,7 +76,7 @@ TIMER: 0s
 
 <br>
 
-## Passwords are never on the command line
+## Database passwords are never on the command line
 
 A password is collected interactively, with hidden input, at apply time only. An argument would land in shell history and in the process list, where any local user can read it.
 
@@ -86,7 +86,7 @@ A password is collected interactively, with hidden input, at apply time only. An
 
 Passwords are written as cleartext by default, and a cleartext write removes the matching encryption marker so the runtime does not try to decrypt plaintext.
 
-`-encrypt` writes an encrypted value instead. The key comes from `-key VALUE`, `-key /path/to/keyfile`, or the `ADT_KEY` environment variable in either of those two forms. What the stored value looks like, and what protects it, is on [connection_passwords.md](connection_passwords.md).
+`-encrypt` writes an encrypted value. Its key comes from `-key`, `ADT_KEY`, or `ADT_KEY_CMD`; values and key-file paths are accepted. Prefer a file or secret-manager command. Unlike the prompted database password, literal `-key VALUE` is exposed in shell history and the process list. The formats are on [connection_passwords.md](connection_passwords.md).
 
 <br>
 

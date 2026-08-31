@@ -162,7 +162,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
             format_status_line(
                 "ADT_KEY",
                 self._adt_key_value(),  # type: ignore[attr-defined]
-                self._visible_status(self._env_status("ADT_KEY")),  # type: ignore[attr-defined]
+                self._visible_status(self._adt_key_status()),  # type: ignore[attr-defined]
             ),
             format_status_line("ARCH", platform.machine() or "unknown"),
             format_status_line("JAVA_TOOL_OPTIONS", env["JAVA_TOOL_OPTIONS"]),
@@ -262,7 +262,20 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         return self.env.get(name) or "<empty>"  # type: ignore[attr-defined]
 
     def _adt_key_value(self) -> str:
-        return "<redacted>" if self.env.get("ADT_KEY") else "<empty>"  # type: ignore[attr-defined]
+        value = bool(self.env.get("ADT_KEY"))  # type: ignore[attr-defined]
+        command = bool(self.env.get("ADT_KEY_CMD"))  # type: ignore[attr-defined]
+        if value and command:
+            return "<ambiguous: both set>"
+        if value:
+            return "<redacted>"
+        if command:
+            return "<from ADT_KEY_CMD>"
+        return "<empty>"
+
+    def _adt_key_status(self) -> str:
+        value = bool(self.env.get("ADT_KEY"))  # type: ignore[attr-defined]
+        command = bool(self.env.get("ADT_KEY_CMD"))  # type: ignore[attr-defined]
+        return "OK" if value ^ command else "WARN"
 
     def _env_status(self, name: str) -> str:
         return "OK" if self.env.get(name) else "WARN"  # type: ignore[attr-defined]

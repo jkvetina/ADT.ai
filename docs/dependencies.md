@@ -1,5 +1,7 @@
 # Query the Object Graph (adtai dependencies)
 
+![What would I break?](images/dependencies.png)
+
 `dependencies` answers "what uses this?" and "what would I break?" against a local mirror of the Oracle data dictionary. Reach for it before changing a table or a package, when you need the blast radius rather than a guess.
 
 The mirror is a single gitignored SQLite file at `config/internal/dependencies.db`, holding the raw dictionary tables stamped with an owner, so it is multi-schema, plus the APEX dictionary keyed by application id. Every query recomputes its answer from those raw mirrors.

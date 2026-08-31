@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from importlib.resources.abc import Traversable
 from pathlib import Path
 
 import yaml
@@ -69,15 +70,32 @@ def _identity_template(root: Path) -> str:
     )
 
 
-def _patch_template_files(package_root: Path) -> list[tuple[Path, str]]:
-    source_root = package_root / PATCH_TEMPLATE_DIR
+def _resource(root: Traversable, relative_path: Path) -> Traversable:
+    return root.joinpath(*relative_path.parts)
+
+
+def _patch_template_files(resource_root: Traversable) -> list[tuple[Path, str]]:
+    source_root = _resource(resource_root, PATCH_TEMPLATE_DIR)
     if not source_root.is_dir():
         return []
-    return [
-        (PATCH_TEMPLATE_DIR / path.relative_to(source_root), path.read_text(encoding="utf-8"))
-        for path in sorted(source_root.rglob("*"))
-        if path.is_file() and path.name != ".DS_Store"
-    ]
+
+    files: list[tuple[Path, str]] = []
+
+    def collect(directory: Traversable, relative: Path) -> None:
+        for item in sorted(directory.iterdir(), key=lambda entry: entry.name):
+            item_relative = relative / item.name
+            if item.is_dir():
+                collect(item, item_relative)
+            elif item.is_file() and item.name != ".DS_Store":
+                files.append(
+                    (
+                        PATCH_TEMPLATE_DIR / item_relative,
+                        item.read_text(encoding="utf-8"),
+                    )
+                )
+
+    collect(source_root, Path())
+    return files
 
 
 class DoctorInitMixin:
@@ -88,7 +106,7 @@ class DoctorInitMixin:
         self._add(lines, "PROJECT INIT:")  # type: ignore[attr-defined]
         created: list[Path] = []
         skipped: list[Path] = []
-        source_gitignore = (self.package_root / ".gitignore").read_text(  # type: ignore[attr-defined]
+        source_gitignore = _resource(self.resource_root, Path(".gitignore")).read_text(  # type: ignore[attr-defined]
             encoding="utf-8"
         )
 
@@ -98,7 +116,7 @@ class DoctorInitMixin:
             (Path(".gitignore"), source_gitignore),
             (Path("connections/.gitkeep"), ""),
             (Path("connections/wallets/.gitkeep"), ""),
-            *_patch_template_files(self.package_root),  # type: ignore[attr-defined]
+            *_patch_template_files(self.resource_root),  # type: ignore[attr-defined]
         ]
 
         for relative_path, content in scaffold:

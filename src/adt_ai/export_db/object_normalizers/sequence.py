@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from adt_ai.export_db.normalizers import NormalizationContext
+from adt_ai.export_db.normalizers import NormalizationContext, qualified
 
 
 def normalize_sequence(lines: list[str], context: NormalizationContext) -> list[str]:
@@ -24,7 +24,7 @@ def normalize_sequence(lines: list[str], context: NormalizationContext) -> list[
     line = line.replace(" MINVALUE", "\n    MINVALUE")
     line = re.sub(r"\s+;", ";", line)
     return [
-        f"-- DROP SEQUENCE {context.object_name.lower()};",
+        f"-- DROP SEQUENCE {qualified(context.object_name.lower(), context)};",
         line,
         "/",
         "",

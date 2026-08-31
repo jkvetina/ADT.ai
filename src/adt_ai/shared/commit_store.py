@@ -104,6 +104,26 @@ class CommitStore:
     def close(self) -> None:
         self.connection.close()
 
+    def claim_branch(self, branch: str) -> None:
+        """Bind this file to one branch, rejecting a filename collision."""
+        row = self.connection.execute(queries.META_BRANCH_QUERY).fetchone()
+        recorded = str(row[0]) if row else ""
+        if not recorded:
+            existing = [
+                str(item[0])
+                for item in self.connection.execute(queries.COMMIT_BRANCHES_QUERY)
+            ]
+            if len(existing) > 1:
+                raise ValueError(f"commit store already contains multiple branches: {existing}")
+            recorded = existing[0] if existing else branch
+            self.connection.execute(queries.META_BRANCH_INSERT, (recorded,))
+            self.connection.commit()
+        if recorded != branch:
+            raise ValueError(
+                f"branch {branch!r} maps to a commit store already owned by {recorded!r}; "
+                "rename one branch to keep cache filenames distinct"
+            )
+
     def __enter__(self) -> CommitStore:
         return self
 
@@ -253,27 +273,6 @@ class CommitStore:
         self._write(branch, fresh)
         return assigned
 
-    def adopt(self, branch: str, records: Iterable[StoredCommit]) -> list[int]:
-        """Write ``records`` at the numbers they ALREADY carry.
-
-        Migration only. An existing YAML cache's numbers are the contract every
-        patch folder and every `-commit N` anyone wrote down was built against,
-        so converting that cache preserves them verbatim instead of allocating
-        a second time. Jan, 2026-08-15: *"it should have been converted to keep
-        current id numbers"*. A commit already stored is skipped rather than
-        rewritten, so a half-finished conversion re-runs cleanly, and the
-        schema refuses a duplicate number outright.
-        """
-        existing = self.numbers(branch)
-        taken = set(self._all_numbers(branch))
-        fresh = [
-            (item.number, item)
-            for item in records
-            if item.id not in existing and item.number not in taken
-        ]
-        self._write(branch, fresh)
-        return [number for number, _ in fresh]
-
     def reset(self, branch: str) -> None:
         """Forget everything on ``branch``.
 
@@ -301,11 +300,9 @@ class CommitStore:
         rows: list[tuple] = []
         for number, item in fresh:
             for path, hash_ in item.files.items():
-                # NULL, not a default letter: a row imported from the YAML cache
-                # genuinely does not know whether a file was added or modified,
-                # and writing "M" there would be a guess indistinguishable from
-                # git's own answer. An absent status reads as absent, so a
-                # reader can say so or approximate it deliberately.
+                # NULL, not a default letter: a caller that has no status does
+                # not know whether a file was added or modified, and writing
+                # "M" would be a guess indistinguishable from git's own answer.
                 rows.append((branch, number, path, hash_, item.statuses.get(path)))
             for path in item.deleted:
                 rows.append((branch, number, path, None, "D"))

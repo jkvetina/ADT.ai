@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from adt_ai.shared import text_files
+from adt_ai.shared.subprocess_env import safe_subprocess_environment
 
 
 @dataclass(frozen=True)
@@ -61,25 +62,38 @@ def _blob_contents(root: Path, commit_hash: str, paths: list[str]) -> dict[str, 
     if not paths:
         return {}
     specs = "".join(f"{commit_hash}:{path}\n" for path in paths)
-    output = subprocess.run(
+    completed = subprocess.run(
         ["git", "cat-file", "--batch"],
         cwd=root,
         input=specs.encode(),
         capture_output=True,
-    ).stdout
+        check=True,
+        env=safe_subprocess_environment(),
+    )
+    output = completed.stdout
 
     contents: dict[str, bytes] = {}
     pos = 0
-    for path in paths:
+    for record_index, path in enumerate(paths):
         newline = output.find(b"\n", pos)
         if newline == -1:
-            break
+            raise RuntimeError(
+                f"git cat-file returned {record_index} complete record(s) "
+                f"for {len(paths)} path(s)"
+            )
         header = output[pos:newline].decode(errors="replace")
         pos = newline + 1
         if header.endswith(" missing"):
             continue
-        _oid, obj_type, size_text = header.split(" ", 2)
-        size = int(size_text)
+        try:
+            _oid, obj_type, size_text = header.split(" ", 2)
+            size = int(size_text)
+        except (TypeError, ValueError) as error:
+            raise RuntimeError(f"Malformed git cat-file response: {header!r}") from error
+        if pos + size >= len(output):
+            raise RuntimeError(f"Truncated git cat-file body for {path!r}")
+        if output[pos + size : pos + size + 1] != b"\n":
+            raise RuntimeError(f"Malformed git cat-file body terminator for {path!r}")
         if obj_type == "blob":
             contents[path] = output[pos : pos + size]
         pos += size + 1  # skip the body and its trailing newline
@@ -138,6 +152,7 @@ def run_git(root: Path, args: list[str]) -> str:
         check=True,
         capture_output=True,
         text=True,
+        env=safe_subprocess_environment(),
     ).stdout
 
 
@@ -147,6 +162,7 @@ def run_git_bytes(root: Path, args: list[str]) -> bytes:
         cwd=root,
         check=True,
         capture_output=True,
+        env=safe_subprocess_environment(),
     ).stdout
 
 
@@ -159,6 +175,7 @@ def git_config_value(key: str, root: Path | None = None) -> str:
         cwd=root,
         capture_output=True,
         text=True,
+        env=safe_subprocess_environment(),
     )
     return result.stdout.strip() if result.returncode == 0 else ""
 
@@ -182,6 +199,7 @@ def fetch_origin(root: Path) -> None:
         cwd=root,
         capture_output=True,
         text=True,
+        env=safe_subprocess_environment(),
     )
 
 
@@ -192,8 +210,28 @@ def git_ref_exists(root: Path, ref: str) -> bool:
         cwd=root,
         capture_output=True,
         text=True,
+        env=safe_subprocess_environment(),
     )
     return result.returncode == 0
+
+
+def last_commit_time(root: Path, ref: str, path: str) -> int:
+    """Committer timestamp of the newest commit at ``ref`` that touched ``path``.
+
+    ``0`` when ``ref`` has no commit for it at all, which is a real answer rather
+    than an error: a path added on one branch and nowhere else is exactly the
+    case `patch -head` compares two refs to settle, and zero loses that
+    comparison to any commit there is.
+    """
+    output = subprocess.run(
+        ["git", "log", "-1", "--format=%ct", ref, "--", path],
+        cwd            = root,
+        capture_output = True,
+        text           = True,
+        check          = False,
+        env            = safe_subprocess_environment(),
+    ).stdout.strip()
+    return int(output) if output else 0
 
 
 def git_is_ancestor(root: Path, commit: str, branch: str) -> bool:
@@ -203,6 +241,7 @@ def git_is_ancestor(root: Path, commit: str, branch: str) -> bool:
         cwd=root,
         capture_output=True,
         text=True,
+        env=safe_subprocess_environment(),
     )
     return result.returncode == 0
 
@@ -214,6 +253,7 @@ def git_show(root: Path, ref: str, path: str) -> bytes | None:
         cwd            = root,
         check          = False,
         capture_output = True,
+        env            = safe_subprocess_environment(),
     )
     return result.stdout if result.returncode == 0 else None
 
@@ -225,6 +265,7 @@ def git_blob_exists(root: Path, ref: str, path: str) -> bool:
         cwd=root,
         capture_output=True,
         check=False,
+        env=safe_subprocess_environment(),
     )
     return result.returncode == 0
 
@@ -237,6 +278,7 @@ def git_status_porcelain(root: Path, path: str) -> str:
         capture_output=True,
         text=True,
         check=False,
+        env=safe_subprocess_environment(),
     ).stdout.strip()
 
 
@@ -247,6 +289,7 @@ def git_checkout(root: Path, name: str) -> None:
         cwd=root,
         capture_output=True,
         text=True,
+        env=safe_subprocess_environment(),
     )
     if result.returncode != 0:
         message = (result.stderr or result.stdout).strip()
@@ -265,6 +308,7 @@ def default_branch_ref(root: Path) -> tuple[str, str]:
         cwd=root,
         capture_output=True,
         text=True,
+        env=safe_subprocess_environment(),
     )
     ref = result.stdout.strip()
     if ref.startswith("refs/remotes/origin/"):
@@ -276,6 +320,7 @@ def default_branch_ref(root: Path) -> tuple[str, str]:
             cwd=root,
             capture_output=True,
             text=True,
+            env=safe_subprocess_environment(),
         )
         if probe.returncode == 0:
             short = candidate[len("origin/"):] if candidate.startswith("origin/") else candidate

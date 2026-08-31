@@ -1,5 +1,7 @@
 # Validate APEXlang Source (adtai validate)
 
+![Compiled offline, with the database never invited.](images/validate.png)
+
 `validate` runs the APEXlang compiler over an exported `apexlang/` folder and reports what it finds, with a non-zero exit code when anything is wrong. It closes the loop that [`export_apex -apexlang`](export_apex.md) opens: export the `.apx` source, edit it by hand or with an agent, validate, fix, and import only on a clean run.
 
 **The command never connects.** The compiler ships inside SQLcl and answers on a bare `sql -S /nolog` session, so `validate` takes no `-env`, no `-schema` and no credentials, and it works in CI and from any checkout. The only requirement is a SQLcl new enough to carry the compiler, 26.1 or later.

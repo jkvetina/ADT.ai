@@ -1,6 +1,6 @@
 # ADT.ai
 
-![Version](https://img.shields.io/badge/version-0.9.4-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Python](https://img.shields.io/badge/python-3.11%2B-blue) [![CI](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml/badge.svg)](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml)
+![Version](https://img.shields.io/badge/version-0.9.5-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Python](https://img.shields.io/badge/python-3.11%2B-blue) [![CI](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml/badge.svg)](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml)
 
 Get your Oracle database and APEX applications into Git, and get your changes back out to the next environment.
 
@@ -12,7 +12,7 @@ ADT.ai is a Python command-line tool for Oracle developers, and it closes that g
 
 Nothing is installed in the database. It is a command you run from your project folder, against a connection you configure, so there is no schema to create and nothing to uninstall when you are done with it.
 
-Build verified by 5573 private unit tests.
+Fun fact: build verified by 6018 private unit tests over 14 cores in 0:58 with 100% code coverage.
 
 <br>
 
@@ -204,11 +204,3 @@ Longer write-ups on what ADT.ai does and how it is used in real Oracle and APEX 
 - [Mapping APEX page navigation with ADT.ai flow](https://www.oneoracledeveloper.com/2026/06/mapping-apex-page-navigation-with-adtai.html)
 - [AI Skills for APEX Deployment Tool](https://www.oneoracledeveloper.com/2026/04/ai-skills-for-apex-deployment-tool.html)
 - [Every ADT article on oneoracledeveloper.com](https://www.oneoracledeveloper.com/search/label/project_adt)
-
-<br>
-
-## Public Scope
-
-This public checkout intentionally includes only the runtime code, configuration defaults, and documentation needed for the commands listed above. Private tests, connection files, wallets, and unrelated internal modules are not part of this checkout.
-
-What you may do with all of it is in [LICENSE](LICENSE).

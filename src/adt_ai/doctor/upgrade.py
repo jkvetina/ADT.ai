@@ -4,6 +4,7 @@ import re
 import shutil
 import tempfile
 import zipfile
+from importlib import resources
 from pathlib import Path
 
 from adt_ai.doctor._base import (
@@ -35,18 +36,27 @@ def _matching_tag(tags: set[str], release: str) -> str:
 
 
 class DoctorUpgradeMixin:
+    def _pip(self, *arguments: str) -> list[str]:
+        """Run pip in the interpreter that imported and is running ADT.ai."""
+        return [self.python_executable, "-m", "pip", *arguments]  # type: ignore[attr-defined]
+
     def _install_requirements(self, lines: list[str]) -> DoctorResult:
         label = "Python requirements"
-        requirements = self.package_root / "requirements.txt"  # type: ignore[attr-defined]
+        requirements_resource = self.resource_root.joinpath("requirements.txt")  # type: ignore[attr-defined]
         self._begin_action(label)  # type: ignore[attr-defined]
-        if not requirements.exists():
-            return self._fail_action(lines, label, f"requirements.txt missing: {requirements}")  # type: ignore[attr-defined]
-        try:
-            output = self.command_runner(  # type: ignore[attr-defined]
-                ["pip3", "install", "-r", str(requirements), "--upgrade"],
-                None,
-                self._command_env(),  # type: ignore[attr-defined]
+        if not requirements_resource.is_file():
+            return self._fail_action(  # type: ignore[attr-defined]
+                lines,
+                label,
+                f"requirements.txt missing: {requirements_resource}",
             )
+        try:
+            with resources.as_file(requirements_resource) as requirements:
+                output = self.command_runner(  # type: ignore[attr-defined]
+                    self._pip("install", "-r", str(requirements), "--upgrade"),
+                    None,
+                    self._command_env(),  # type: ignore[attr-defined]
+                )
         except Exception as error:
             return self._fail_action(lines, label, str(error))  # type: ignore[attr-defined]
         # pip prints "Successfully installed ..." only when it actually installed
@@ -145,15 +155,14 @@ class DoctorUpgradeMixin:
                 self._git(repo_root, "stash", "pop")
                 stashed = False
             self.command_runner(  # type: ignore[attr-defined]
-                ["pip3", "install", "-e", str(repo_root)],
+                self._pip("install", "-e", str(repo_root)),
                 None,
                 self._command_env(),  # type: ignore[attr-defined]
             )
         except Exception as error:
             if stashed:
                 restore_message = (
-                    "    Local changes saved in git stash; "
-                    "run `git stash pop` to restore them."
+                    "    Local changes saved in git stash; run `git stash pop` to restore them."
                 )
                 self._add(  # type: ignore[attr-defined]
                     lines,
@@ -194,7 +203,7 @@ class DoctorUpgradeMixin:
         # has ever used, with no extra network round trip to tell them apart.
         try:
             output = self.command_runner(  # type: ignore[attr-defined]
-                ["pip3", "install", f"git+{ADT_AI_GITHUB_REPO_URL}@v{release}"],
+                self._pip("install", f"git+{ADT_AI_GITHUB_REPO_URL}@v{release}"),
                 None,
                 self._command_env(),  # type: ignore[attr-defined]
             )
@@ -220,7 +229,7 @@ class DoctorUpgradeMixin:
     def _run_pip_install(self, lines: list[str], label: str, *args: str) -> DoctorResult:
         try:
             output = self.command_runner(  # type: ignore[attr-defined]
-                ["pip3", "install", *args],
+                self._pip("install", *args),
                 None,
                 self._command_env(),  # type: ignore[attr-defined]
             )
@@ -303,24 +312,79 @@ class DoctorUpgradeMixin:
             return DoctorResult(lines=[], performed_actions=[], exit_code=0)
 
         backup_dir = self._sqlcl_backup_dir(sqlcl_dir)
+        restored = False
         try:
-            with tempfile.TemporaryDirectory(prefix="adtai-sqlcl-") as temp_dir:
-                sqlcl_zip = Path(temp_dir) / Path(release.download_url).name
+            # Stage beside the live install so the final rename stays on one
+            # filesystem. The old install is not touched until the archive has
+            # been extracted and its launcher has been validated.
+            with tempfile.TemporaryDirectory(
+                prefix=".adtai-sqlcl-",
+                dir=sqlcl_parent,
+                ignore_cleanup_errors=True,
+            ) as temp_dir:
+                staging_dir = Path(temp_dir)
+                sqlcl_zip = staging_dir / Path(release.download_url).name
+                extracted_dir = staging_dir / "extracted"
                 self.file_downloader(release.download_url, sqlcl_zip)  # type: ignore[attr-defined]
-                if sqlcl_dir.exists():
-                    if backup_dir.exists():
-                        shutil.rmtree(backup_dir)
-                    shutil.move(str(sqlcl_dir), str(backup_dir))
                 with zipfile.ZipFile(sqlcl_zip) as archive:
-                    self._extract_archive(archive, sqlcl_parent)
-                self._ensure_executable(sqlcl_dir / "bin" / "sql")
+                    self._extract_archive(archive, extracted_dir)
+
+                candidate_dir = extracted_dir / "sqlcl"
+                candidate_launcher = candidate_dir / "bin" / "sql"
+                if not candidate_dir.is_dir() or not candidate_launcher.is_file():
+                    raise RuntimeError("Downloaded SQLcl archive has no sqlcl/bin/sql launcher")
+                self._ensure_executable(candidate_launcher)
+
+                stale_backup = staging_dir / "previous-backup"
+                stale_backup_saved = False
+                current_backed_up = False
+                promotion_attempted = False
+                try:
+                    if backup_dir.exists():
+                        shutil.move(str(backup_dir), str(stale_backup))
+                        stale_backup_saved = True
+                    if sqlcl_dir.exists():
+                        shutil.move(str(sqlcl_dir), str(backup_dir))
+                        current_backed_up = True
+                    promotion_attempted = True
+                    shutil.move(str(candidate_dir), str(sqlcl_dir))
+                except Exception as promotion_error:
+                    rollback_errors: list[str] = []
+                    if promotion_attempted and sqlcl_dir.exists():
+                        try:
+                            self._remove_path(sqlcl_dir)
+                        except Exception as rollback_error:
+                            rollback_errors.append(str(rollback_error))
+                    if current_backed_up and backup_dir.exists():
+                        try:
+                            shutil.move(str(backup_dir), str(sqlcl_dir))
+                            restored = True
+                        except Exception as rollback_error:
+                            rollback_errors.append(str(rollback_error))
+                    if stale_backup_saved and stale_backup.exists():
+                        try:
+                            shutil.move(str(stale_backup), str(backup_dir))
+                        except Exception as rollback_error:
+                            rollback_errors.append(str(rollback_error))
+                    if rollback_errors:
+                        detail = "; ".join(rollback_errors)
+                        raise RuntimeError(
+                            f"{promotion_error}; rollback failed: {detail}"
+                        ) from promotion_error
+                    raise
             self._end_action(lines, label, f"UPGRADED TO {release.version}")  # type: ignore[attr-defined]
             return DoctorResult(lines=[], performed_actions=["sqlcl"], exit_code=0)
         except Exception as error:
-            if backup_dir.exists() and not sqlcl_dir.exists():
-                shutil.move(str(backup_dir), str(sqlcl_dir))
+            if restored:
                 self._add(lines, "    Restored previous SQLcl backup.")  # type: ignore[attr-defined]
             return self._fail_action(lines, label, str(error))  # type: ignore[attr-defined]
+
+    @staticmethod
+    def _remove_path(path: Path) -> None:
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+        elif path.exists():
+            shutil.rmtree(path)
 
     @staticmethod
     def _extract_archive(archive: zipfile.ZipFile, target: Path) -> None:
@@ -349,9 +413,8 @@ class DoctorUpgradeMixin:
         """Guarantee the SQLcl launcher is runnable even if the archive carried
         no mode bits (e.g. a Windows-built zip), so version detection, which
         runs the executable, succeeds right after an upgrade."""
-        if launcher.exists():
-            current = launcher.stat().st_mode
-            launcher.chmod(current | 0o111)
+        current = launcher.stat().st_mode
+        launcher.chmod(current | 0o111)
 
     def _sqlcl_backup_dir(self, sqlcl_dir: Path) -> Path:
         version = self._sqlcl_version()  # type: ignore[attr-defined]

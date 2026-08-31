@@ -27,6 +27,19 @@ class DebugQueryGateway:
         mark_announced()
         return self.wrapped.fetch_all(sql, params)
 
+    def read_only_fetch_all(
+        self,
+        sql: str,
+        params: Mapping[str, object] | None = None,
+    ) -> list[dict[str, object]]:
+        """Log and delegate the discovery gateway's read-only query path."""
+        print()
+        print("QUERY:")
+        print(_debug_sql(sql, params or {}))
+        print()
+        mark_announced()
+        return self.wrapped.read_only_fetch_all(sql, params)
+
     def execute(
         self,
         sql: str,
@@ -51,6 +64,9 @@ class DebugQueryGateway:
         return self.wrapped.sqlcl_request(
             request, root, timeout_seconds=timeout_seconds, on_line=on_line
         )
+
+    def close(self) -> None:
+        self.wrapped.close()
 
 def _print_startup_debug(context) -> None:
     print()

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-import json
+import io
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,10 +9,18 @@ from typing import Any, Protocol
 
 from adt_ai.export_data import queries
 from adt_ai.export_data.groups import GroupRules, group_for, resolve_data_group_rules
-from adt_ai.export_data.inventory import DataColumn, DataDiscovery, DataTable
-from adt_ai.export_data.lob_update_scripts import (
-    include_update_scripts,
-    write_lob_update_script,
+from adt_ai.export_data.inventory import DataDiscovery, DataTable
+from adt_ai.export_data.lob_update_scripts import include_update_scripts
+from adt_ai.export_data.sidecars import (  # noqa: F401  (re-exported for existing importers)
+    SIDE_CAR_DATA_TYPES,
+    _is_sidecar_column,
+    _prune_sidecar_folder,
+    _read_lob_value,
+    _sidecar_extension,
+    _sidecar_name_part,
+    _sidecar_payload,
+    _sidecar_row_key,
+    _write_sidecar_values,
 )
 from adt_ai.shared import text_files
 from adt_ai.shared.config import (
@@ -24,14 +32,13 @@ from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.object_files import object_layouts
 from adt_ai.shared.path_template import object_type_token, render_path_template
 from adt_ai.shared.row_values import row_value
+from adt_ai.shared.safe_paths import (
+    simple_component,
+    simple_oracle_identifier,
+    simple_relative_path,
+    under_root,
+)
 from adt_ai.shared.sql_like import split_patterns
-
-_SIDE_CAR_DATA_TYPES = {
-    "BLOB"   : "bin",
-    "CLOB"   : "txt",
-    "JSON"   : "json",
-    "XMLTYPE": "xml",
-}
 
 
 @dataclass(frozen=True)
@@ -142,30 +149,42 @@ class ExportDataRunner:
         rows = discovery.rows(table.name, query_columns, where_filter, order_by)
         path = _data_path(request.root, request.config, table.name, table.schema, group_rules)
         path.parent.mkdir(parents=True, exist_ok=True)
-        if sidecar_columns:
-            _clear_sidecar_folder(path.with_suffix(""))
         row_count = 0
         update_scripts: list[str] = []
-        with path.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.writer(
-                handle,
-                delimiter      = str(request.config.get("csv_delimiter") or ";"),
-                lineterminator = text_files.configured_newline(),
-                quoting        = csv.QUOTE_NONNUMERIC,
-            )
-            writer.writerow(csv_columns)
-            sidecar_key_columns = _key_columns(table, query_columns)
-            for row_number, row in enumerate(rows, start=1):
-                writer.writerow([row_value(row, column) for column in csv_columns])
-                update_scripts.extend(_write_sidecar_values(
-                    path            = path,
-                    table_name      = table.name,
-                    row             = row,
-                    row_number      = row_number,
-                    key_columns     = sidecar_key_columns,
-                    sidecar_columns = sidecar_columns,
-                ))
-                row_count += 1
+        written_sidecars: set[Path] = set()
+        # The CSV is built in memory and handed to the shared writer rather than
+        # streamed straight at the file, so a table whose rows have not moved
+        # keeps its mtime (`#593`). The rows are already a materialized list by
+        # this point, so nothing is held that was not held before. `newline=""`
+        # semantics are preserved by writing the buffer's bytes verbatim: a line
+        # break inside a quoted value is data, and normalizing it would rewrite
+        # what the column holds.
+        buffer = io.StringIO(newline="")
+        writer = csv.writer(
+            buffer,
+            delimiter      = str(request.config.get("csv_delimiter") or ";"),
+            lineterminator = text_files.configured_newline(),
+            quoting        = csv.QUOTE_NONNUMERIC,
+        )
+        writer.writerow(csv_columns)
+        sidecar_key_columns = _key_columns(table, query_columns)
+        sql_table_name = _sql_table_name(table.schema, table.name, request.config)
+        for row_number, row in enumerate(rows, start=1):
+            writer.writerow([row_value(row, column) for column in csv_columns])
+            update_scripts.extend(_write_sidecar_values(
+                path            = path,
+                table_name      = table.name,
+                row             = row,
+                row_number      = row_number,
+                key_columns     = sidecar_key_columns,
+                sidecar_columns = sidecar_columns,
+                written         = written_sidecars,
+                sql_table_name  = sql_table_name,
+            ))
+            row_count += 1
+        text_files.write_bytes(path, buffer.getvalue().encode("utf-8"))
+        if sidecar_columns:
+            _prune_sidecar_folder(path.with_suffix(""), written_sidecars)
         primary_columns = _key_columns(table, csv_columns)
         if primary_columns:
             merge_sql = _merge_sql_from_csv(
@@ -174,6 +193,7 @@ class ExportDataRunner:
                 primary_columns = primary_columns,
                 config          = request.config,
                 where_filter    = where_filter,
+                sql_table_name  = sql_table_name,
             )
             if merge_sql:
                 text_files.write_text(
@@ -183,120 +203,15 @@ class ExportDataRunner:
         return path, row_count
 
 
-def _is_sidecar_column(column: DataColumn) -> bool:
-    return _sidecar_extension(column) is not None
+def _sql_table_name(schema: str, table_name: str, config: dict[str, Any]) -> str:
+    """How generated DML names this table: bare, or `owner.table` under `keep_owner`.
 
-
-def _sidecar_extension(column: DataColumn) -> str | None:
-    return _SIDE_CAR_DATA_TYPES.get(column.data_type.upper())
-
-
-def _clear_sidecar_folder(folder: Path) -> None:
-    if not folder.exists():
-        return
-    sidecar_suffixes = {
-        f".{extension}"
-        for extension in _SIDE_CAR_DATA_TYPES.values()
-    }
-    sidecar_suffixes.add(".sql")
-    for file_path in folder.iterdir():
-        if file_path.suffix not in sidecar_suffixes:
-            continue
-        if file_path.is_file():
-            file_path.unlink()
-
-
-def _write_sidecar_values(
-    path: Path,
-    table_name: str,
-    row: dict[str, Any],
-    row_number: int,
-    key_columns: list[str],
-    sidecar_columns: list[DataColumn],
-) -> list[str]:
-    folder_created = False
-    row_key = _sidecar_row_key(row, key_columns, row_number)
-    update_scripts: list[str] = []
-    for column in sidecar_columns:
-        value = row_value(row, column.name)
-        payload = _sidecar_payload(value, column)
-        if payload is None:
-            continue
-        folder = path.with_suffix("")
-        if not folder_created:
-            folder.mkdir(parents=True, exist_ok=True)
-            folder_created = True
-        extension = _sidecar_extension(column)
-        if extension is None:
-            continue
-        file_path = folder / f"{row_key}.{column.name.lower()}.{extension}"
-        if isinstance(payload, bytes):
-            file_path.write_bytes(payload)
-        else:
-            # Raw LOB payload, byte-faithful: newline="" blocks the platform
-            # translation so the sidecar mirrors the stored value exactly,
-            # independent of the file_crlf setting.
-            with file_path.open("w", encoding="utf-8", newline="") as handle:
-                handle.write(payload)
-        update_script = write_lob_update_script(
-            folder      = folder,
-            table_name  = table_name,
-            row_key     = row_key,
-            row         = row,
-            key_columns = key_columns,
-            column      = column,
-            payload     = payload,
-        )
-        if update_script:
-            update_scripts.append(update_script)
-    return update_scripts
-
-
-def _sidecar_payload(value: Any, column: DataColumn) -> str | bytes | None:
-    value = _read_lob_value(value)
-    if value is None or value == "":
-        return None
-    if isinstance(value, bytes | bytearray | memoryview) and len(value) == 0:
-        return None
-
-    data_type = column.data_type.upper()
-    if data_type == "BLOB":
-        if isinstance(value, bytes | bytearray | memoryview):
-            return bytes(value)
-        return str(value).encode("utf-8")
-    if data_type == "JSON" and not isinstance(value, str):
-        return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
-    if isinstance(value, bytes | bytearray | memoryview):
-        return bytes(value).decode("utf-8")
-    return str(value)
-
-
-def _read_lob_value(value: Any) -> Any:
-    read = getattr(value, "read", None)
-    if callable(read):
-        return read()
-    return value
-
-
-def _sidecar_row_key(row: dict[str, Any], key_columns: list[str], row_number: int) -> str:
-    if not key_columns:
-        return f"row_{row_number:06d}"
-    key = "__".join(
-        _sidecar_name_part(row_value(row, column))
-        for column in key_columns
-    )
-    return key or f"row_{row_number:06d}"
-
-
-def _sidecar_name_part(value: Any) -> str:
-    text = "" if value is None else str(value).strip()
-    if not text:
-        return "null"
-    safe = "".join(
-        char if char.isalnum() or char in {"-", "_", "."} else "_"
-        for char in text
-    ).strip("._")
-    return safe or "value"
+    One reader for both the MERGE/DELETE and the per-row LOB UPDATE, so the two
+    files a table produces cannot end up naming it differently.
+    """
+    if schema and is_enabled(config.get("keep_owner", False)):
+        return f"{schema}.{table_name}"
+    return table_name
 
 
 def _data_path(
@@ -306,11 +221,12 @@ def _data_path(
     schema: str = "",
     group_rules: GroupRules | None = None,
 ) -> Path:
+    simple_oracle_identifier(table_name, role="table name")
     folder = _data_folder(root, config, schema)
     group = group_for("DATA", table_name, group_rules)
     if group:
-        folder = folder / group.upper()
-    return folder / f"{table_name.lower()}.csv"
+        folder = folder / simple_component(group.upper(), role="group name")
+    return under_root(root, folder / f"{table_name.lower()}.csv", role="data export path")
 
 
 DEFAULT_DATA_LAYOUT = ("data", ".sql")
@@ -343,10 +259,16 @@ def _data_folder(root: Path, config: dict[str, Any], schema: str = "") -> Path:
     template = reject_unresolved_placeholders(
         str(config.get("path_objects") or DEFAULT_PATH_OBJECTS)
     )
+    if schema:
+        simple_oracle_identifier(schema, role="schema name")
     rendered = render_path_template(template, schema=schema or "", object_type=folder)
     if object_type_token(template):
-        return root / Path(rendered.strip("/"))
-    return root / Path(rendered.strip("/")) / folder
+        relative = simple_relative_path(rendered, role="path_objects")
+    else:
+        relative = simple_relative_path(rendered, role="path_objects") / simple_relative_path(
+            folder, role="data folder"
+        )
+    return under_root(root, root / relative, role="data folder")
 
 
 def _data_extension(config: dict[str, Any]) -> str:
@@ -444,11 +366,14 @@ def _merge_sql_from_csv(
     primary_columns: list[str],
     config: dict[str, Any],
     where_filter: str,
+    sql_table_name: str | None = None,
 ) -> str:
     columns, batches = _csv_select_batches(path, config)
     if not columns:
         return ""
-    table = table_name.lower()
+    # The MERGE/DELETE target carries the owner under `keep_owner`; every config
+    # lookup below still keys off the unqualified `table_name`.
+    table = (sql_table_name or table_name).lower()
     lower_columns = [column.lower() for column in columns]
     lower_primary = [column.lower() for column in primary_columns]
     update_columns = [column for column in lower_columns if column not in lower_primary]

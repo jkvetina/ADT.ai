@@ -1,5 +1,7 @@
 # Rebuild Commit Store (adtai rebuild)
 
+![Scan once. Everyone else just reads.](images/rebuild.png)
+
 `rebuild` keeps the local commit store up to date, one database per branch of commit metadata that [`search_repo`](search_repo.md) and [`calendar`](calendar.md) read instead of scanning git live. Run it when the store should catch up with new commits.
 
 Scans are incremental by default, so a steady-state run costs seconds. It also lists and switches branches, and it never connects to Oracle.
@@ -72,11 +74,11 @@ TIMER: 0s
 
 Stores go where `repo_commits_file` points, `./config/commits/#BRANCH#.db` by default. One file per branch is deliberate: a branch you no longer care about is one file you can delete, and deleting it costs nothing anywhere else.
 
-`#BRANCH#` becomes a filename-safe form of the branch name, so a branch always resolves to one file and never to a folder. Letters, digits, `.`, `_` and `-` survive, and every other character (`/` included) becomes a `-`, so `feat/PROJ-300-currency` writes `feat-PROJ-300-currency.db`.
+`#BRANCH#` becomes one readable filename. Letters, digits, `.`, `_`, `-` and `/` are accepted; `/` is flattened to `-`, so `feat/PROJ-300-currency` writes `feat-PROJ-300-currency.db`. Anything else is rejected rather than escaped. If two accepted names flatten to the same filename, the exact branch recorded inside the store prevents them from sharing it.
 
 Only the branch is rewritten: the separators in your own template are the folder layout you configured. The branch keeps its real name everywhere you read it, the `BRANCH |` header included.
 
-A branch that still has an older `.yaml` cache is converted rather than rebuilt, so its commit numbers come across exactly as they are. Fields the text format could not hold, git's per-file status letters among them, fill in as later runs reach those commits.
+YAML commit history is decommissioned. A configured `repo_commits_file` that does not end in `.db`, or an old `.yaml` cache beside the supported store path, stops the command with remove-and-rebuild guidance. ADT.ai does not convert it: the old format cannot represent the complete file-status data the SQLite store requires.
 
 <br>
 

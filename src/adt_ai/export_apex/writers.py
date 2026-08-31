@@ -8,9 +8,9 @@ them there), reached through ``self``.
 
 from __future__ import annotations
 
-import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from adt_ai.export_apex.files import ApexFileResolver
@@ -49,6 +49,23 @@ class CollectionWriteResult:
     rows: list[dict[str, Any]]
 
 
+def _prune_folder(root: Path, keep: set[Path]) -> None:
+    """Delete everything under ``root`` this export did not write.
+
+    The replacement for clearing the folder up front: same end state, minus the
+    delete-and-rewrite that gave every surviving file a fresh mtime. Empty
+    folders go too, so a component type that lost its last member leaves no
+    directory behind either.
+    """
+    if not root.is_dir():
+        return
+    for path in sorted(root.rglob("*"), reverse=True):
+        if path.is_file() and path not in keep:
+            path.unlink()
+        elif path.is_dir() and not any(path.iterdir()):
+            path.rmdir()
+
+
 class ApexCollectionWriterMixin:
     def _write_collection_files(
         self,
@@ -65,12 +82,15 @@ class ApexCollectionWriterMixin:
         page_names: dict[int, str] | None = None,
     ) -> CollectionWriteResult:
         rows = []
-        if action == "apexlang":
-            # An APEXlang folder is only meaningful as a complete snapshot of the
-            # app: a component deleted in APEX must not survive as a stale `.apx`
-            # here. Nothing else lives under `apexlang/`, so recreating just that
-            # subtree leaves every sibling export folder untouched.
-            shutil.rmtree(resolver.apexlang_root(application), ignore_errors=True)
+        # An APEXlang folder is only meaningful as a complete snapshot of the
+        # app: a component deleted in APEX must not survive as a stale `.apx`
+        # here. That used to be a `shutil.rmtree` before the first write, which
+        # deleted every unchanged member a moment before writing it back, so the
+        # whole tree took a fresh mtime on every export (`#593`). Pruning what
+        # this run did not write reaches the same folder by a route the
+        # unchanged-skip can see, and nothing else lives under `apexlang/`, so
+        # either way every sibling export folder is untouched.
+        written: set[Path] = set()
         for row in gateway.fetch_all(self.FETCH_FILES_QUERY):  # type: ignore[attr-defined]
             file_name = str(row_value(row, "FILE_NAME") or "")
             payload = str(row_value(row, "CLOB_CONTENT") or "")
@@ -100,6 +120,9 @@ class ApexCollectionWriterMixin:
             if action == "readable" and target == resolver.workspace_root() / "app_groups.yaml":
                 content = _merge_app_groups(target, content)
             text_files.write_text(target, content)
+            written.add(target)
+        if action == "apexlang":
+            _prune_folder(resolver.apexlang_root(application), written)
         return CollectionWriteResult(rows)
 
     def _write_static_files(
@@ -123,7 +146,9 @@ class ApexCollectionWriterMixin:
                 else resolver.application_file(application, file_name)
             )
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(payload)
+            # Through the shared writer, so a static file whose bytes have not
+            # moved keeps its mtime like every other exported artifact (`#593`).
+            text_files.write_bytes(target, payload)
 
     def _write_page_comments(
         self,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -13,6 +14,13 @@ from adt_ai.shared.path_template import (
     object_type_token,
     render_path_template,
     schema_token,
+)
+from adt_ai.shared.safe_paths import (
+    UnsafePathError,
+    simple_component,
+    simple_oracle_identifier,
+    simple_relative_path,
+    under_root,
 )
 
 
@@ -91,6 +99,19 @@ class ObjectFileResolver:
         if layout is None:
             raise ObjectFileError(f"Object type is not configured: {database_object.object_type}")
 
+        try:
+            simple_oracle_identifier(database_object.schema, role="schema name")
+            if object_type == "GRANT" and "/" in database_object.name:
+                category, owner, *extra = database_object.name.split("/")
+                if category.lower() != "received" or not owner or extra:
+                    raise UnsafePathError(
+                        f"Unsupported GRANT artifact name {database_object.name!r}"
+                    )
+                simple_oracle_identifier(owner, role="grant owner name")
+            else:
+                simple_oracle_identifier(database_object.name, role="database object name")
+        except UnsafePathError as error:
+            raise ObjectFileError(str(error)) from error
         folder = self._folder_for(database_object, layout)
         object_name = (
             database_object.name
@@ -102,11 +123,24 @@ class ObjectFileResolver:
         # subfolder a user arranged by hand) before routing a brand-new object.
         existing = self._existing_case_path(folder, filename)
         if existing is not None:
-            return existing
-        group = group_for(object_type, database_object.name, self.group_rules)
-        if group:
-            return folder / group / filename
-        return folder / filename
+            try:
+                return under_root(self.root, existing, role="database object path")
+            except UnsafePathError as error:
+                raise ObjectFileError(str(error)) from error
+        try:
+            group = (
+                None
+                if object_type == "GRANT"
+                else group_for(object_type, database_object.name, self.group_rules)
+            )
+            target = (
+                folder / simple_component(group, role="group name") / filename
+                if group
+                else folder / filename
+            )
+            return under_root(self.root, target, role="database object path")
+        except UnsafePathError as error:
+            raise ObjectFileError(str(error)) from error
 
     def fix_path_for(self, database_object: DatabaseObject) -> Path:
         path = self.path_for(database_object)
@@ -274,9 +308,13 @@ class ObjectFileResolver:
             schema      = database_object.schema,
             object_type = layout.folder,
         )
-        if object_type_token(self.path_objects):
-            return self.root / Path(rendered.strip("/"))
-        return self.root / Path(rendered.strip("/")) / layout.folder
+        try:
+            relative = simple_relative_path(rendered, role="path_objects")
+            if not object_type_token(self.path_objects):
+                relative /= simple_relative_path(layout.folder, role="object type folder")
+            return under_root(self.root, self.root / relative, role="object type folder")
+        except UnsafePathError as error:
+            raise ObjectFileError(str(error)) from error
 
     def _search_roots_for(
         self,
@@ -334,9 +372,8 @@ class ObjectFileResolver:
 
 
 class ObjectFileWriter:
-    def __init__(self, resolver: ObjectFileResolver, compare_existing: bool = True) -> None:
+    def __init__(self, resolver: ObjectFileResolver) -> None:
         self.resolver = resolver
-        self.compare_existing = compare_existing
 
     def write(self, requests: list[ObjectWriteRequest]) -> list[ObjectWritePlan]:
         return [self.write_one(request) for request in requests]
@@ -344,24 +381,39 @@ class ObjectFileWriter:
     def differs_from_disk(self, request: ObjectWriteRequest) -> bool:
         """Is the file this request targets absent, or holding other content?
 
-        The comparison :meth:`write_one` makes under ``compare_existing``, asked
-        without writing anything. ``compare_existing`` itself is deliberately not
-        consulted: that flag says whether an unchanged file may skip its WRITE,
-        and this is a question about the content either way.
-
-        `export_db` asks it before printing the `GRANT` overview row, which
-        exists to say those artifacts moved and must not claim a run that
+        The same comparison :meth:`write_one` makes, asked without writing
+        anything. `export_db` asks it before printing the `GRANT` overview row,
+        which exists to say those artifacts moved and must not claim a run that
         rewrites the same bytes (`#437`).
         """
-        return self._plan_one(request, compare_existing=True).action != "unchanged"
+        path = request.path or self.resolver.path_for(request.object)
+        try:
+            path = under_root(self.resolver.root, path, role="database object path")
+        except UnsafePathError as error:
+            raise ObjectFileError(str(error)) from error
+        return not text_files.text_matches(path, request.content)
 
     def write_one(self, request: ObjectWriteRequest) -> ObjectWritePlan:
-        plan = self._plan_one(request, compare_existing=self.compare_existing)
-        if plan.action == "unchanged":
-            return plan
-        plan.path.parent.mkdir(parents=True, exist_ok=True)
-        text_files.write_text(plan.path, request.content)
-        return plan
+        """Write the object's file, unless the file already holds these bytes.
+
+        The skip is the shared writer's (`#593`); this reads its answer back to
+        name the action. `export_db` used to build its writer with
+        ``compare_existing=False``, trading a rewrite of every touched file for
+        one skipped read per object, which under a syncing folder re-uploaded
+        the whole export after a run that changed nothing.
+        """
+        path = request.path or self.resolver.path_for(request.object)
+        try:
+            path = under_root(self.resolver.root, path, role="database object path")
+        except UnsafePathError as error:
+            raise ObjectFileError(str(error)) from error
+        existed = path.exists()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        written = text_files.write_text(path, request.content)
+        action: Literal["create", "update", "unchanged"] = (
+            ("update" if existed else "create") if written else "unchanged"
+        )
+        return ObjectWritePlan(object=request.object, path=path, action=action)
 
     def hash_one(self, request: ObjectWriteRequest) -> ObjectWritePlan:
         """What this object would hash to, without writing anything (`#452`).
@@ -380,38 +432,15 @@ class ObjectFileWriter:
         the same as the hash calculated in export_db -baseline mode."*
         """
         path = request.path or self.resolver.path_for(request.object)
-        rendered = text_files.normalize(request.content).replace(
-            "\n", text_files.configured_newline()
-        )
+        try:
+            path = under_root(self.resolver.root, path, role="database object path")
+        except UnsafePathError as error:
+            raise ObjectFileError(str(error)) from error
         return ObjectWritePlan(
             object       = request.object,
             path         = path,
             action       = "hashed",
-            content_hash = file_payload_hash(rendered.encode("utf-8")),
-        )
-
-    def _plan_one(
-        self,
-        request: ObjectWriteRequest,
-        compare_existing: bool,
-    ) -> ObjectWritePlan:
-        path = request.path or self.resolver.path_for(request.object)
-        if not path.exists():
-            action: Literal["create", "update", "unchanged"] = "create"
-        elif compare_existing and path.read_text(encoding="utf-8") == text_files.normalize(
-            request.content
-        ):
-            # read_text() reads with universal newlines, so the file side is always
-            # LF; the DDL side has to be normalized the same way the writer does or
-            # every CRLF-carrying object reports as changed on every export.
-            action = "unchanged"
-        else:
-            action = "update"
-
-        return ObjectWritePlan(
-            object = request.object,
-            path   = path,
-            action = action,
+            content_hash = file_payload_hash(text_files.rendered_bytes(request.content)),
         )
 
 
@@ -427,7 +456,15 @@ def _parse_layout(object_type: str, raw_layout: Any) -> ObjectTypeLayout:
     if not isinstance(folder, str) or not isinstance(extension, str):
         raise ObjectFileError(f"Invalid file layout for object type: {object_type}")
 
-    return ObjectTypeLayout(folder=folder.strip("/"), extension=extension)
+    try:
+        safe_folder = simple_relative_path(folder, role=f"{object_type} folder").as_posix()
+    except UnsafePathError as error:
+        raise ObjectFileError(str(error)) from error
+    if not re.fullmatch(r"(?:\.[A-Za-z0-9_-]+)+", extension):
+        raise ObjectFileError(
+            f"Invalid file extension for object type {object_type}: {extension!r}"
+        )
+    return ObjectTypeLayout(folder=safe_folder, extension=extension)
 
 
 def _duplicate_case_paths(folder: Path, extension: str) -> dict[str, list[Path]]:

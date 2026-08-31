@@ -42,6 +42,18 @@ _WARNINGS_MARKER  = "APEXlang Compile Warnings:"
 _EMPTY_MARKER     = "does not contain APEXlang files"
 _NOT_FOUND_MARKER = "Could not find file or directory with inputPath"
 
+# What `apex import` says when it worked. A tuple because one command can settle
+# on more than one wording across the versions this tool runs against, and
+# because an empty tuple is the honest state before anything has been captured:
+# every outcome then falls through to UNRECOGNISED, which is a failure, which is
+# the direction a gate is allowed to be wrong in.
+#
+# Captured from SQLcl 26.2.1.0 against APEX 26.1.0 on SANDBOX and pinned by
+# `tests/contracts/test_import_markers_are_captured.py`, the same contract
+# `#473` put on the validate markers after a remembered spelling reported every
+# real compile error as output the parser could not read.
+IMPORT_SUCCESS_MARKERS: tuple[str, ...] = ("Import successful",)
+
 _FIELD_RE = re.compile(r"^(File|Line|Column|Type|Error|Warning):\s?(.*)$")
 
 
@@ -119,6 +131,35 @@ def parse_validate_output(text: str) -> FolderReport:
     if _has_marker(body, _EMPTY_MARKER):
         return FolderReport(EMPTY, (), body, warnings)
     if _has_marker(body, _SUCCESS_MARKER):
+        return FolderReport(SUCCESS, (), body, warnings)
+    return FolderReport(UNRECOGNISED, (), body, warnings)
+
+
+def parse_import_output(text: str) -> FolderReport:
+    """The same read, for ``apex import`` instead of ``apex validate``.
+
+    `apex import` compiles its input before it writes anything, so the two
+    commands share the whole error half: the compile-error block, the empty-input
+    and missing-path wordings, and SQLcl's habit of exiting ``0`` whichever way
+    it went. What differs is the line that says it worked, so that is the only
+    thing this adds.
+
+    UNRECOGNISED-by-default for the reason `parse_validate_output` is, one step
+    more serious: on a validate, an unread failure rendering as a pass wastes a
+    round; on an import it reports a deploy that landed nothing as SUCCESS, which
+    is exactly the defect `#312` was filed on.
+    """
+    body = text or ""
+    warnings = _parse_block(body, _WARNINGS_MARKER, "Warning")
+
+    if _has_marker(body, _ERRORS_MARKER):
+        errors = _parse_block(body, _ERRORS_MARKER, "Error")
+        return FolderReport(ERRORS if errors else UNRECOGNISED, errors, body, warnings)
+    if _has_marker(body, _NOT_FOUND_MARKER):
+        return FolderReport(NOT_FOUND, (), body, warnings)
+    if _has_marker(body, _EMPTY_MARKER):
+        return FolderReport(EMPTY, (), body, warnings)
+    if any(_has_marker(body, marker) for marker in IMPORT_SUCCESS_MARKERS):
         return FolderReport(SUCCESS, (), body, warnings)
     return FolderReport(UNRECOGNISED, (), body, warnings)
 

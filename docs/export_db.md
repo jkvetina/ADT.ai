@@ -1,7 +1,5 @@
 # Export Database Objects (adtai export_db)
 
-![export_db running against a schema and writing files to disk](images/export_db.svg)
-
 `export_db` brings an Oracle schema out of the database and into your repository as one DDL file per object, in a folder tree you configure. Run it after making database changes and version control shows exactly what moved, per object.
 
 The output is normalized, so repeated exports of an unchanged object are byte-identical and a change on screen is a real change rather than the export moving things around. Where the files land, and how to reorganize them, is on [export_db_layout.md](export_db_layout.md).
@@ -101,6 +99,7 @@ TIMER: 1s
 - **The `GRANT` row prints only when a grant actually moved.** None of the four has a `LAST_DDL_TIME`, so every run re-reads all four and the comparison against what is on disk decides what the screen says. The files are rewritten either way.
 - **The whole table waits on those reads.** The header goes up first and the reads run under it. A run where neither an object nor a privilege changed prints its header and stops: no column headings over an empty table, and no `EXPORTING 0 OBJECTS:` under it.
 - A multi-schema run executes schema by schema, with its own connection block and its own `TIMER`, and prints the banner once.
+- **Exported DDL names no schema.** The `CREATE` line, the object a `GRANT` names and the directories all drop the owner, so a file installs into whichever schema the deploying session connects as. Set `keep_owner` to write `owner.object` in all of them instead; [config.md](config.md#naming-the-owning-schema) covers when that is the right trade.
 
 <br>
 

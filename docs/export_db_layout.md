@@ -1,5 +1,7 @@
 # The Exported Files (adtai export_db)
 
+![Look first. Move only what you named.](images/export_db_layout.png)
+
 What an exported file looks like, the folder tree it lands in, how to reorganize that tree into per-group subfolders, what happens when one object ends up in two places, and how to record what an environment actually holds. The command and its flags are on [export_db.md](export_db.md).
 
 <br>

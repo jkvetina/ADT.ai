@@ -103,18 +103,46 @@ def write_file_results(file_path: Path, results: list[str]) -> None:
     """
     text = file_path.read_text(encoding="utf-8")
     stripped = _RESULT_BLOCK_RE.sub("", text)
-    raw_pieces = stripped.split(";")
-    while raw_pieces and not raw_pieces[-1].strip():
-        raw_pieces.pop()
-
+    terminators = _top_level_semicolons(stripped)
     parts: list[str] = []
-    for i, piece in enumerate(raw_pieces):
-        stmt = piece.rstrip()
-        if i < len(results):
-            parts.append(f"{stmt};\n{RESULT_BLOCK_START}\n{results[i]}\n{RESULT_BLOCK_END}\n")
+    start = 0
+    result_index = 0
+    last_had_result = False
+    terminator_ends = {terminator + 1 for terminator in terminators}
+    ends = sorted(terminator_ends)
+    if not ends or ends[-1] != len(stripped):
+        ends.append(len(stripped))
+    for end in ends:
+        chunk = stripped[start:end]
+        terminated = end in terminator_ends
+        body = chunk[:-1] if terminated else chunk
+        if body.strip():
+            parts.append(chunk.rstrip())
+            if result_index < len(results):
+                parts.append(
+                    f"\n{RESULT_BLOCK_START}\n{results[result_index]}\n{RESULT_BLOCK_END}\n"
+                )
+                last_had_result = True
+            else:
+                last_had_result = False
+            result_index += 1
+        elif end == len(stripped) and last_had_result:
+            pass
         else:
-            parts.append(f"{stmt};\n")
+            parts.append(chunk)
+        start = end
     text_files.write_text(file_path, "".join(parts))
+
+
+def _top_level_semicolons(text: str) -> list[int]:
+    """Offsets of statement terminators, excluding strings and comments."""
+    return [
+        index
+        for kind, span_start, span_end in sql_spans(text, identifiers=True)
+        if kind == "code"
+        for index in range(span_start, span_end)
+        if text[index] == ";"
+    ]
 
 
 def _split_top_level_semicolons(text: str) -> list[str]:
@@ -129,13 +157,9 @@ def _split_top_level_semicolons(text: str) -> list[str]:
     """
     statements: list[str] = []
     start = 0
-    for kind, span_start, span_end in sql_spans(text):
-        if kind != "code":
-            continue
-        for index in range(span_start, span_end):
-            if text[index] == ";":
-                statements.append(text[start:index])
-                start = index + 1
+    for index in _top_level_semicolons(text):
+        statements.append(text[start:index])
+        start = index + 1
     statements.append(text[start:])
     return [statement.strip() for statement in statements if statement.strip()]
 

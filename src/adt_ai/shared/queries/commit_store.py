@@ -45,6 +45,12 @@ META_VERSION_INSERT = """
 INSERT OR IGNORE INTO meta(key, value) VALUES('schema_version', ?)
 """.strip()
 
+META_BRANCH_QUERY = "SELECT value FROM meta WHERE key = 'branch_name'"
+
+META_BRANCH_INSERT = "INSERT INTO meta(key, value) VALUES('branch_name', ?)"
+
+COMMIT_BRANCHES_QUERY = "SELECT DISTINCT branch FROM commits ORDER BY branch"
+
 COMMIT_FLOOR_QUERY = """
 SELECT MIN(number) FROM commits WHERE branch = ?
 """.strip()

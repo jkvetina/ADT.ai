@@ -441,7 +441,6 @@ def _run_doctor(args: argparse.Namespace) -> int:
 
     result = DoctorRunner(
         package_version=__version__,
-        package_root=_repo_root(),
         line_callback=print_doctor_line,
         action_reporter=_ConsoleActionReporter(),
         version_cache_dir=Path.home() / ".cache" / "adt-ai" / "doctor",

@@ -22,10 +22,10 @@ from adt_ai.ut.limits import error_limit, packages_below, resolve_gate
 from adt_ai.ut.naming import UtNaming
 from adt_ai.ut.render import (
     print_coverage_gate,
-    print_module_summary,
     print_summary_rows,
 )
 from adt_ai.ut.reporter import ConsoleUt3Reporter
+from adt_ai.ut.rollup import print_compact_row, print_module_summary
 from adt_ai.ut.runner import Ut3Request, Ut3Runner
 from adt_ai.ut.store import record_run, run_history
 from adt_ai.ut.timers import previous_seconds, record_seconds, timers_path, variant_key
@@ -113,6 +113,7 @@ def _run_ut_for_schema(
     reporter = ConsoleUt3Reporter(
         silent            = args.silent,
         verbose           = args.verbose,
+        compact           = args.compact,
         names             = names,
         previous_seconds  = previous_seconds(timers_file, owner, variant),
         started_at        = started_at,
@@ -158,14 +159,30 @@ def _run_ut_for_schema(
         # that would seed `0:00:00` into the next real run's countdown.
         record_seconds(timers_file, owner, variant, time.monotonic() - started_at)
 
+    # **The gate is resolved before anything prints, and it used to be resolved
+    # after.** Absent `-gate` nothing is compared and the exit code is the
+    # suites'; with it, a package under the bar fails a run whose tests all
+    # passed, so `-compact`'s `STATUS` cell cannot be rendered until this is
+    # known. It reads config and the finished result and reaches no database, so
+    # moving it above the report costs the reader nothing.
+    threshold = resolve_gate(args.gate, startup.config)
+    below = () if threshold is None else tuple(
+        packages_below(gated_packages(result), threshold)
+    )
+    # One expression, read twice: the row and the exit code cannot disagree.
+    passed = result.success and not below
+
     # The rows under the heading the reporter laid down before the coverage
     # read, which is the one part of the report that had to wait for it. Then
     # the same run grouped per module when `ut_module` is configured. Neither
     # heading carries `names`: they say what they group, and the section the run
-    # happened under said what it covered.
-    print_summary_rows(result)
-    if result.modules:
-        print_module_summary(result)
+    # happened under said what it covered. `-compact` replaces both with one row.
+    if args.compact:
+        print_compact_row(result, passed=passed)
+    else:
+        print_summary_rows(result)
+        if result.modules:
+            print_module_summary(result)
 
     # **Recorded whether or not this run printed a change table.** The table is
     # `-verbose`, the history is not: a quiet run still moves the figure, and a
@@ -176,14 +193,11 @@ def _run_ut_for_schema(
 
     # The gate reads the report rather than replacing it: every table above has
     # already printed, and what follows is only the list of packages under the
-    # bar. Absent `-gate` nothing is compared and the exit code is the suites'.
-    threshold = resolve_gate(args.gate, startup.config)
-    below = () if threshold is None else tuple(
-        packages_below(gated_packages(result), threshold)
-    )
+    # bar. It survives `-compact` for the reason `ERRORS & FAILURES:` does, a
+    # status word does not say WHICH package has to be covered.
     if below:
         print_coverage_gate(below, threshold)
-    return 0 if result.success and not below else 1
+    return 0 if passed else 1
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

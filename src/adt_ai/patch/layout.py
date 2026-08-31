@@ -25,6 +25,7 @@ from typing import Any
 # them from here.
 from adt_ai.patch.deploy_paths import deploy_log_folder as deploy_log_folder
 from adt_ai.patch.deploy_paths import ensure_deploy_log_folder as ensure_deploy_log_folder
+from adt_ai.shared.apex_paths import APEXLANG_DIR
 from adt_ai.shared.config import DEFAULT_PATH_OBJECTS, reject_unresolved_placeholders
 
 # `object_layouts` moved to `shared/` with the ownership rule it feeds (ADT #471),
@@ -286,6 +287,25 @@ def is_apex_full_export(path: str, config: dict[str, Any]) -> bool:
     if app_id is None or root is None:
         return False
     return Path(path).parts == (*root, f"f{app_id}.sql")
+
+
+def is_apexlang_path(path: str, config: dict[str, Any]) -> bool:
+    """A file inside one application's exported ``apexlang/`` tree (ADT #602).
+
+    The tree is a whole-application format with no SQL install route of its own.
+    `apex import` reads the FOLDER, and SQLcl answers `SP2-0044` to every `@` of
+    an `.apx` file, so `patch` has to tell one apart from the `.sql` component
+    exports beside it: those it links, these it names.
+
+    Keyed on the folder rather than on the `.apx` suffix, because the tree also
+    carries `.apex/apexlang.json`, which is as much a part of the application as
+    a page is and has no more of a SQL route than one.
+    """
+    root = apex_app_root(path, config)
+    if root is None:
+        return False
+    parts = Path(path).parts
+    return len(parts) > len(root) and parts[len(root)] == APEXLANG_DIR
 
 
 def is_apex_static_file(path: str, config: dict[str, Any]) -> bool:

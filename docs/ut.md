@@ -1,8 +1,10 @@
 # Run utPLSQL Test Suites (adtai ut)
 
+![It never raises. The exit code does.](images/ut.png)
+
 `ut` runs the [utPLSQL](https://www.utplsql.org) v3 test suites installed in a configured Oracle schema, prints what it is about to run, shows a progress bar while it runs it, and turns the result into an exit code.
 
-utPLSQL does not raise when a test fails, so a caller that only watches for an exception sees a clean run. The exit code is what this command is for. Coverage, the gate and the delta report are on [ut_coverage.md](ut_coverage.md).
+utPLSQL does not raise when a test fails, so a caller that only watches for an exception sees a clean run. The exit code is what this command is for. Which packages a run selects, and the configuration behind that, are on [ut_discovery.md](ut_discovery.md); coverage, the gate and the delta report are on [ut_coverage.md](ut_coverage.md).
 
 <br>
 
@@ -32,6 +34,12 @@ Swap the progress bar for a verdict per test, or for nothing at all:
 ```bash
 adtai ut -verbose
 adtai ut -silent
+```
+
+Collapse both summary tables into the run's one-line score:
+
+```bash
+adtai ut -compact
 ```
 
 Fail the run when a tested package is under a coverage threshold:
@@ -99,6 +107,8 @@ Between the connection block and `SUMMARY PER SUITE:` the output belongs to the 
 
 Everything below is identical in all three, with one exception: `-verbose` also prints `COVERAGE CHANGED SINCE LAST RUN:` above the summaries when there is something to compare against.
 
+What sits below has a flag of its own, `-compact`, and the two halves of the screen do not overlap: a mode decides what you watch while the run happens, `-compact` decides how much of the report you read afterwards. See [The compact run](#the-compact-run).
+
 - **The label is the tests the run targets; the bar is bumped by finished suites.** A test is knowable before anything runs, so it is what the row says out loud. A suite is the only unit utPLSQL reports back, so it is the only thing that can move a bar honestly.
 - **The bar moves when a suite returns and at no other moment.** utPLSQL buffers a run's whole reporter output until `ut.run` returns, so a suite is the smallest unit of progress that exists.
 - **The time on the right is what is left, not what has passed.** Before the first suite returns the only thing known is what the last run of this schema and `-name` variant cost; from there the run measures its own rate and the two blend. At 100% the row shows real elapsed time.
@@ -151,6 +161,28 @@ TEST RESULTS:
 
 <br>
 
+## The compact run
+
+`-compact` replaces both summary tables with one row: how big the run was, what it cost, how much of the code it reached, and whether it is green. It is the same fixture run the `## Output` block above shows, reported in five cells instead of a table.
+
+```text
+RESULTS:
+--------
+
+  PACKAGES   LINES   TIMER   COVERAGE   STATUS
+  --------   -----   -----   --------   ------
+         1             0.2              ERROR
+```
+
+- **The four measured cells are the module total's own**, built by the same helper, so the short form and the long one cannot report two different figures for one run. `PACKAGES` is how many suites ran, `LINES` the deduplicated body size of the packages they test, `TIMER` their own wall clock, `COVERAGE` the group figure over the same set, scaled the same way. Both blank here for the reason the module table's own row blanks: that suite pairs to no package, so there is no body to measure.
+- **They print with no module convention too.** `ut_module` decides whether a table of *groups* is meaningful; a total over every suite needs no convention to name it, so blanking the expression takes `SUMMARY PER MODULE:` out and leaves this row whole.
+- **`STATUS` is the exit code in words**, `PASS` or `ERROR`, so a green row above a non-zero exit is not a state this command can reach. It reads `ERROR` on a failed or errored test, on a run that executed nothing, and on a package under the `-gate` threshold. Which of the three it was is what the sections around the row say, and one word is deliberately not asked to carry that.
+- **It removes the tally, never the detail that explains one.** `ERRORS & FAILURES:` above the row and `COVERAGE BELOW <n>:` below it print exactly as they do without the flag. This is the line `-silent` already draws: a green run gets short, a red one stays readable.
+- **`RESULTS:` leads the coverage read** like the heading it replaces, so it is on screen before the profiler round trips rather than after them.
+- **It composes with the modes rather than outranking them**, because they own different halves of the screen: `-silent -compact` is command chrome and one row, `-verbose -compact` keeps the per-test listing above it. The one thing `-compact` does take from `-verbose` is `COVERAGE CHANGED SINCE LAST RUN:`, which is per-package detail inside the region the row replaces.
+
+<br>
+
 ## What counts as a test suite
 
 A package is run when **both** are true:
@@ -180,53 +212,6 @@ The zero-test row is the important one: **a zero-test run is a failure, not an e
 
 <br>
 
-## The naming convention is configuration
-
-Four config values describe how a project names its test packages. All four are **Oracle regular expressions**, evaluated by Oracle inside the dictionary query, so nothing is fetched to be discarded and there is no second regex engine to disagree. Matching is case-insensitive.
-
-| Key | Default | What it answers |
-| --- | ------- | --------------- |
-| `ut_pattern` | `'_UT$'` | Which packages are test packages. Nothing else is ever run. |
-| `ut_match` | `'^(.+)_UT$'` | Which package a test package tests, capture group 1. |
-| `ut_owner` | `''` | Which schema holds the test packages. Empty means the schema being tested. |
-| `ut_module` | `'^[^_]+_([^_]+)'` | Which module a suite belongs to, capture group 1. Anchor it to nothing that has to follow the module token. Set it to `''` to print no `SUMMARY PER MODULE:` table. |
-
-A project whose suites are `TEST_ABC` rather than `ABC_UT` configures `ut_pattern: '^TEST_'` and `ut_match: '^TEST_(.+)$'`, and everything else follows: discovery, the `COVERAGE` column's pairing, and the exclusion of test packages from the coverage listing.
-
-**`ut_owner` is the only one that defaults empty**, since the other three ship as working values and a convention nobody can see is not a feature. **`ut_match` and `ut_pattern` are independent**: a suite the first cannot pair still runs, and simply contributes no verdicts to any coverage row.
-
-Two more values are not regular expressions. `ut_limit_errors` (default `20`) bounds how many stanzas print, and `ut_coverage_gate` (default `80`) is the threshold a bare `-gate` uses. Neither reaches Oracle.
-
-**Test packages can live in another schema.** `ut_owner` names it, and it scopes discovery, the annotation cache, `-refresh` and the owner-qualified path `ut.run` is given. Coverage is always measured in the schema under test, never in `ut_owner`, since conflating the two would report the coverage of the test packages themselves. The connected user then needs `SELECT` on that schema's dictionary rows and `EXECUTE` on its packages.
-
-The naming configuration is per-project and has no flag. A convention is a property of the codebase, and one overridable per run would make two runs of the same schema disagree about which packages are tests.
-
-<br>
-
-## Name patterns are Oracle LIKE patterns
-
-`-name` takes Oracle `LIKE` semantics, `%` for any run of characters, `_` for exactly one, `\` to escape either, through the same shared implementation `recompile -name` and `export_db -name` use.
-
-**It selects the suites to run**, so a filtered run costs less than an unfiltered one, and the coverage figures describe whatever those suites reached.
-
-Patterns are repeatable and space- or comma-separated, and a package matching several still runs once. No `-name` at all means every matching suite in the schema.
-
-Matching is at package level, never at individual-test level, and deliberately: utPLSQL runs a suite's `%beforeall` and `%afterall` fixtures once per invocation, so running a subset test by test would re-run the fixtures for each one and stop measuring what the suite asserts.
-
-<br>
-
-## The annotation cache
-
-utPLSQL discovers suites by parsing the `%suite` and `%test` annotations out of package source into a cache of its own. **A freshly compiled package is not in that cache yet**, so it is not discoverable and `ut.run` legitimately reports zero tests straight after an install, which without the rules above would read as a clean pass.
-
-`-refresh` rebuilds that cache for the connected schema before discovery. It is not the default because a rebuild re-parses the schema's source. Use it right after deploying or recompiling a test package.
-
-It is also the first thing to reach for when a suite you know exists is missing from `-verbose`'s `UNIT TESTS SUITES:`: an unparsed package is ignored silently, so its absence from that list is the only signal there is.
-
-The rebuild is the slowest thing this command can be asked to do. It runs under the connection block and prints no section of its own.
-
-<br>
-
 ## Requirements
 
 - **utPLSQL v3 installed**, with the connected schema holding `EXECUTE` on `ut` and `ut_runner` plus the `ut_*` types and the matching synonyms. This is utPLSQL's standard `ut_user` grant set.
@@ -243,6 +228,7 @@ The rebuild is the slowest thing this command can be asked to do. It runs under 
 | `-name`, `--name` | Yes | everything | Name pattern or patterns, comma- or space-separated, with `%` and `_` LIKE wildcards (`\` escapes a literal one, quoted: `-name 'APP\_INT%'`). Selects the suites to run, and names itself in the `RUNNING TESTS FOR <PATTERNS>:` header. LIKE wildcards, not regex; `ut_pattern` is what uses regular expressions. |
 | `-refresh`, `--refresh` | No | off | Rebuild utPLSQL's annotation cache for the schema before discovery, so a suite compiled since the last run is found. |
 | `-gate [N]`, `--gate [N]` | No | off | Fail the run when a tested package's `COVERAGE` is below a threshold. With a number that number is the threshold; bare it comes from `ut_coverage_gate`; absent nothing gates. See [ut_coverage.md](ut_coverage.md). |
+| `-compact`, `--compact` | No | off | Replace both summary tables with one `RESULTS:` row: the run's `PACKAGES`, `LINES`, `TIMER`, `COVERAGE` and a `PASS` or `ERROR` status. `ERRORS & FAILURES:` and the `-gate` list still print; the `-verbose` change table does not. |
 | `-silent`, `--silent` | No | off | Suppress whatever the mode prints between the connection block and `SUMMARY PER SUITE:`. The banner, connection block, `ERRORS & FAILURES:` when a run has any, the summaries and the timer stay. Outranks `-verbose`. |
 | `-verbose`, `--verbose` | No | off | Print `UNIT TESTS SUITES:` and then `TEST RESULTS:`, a row per test under its package heading, instead of the progress bar. The heading is streamed before the suite runs and its rows land once the verdict is known. Ignored under `-silent`. |
 

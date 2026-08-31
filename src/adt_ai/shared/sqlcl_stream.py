@@ -87,19 +87,7 @@ def stream_on_pty(
     ).strip()
 
     master, slave = pty.openpty()
-    attributes = termios.tcgetattr(slave)
-    attributes[3] &= ~termios.ECHO
-    termios.tcsetattr(slave, termios.TCSANOW, attributes)
-    process = subprocess.Popen(
-        list(command),
-        cwd    = root,
-        stdin  = subprocess.DEVNULL,
-        stdout = slave,
-        stderr = slave,
-        env    = environment,
-    )
-    os.close(slave)
-
+    process: subprocess.Popen[bytes] | None = None
     collected: list[str] = []
     buffer = b""
     deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
@@ -114,11 +102,22 @@ def stream_on_pty(
         on_line(line)
 
     try:
+        attributes = termios.tcgetattr(slave)
+        attributes[3] &= ~termios.ECHO
+        termios.tcsetattr(slave, termios.TCSANOW, attributes)
+        process = subprocess.Popen(
+            list(command),
+            cwd    = root,
+            stdin  = subprocess.DEVNULL,
+            stdout = slave,
+            stderr = slave,
+            env    = environment,
+        )
+        os.close(slave)
+        slave = -1
         while True:
             remaining = None if deadline is None else deadline - time.monotonic()
             if remaining is not None and remaining <= 0:
-                process.kill()
-                process.wait()
                 raise _timed_out(timeout_seconds, collected)
             if not select.select([master], [], [], remaining if remaining else 1.0)[0]:
                 continue
@@ -136,10 +135,17 @@ def stream_on_pty(
                 emit(raw)
         if buffer.strip():
             emit(buffer)
+        return "\n".join(collected), process.wait()
+    except BaseException:
+        if process is not None:
+            _kill_and_reap(process)
+        raise
     finally:
+        if slave >= 0:
+            with contextlib.suppress(OSError):
+                os.close(slave)
         with contextlib.suppress(OSError):
             os.close(master)
-    return "\n".join(collected), process.wait()
 
 
 def stream_on_pipe(
@@ -180,39 +186,62 @@ def stream_on_pipe(
         stderr = subprocess.STDOUT,
         env    = dict(environment),
     )
-    # Closed at once, never inherited: ADT #188's invariant through a pipe
-    # rather than a device, which is what lets SQLcl's console builder start at
-    # all on Windows, and the reason a failed CONNECT ends on EOF instead of
-    # sitting at an invisible username prompt.
-    if process.stdin is not None:
-        process.stdin.close()
-
     collected: list[str] = []
+    callback_errors: list[BaseException] = []
 
     def pump() -> None:
         if process.stdout is None:
             return
-        for raw in process.stdout:
-            # `rstrip("\r\n")` and not a bare `rstrip()`: a transcript line's own
-            # trailing spaces belong to it, and every parser downstream reads the
-            # same string the pty transport produces.
-            line = raw.decode("utf-8", "replace").rstrip("\r\n")
-            collected.append(line)
-            on_line(line)
+        try:
+            for raw in process.stdout:
+                # `rstrip("\r\n")` and not a bare `rstrip()`: a transcript
+                # line's trailing spaces belong to it, and every parser
+                # downstream reads the same string the pty transport produces.
+                line = raw.decode("utf-8", "replace").rstrip("\r\n")
+                collected.append(line)
+                on_line(line)
+        except BaseException as error:
+            callback_errors.append(error)
+            with contextlib.suppress(Exception):
+                process.kill()
+        finally:
+            with contextlib.suppress(Exception):
+                process.stdout.close()
 
-    reader = threading.Thread(target=pump, daemon=True)
-    reader.start()
+    reader: threading.Thread | None = None
     try:
+        # Closed at once, never inherited: ADT #188's invariant through a pipe
+        # rather than a device, and the reason a failed CONNECT ends on EOF.
+        if process.stdin is not None:
+            process.stdin.close()
+        reader = threading.Thread(target=pump, daemon=True)
+        reader.start()
         process.wait(timeout=timeout_seconds)
     except subprocess.TimeoutExpired as expired:
-        process.kill()
-        process.wait()
-        reader.join(timeout=5.0)
+        _kill_and_reap(process)
+        if reader is not None:
+            reader.join(timeout=5.0)
         raise _timed_out(timeout_seconds, collected) from expired
+    except BaseException:
+        _kill_and_reap(process)
+        if reader is not None:
+            reader.join(timeout=5.0)
+        raise
     # The child is gone, so the pipe is at EOF and the pump ends on its own; the
     # bound is a backstop, never the normal path.
+    assert reader is not None
     reader.join(timeout=5.0)
+    if callback_errors:
+        raise callback_errors[0]
     return "\n".join(collected), process.returncode
+
+
+def _kill_and_reap(process: subprocess.Popen[bytes]) -> None:
+    """Best-effort teardown used by every exceptional streaming path."""
+    with contextlib.suppress(Exception):
+        process.kill()
+    with contextlib.suppress(Exception):
+        process.wait()
 
 
 def open_stream(

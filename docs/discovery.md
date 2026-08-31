@@ -1,8 +1,12 @@
 # Read-Only SELECT Discovery (adtai discovery)
 
-`discovery` runs `SELECT` statements against the target database and renders the answers as tables. Reach for it when you want to look around a schema, or let an agent look around one, without the risk of an open SQL session.
+![Questions in. Evidence out. Database unchanged.](images/discovery.png)
 
-Anything that is not a single `SELECT` is rejected before it runs, and what survives executes inside a read-only transaction that is rolled back afterwards.
+`discovery` runs `SELECT` statements against the target database and renders the answers as tables. Reach for it when you want to give a person or an agent a narrow exploration surface instead of an unrestricted SQL session.
+
+Direct DML, DDL, transaction control, PL/SQL blocks, inline `WITH FUNCTION` / `WITH PROCEDURE`, multiple statements and `FOR UPDATE` are rejected before execution. What survives runs inside a read-only transaction that is rolled back after every query.
+
+This is intentionally SELECT-only, not a sandbox for untrusted database code. Oracle permits a `SELECT` to invoke stored functions. Discovery allows those calls, as required for normal Oracle queries, and an autonomous-transaction function can commit independently of the caller's read-only transaction. Use a least-privilege discovery account and do not grant it `EXECUTE` on functions with side effects.
 
 <br>
 
@@ -73,12 +77,14 @@ TIMER: 0s
 
 <br>
 
-## What it refuses, and why that holds
+## What it refuses, and the trust boundary
 
-Two independent gates, so neither one has to be perfect on its own:
+Two controls narrow the session:
 
-- **The validator.** Each statement must parse as a single `SELECT`. DML, DDL, PL/SQL blocks, several statements in one string, and commands smuggled inside comments are all rejected, recorded as errors, and never sent to the database.
-- **The transaction.** What survives the validator runs in a session under `SET TRANSACTION READ ONLY`, rolled back at the end, so a statement that found a way to mutate state still commits nothing.
+- **The validator.** Each statement must have the shape of one `SELECT` or `WITH ... SELECT`. DML, DDL, transaction control, PL/SQL blocks, inline `WITH FUNCTION` / `WITH PROCEDURE`, `FOR UPDATE`, several statements in one string, and commands smuggled inside comments are rejected, recorded as errors, and never sent to the database.
+- **The transaction.** What survives the validator runs under `SET TRANSACTION READ ONLY` and is rolled back after the query. This stops writes in that transaction and makes the non-committing path explicit.
+
+The boundary matters: a SELECT may invoke a stored function or view whose implementation the client cannot inspect. Discovery deliberately permits function calls. An autonomous transaction is separate, so the caller cannot roll it back. Database grants are the final control: give an agent only the dictionary, object and function privileges its exploration requires.
 
 Per-query failures, refusals and database errors alike, are captured into the report instead of ending the run, so one bad statement in a file does not throw away the answers around it.
 
@@ -126,7 +132,7 @@ To run the same query against several schemas separately, run discovery once per
 
 | Argument       | Repeatable | Default | Description |
 | -------------- | ---------- | ------- | ----------- |
-| `-sql`, `--sql` | No | none | A single `SELECT` statement to run. Mutually exclusive with `-file`. |
+| `-sql`, `--sql` | No | none | A single `SELECT` statement to run. Stored functions in the SELECT are allowed; PL/SQL blocks are not. Mutually exclusive with `-file`. |
 | `-file`, `--file` | No | none | Path to a file of `;`-separated `SELECT` statements. Mutually exclusive with `-sql`. Results are written back into the file. |
 | `-limit`, `--limit` | No | `200` | Maximum rows rendered per query. |
 | `-nolog`, `--no-log` | No | off | Run without writing a report or touching `.gitignore`. Does not affect the `-file` write-back. |

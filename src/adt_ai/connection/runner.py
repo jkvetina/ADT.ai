@@ -201,8 +201,9 @@ class ConnectionEditor:
 
         if request.apply:
             request.path.parent.mkdir(parents=True, exist_ok=True)
-            with text_files.open_text(request.path) as handle:
-                yaml.dump(data, handle)
+            buffer = io.StringIO()
+            yaml.dump(data, buffer)
+            text_files.write_private_text(request.path, buffer.getvalue())
 
         return ConnectionEditResult(
             action      = request.action,
