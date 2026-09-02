@@ -7,6 +7,8 @@ import yaml
 
 from adt_ai.doctor._base import (
     PROJECT_CONFIG_TEMPLATE,
+    DoctorHost,
+    DoctorRequest,
     DoctorResult,
     _init_group_lines,
 )
@@ -98,15 +100,14 @@ def _patch_template_files(resource_root: Traversable) -> list[tuple[Path, str]]:
     return files
 
 
-class DoctorInitMixin:
-    def _init_project(self, request: object) -> DoctorResult:  # type: ignore[override]
-        # request is DoctorRequest; typed as object to avoid circular import
-        root = (request.root or Path(".")).expanduser().resolve()  # type: ignore[union-attr]
+class DoctorInitMixin(DoctorHost):
+    def _init_project(self, request: DoctorRequest) -> DoctorResult:
+        root = (request.root or Path(".")).expanduser().resolve()
         lines: list[str] = []
-        self._add(lines, "PROJECT INIT:")  # type: ignore[attr-defined]
+        self._add(lines, "PROJECT INIT:")
         created: list[Path] = []
         skipped: list[Path] = []
-        source_gitignore = _resource(self.resource_root, Path(".gitignore")).read_text(  # type: ignore[attr-defined]
+        source_gitignore = _resource(self.resource_root, Path(".gitignore")).read_text(
             encoding="utf-8"
         )
 
@@ -116,23 +117,23 @@ class DoctorInitMixin:
             (Path(".gitignore"), source_gitignore),
             (Path("connections/.gitkeep"), ""),
             (Path("connections/wallets/.gitkeep"), ""),
-            *_patch_template_files(self.resource_root),  # type: ignore[attr-defined]
+            *_patch_template_files(self.resource_root),
         ]
 
         for relative_path, content in scaffold:
             path = root / relative_path
-            if path.exists() and not request.force:  # type: ignore[union-attr]
+            if path.exists() and not request.force:
                 skipped.append(relative_path)
                 continue
             path.parent.mkdir(parents=True, exist_ok=True)
             text_files.write_text(path, content)
             created.append(relative_path)
 
-        self._extend(lines, _init_group_lines("CREATED", root, created))  # type: ignore[attr-defined]
-        self._extend(lines, _init_group_lines("SKIPPED", root, skipped))  # type: ignore[attr-defined]
+        self._extend(lines, _init_group_lines("CREATED", root, created))
+        self._extend(lines, _init_group_lines("SKIPPED", root, skipped))
 
         if skipped:
-            self._add(lines, "")  # type: ignore[attr-defined]
-            self._add(lines, "Use `adtai doctor -init -force` to overwrite generated files.")  # type: ignore[attr-defined]
+            self._add(lines, "")
+            self._add(lines, "Use `adtai doctor -init -force` to overwrite generated files.")
 
         return DoctorResult(lines, performed_actions=[], exit_code=0)

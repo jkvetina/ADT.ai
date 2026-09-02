@@ -219,7 +219,7 @@ class ApexExportRunner(
                 # applications the schema has. The first one carries them, so
                 # the rows still read among that block's other export rows.
                 schema_slice = index == 0
-                cutoff = self._listing_cutoff(request, application)
+                cutoff = self._listing_cutoff(request, application, store)
                 # A sub-day window's title carries the instant it starts at, and
                 # that instant belongs to the database clock (`#340`), so this
                 # one `SELECT ... FROM dual` is the only read that has to come
@@ -370,7 +370,7 @@ class ApexExportRunner(
                 self._store_checksum(gateway, request, application)
                 # Reached only when every requested format wrote successfully, so
                 # an app that raised mid-export keeps its previous watermarks.
-                self._advance_watermarks(request, application, candidate)
+                self._advance_watermarks(request, application, candidate, store)
             if not applications:
                 self._run_schema_artifacts_tail(
                     request, schema, gateway, resolver,

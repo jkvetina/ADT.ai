@@ -26,11 +26,26 @@ def listed_applications(discovery, schemas: list[str], app_ids=None) -> list:
     return found
 
 
-def _apex_reveal_connection_schema(
+def apex_lookup_schema(
     connections: ConnectionResult,
     environment: str,
     schemas: list[str],
 ) -> str:
+    """The schema an APEX-aware command reads the inventory through.
+
+    A configured `schema_apex` default wins; without one the first configured
+    schema stands in, because the dictionary views these commands read are the
+    workspace-filtered `APEX_*` ones and any schema the connection lists can
+    open them. That fallback is the point: `schema_apex` is an optimisation for
+    a connection with many schemas, never a precondition, so a connection whose
+    `defaults` are empty still answers.
+
+    `default_schemas` RAISES on an unconfigured default rather than returning an
+    empty list, so the `except` is what makes the fallback reachable at all.
+    `flow -refresh` had this same expression without it (`#638`) and every
+    connection carrying `defaults: {}` failed there while `-reveal` beside it
+    worked; both callers share this one function now.
+    """
     try:
         default_schemas = connections.default_schemas(environment, kind="apex")
     except ConnectionConfigError:

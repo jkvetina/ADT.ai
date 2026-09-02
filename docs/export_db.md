@@ -4,8 +4,6 @@
 
 The output is normalized, so repeated exports of an unchanged object are byte-identical and a change on screen is a real change rather than the export moving things around. Where the files land, and how to reorganize them, is on [export_db_layout.md](export_db_layout.md).
 
-<br>
-
 ## Examples
 
 Export the whole schema from your project folder:
@@ -48,8 +46,6 @@ Replace the per-object rows with one moving bar, for a whole-schema run:
 adtai export_db -compact
 ```
 
-<br>
-
 ## Output
 
 The run prints the connection block, an overview of what it found, and then a row per object:
@@ -63,7 +59,6 @@ CONNECTING TO SCHEMA SANDBOX, DEV:
               APEX | 26.1.0
           DATABASE | 23.26.3.0.0 | FREEPDB1
 
-
 OBJECTS OVERVIEW:
 -----------------
 
@@ -74,7 +69,6 @@ OBJECTS OVERVIEW:
   TRIGGER           1
   VIEW              1
   GRANT             4
-
 
 EXPORTING 6 OBJECTS:
 --------------------
@@ -90,7 +84,6 @@ EXPORTING 6 OBJECTS:
                 VIEW | ADT_FIXTURE_DDL_LOG_V                                 
                      |
 
-
 TIMER: 1s
 ```
 
@@ -100,8 +93,6 @@ TIMER: 1s
 - **The whole table waits on those reads.** The header goes up first and the reads run under it. A run where neither an object nor a privilege changed prints its header and stops: no column headings over an empty table, and no `EXPORTING 0 OBJECTS:` under it.
 - A multi-schema run executes schema by schema, with its own connection block and its own `TIMER`, and prints the banner once.
 - **Exported DDL names no schema.** The `CREATE` line, the object a `GRANT` names and the directories all drop the owner, so a file installs into whichever schema the deploying session connects as. Set `keep_owner` to write `owner.object` in all of them instead; [config.md](config.md#naming-the-owning-schema) covers when that is the right trade.
-
-<br>
 
 ## Windows: what changed, and since when
 
@@ -116,8 +107,6 @@ Every type a window narrows is narrowed by a column that dates a **change**, whi
 - **A job** has no change timestamp anywhere in the dictionary, so the signal is built: the listing returns a SHA-256 of exactly the columns the exported file is rendered from, hashed inside the database. A windowed run exports the jobs whose signature moved and remembers the rest in `config/internal/job_signatures.yaml`.
 
 The signature narrows a window, never an explicit request. `-type JOB` with no `-recent` exports every matching job with no comparison, which is how to re-pull a whole job tree on demand.
-
-<br>
 
 ## Exporting one author's work
 
@@ -163,8 +152,6 @@ COALESCE(
 
 `CLIENT_IDENTIFIER` is there because every ADT.ai connection runs `DBMS_SESSION.SET_IDENTIFIER(db_schema)` from `config/IDENTITY.yaml`, which is also where `-my` reads your identity from (see [config.md](config.md#developer-identity)).
 
-<br>
-
 ## Permanently excluding objects
 
 `-name` and `-type` narrow a single run. To keep a set of objects out of **every** export, put the pattern in the schema's `export:` block in the connection file:
@@ -187,8 +174,6 @@ adtai connection -create -env DEV -schema APP -ignore 'REST_INCOMING_RETRY%' -go
 The patterns are matched by the discovery query, so ignored objects are never listed and never exported. Because a config filter is not a runtime filter they also count as *missing* on the next full run, so `auto_delete` removes the files a previous export already wrote.
 
 That is what makes this the right tool for runtime-generated objects: an application creating one scheduler job per request otherwise adds one file to the repository forever. `export_data` reads the same block.
-
-<br>
 
 ## Watching a long export
 
@@ -213,8 +198,6 @@ EXPORTING 6 OBJECTS:
 - **The countdown is seeded by what your last export of that schema cost.** Every run records how long an object of each type took, per environment and schema, in `config/internal/recent.yaml`. The unit is per object type on purpose: a sequence costs a fiftieth of what a table with constraint blocks costs.
 - A first export of a schema has no history, so the row reads `0:00:00` until the first object returns. Deleting `config/internal/recent.yaml` resets the rates and the watermarks together.
 - `-silent` outranks `-compact`, since it removes the very rows the bar stands in for.
-
-<br>
 
 ## Arguments
 

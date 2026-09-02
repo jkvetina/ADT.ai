@@ -4,9 +4,7 @@
 
 `flow` answers two questions about an application's navigation graph: which pages link **into** a page, and which pages you can reach **from** it. Reach for it before changing a page, when you need to know what will send users there and where they will go next. It scrapes the links once, stores them locally, and answers offline from then on.
 
-The store is a SQLite file at `config/internal/flow.db` (gitignored), and every refresh also writes Mermaid, Graphviz DOT and JSON diagrams under `config/flow/`.
-
-<br>
+The store is a SQLite file at `config/internal/flow.db` (gitignored), and every refresh also writes Mermaid, Graphviz DOT and JSON diagrams under `config/flow/`. Its tables are on [storage_flow.md](storage_flow.md).
 
 ## Examples
 
@@ -31,8 +29,6 @@ adtai flow -app 100 -delete
 
 `-app` is required for every action. The store holds many applications side by side, keyed by workspace and application id, so every run has to say which one it means.
 
-<br>
-
 ## Output
 
 `-refresh` connects, scans under its own `APP <id>, REFRESHING:` header, and reports what it stored:
@@ -46,10 +42,8 @@ CONNECTING TO SCHEMA SANDBOX, DEV:
               APEX | 26.1.0
           DATABASE | 23.26.1.0.0 | FREEPDB1
 
-
 APP 100, REFRESHING:
 --------------------
-
 
 APP 100/ORDERS, REFRESHED:
 --------------------------
@@ -57,7 +51,6 @@ APP 100/ORDERS, REFRESHED:
   PAGES   EDGES   DIAGRAMS
   -----   -----   --------
       4       9          3
-
 
 TIMER: 1s
 ```
@@ -78,7 +71,6 @@ LINKS INTO APP 100 PAGE 1 (4):
         100   3            BUTTON       BACK_TO_ORDERS   PAGE
         100   shared       LIST_ENTRY   Orders           PAGE
 
-
 TIMER: 0s
 ```
 
@@ -94,7 +86,6 @@ APEX DEPLOYMENT TOOL - FLOW
 ---------------------------
 No APEX flow database found. Run 'adt flow -app N -refresh' to build it.
 
-
 TIMER: 0s
 ```
 
@@ -102,15 +93,11 @@ TIMER: 0s
 - With a store present and no action flag, the run prints a short hint and exits `2`.
 - Each refreshed application scans under its own `APP <id>, REFRESHING:` header, printed before the reads rather than after them, so the wait never sits on a blank screen. The owner lookup for every requested application runs once, up front, under the banner.
 
-<br>
-
 ## The three modes
 
 - **Query** (`-to PAGE` or `-from PAGE`) reads the local store and lists the incoming or outgoing links for one page. It opens no connection.
 - **Refresh** (`-refresh`) connects through the default APEX schema, resolves the application's owner, reconnects through that schema, and reloads the application's metadata, pages and edges. A refresh is a full rewrite in one transaction: the old rows are deleted and replaced, never appended to.
 - **Delete** (`-delete`) removes the application, its pages and its edges from the store.
-
-<br>
 
 ## What counts as an edge
 
@@ -128,8 +115,6 @@ Every edge carries a flag describing how resolvable its target is:
 `-to` and `-from` surface only the resolvable flags, `PAGE` and `CROSS_APP`. The Mermaid and DOT diagrams draw the same set. The JSON dump is lossless and keeps every edge, `DYNAMIC` and `NONE` included, so downstream tooling can decide for itself what to draw.
 
 A store written before the report-column label fix can still hold rendered HTML or heading text where a column name belongs. Those rows display as `COL_<component_id>` until the application is refreshed again.
-
-<br>
 
 ## Arguments
 

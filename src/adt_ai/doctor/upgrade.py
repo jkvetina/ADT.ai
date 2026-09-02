@@ -9,6 +9,7 @@ from pathlib import Path
 
 from adt_ai.doctor._base import (
     ADT_AI_GITHUB_REPO_URL,
+    DoctorHost,
     DoctorResult,
     _normalize_target_version,
     _version_key,
@@ -35,37 +36,37 @@ def _matching_tag(tags: set[str], release: str) -> str:
     return max(matching, key=_version_key) if matching else ""
 
 
-class DoctorUpgradeMixin:
+class DoctorUpgradeMixin(DoctorHost):
     def _pip(self, *arguments: str) -> list[str]:
         """Run pip in the interpreter that imported and is running ADT.ai."""
-        return [self.python_executable, "-m", "pip", *arguments]  # type: ignore[attr-defined]
+        return [self.python_executable, "-m", "pip", *arguments]
 
     def _install_requirements(self, lines: list[str]) -> DoctorResult:
         label = "Python requirements"
-        requirements_resource = self.resource_root.joinpath("requirements.txt")  # type: ignore[attr-defined]
-        self._begin_action(label)  # type: ignore[attr-defined]
+        requirements_resource = self.resource_root.joinpath("requirements.txt")
+        self._begin_action(label)
         if not requirements_resource.is_file():
-            return self._fail_action(  # type: ignore[attr-defined]
+            return self._fail_action(
                 lines,
                 label,
                 f"requirements.txt missing: {requirements_resource}",
             )
         try:
             with resources.as_file(requirements_resource) as requirements:
-                output = self.command_runner(  # type: ignore[attr-defined]
+                output = self.command_runner(
                     self._pip("install", "-r", str(requirements), "--upgrade"),
                     None,
-                    self._command_env(),  # type: ignore[attr-defined]
+                    self._command_env(),
                 )
         except Exception as error:
-            return self._fail_action(lines, label, str(error))  # type: ignore[attr-defined]
+            return self._fail_action(lines, label, str(error))
         # pip prints "Successfully installed ..." only when it actually installed
         # or upgraded a package; an all-satisfied run changes nothing, so report
         # CURRENT to match the ADT.ai action instead of a misleading DONE.
         if "Successfully installed" not in output:
-            self._end_action(lines, label, "CURRENT")  # type: ignore[attr-defined]
+            self._end_action(lines, label, "CURRENT")
             return DoctorResult(lines=[], performed_actions=[], exit_code=0)
-        self._end_action(lines, label, "UPDATED")  # type: ignore[attr-defined]
+        self._end_action(lines, label, "UPDATED")
         return DoctorResult(lines=[], performed_actions=["requirements"], exit_code=0)
 
     def _upgrade_adt_ai(
@@ -81,18 +82,18 @@ class DoctorUpgradeMixin:
         moves is the user's business, not this command's.
         """
         label = "ADT.ai"
-        self._begin_action(label)  # type: ignore[attr-defined]
+        self._begin_action(label)
         release = ""
         if target_version is not None:
             release = _normalize_target_version(target_version)
             if not release:
-                return self._fail_action(  # type: ignore[attr-defined]
+                return self._fail_action(
                     lines,
                     label,
                     f"not a version: {target_version}. Pass a release number such as "
                     "0.9.1, or leave -update bare to take the latest release.",
                 )
-        if self._is_git_repo():  # type: ignore[attr-defined]
+        if self._is_git_repo():
             return self._upgrade_adt_ai_checkout(lines, label, release)
         return self._upgrade_adt_ai_package(lines, label, release)
 
@@ -105,8 +106,8 @@ class DoctorUpgradeMixin:
         stashed = False
         repo_root: Path | None = None
         try:
-            repo_root = self._git_repo_root()  # type: ignore[attr-defined]
-            head_before = self._git_head(repo_root)  # type: ignore[attr-defined]
+            repo_root = self._git_repo_root()
+            head_before = self._git_head(repo_root)
             tag = ""
             if release:
                 # Resolved before anything is stashed or moved, so a version with
@@ -120,7 +121,7 @@ class DoctorUpgradeMixin:
                         if release.count(".") < 2
                         else f"v{release} or {release}"
                     )
-                    return self._fail_action(  # type: ignore[attr-defined]
+                    return self._fail_action(
                         lines,
                         label,
                         f"no release {release} in {origin}: it carries no tag matching {wanted}.",
@@ -150,30 +151,30 @@ class DoctorUpgradeMixin:
                     if branch:
                         self._git(repo_root, "checkout", branch)
                 self._git(repo_root, "pull")
-            head_after = self._git_head(repo_root)  # type: ignore[attr-defined]
+            head_after = self._git_head(repo_root)
             if stashed:
                 self._git(repo_root, "stash", "pop")
                 stashed = False
-            self.command_runner(  # type: ignore[attr-defined]
+            self.command_runner(
                 self._pip("install", "-e", str(repo_root)),
                 None,
-                self._command_env(),  # type: ignore[attr-defined]
+                self._command_env(),
             )
         except Exception as error:
             if stashed:
                 restore_message = (
                     "    Local changes saved in git stash; run `git stash pop` to restore them."
                 )
-                self._add(  # type: ignore[attr-defined]
+                self._add(
                     lines,
                     restore_message,
                 )
-            return self._fail_action(lines, label, str(error))  # type: ignore[attr-defined]
+            return self._fail_action(lines, label, str(error))
         if head_before == head_after:
-            self._end_action(lines, label, "CURRENT")  # type: ignore[attr-defined]
+            self._end_action(lines, label, "CURRENT")
             return DoctorResult(lines=[], performed_actions=[], exit_code=0)
-        version = self._adt_ai_version(repo_root)  # type: ignore[attr-defined]
-        self._end_action(lines, label, self._updated_outcome(version))  # type: ignore[attr-defined]
+        version = self._adt_ai_version(repo_root)
+        self._end_action(lines, label, self._updated_outcome(version))
         return DoctorResult(lines=[], performed_actions=["adt-ai"], exit_code=0)
 
     def _upgrade_adt_ai_package(
@@ -189,7 +190,7 @@ class DoctorUpgradeMixin:
             # carries a release tag.
             tag = self._public_release_tag(release)
             if not tag:
-                return self._fail_action(  # type: ignore[attr-defined]
+                return self._fail_action(
                     lines,
                     label,
                     f"no release {release} in {ADT_AI_GITHUB_REPO_URL}: it carries no "
@@ -202,10 +203,10 @@ class DoctorUpgradeMixin:
         # first and falls back to the bare one, the two spellings a real tag
         # has ever used, with no extra network round trip to tell them apart.
         try:
-            output = self.command_runner(  # type: ignore[attr-defined]
+            output = self.command_runner(
                 self._pip("install", f"git+{ADT_AI_GITHUB_REPO_URL}@v{release}"),
                 None,
-                self._command_env(),  # type: ignore[attr-defined]
+                self._command_env(),
             )
         except Exception:
             return self._run_pip_install(lines, label, f"git+{ADT_AI_GITHUB_REPO_URL}@{release}")
@@ -214,10 +215,10 @@ class DoctorUpgradeMixin:
     def _public_release_tag(self, release: str) -> str:
         """`_matching_tag` against the PUBLIC repo's own tags, fetched with no
         local checkout: `pip install` never has one to ask."""
-        listed = self.command_runner(  # type: ignore[attr-defined]
+        listed = self.command_runner(
             ["git", "ls-remote", "--tags", ADT_AI_GITHUB_REPO_URL],
             None,
-            self._command_env(),  # type: ignore[attr-defined]
+            self._command_env(),
         )
         tags = {
             ref.rsplit("refs/tags/", 1)[-1]
@@ -228,28 +229,28 @@ class DoctorUpgradeMixin:
 
     def _run_pip_install(self, lines: list[str], label: str, *args: str) -> DoctorResult:
         try:
-            output = self.command_runner(  # type: ignore[attr-defined]
+            output = self.command_runner(
                 self._pip("install", *args),
                 None,
-                self._command_env(),  # type: ignore[attr-defined]
+                self._command_env(),
             )
         except Exception as error:
-            return self._fail_action(lines, label, str(error))  # type: ignore[attr-defined]
+            return self._fail_action(lines, label, str(error))
         return self._pip_install_result(lines, label, output)
 
     def _pip_install_result(self, lines: list[str], label: str, output: str) -> DoctorResult:
         version, upgraded = self._parse_pip_upgrade(output)
         if upgraded:
-            self._end_action(lines, label, self._updated_outcome(version))  # type: ignore[attr-defined]
+            self._end_action(lines, label, self._updated_outcome(version))
             return DoctorResult(lines=[], performed_actions=["adt-ai"], exit_code=0)
-        self._end_action(lines, label, "CURRENT")  # type: ignore[attr-defined]
+        self._end_action(lines, label, "CURRENT")
         return DoctorResult(lines=[], performed_actions=[], exit_code=0)
 
     def _git(self, repo_root: Path | None, *arguments: str) -> str:
-        return self.command_runner(  # type: ignore[attr-defined]
+        return self.command_runner(
             ["git", *arguments],
             repo_root,
-            self._command_env(),  # type: ignore[attr-defined]
+            self._command_env(),
         )
 
     def _release_tag(self, repo_root: Path, release: str) -> str:
@@ -294,21 +295,21 @@ class DoctorUpgradeMixin:
 
     def _upgrade_sqlcl(self, lines: list[str]) -> DoctorResult:
         label = "SQLcl"
-        self._begin_action(label)  # type: ignore[attr-defined]
-        sqlcl_dir = self._sqlcl_home()  # type: ignore[attr-defined]
+        self._begin_action(label)
+        sqlcl_dir = self._sqlcl_home()
         if sqlcl_dir == sqlcl_dir.parent:
-            return self._fail_action(  # type: ignore[attr-defined]
+            return self._fail_action(
                 lines, label, f"cannot locate a SQLcl install to upgrade ({sqlcl_dir})"
             )
         sqlcl_parent = sqlcl_dir.parent
-        current_version = self._sqlcl_version()  # type: ignore[attr-defined]
+        current_version = self._sqlcl_version()
         try:
-            release = self._latest_sqlcl_release()  # type: ignore[attr-defined]
+            release = self._latest_sqlcl_release()
         except Exception as error:
-            return self._fail_action(lines, label, f"cannot fetch SQLcl release metadata: {error}")  # type: ignore[attr-defined]
+            return self._fail_action(lines, label, f"cannot fetch SQLcl release metadata: {error}")
 
         if current_version and _version_key(current_version) >= _version_key(release.version):
-            self._end_action(lines, label, "CURRENT")  # type: ignore[attr-defined]
+            self._end_action(lines, label, "CURRENT")
             return DoctorResult(lines=[], performed_actions=[], exit_code=0)
 
         backup_dir = self._sqlcl_backup_dir(sqlcl_dir)
@@ -325,7 +326,7 @@ class DoctorUpgradeMixin:
                 staging_dir = Path(temp_dir)
                 sqlcl_zip = staging_dir / Path(release.download_url).name
                 extracted_dir = staging_dir / "extracted"
-                self.file_downloader(release.download_url, sqlcl_zip)  # type: ignore[attr-defined]
+                self.file_downloader(release.download_url, sqlcl_zip)
                 with zipfile.ZipFile(sqlcl_zip) as archive:
                     self._extract_archive(archive, extracted_dir)
 
@@ -372,12 +373,12 @@ class DoctorUpgradeMixin:
                             f"{promotion_error}; rollback failed: {detail}"
                         ) from promotion_error
                     raise
-            self._end_action(lines, label, f"UPGRADED TO {release.version}")  # type: ignore[attr-defined]
+            self._end_action(lines, label, f"UPGRADED TO {release.version}")
             return DoctorResult(lines=[], performed_actions=["sqlcl"], exit_code=0)
         except Exception as error:
             if restored:
-                self._add(lines, "    Restored previous SQLcl backup.")  # type: ignore[attr-defined]
-            return self._fail_action(lines, label, str(error))  # type: ignore[attr-defined]
+                self._add(lines, "    Restored previous SQLcl backup.")
+            return self._fail_action(lines, label, str(error))
 
     @staticmethod
     def _remove_path(path: Path) -> None:
@@ -417,7 +418,7 @@ class DoctorUpgradeMixin:
         launcher.chmod(current | 0o111)
 
     def _sqlcl_backup_dir(self, sqlcl_dir: Path) -> Path:
-        version = self._sqlcl_version()  # type: ignore[attr-defined]
+        version = self._sqlcl_version()
         suffix = version.replace(".", "-") if version else "backup"
         return sqlcl_dir.parent / f"sqlcl{suffix}"
 
@@ -427,5 +428,5 @@ class DoctorUpgradeMixin:
     def _parse_pip_upgrade(self, output: str) -> tuple[str, bool]:
         if "Successfully installed" in output:
             match = re.search(r"adt[-_]ai-(\S+)", output)
-            return (match.group(1) if match else self.package_version), True  # type: ignore[attr-defined]
-        return self.package_version, False  # type: ignore[attr-defined]
+            return (match.group(1) if match else self.package_version), True
+        return self.package_version, False

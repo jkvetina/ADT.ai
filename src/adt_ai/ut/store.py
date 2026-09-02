@@ -51,11 +51,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from adt_ai.shared.internal_paths import internal_path
+from adt_ai.shared.sqlite_store import Migration, open_store
 from adt_ai.ut import queries
 from adt_ai.ut.inventory import PackageCoverage, SuitePackage
 
 #: The store's filename under ``config/internal/``.
 STORE_NAME = "ut.db"
+
+#: The first version the file carries (ADT #642). A file from before it has no
+#: `_meta`, an index with no prefix, an ISO stamp with a `T`, and possibly no
+#: `variant` column; :func:`_lift_legacy` fixes all four, history intact.
+SCHEMA_VERSION = "1"
 
 #: What this store was called while the command was ``ut3`` (ADT #390).
 #:
@@ -163,7 +169,6 @@ def run_history(
         return ()
     try:
         with contextlib.closing(_connect(path)) as connection, connection:
-            _migrate(connection)
             runs = connection.execute(queries.RUNS_QUERY, (_key(schema), variant)).fetchall()
             return tuple(
                 RunSnapshot(
@@ -245,15 +250,12 @@ def record_run(
     """
     path = store_path(root)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
         with contextlib.closing(_connect(path)) as connection, connection:
-            connection.executescript(queries.STORE_SCHEMA_SCRIPT)
-            _migrate(connection)
             cursor = connection.execute(
                 queries.INSERT_RUN_STATEMENT,
                 (
                     _key(schema),
-                    datetime.now(UTC).isoformat(timespec="seconds"),
+                    datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
                     variant,
                 ),
             )
@@ -356,22 +358,32 @@ def coverage_changes(
 
 
 def _connect(path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(path)
-    connection.execute(queries.FOREIGN_KEYS_PRAGMA)
-    return connection
+    """The file at version 1, through the shared opener; plain tuple rows."""
+    return open_store(
+        path,
+        schema      = queries.STORE_SCHEMA_SCRIPT,
+        version     = SCHEMA_VERSION,
+        migrations  = MIGRATIONS,
+        row_factory = None,
+    )
 
 
-def _migrate(connection: sqlite3.Connection) -> None:
-    """Add the selection column to a store created before it existed.
+def _lift_legacy(connection: sqlite3.Connection) -> None:
+    """Bring a file written before version 1 to the shape the schema declares.
 
     ``CREATE TABLE IF NOT EXISTS`` is a no-op on a table that is already there,
     so the schema script cannot deliver a new column to an existing store and
-    the migration has to happen on the way past. Idempotent by inspection rather
-    than by catching the error, so a genuine failure is not swallowed with it.
+    the column has to arrive here. Idempotent by inspection rather than by
+    catching the error, so a genuine failure is not swallowed with it.
     """
     columns = {row[1] for row in connection.execute(queries.RUN_COLUMNS_PRAGMA)}
     if "variant" not in columns:
         connection.execute(queries.ADD_VARIANT_STATEMENT)
+    connection.execute(queries.DROP_LEGACY_INDEX_STATEMENT)
+    connection.execute(queries.LIFT_RECORDED_AT_STATEMENT)
+
+
+MIGRATIONS: tuple[Migration, ...] = (Migration(None, "1", _lift_legacy),)
 
 
 def _key(schema: str) -> str:

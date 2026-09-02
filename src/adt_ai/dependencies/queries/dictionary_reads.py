@@ -47,7 +47,7 @@ FROM dual
 """.strip()
 
 # `-refresh -recent` narrowing: exactly one of the two binds is non-NULL, the
-# scope's stored `_meta` last-refresh stamp (bare -recent) or an N-day window
+# scope's stored `refreshes` stamp (bare -recent) or an N-day window
 # (-recent N). COALESCE picks whichever mode is active.
 USER_OBJECTS_RECENT_QUERY = """
 SELECT object_name, object_type, last_ddl_time

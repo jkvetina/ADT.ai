@@ -196,7 +196,7 @@ def _run_dependencies(
     with DependencyStore.open(db_path) as store:
         if args.age:
             # Offline staleness report: read the per-scope last-refresh stamps
-            # from _meta; no query object, no connection.
+            # from `refreshes`; no query object, no connection.
             exit_code = _print_dependency_age(store.last_refreshes(), args.format)
         elif args.uses:
             exit_code = _print_dependency_list(

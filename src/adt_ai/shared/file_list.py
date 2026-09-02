@@ -43,7 +43,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, cast
 
 #: Nesting is on unless a project turns it off. Jan asked for the flag in the
 #: same breath as the format, so a project that reads its patches in a narrow
@@ -197,10 +197,10 @@ def _tree_rows(
     """
     chains = [_folder_chain(path, folder_of(path)) for path in paths]
     known = {folder for chain, _leaf in chains for folder in chain}
-    root: list[tuple] = []
-    entries: dict[str, list[tuple]] = {}
+    root: list[tuple[str, str, str | None]] = []
+    entries: dict[str, list[tuple[str, str, str | None]]] = {}
 
-    def node(folder: str) -> list[tuple]:
+    def node(folder: str) -> list[tuple[str, str, str | None]]:
         if folder not in entries:
             parent = _closest_parent(folder, known)
             siblings = root if parent is None else node(parent)
@@ -239,9 +239,9 @@ def _closest_parent(folder: str, known: set[str]) -> str | None:
 
 
 def _emit(
-    node_entries: list[tuple],
+    node_entries: list[tuple[str, str, str | None]],
     depth: int,
-    entries: dict[str, list[tuple]],
+    entries: dict[str, list[tuple[str, str, str | None]]],
     decorate: Callable[[str, str], str] | None,
     children: Callable[[str, int], Sequence[str]] | None,
 ) -> list[str]:
@@ -253,7 +253,7 @@ def _emit(
             rows.extend(_emit(entries[folder], depth + 1, entries, decorate, children))
             continue
         _kind, path, leaf = entry
-        rows.append(row(_text(decorate, path, leaf), depth))
+        rows.append(row(_text(decorate, path, cast(str, leaf)), depth))
         rows.extend(_children(children, path, depth + 1))
     return rows
 

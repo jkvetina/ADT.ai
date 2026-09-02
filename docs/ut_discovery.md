@@ -6,8 +6,6 @@ How `ut` decides which packages are test packages, which of them a run selects, 
 
 The command itself is on [ut.md](ut.md); coverage, the gate and the delta report are on [ut_coverage.md](ut_coverage.md).
 
-<br>
-
 ## The naming convention is configuration
 
 Four config values describe how a project names its test packages. All four are **Oracle regular expressions**, evaluated by Oracle inside the dictionary query, so nothing is fetched to be discarded and there is no second regex engine to disagree. Matching is case-insensitive.
@@ -29,8 +27,6 @@ Two more values are not regular expressions. `ut_limit_errors` (default `20`) bo
 
 The naming configuration is per-project and has no flag. A convention is a property of the codebase, and one overridable per run would make two runs of the same schema disagree about which packages are tests.
 
-<br>
-
 ## Name patterns are Oracle LIKE patterns
 
 `-name` takes Oracle `LIKE` semantics, `%` for any run of characters, `_` for exactly one, `\` to escape either, through the same shared implementation `recompile -name` and `export_db -name` use.
@@ -40,8 +36,6 @@ The naming configuration is per-project and has no flag. A convention is a prope
 Patterns are repeatable and space- or comma-separated, and a package matching several still runs once. No `-name` at all means every matching suite in the schema.
 
 Matching is at package level, never at individual-test level, and deliberately: utPLSQL runs a suite's `%beforeall` and `%afterall` fixtures once per invocation, so running a subset test by test would re-run the fixtures for each one and stop measuring what the suite asserts.
-
-<br>
 
 ## The annotation cache
 

@@ -1,0 +1,45 @@
+name: Feature request
+description: Something ADT.ai should be able to do
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Say what you are trying to do, not only the flag you want. The shape of
+        the answer is often different from the shape of the request.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The task, and what makes it awkward today.
+      placeholder: |
+        I deploy to three environments and have to remember which objects
+        changed since the last patch in each one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: How you handle it now
+      description: The manual steps, the script, or the reason there is no workaround.
+    validations:
+      required: false
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you think should happen
+      description: A command, an argument, or a behaviour change. Rough is fine.
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: ADT.ai version
+      description: The output of `adtai --version`.
+      placeholder: "0.9.5"
+    validations:
+      required: false

@@ -4,11 +4,26 @@ Four tables, one subject: what ADT.ai knows about a project's APEX applications
 between runs. Every write is an upsert, which is what lets the legacy conversion
 re-run after a half-finished pass, and what lets the checksum arrive on its own
 later pass without erasing the row the export listing already wrote.
+
+Version 2 (ADT #642) keys `watermarks` by an INTEGER `app_id` like every other
+table, and gives `_meta` the NOT NULL `value` every store's version table has.
 """
 
 from __future__ import annotations
 
-APEX_STORE_SCHEMA = """
+from adt_ai.shared.queries.sqlite_store import META_TABLE_DDL
+
+WATERMARKS_DDL = """
+CREATE TABLE IF NOT EXISTS watermarks (
+    environment TEXT    NOT NULL,
+    app_id      INTEGER NOT NULL,
+    format      TEXT    NOT NULL,
+    exported_at TEXT    NOT NULL,
+    PRIMARY KEY (environment, app_id, format)
+);
+"""
+
+APEX_STORE_SCHEMA = META_TABLE_DDL + """
 CREATE TABLE IF NOT EXISTS applications (
     app_id       INTEGER PRIMARY KEY,
     owner        TEXT,
@@ -29,27 +44,30 @@ CREATE TABLE IF NOT EXISTS developers (
 );
 CREATE TABLE IF NOT EXISTS timers (
     app_id  INTEGER NOT NULL,
-    action  TEXT NOT NULL,
+    action  TEXT    NOT NULL,
     seconds REAL,
     PRIMARY KEY (app_id, action)
 );
-CREATE TABLE IF NOT EXISTS watermarks (
-    environment TEXT NOT NULL,
-    app_id      TEXT NOT NULL,
-    format      TEXT NOT NULL,
-    exported_at TEXT NOT NULL,
-    PRIMARY KEY (environment, app_id, format)
-);
-CREATE TABLE IF NOT EXISTS _meta (
-    key   TEXT PRIMARY KEY,
-    value TEXT
-);
-"""
+""" + WATERMARKS_DDL
 
-APEX_META_UPSERT = (
-    "INSERT INTO _meta (key, value) VALUES ('schema_version', ?) "
-    "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-)
+# Version 1 to 2, one transaction. A watermark row whose `app_id` was never a
+# number described no application and is left behind; a `_meta` row with no
+# value answered nothing and goes the same way.
+APEX_STORE_LIFT_1 = """
+BEGIN;
+ALTER TABLE watermarks RENAME TO watermarks_v1;
+""" + WATERMARKS_DDL + """
+INSERT OR REPLACE INTO watermarks (environment, app_id, format, exported_at)
+SELECT environment, CAST(app_id AS INTEGER), format, exported_at
+  FROM watermarks_v1
+ WHERE app_id <> '' AND app_id NOT GLOB '*[^0-9]*';
+DROP TABLE watermarks_v1;
+ALTER TABLE _meta RENAME TO _meta_v1;
+""" + META_TABLE_DDL + """
+INSERT INTO _meta (key, value) SELECT key, value FROM _meta_v1 WHERE value IS NOT NULL;
+DROP TABLE _meta_v1;
+COMMIT;
+"""
 
 APEX_APPLICATIONS_QUERY = "SELECT * FROM applications ORDER BY app_id"
 

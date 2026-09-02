@@ -6,8 +6,6 @@ This page is written for the person who has to approve ADT.ai, not for the devel
 
 It also states plainly the two things ADT.ai does not protect against, because a tool that overclaims on credentials is not one you should trust with them. Nothing here is aspirational: every control below is shipped.
 
-<br>
-
 ## Start here: nothing is installed in your database
 
 ADT.ai is a command line tool that runs on a developer's machine. It creates no schema, no package, no job and no trigger in your database.
@@ -15,8 +13,6 @@ ADT.ai is a command line tool that runs on a developer's machine. It creates no 
 It connects as an ordinary Oracle user, reads the data dictionary, writes files to a git repository, and where you ask it to deploy, it runs SQL you can read first. Withdraw the credential and ADT.ai stops working, leaving nothing behind.
 
 That matters for this conversation because it sets the size of the question. The primary sensitive assets ADT.ai handles are database credentials, encryption keys and wallet paths, and the only database privileges it can use are the ones you grant its user.
-
-<br>
 
 ## Where a credential lives
 
@@ -28,8 +24,6 @@ A project has a connection file, a YAML file that lists environments, schemas, h
 - A file created or rewritten by `adtai connection` is owner-only (`0600`) on POSIX systems. A manually created file keeps the permissions your editor gave it until ADT.ai rewrites it, so check those permissions independently.
 
 There is no shipped template and no sample credentials. A first connection file is created by `adtai connection -create`, which prompts for the password interactively.
-
-<br>
 
 ## The two questions a reviewer is actually asking
 
@@ -43,11 +37,7 @@ The honest consequence of the second question is worth stating in one sentence, 
 
 What follows is therefore split the way the questions split.
 
-<br>
-
 ## What ADT.ai does today
-
-<br>
 
 ### Against a leaked file
 
@@ -62,24 +52,18 @@ What follows is therefore split the way the questions split.
 - **Passwords are never accepted as a command line argument.** They are collected interactively with hidden input, at apply time only. This is deliberate: an argument would appear in shell history and in the process list, where any local user can read it.
 - **Preview never renders a secret.** Every `connection` action previews by default and only writes with `-go`, and the preview prints the change without the password.
 
-<br>
-
 ### Against a credential reaching somewhere it should not
 
-- **A loaded credential is masked in the tool's own memory.** Once a connection file is read, the schema password and the wallet password are held in a wrapper that renders as `***`. Exactly three places in the code unwrap it, and each hands it straight to something outside the program that cannot accept a mask: the Oracle driver's connect call, the connect line of a generated SQLcl script, and a credential fingerprint that emits only a 12 character digest. A test walks the whole source tree and fails the build if a fourth place is added. The practical effect is that a credential cannot reach a log line, an error message, a debug dump, or a test failure report by accident, which matters increasingly because those outputs are what a developer's AI assistant reads.
+- **A loaded or pending credential is masked in the tool's own memory.** Once a connection file is read, the schema password and wallet password are held in a wrapper that renders as `***`. The same wrapper now covers all five secret inputs while `adtai connection` is preparing an edit: the schema and wallet passwords, the write key, and both rekey keys. Exactly four places in the code unwrap a secret, and each hands it straight to a consumer that cannot accept a mask: the Oracle driver's connect call, the connect line of a generated SQLcl script, a credential fingerprint that emits only a 12 character digest, or the editor boundary immediately before encryption, key resolution, or owner-only file writing. A test walks the whole source tree and fails the build if another place is added. The practical effect is that a credential cannot reach a log line, an error message, a debug dump, a dataclass representation, or a test failure report by accident, which matters increasingly because those outputs are what a developer's AI assistant reads.
 - **Generated SQL scripts carry no credentials.** ADT.ai registers a named connection in SQLcl's own connection store once, and every script it generates afterwards connects with `connect -name ADT_...` and nothing else. No username, no password, no wallet path in the file on disk.
 - **Temporary scripts are locked down and removed.** The one script that does carry a connect line, the registration run, is written with `0600` permissions, readable only by the owner, and deleted after the run. Any password in captured SQLcl output is replaced with `***` before that output reaches a log or the screen.
 - **Diagnostics redact.** `adtai doctor` reports whether `ADT_KEY` is set by printing `<redacted>`, never its value.
 - **Child processes do not inherit ADT.ai's encryption keys.** Git, pip, Java, SQLcl and configured secret-provider commands receive an environment with `ADT_KEY` and `ADT_KEY_CMD` removed. The one deliberate exception is the login-shell bootstrap whose purpose is to discover the user's configured ADT variables. Variables owned by the child tool are not stripped.
 - **Debug output is operationally sensitive.** `-debug` prints SQL with bind values and preserves tracebacks. Password wrappers remain masked, but application data and paths are not secrets ADT.ai can identify generically. Treat debug transcripts as local diagnostic artifacts and inspect them before sharing.
 
-<br>
-
 ### For your audit trail
 
 - **ADT.ai sessions can be attributed to a named developer.** When a project carries a `config/IDENTITY.yaml` with a `db_schema` value, every connection ADT.ai opens calls `DBMS_SESSION.SET_IDENTIFIER` with it before running anything. That identifier is visible in `V$SESSION.CLIENT_IDENTIFIER` and in unified auditing, so ADT.ai activity is distinguishable from other use of the same database user, per developer. The file is optional and gitignored; without it the identifier is simply not set.
-
-<br>
 
 ## What ADT.ai does not claim
 
@@ -88,8 +72,6 @@ Two limits, stated rather than buried.
 **It is not a defence against software running as that developer.** If a process on the machine may run `adtai`, it may also open a database session, whatever the credential is protected with. Encryption, a key file, a vault, and an operating system keychain all change *where the secret rests*; none of them change *who may use it*. The guarantee ADT.ai does make is the narrower and checkable one: the tool itself never puts a plaintext credential where something else reads it back.
 
 **Encryption in the connection file is not permission to commit it.** It raises the cost of an accidental leak, but metadata, endpoints and ciphertext still leave your control, and keys can be mishandled later. Connection files, key files, wallets, generated logs and debug transcripts remain untracked local artifacts. Encryption also does not limit what the credential can do once someone has it. That limit is set by the privileges you grant, and it is the subject of the next section.
-
-<br>
 
 ## The controls that actually close a review, and they are yours
 
@@ -102,8 +84,6 @@ These are the ones we recommend you insist on, because they bound the damage rat
 - **Keep it out of production.** ADT.ai is a development and test tool. Promotion into production should run through your existing release process, with the artifacts ADT.ai produced reviewed like any other change.
 
 A credential that can only read a development schema, only from one host, only during the working day, and whose every use is logged against a named person, is a credential whose storage format stops being the interesting question. That is the outcome worth aiming at.
-
-<br>
 
 ## Questions
 

@@ -2,8 +2,6 @@
 
 Which format each flag writes, how the APEX version decides what is skipped, why APEXlang is a whole-application format that carries no static payloads, and what a schema-level format does to the console. The command and its flags are on [export_apex.md](export_apex.md).
 
-<br>
-
 ## Formats are explicit
 
 ADT.ai exports only the formats named on the command line. There are no configured format defaults and no suppressor flags: `-all` is how you ask for everything.
@@ -25,8 +23,6 @@ ADT.ai exports only the formats named on the command line. There are no configur
 
 Version handling reads the one APEX version the connection block already printed. `-apexlang` on an older instance is skipped and the run continues, so `-all` never fails on a pre-26.1 environment. The skip is announced only when you named the format yourself, and is silent under `-all`.
 
-<br>
-
 ## APEXlang is a whole-app format
 
 `-apexlang` writes the folder tree beside `readable/` and `embedded_code/`: `application.apx`, `pages/`, `shared-components/`, `workspace-components/`, and the deployment and project metadata. Members land verbatim, since `.apx` is compiler input, so none of the SQL-export postprocessing applies.
@@ -35,9 +31,9 @@ The folder is recreated on every export, so a component deleted in App Builder l
 
 **Static files are deliberately left out.** An APEXlang export carries the application's static files as binary payloads, and ADT.ai skips those members so the repository never holds two copies, `-files` being the single static-file channel. The metadata that references them is still exported.
 
-That makes `apexlang/` a source and editing surface rather than a directly importable artifact. It does not have to be one: [`validate`](validate.md) assembles the complete application on demand by hardlinking the metadata and the `files/` export into one staging tree. Run `-files` alongside `-apexlang`, or `-all`, so the payloads exist to stage.
+That makes `apexlang/` a source and editing surface rather than a directly importable artifact. It does not have to be one: [`validate`](validate.md) and `patch -deploy -app` both assemble the complete application on demand by hardlinking the metadata and the `files/` export into one staging tree. Run `-files` alongside `-apexlang`, or `-all`, so the payloads exist to stage.
 
-<br>
+The loop from export to promotion is on apex_round_trip.md.
 
 ## Schema-level formats on their own
 

@@ -7,25 +7,35 @@ to look and a statement cannot drift into a runner. ``shared/queries/apex_store`
 and ``shared/queries/commit_store`` are the same shape for their stores.
 
 The store keeps one row per run per schema plus one row per package that run
-measured; the schema is created on first write and is idempotent, so a root that
-already has the file is never migrated, only opened.
+measured. Version 1 (ADT #642) is the first the file carries; a file from
+before it is lifted in place, history intact, on the way past.
 """
 
 from __future__ import annotations
 
-#: Both tables plus the lookup index, run as one script on every write.
+from adt_ai.shared.queries.sqlite_store import META_TABLE_DDL
+
+#: Both tables plus the lookup index, run as one script on every open.
 #:
 #: ``percent`` is nullable on purpose: ``blocks_total = 0`` is Oracle collecting
 #: nothing rather than a package scoring zero, and a NULL is the only value that
 #: cannot be mistaken for a measurement later.
-STORE_SCHEMA_SCRIPT = """
+#:
+#: ``variant`` is nullable on purpose too, and the NULL is load-bearing. A row
+#: written before the column existed cannot say what it measured, and
+#: :func:`run_history` declines to compare against one rather than guess:
+#: reading them all as full runs puts a single-package run straight back into
+#: the baseline position, which is the defect `#436` fixed, and reading them
+#: all as filtered throws real history away.
+STORE_SCHEMA_SCRIPT = META_TABLE_DDL + """
 CREATE TABLE IF NOT EXISTS runs (
     run_id      INTEGER PRIMARY KEY AUTOINCREMENT,
     schema_name TEXT NOT NULL,
-    recorded_at TEXT NOT NULL
+    recorded_at TEXT NOT NULL,
+    variant     TEXT
 );
 CREATE TABLE IF NOT EXISTS package_coverage (
-    run_id         INTEGER NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+    run_id         INTEGER NOT NULL REFERENCES runs (run_id) ON DELETE CASCADE,
     package        TEXT NOT NULL,
     lines          INTEGER NOT NULL DEFAULT 0,
     blocks_total   INTEGER NOT NULL DEFAULT 0,
@@ -33,7 +43,7 @@ CREATE TABLE IF NOT EXISTS package_coverage (
     percent        REAL,
     PRIMARY KEY (run_id, package)
 );
-CREATE INDEX IF NOT EXISTS runs_by_schema ON runs (schema_name, run_id);
+CREATE INDEX IF NOT EXISTS ix_runs_schema ON runs (schema_name, run_id);
 """
 
 #: How a run says what it measured, added after the store shipped (`#436`).
@@ -44,14 +54,20 @@ CREATE INDEX IF NOT EXISTS runs_by_schema ON runs (schema_name, run_id);
 #: previous figure, which is exactly what Jan's store did on 2026-08-20: four
 #: single-package runs sat between two 42-package ones. The selection keys the
 #: history, the same key `ut_timers.yaml` already stores its seconds under.
+#: The column ships in the schema now; a file older than it gets it here.
 RUN_COLUMNS_PRAGMA = "PRAGMA table_info(runs)"
 
-#: Nullable on purpose, and the NULL is load-bearing. A row written before this
-#: column existed cannot say what it measured, and :func:`run_history` declines
-#: to compare against one rather than guess: reading them all as full runs puts
-#: a single-package run straight back into the baseline position, which is the
-#: defect, and reading them all as filtered throws real history away.
 ADD_VARIANT_STATEMENT = "ALTER TABLE runs ADD COLUMN variant TEXT"
+
+#: The pre-version index, renamed on the lift to the `ix_<table>_` shape.
+DROP_LEGACY_INDEX_STATEMENT = "DROP INDEX IF EXISTS runs_by_schema"
+
+#: A stamp written before version 1 was ISO with a `T` and its `+00:00`; the
+#: store keeps `YYYY-MM-DD HH:MM:SS` in UTC now, the same instant.
+LIFT_RECORDED_AT_STATEMENT = (
+    "UPDATE runs SET recorded_at = replace(substr(recorded_at, 1, 19), 'T', ' ') "
+    "WHERE substr(recorded_at, 11, 1) = 'T'"
+)
 
 #: Every run recorded for one schema and one selection, newest first.
 #:
@@ -94,7 +110,5 @@ EXPIRED_RUNS_QUERY = (
 #: selected, never from user input, and the caller parameterises it.
 DELETE_PACKAGES_STATEMENT = "DELETE FROM package_coverage WHERE run_id IN ({marks})"
 DELETE_RUNS_STATEMENT = "DELETE FROM runs WHERE run_id IN ({marks})"
-
-FOREIGN_KEYS_PRAGMA = "PRAGMA foreign_keys = ON"
 
 __all__ = [name for name in globals() if not name.startswith("_")]

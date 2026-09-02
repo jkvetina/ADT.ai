@@ -10,36 +10,59 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  smoke:
-    # The published package ships no test suite (the ~1040 tests live in the
-    # private ADT.ai-DEV repo, which gates development). This job is the
-    # release-integrity smoke test for the PUBLIC artifact: it proves the
-    # released package installs cleanly, imports, and both console entry points
-    # resolve and run. It catches the "broken release" class — a dropped file,
-    # a bad build, an unimportable package — that DEV's test suite structurally
-    # cannot see because DEV never installs the published wheel.
-    name: smoke (py${{ matrix.python-version }})
+  artifact-build:
+    # Build one immutable wheel/sdist pair. Every operating-system job downloads
+    # this upload, so no platform can silently install the source checkout or
+    # rebuild a different artifact.
+    name: build wheel + sdist (py3.14)
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      # Pinned exactly, like DEV's own build job: the frontend produces the
+      # file a user installs, so "whatever build resolved to that morning" is a
+      # difference in the released artifact that no diff shows.
+      - name: Build wheel and sdist once
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "build==1.6.0"
+          python -m build --wheel --sdist --outdir dist
+      - name: Verify wheel and sdist payload parity
+        run: python .github/scripts/verify_installed_artifact.py archives --dist dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: adt-ai-dist
+          path: dist/*
+          if-no-files-found: error
+
+  artifact-smoke:
+    # PUBLIC ships no private tests. This small clean-room gate installs the
+    # exact wheel above on every supported hosted operating system, runs pip's
+    # dependency check, scaffolds all eleven Doctor files and exercises the
+    # offline Doctor screen from outside the checkout.
+    name: installed artifact (${{ matrix.os }}, py3.14)
+    needs: artifact-build
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.13"]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install package from source
-        run: |
-          python -m pip install --upgrade pip
-          pip install .
-      - name: Import check
-        run: python -c "import adt_ai; print('adt_ai', adt_ai.__version__)"
-      - name: Console entry points resolve and run
-        run: |
-          adt --version
-          adt --help
-          adtai --version
+          python-version: "3.14"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: adt-ai-dist
+          path: dist
+      - name: Exercise the downloaded wheel outside the checkout
+        run: >-
+          python .github/scripts/verify_installed_artifact.py smoke
+          --dist dist
+          --work-root "${{ runner.temp }}/adt-ai-artifact-smoke"
 
   lint:
     # Blocking: `ruff check src` is clean. PUBLIC ships no tests/ directory, so
@@ -50,10 +73,10 @@ jobs:
     name: ruff
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.11"
+          python-version: "3.14"
       - name: Install ruff
         run: pip install "ruff==0.15.*"
       - name: ruff check

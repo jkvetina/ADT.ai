@@ -139,8 +139,8 @@ def rekey_secrets(data: Any, request: ConnectionEditRequest) -> tuple[str, str]:
     if not request.new_key:
         raise ConnectionEditError("-rekey requires -new-key")
     try:
-        old_key = crypto.resolve_key(request.old_key)
-        new_key = crypto.resolve_key(request.new_key)
+        old_key = crypto.resolve_key(request.plaintext("old_key"))
+        new_key = crypto.resolve_key(request.plaintext("new_key"))
     except crypto.CryptoError as error:
         raise ConnectionEditError(str(error)) from error
 

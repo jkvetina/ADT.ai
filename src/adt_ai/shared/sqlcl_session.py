@@ -252,7 +252,8 @@ class SqlclSession:
         threading.Thread(target=self._pump, daemon=True).start()
 
     def _pump(self) -> None:
-        assert self._console is not None
+        if self._console is None:
+            raise SqlclSessionError("SQLcl console is not open")
         console = self._console
         buffer = b""
         try:

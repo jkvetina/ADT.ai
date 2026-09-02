@@ -12,50 +12,71 @@ resolving.
 
 from __future__ import annotations
 
-# ------------------------------------------------------------- schema meta queries
+from adt_ai.dependencies.schema import LEGACY_INDEXES, REFRESHES_DDL
+from adt_ai.shared.queries.sqlite_store import META_TABLE_DDL
 
-META_TABLE_EXISTS_QUERY = (
-    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='_meta'"
+# ------------------------------------------------------------- refresh stamps
+
+# One row per refreshed scope in `refreshes` (ADT #642): the stamp `-age`
+# prints, and the database UTC offset `patch -create` resolves a mirrored
+# LAST_DDL_TIME through (ADT #394). A stamp or offset the caller does not have
+# leaves the stored one alone, so `-refresh` on a gateway that cannot report
+# its offset never erases the one a previous refresh recorded.
+REFRESH_UPSERT = (
+    "INSERT INTO refreshes (scope_type, scope_name, refreshed_at, db_utc_offset) "
+    "VALUES (?, ?, ?, ?) "
+    "ON CONFLICT(scope_type, scope_name) DO UPDATE SET "
+    "refreshed_at = COALESCE(excluded.refreshed_at, refreshes.refreshed_at), "
+    "db_utc_offset = COALESCE(excluded.db_utc_offset, refreshes.db_utc_offset)"
 )
 
-META_SCHEMA_VERSION_QUERY = "SELECT value FROM _meta WHERE key = 'schema_version'"
-
-META_SCHEMA_VERSION_NULL_QUERY = "SELECT NULL as value WHERE 0"
-
-META_UPSERT_SCHEMA_VERSION = (
-    "INSERT OR REPLACE INTO _meta (key, value) VALUES ('schema_version', ?)"
+REFRESHES_QUERY = (
+    "SELECT scope_type, scope_name, refreshed_at, db_utc_offset FROM refreshes "
+    "ORDER BY scope_type, scope_name"
 )
 
-# Per-scope last-refresh stamps share the same key/value ``_meta`` table under a
-# ``last_refresh:<kind>:<name>`` key, so refresh can record, and ``-age`` can
-# read, staleness offline without a dedicated table or a SCHEMA_VERSION bump.
-META_LAST_REFRESH_PREFIX = "last_refresh:"
-
-META_UPSERT_QUERY = "INSERT OR REPLACE INTO _meta (key, value) VALUES (?, ?)"
-
-# The three `_meta` reads and the delete the owner-case fold needs (ADT #413).
-# Here rather than beside it because every SQL string in this package lives in a
-# `queries` module, `tests/contracts/test_sql_home.py` included.
-META_KEY_PREFIX_QUERY = "SELECT key, value FROM _meta WHERE key LIKE ?"
-
-META_VALUE_QUERY = "SELECT value FROM _meta WHERE key = ?"
-
-META_DELETE_QUERY = "DELETE FROM _meta WHERE key = ?"
-
-META_LAST_REFRESH_QUERY = (
-    "SELECT key, value FROM _meta WHERE key LIKE 'last_refresh:%' ORDER BY key"
+# The schema scopes only: an app stamp says nothing about the database objects
+# an install script orders, so the `patch` gates never read one.
+REFRESH_SCHEMA_ROWS_QUERY = (
+    "SELECT scope_name, refreshed_at, db_utc_offset FROM refreshes "
+    "WHERE scope_type = 'schema' ORDER BY scope_name"
 )
 
-# The refreshed scope's DATABASE UTC offset, stored beside its last-refresh
-# stamp under the same key/value `_meta` table and the same `<kind>:<name>`
-# key shape. `patch -create` resolves the mirrored LAST_DDL_TIME through it, so
-# the comparison against a repo file's mtime is made on one clock (ADT #394).
-# A scope with no row here was mirrored before that fix and cannot answer the
-# question, which the gate reports rather than guessing at.
-META_DB_OFFSET_PREFIX = "db_utc_offset:"
+# The delete and the rename the owner-case fold needs (ADT #413). Here rather
+# than beside it because every SQL string in this package lives in a `queries`
+# module, `tests/contracts/test_sql_home.py` included.
+REFRESH_DELETE_SCOPE = "DELETE FROM refreshes WHERE scope_type = ? AND scope_name = ?"
 
-META_DB_OFFSET_QUERY = (
-    "SELECT key, value FROM _meta WHERE key LIKE 'db_utc_offset:%' ORDER BY key"
+REFRESH_RENAME_SCOPE = (
+    "UPDATE refreshes SET scope_name = ? WHERE scope_type = ? AND scope_name = ?"
+)
+
+# The version 3 shape of the same facts: `_meta` rows keyed
+# `last_refresh:<type>:<name>` and `db_utc_offset:<type>:<name>`. Read once by
+# the lift to version 4, then deleted.
+LEGACY_STAMP_ROWS_QUERY = (
+    "SELECT key, value FROM _meta "
+    "WHERE key LIKE 'last_refresh:%' OR key LIKE 'db_utc_offset:%' ORDER BY key"
+)
+
+LEGACY_STAMP_DELETE = (
+    "DELETE FROM _meta WHERE key LIKE 'last_refresh:%' OR key LIKE 'db_utc_offset:%'"
+)
+
+# Version 3 to 4, the DDL half: the stamp table, the index rename, and `_meta`
+# rebuilt with the NOT NULL `value` every store's version table has. The rows
+# that move from `_meta` into `refreshes` are the store's half (`store.py`).
+MIRROR_LIFT_3_SCRIPT = "\n".join(
+    [
+        "BEGIN;",
+        REFRESHES_DDL,
+        *(f"DROP INDEX IF EXISTS {name};" for name in LEGACY_INDEXES),
+        "ALTER TABLE _meta RENAME TO _meta_v3;",
+        META_TABLE_DDL,
+        "INSERT INTO _meta (key, value) SELECT key, value FROM _meta_v3 WHERE value IS NOT NULL;",
+        "DROP TABLE _meta_v3;",
+        "COMMIT;",
+    ]
 )
 
 # The dictionary's own LAST_DDL_TIME per object, mirrored on every

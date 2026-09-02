@@ -56,6 +56,7 @@ import secrets
 import stat
 from collections.abc import Iterable, Mapping
 from pathlib import Path
+from types import TracebackType
 from typing import IO, Any
 
 from adt_ai.shared.config import is_enabled
@@ -127,15 +128,20 @@ class _NormalizingWriter:
         self._handle.__enter__()
         return self
 
-    def __exit__(self, *exc_info: object) -> Any:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         self._flush_pending()
-        return self._handle.__exit__(*exc_info)
+        self._handle.__exit__(exc_type, exc_value, traceback)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._handle, name)
 
 
-def open_text(path: Path, mode: str = "w") -> IO[str]:
+def open_text(path: Path, mode: str = "w") -> _NormalizingWriter:
     """Open ``path`` for writing text, normalized to the configured line ending.
 
     The streaming handle, for a caller that hands its output to somebody else's

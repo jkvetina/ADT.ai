@@ -46,7 +46,7 @@ class DependencyIndexRequest:
     apex_versions: dict[str, str] | None = None
     refresh_names: list[str] | None = None
     # `-recent` narrowing for `-refresh`: None (full refresh), an int day window,
-    # or BARE_RECENT (since each schema scope's own `_meta` last-refresh stamp).
+    # or BARE_RECENT (since each schema scope's own `refreshes` stamp).
     recent: Any = None
     # Per-scope last-refresh stamp; defaults to "now" when the request omits it.
     refreshed_at: str | None = None
@@ -58,7 +58,7 @@ GatewayFactory = Callable[[str], QueryGateway]
 
 
 def _now_stamp() -> str:
-    """Sortable, human-readable local timestamp for the ``_meta`` refresh row."""
+    """Sortable, human-readable local timestamp for the ``refreshes`` row."""
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -88,7 +88,7 @@ class DependencyIndexRunner:
 
     @staticmethod
     def _schema_last_refresh(store: DependencyStore, schema: str) -> str | None:
-        """The schema scope's own ``_meta`` stamp, bare ``-recent``'s cutoff."""
+        """The schema scope's own ``refreshes`` stamp, bare ``-recent``'s cutoff."""
         for row in store.last_refreshes():
             if row["type"] == "schema" and row["scope"] == schema:
                 return row["last_refresh"]
@@ -108,7 +108,7 @@ class DependencyIndexRunner:
             for schema in request.schemas:
                 gateway = self.gateway_factory(schema)
                 # `-recent` narrows THIS schema's refresh to objects changed since
-                # its own `_meta` stamp (bare) or an N-day window, selected
+                # its own `refreshes` stamp (bare) or an N-day window, selected
                 # server-side and patched through the deep per-object path so the
                 # untouched mirror rows survive. A user-named deep refresh or
                 # `-force` wins over `-recent`; a bare `-recent` with no stamp yet

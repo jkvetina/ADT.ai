@@ -14,18 +14,41 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.dependencies import queries, refresh
-from adt_ai.dependencies.db import connect
+from adt_ai.dependencies.db import dict_factory
 from adt_ai.dependencies.owner_case import fold_owner_case, normalize_owner
 from adt_ai.dependencies.schema import DROP_SCHEMA, LEGACY_TABLES, SCHEMA, SCHEMA_VERSION
 from adt_ai.dependencies.store_reads import (  # noqa: F401  (re-exported for existing importers)
     DEFAULT_MAX_DEPTH,
     DependencyQueries,
 )
+from adt_ai.shared.sqlite_store import Migration, open_store
+
+_LAST_REFRESH_PREFIX = "last_refresh"
 
 
-def _meta_table_exists(connection: Any) -> bool:
-    row = connection.execute(queries.META_TABLE_EXISTS_QUERY).fetchone()
-    return row is not None
+def _lift_3(connection: Any) -> None:
+    """Version 3 to 4: the refresh stamps leave `_meta` for their own table.
+
+    A stamp and the offset read beside it describe one refresh, so the two
+    rows an older ADT wrote under parallel keys become one row here; a scope
+    carrying only one of them keeps that one and NULL for the other, which is
+    what `patch/graph_mirror.py` already reads either half as.
+    """
+    scopes: dict[tuple[str, str], list[str | None]] = {}
+    for row in connection.execute(queries.LEGACY_STAMP_ROWS_QUERY).fetchall():
+        prefix, _, remainder = str(row["key"]).partition(":")
+        scope_type, _, scope_name = remainder.partition(":")
+        entry = scopes.setdefault((scope_type, scope_name), [None, None])
+        entry[0 if prefix == _LAST_REFRESH_PREFIX else 1] = row["value"]
+    connection.executescript(queries.MIRROR_LIFT_3_SCRIPT)
+    connection.executemany(
+        queries.REFRESH_UPSERT,
+        [(scope_type, scope_name, *entry) for (scope_type, scope_name), entry in scopes.items()],
+    )
+    connection.execute(queries.LEGACY_STAMP_DELETE)
+
+
+MIGRATIONS: tuple[Migration, ...] = (Migration("3", "4", _lift_3),)
 
 
 def build_db(db_path: str | Path) -> DependencyStore:
@@ -43,35 +66,34 @@ class DependencyStore(DependencyQueries):
 
     @classmethod
     def open(cls, db_path: str | Path, *, rebuild: bool = False) -> DependencyStore:
-        """Open, creating the schema when absent.
+        """Open, creating the schema when absent and lifting an older file.
 
-        Pass ``rebuild=True`` (refresh path only) to wipe and recreate all
-        tables when the stored schema version doesn't match SCHEMA_VERSION.
-        Query-mode callers leave this False so a version mismatch never
-        silently destroys data mid-query.
+        A file the migrations know (version 3) is lifted in place on either
+        path. One they do not is wiped and recreated with ``rebuild=True``
+        (refresh path only) and refused with a ``StoreVersionError`` otherwise,
+        so a version mismatch never silently destroys data mid-query.
         """
-        connection = connect(db_path)
-        # Closed on failure since ADT #510: `connect` succeeds against any
-        # readable path and only the first statement discovers the bytes are not a
-        # database, so a raise anywhere below used to leave the connection open
-        # and unreferenced. `ApexStore` and `CommitStore` carry the same guard for
-        # the same reason; the argument is written out at `ApexStore.open`. The
-        # whole body is inside it here rather than the schema step alone, because
-        # every statement below reads or writes the same suspect file.
+        wiped: list[bool] = []
+
+        def reset(connection: Any) -> None:
+            connection.executescript(DROP_SCHEMA)
+            wiped.append(True)
+
+        # Closed on failure since ADT #510, by the shared opener: `connect`
+        # succeeds against any readable path and only the first statement
+        # discovers the bytes are not a database. The statements below run on
+        # the same suspect file, so they close it the same way.
+        connection = open_store(
+            db_path,
+            schema      = SCHEMA,
+            version     = SCHEMA_VERSION,
+            migrations  = MIGRATIONS,
+            row_factory = dict_factory,
+            reset       = reset if rebuild else None,
+        )
         try:
-            version_sql = (
-                queries.META_SCHEMA_VERSION_QUERY
-                if _meta_table_exists(connection) else
-                queries.META_SCHEMA_VERSION_NULL_QUERY
-            )
-            stored = connection.execute(version_sql).fetchone()
-            wiped = rebuild and (stored is None or stored["value"] != SCHEMA_VERSION)
-            if wiped:
-                connection.executescript(DROP_SCHEMA)
-            connection.executescript(SCHEMA)
             for _legacy in LEGACY_TABLES:
                 connection.execute(f"DROP TABLE IF EXISTS [{_legacy}]")
-            connection.execute(queries.META_UPSERT_SCHEMA_VERSION, (SCHEMA_VERSION,))
             connection.commit()
             if rebuild and not wiped:
                 # Heal a mirror an older ADT split across two spellings of one
@@ -163,15 +185,15 @@ class DependencyStore(DependencyQueries):
         *,
         db_offset: str | None = None,
     ) -> None:
-        """Stamp one refreshed scope's completion time into ``_meta``.
+        """Stamp one refreshed scope's completion time into ``refreshes``.
 
-        ``scope_type`` is ``"schema"`` or ``"app"``; the key is
-        ``last_refresh:<type>:<name>`` so re-refreshing a scope replaces its
-        stamp rather than duplicating it.
+        ``scope_type`` is ``"schema"`` or ``"app"``; the pair is the row's key,
+        so re-refreshing a scope replaces its stamp rather than duplicating it.
 
-        ``db_offset`` is that scope's DATABASE UTC offset (``+02:00``), under
-        the parallel ``db_utc_offset:`` key so `patch -create` reads a mirrored
-        ``LAST_DDL_TIME`` on the clock that produced it (ADT #394).
+        ``db_offset`` is that scope's DATABASE UTC offset (``+02:00``), kept in
+        the same row so `patch -create` reads a mirrored ``LAST_DDL_TIME`` on
+        the clock that produced it (ADT #394). ``None`` leaves a recorded
+        offset alone rather than erasing it.
 
         A schema scope is normalized the way its mirror rows are, so `-schema
         ict_owner` and `-schema ICT_OWNER` stamp one row rather than two (ADT
@@ -179,30 +201,29 @@ class DependencyStore(DependencyQueries):
         """
         if scope_type == "schema":
             scope_name = normalize_owner(scope_name)
-        rows = [
-            (f"{queries.META_LAST_REFRESH_PREFIX}{scope_type}:{scope_name}", timestamp)
-        ]
-        if db_offset:
-            rows.append(
-                (f"{queries.META_DB_OFFSET_PREFIX}{scope_type}:{scope_name}", db_offset)
-            )
         with self.connection:
-            self.connection.executemany(queries.META_UPSERT_QUERY, rows)
+            self.connection.execute(
+                queries.REFRESH_UPSERT,
+                (scope_type, scope_name, timestamp, db_offset or None),
+            )
 
     def last_refreshes(self) -> list[dict[str, str]]:
         """Per-scope last-refresh stamps, schemas first then apps (offline).
 
-        Reads the ``last_refresh:*`` rows from ``_meta`` and splits each key back
-        into ``{type, scope, last_refresh}``. Backs the ``-age`` query mode, so
-        an agent can check staleness without the file-mtime heuristic.
+        Reads the ``refreshes`` rows that carry a stamp as
+        ``{type, scope, last_refresh}``. Backs the ``-age`` query mode, so an
+        agent can check staleness without the file-mtime heuristic.
         """
-        rows = self.connection.execute(queries.META_LAST_REFRESH_QUERY).fetchall()
-        parsed: list[dict[str, str]] = []
-        for row in rows:
-            _, scope_type, scope_name = row["key"].split(":", 2)
-            parsed.append(
-                {"type": scope_type, "scope": scope_name, "last_refresh": row["value"]}
-            )
+        rows = self.connection.execute(queries.REFRESHES_QUERY).fetchall()
+        parsed: list[dict[str, str]] = [
+            {
+                "type": str(row["scope_type"]),
+                "scope": str(row["scope_name"]),
+                "last_refresh": str(row["refreshed_at"]),
+            }
+            for row in rows
+            if row["refreshed_at"]
+        ]
         schemas = sorted(
             (item for item in parsed if item["type"] == "schema"),
             key=lambda item: item["scope"],

@@ -1,6 +1,6 @@
 # ADT.ai
 
-![Version](https://img.shields.io/badge/version-0.9.5-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Python](https://img.shields.io/badge/python-3.11%2B-blue) [![CI](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml/badge.svg)](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml)
+![Version](https://img.shields.io/badge/version-0.9.6-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Python](https://img.shields.io/badge/python-3.14%2B-blue) [![CI](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml/badge.svg)](https://github.com/jkvetina/ADT.ai/actions/workflows/ci.yml)
 
 Get your Oracle database and APEX applications into Git, and get your changes back out to the next environment.
 
@@ -12,7 +12,13 @@ ADT.ai is a Python command-line tool for Oracle developers, and it closes that g
 
 Nothing is installed in the database. It is a command you run from your project folder, against a connection you configure, so there is no schema to create and nothing to uninstall when you are done with it.
 
-Fun fact: build verified by 6018 private unit tests over 14 cores in 0:58 with 100% code coverage.
+Fun fact: build verified by 6276 private unit tests over 14 cores in 1:17 with 100% code coverage.
+
+Release evidence: 68 user-story stories passed, 0 failed, and 2 unverified.
+
+The maintained private test suite is available with the existing [GitHub Sponsors Company tier](https://github.com/sponsors/jkvetina).
+
+The public edition covers export, validation, dependency analysis, and repository-history tooling.
 
 <br>
 
@@ -77,6 +83,7 @@ None of the above runs until the tool knows how to reach your database, so this 
 ![No problem for the AI, humans don't read manuals anyway](docs/images/docs.png)
 
 - [SETUP.md](SETUP.md) covers install and environment setup.
+- [docs/why.md](docs/why.md) makes the case for adopting it: what you answer by hand today, what each command group does instead, and a fifteen-minute trial against a development schema.
 - [docs/README.md](docs/README.md) is the command index; every command in the Commands section above links straight to its own page.
 - [docs/console.md](docs/console.md#shared-arguments) documents the flags every command shares, once, so no command page repeats them.
 
@@ -86,7 +93,7 @@ None of the above runs until the tool knows how to reach your database, so this 
 
 ![Real tools, real flags, first try](docs/images/skills.png)
 
-If you work with an AI agent (Claude Code, Codex, Cursor and friends), install [skills/adt/SKILL.md](skills/adt/SKILL.md): it teaches the agent the whole command surface, so it drives the exports, checks and patches for you and gets the flags right on the first try. [skills/adt-setup/SKILL.md](skills/adt-setup/SKILL.md) does the same for setting the machine up, and [skills/README.md](skills/README.md) says which of the two to install when.
+If you work with an AI agent (Claude Code, Codex, Copilot, Cursor and friends), expose [skills/adt/SKILL.md](skills/adt/SKILL.md): its lean command router sends the agent to only the relevant page in `docs/`, with the operational and safety boundaries needed to run the command correctly. [skills/adt-setup/SKILL.md](skills/adt-setup/SKILL.md) handles machine setup, and [skills/README.md](skills/README.md) explains when to use each one.
 
 <br>
 
@@ -94,7 +101,13 @@ If you work with an AI agent (Claude Code, Codex, Cursor and friends), install [
 
 ![One command, then it runs](docs/images/install.png)
 
-Open a terminal, clone the production repository, and install the tool:
+Open a terminal and install the tool:
+
+```bash
+python3 -m pip install adt-ai
+```
+
+To work on ADT.ai itself, clone the production repository and install that checkout instead:
 
 ```bash
 git clone https://github.com/jkvetina/ADT.ai.git

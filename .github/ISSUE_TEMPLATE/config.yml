@@ -1,0 +1,13 @@
+# A vulnerability filed as a public issue is disclosed by the filing, so the
+# blank box is closed and the security route is the first link a reporter sees.
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/jkvetina/ADT.ai/security/advisories/new
+    about: Private advisory form. Never open a public issue for a vulnerability.
+  - name: Command reference
+    url: https://github.com/jkvetina/ADT.ai/blob/main/docs/README.md
+    about: Every command, its arguments and worked examples.
+  - name: Install and environment setup
+    url: https://github.com/jkvetina/ADT.ai/blob/main/SETUP.md
+    about: Start here, then run `adtai doctor` to check the machine.

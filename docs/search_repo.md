@@ -6,8 +6,6 @@
 
 It reads the commit store [`rebuild`](rebuild.md) maintains, so run `rebuild` first. It never connects to Oracle.
 
-<br>
-
 ## Examples
 
 List the newest commits in the branch store:
@@ -53,8 +51,6 @@ Restore the historical version of a file beside the current one:
 adtai search_repo -file monthly_report_v -commit 7 -restore
 ```
 
-<br>
-
 ## Output
 
 One block per commit, newest first: the store's own commit number and the subject, then the author, the commit timestamp and the short hash. A file selector adds the changed-file rows under each commit:
@@ -62,7 +58,6 @@ One block per commit, newest first: the store's own commit number and the subjec
 ```text
 APEX DEPLOYMENT TOOL - SEARCH_REPO
 ----------------------------------
-
 
 COMMITS:
 --------
@@ -81,7 +76,6 @@ COMMITS:
     - SANDBOX/database/views/
       - A | monthly_report_v.sql
 
-
 TIMER: 0s
 ```
 
@@ -91,15 +85,11 @@ TIMER: 0s
 - `-file`, `-type` and `-name` turn the file rows on by themselves, capped at 20 per commit. `-files N` sets another cap and `-files 0` turns them off.
 - A search that matches nothing prints `No commits found.` and exits `0`.
 
-<br>
-
 ## How filters combine
 
 Terms inside one flag are AND-matched, and different flags are AND-matched with each other, so `-commit 5+ -hash 565fcf1a` keeps only the commit that satisfies both. The exceptions are `-commit` and `-hash`, whose own multiple values are OR-matched.
 
 `-commit` takes a number, a hash, or a range: `7` is that commit, `5+` is that one and everything newer, `2-6` is the inclusive span. A range needs digits on both sides, so a hash prefix is never misread as one.
-
-<br>
 
 ## Finding an object rather than a file
 
@@ -109,15 +99,11 @@ Terms inside one flag are AND-matched, and different flags are AND-matched with 
 - `-name` is the object name, read through the file's own configured extension, so `packages/core.spec.sql` is `CORE` rather than `CORE.SPEC`.
 - Both are matched as SQL LIKE patterns, case-insensitively, the way `export_db -type` and `-name` are matched. The pattern is anchored, so `-type PACKAGE` is the spec alone and `-type "PACKAGE%"` is the spec and the body; a partial name is written `-name "SHOP%"` rather than as a bare fragment.
 
-<br>
-
 ## Restoring an old version
 
 `-restore` writes each matching historical version beside the original, with the commit number inserted before the extension, so `-file monthly_report_v -commit 7 -restore` writes `monthly_report_v.7.sql`. Restore is the one mode that reads live git, and only to fetch the payloads of versions already selected from the store.
 
 `-stage` writes to the original path instead and runs `git add` on it. When a restore with `-stage` matches more than one version of one file, the newest match wins in the working tree, so name a specific `-commit` or `-hash` when staging.
-
-<br>
 
 ## Arguments
 

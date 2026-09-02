@@ -7,57 +7,17 @@ from pathlib import Path
 
 from adt_ai.flow import queries
 from adt_ai.flow.model import FlowApp, FlowEdge, FlowPage
+from adt_ai.shared.sqlite_store import Migration, open_store
 
 # Persistent store: the .db IS the source of truth (populated from live Oracle on
-# refresh), so the schema is created with IF NOT EXISTS and never dropped.
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS apex_app (
-    app_id     INTEGER PRIMARY KEY,
-    workspace  TEXT NOT NULL,
-    app_name   TEXT,
-    app_alias  TEXT,
-    loaded_at  TEXT
-);
+# refresh), so the schema is created with IF NOT EXISTS and never dropped by a
+# refresh. The one drop is the lift from the pre-version shape (ADT #642), a
+# cache the next refresh refills. The SQL lives in `flow/queries/store.py`.
+SCHEMA_VERSION = "1"
 
-CREATE TABLE IF NOT EXISTS apex_page (
-    app_id     INTEGER NOT NULL REFERENCES apex_app(app_id) ON DELETE CASCADE,
-    page_id    INTEGER NOT NULL,
-    page_name  TEXT,
-    page_alias TEXT,
-    PRIMARY KEY (app_id, page_id)
-);
-
-CREATE TABLE IF NOT EXISTS apex_link_source_type (
-    src_type    TEXT PRIMARY KEY,
-    description TEXT
-);
-
-CREATE TABLE IF NOT EXISTS apex_nav_edge (
-    edge_id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    workspace       TEXT NOT NULL,
-    app_id          INTEGER NOT NULL REFERENCES apex_app(app_id) ON DELETE CASCADE,
-    src_type        TEXT NOT NULL REFERENCES apex_link_source_type(src_type),
-    src_page        INTEGER,
-    component_id    TEXT,
-    component       TEXT,
-    raw_target      TEXT,
-    target_app      TEXT,
-    target_app_id   INTEGER,
-    target_page     INTEGER,
-    flag            TEXT NOT NULL CHECK (flag IN ('PAGE','CROSS_APP','DYNAMIC','OTHER','NONE')),
-    working_copy_id INTEGER NOT NULL DEFAULT 0,
-    loaded_at       TEXT
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS ux_nav_edge
-    ON apex_nav_edge(app_id, src_type, component_id, working_copy_id);
-CREATE INDEX IF NOT EXISTS ix_nav_edge_in
-    ON apex_nav_edge(target_app_id, target_page, flag);
-CREATE INDEX IF NOT EXISTS ix_nav_edge_out
-    ON apex_nav_edge(app_id, src_page);
-CREATE INDEX IF NOT EXISTS ix_nav_edge_ws
-    ON apex_nav_edge(workspace, app_id);
-"""
+MIGRATIONS: tuple[Migration, ...] = (
+    Migration(None, "1", lambda connection: connection.executescript(queries.STORE_LIFT_LEGACY)),
+)
 
 # Seeded catalog of the 12 statically resolvable link-source views.
 LINK_SOURCE_TYPES: tuple[tuple[str, str], ...] = (
@@ -82,29 +42,8 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _build_schema(connection: sqlite3.Connection) -> None:
-    connection.executescript(SCHEMA)
-
-
-def _migrate_schema(connection: sqlite3.Connection) -> None:
-    # component_id was originally INTEGER; Oracle internal sequence IDs can exceed
-    # SQLite's signed 64-bit max. flow.db is a rebuild-on-demand cache so we just
-    # drop and recreate when we detect the old column type.
-    row = connection.execute(queries.STORE_COMPONENT_ID_TYPE_QUERY).fetchone()
-    if row and row[0].upper() == "INTEGER":
-        connection.executescript(
-            "DROP TABLE IF EXISTS apex_nav_edge;"
-            "DROP TABLE IF EXISTS apex_page;"
-            "DROP TABLE IF EXISTS apex_app;"
-            "DROP TABLE IF EXISTS apex_link_source_type;"
-        )
-        connection.executescript(SCHEMA)
-        _seed_link_source_types(connection)
-        connection.commit()
-
-
-def _seed_link_source_types(connection: sqlite3.Connection) -> None:
-    connection.executemany(queries.STORE_SEED_LINK_SOURCE_TYPE, LINK_SOURCE_TYPES)
+def _seed_link_sources(connection: sqlite3.Connection) -> None:
+    connection.executemany(queries.STORE_SEED_LINK_SOURCE, LINK_SOURCE_TYPES)
 
 
 def _row_to_edge(row: sqlite3.Row) -> FlowEdge:
@@ -129,23 +68,23 @@ class ApexFlowStore:
 
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._con = connection
-        self._con.row_factory = sqlite3.Row
-        self._con.execute("PRAGMA foreign_keys = ON")
-        _build_schema(self._con)
-        _migrate_schema(self._con)
-        _seed_link_source_types(self._con)
-        self._con.commit()
 
     @classmethod
     def open(cls, db_path: str | Path) -> ApexFlowStore:
-        path = Path(db_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(str(path))
+        """Open the file through the shared opener and reseed the link catalog."""
+        connection = open_store(
+            db_path,
+            schema     = queries.STORE_SCHEMA,
+            version    = SCHEMA_VERSION,
+            migrations = MIGRATIONS,
+        )
         try:
-            return cls(connection)
+            _seed_link_sources(connection)
+            connection.commit()
         except BaseException:
             connection.close()
             raise
+        return cls(connection)
 
     def refresh_app(
         self,
@@ -156,8 +95,8 @@ class ApexFlowStore:
         loaded_at: str | None = None,
     ) -> None:
         # Add and update are one code path: delete-by-scope then re-insert in a
-        # single transaction. Deleting the apex_app row cascades to its pages and
-        # edges, so a rewrite is idempotent.
+        # single transaction. Deleting the application row cascades to its pages
+        # and edges, so a rewrite is idempotent.
         stamp = loaded_at or _now()
         con = self._con
         try:

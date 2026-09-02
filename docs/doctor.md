@@ -6,8 +6,6 @@
 
 Installation and environment setup are in [SETUP.md](../SETUP.md); this page owns what the command does.
 
-<br>
-
 ## Examples
 
 Check the local setup from any folder:
@@ -37,8 +35,6 @@ adtai doctor -init
 adtai doctor -init -root ./new-project
 ```
 
-<br>
-
 ## Output
 
 Current versions first, then the runtime environment, then the actions available. Nothing connects to a database:
@@ -46,7 +42,6 @@ Current versions first, then the runtime environment, then the actions available
 ```text
 APEX DEPLOYMENT TOOL - DOCTOR
 -----------------------------
-
 
 CURRENT VERSIONS:
 -----------------
@@ -57,7 +52,6 @@ CURRENT VERSIONS:
   oracledb             | 4.0.2
   Instant Client       | 23.3.0.23.09
   SQLcl                | 26.2.1.0
-
 
 ENVIRONMENT:
 ------------
@@ -70,7 +64,6 @@ ENVIRONMENT:
   ORACLE_HOME          | /Users/dev/.instantclient_23_3
   SQLCL                | /Users/dev/.instantclient_23_3/sqlcl/bin/sql
 
-
 TIMER: 1s
 ```
 
@@ -78,8 +71,6 @@ TIMER: 1s
 - Encryption key material is never printed. A direct `ADT_KEY` renders as `<redacted>`, a configured command as `<from ADT_KEY_CMD>`, and no source as `<empty>`. Setting both sources is ambiguous and renders a warning without showing either value.
 - The `ENVIRONMENT:` rows are what the process actually holds, so a run under an AI tool shows the values ADT.ai filled in for itself from your startup file. How that works is on [config.md](config.md#environment-variables).
 - Status words append after a dot leader, capped at 78 characters.
-
-<br>
 
 ## What the statuses mean
 
@@ -95,8 +86,6 @@ For ADT.ai itself, an editable or git install is compared against its own config
 
 A normal wheel installed inside another repository's `.venv` is still a package install. `doctor` does not mistake that enclosing repository for an editable ADT.ai checkout, and therefore cannot pull, stash, or switch the wrong project.
 
-<br>
-
 ## Actions
 
 `ACTIONS:` closes the run and lists only upgrades an online check actually found:
@@ -108,8 +97,6 @@ A normal wheel installed inside another repository's `.venv` is still a package 
 When none applies the whole section is omitted, header included: an up-to-date machine is offered nothing. `-offline` checks nothing online, so no status is backed by a real check and the section is likewise absent. Under `-update` and `-sqlcl` it always prints, because there it reports the actions that ran.
 
 The offer is always for the latest release. A specific version is something you ask for, never something `doctor` proposes.
-
-<br>
 
 ### Schema folder case
 
@@ -124,8 +111,6 @@ ACTIONS:
 ```
 
 `doctor` never performs it. A repository-wide move is yours to review and commit, and on macOS or Windows a case-only difference is invisible to the filesystem, so `git mv` is what actually records it. Nothing is reported when the tree already agrees, when the layout pins no schema level, or when the project has no config yet.
-
-<br>
 
 ## Landing a specific version
 
@@ -146,8 +131,6 @@ A version with no release **fails and stays put**. The `ADT.ai` row reads `FAILE
 
 So a downgrade can never quietly install something newer than what it reached for. A value that is not a version at all is refused before any git command runs.
 
-<br>
-
 ### Going back below the release that added this
 
 A downgrade installs the older release in full, its own `doctor` included. Land on a release published before this flag existed and you are running a `doctor` that has never heard of it.
@@ -163,8 +146,6 @@ python3 -m pip install -e .
 ```
 
 Between two releases that both carry the flag, `-update <version>` and bare `-update` move the checkout in either direction on their own.
-
-<br>
 
 ## Scaffolding a project
 
@@ -185,8 +166,6 @@ Patch *scripts* are not scaffolded: `patch_scripts/` is per patch code and gener
 `adtai update`, `adtai upgrade` and `adtai init` are not commands. Each prints the generic error banner and points at the `doctor` flag that does the job.
 
 Before replacing SQLcl, `doctor` downloads, extracts, validates, and makes the new launcher executable in a staging directory beside the live install. Promotion is a same-filesystem rename. If that final swap fails, both the live install and any pre-existing backup are restored; a corrupt or incomplete archive never moves the live install at all.
-
-<br>
 
 ## Arguments
 
