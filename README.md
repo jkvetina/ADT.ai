@@ -12,7 +12,7 @@ ADT.ai is a Python command-line tool for Oracle developers, and it closes that g
 
 Nothing is installed in the database. It is a command you run from your project folder, against a connection you configure, so there is no schema to create and nothing to uninstall when you are done with it.
 
-Fun fact: build verified by 6276 private unit tests over 14 cores in 1:17 with 100% code coverage.
+Fun fact: build verified by 6277 private unit tests over 14 cores in 1:16 with 100% code coverage.
 
 Release evidence: 68 user-story stories passed, 0 failed, and 2 unverified.
 
