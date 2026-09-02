@@ -11,7 +11,7 @@
 
 ## Verification
 
-Fun fact: build verified by 6277 private unit tests over 14 cores in 1:16 with 100% code coverage.
+Fun fact: build verified by 6277 private unit tests over 14 cores in 1:10 with 100% code coverage.
 
 Release evidence: 68 user-story stories passed, 0 failed, and 2 unverified.
 
