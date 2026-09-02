@@ -17,7 +17,10 @@ class ApexProgressReporter(Protocol):
         self,
         header: str,
         target_seconds: float,
-        operation: Callable[[], None],
+        # `object`, not `None`: the reporter times the call and discards whatever
+        # comes back, so an action that returns its rows is as valid here as one
+        # that returns nothing.
+        operation: Callable[[], object],
         app_id: int | None = None,
     ) -> float:
         ...
@@ -34,7 +37,7 @@ class ConsoleApexProgressReporter:
         self,
         header: str,
         target_seconds: float,
-        operation: Callable[[], None],
+        operation: Callable[[], object],
         app_id: int | None = None,
     ) -> float:
         # `app_id` is the compact bar's business. Here the application already
@@ -206,7 +209,7 @@ class CompactApexProgressReporter:
         self,
         header: str,
         target_seconds: float,
-        operation: Callable[[], None],
+        operation: Callable[[], object],
         app_id: int | None = None,
     ) -> float:
         """Run one slice, redrawing the segment row while it blocks."""

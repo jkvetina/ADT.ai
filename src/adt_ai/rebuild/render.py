@@ -50,7 +50,10 @@ class ConsoleRebuildReporter:
 
         fraction = index / total
         percent  = min(int((fraction * 100) + 0.5), 100)
-        elapsed  = time.monotonic() - self._started_at
+        # `on_commit_start` runs before the first `on_commit`, so the clock is
+        # always set by the time a row is drawn; a caller that skips it gets a
+        # zero-length run rather than a crash.
+        elapsed  = time.monotonic() - (self._started_at or time.monotonic())
         remaining = (elapsed / index) * (total - index) if index else 0.0
         seconds  = int(elapsed if index == total else remaining)
 

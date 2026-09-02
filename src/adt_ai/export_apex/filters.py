@@ -47,6 +47,10 @@ class ApexExplicitFilter:
     page_selection: ApexPageSelection | None = None
     component_filters: tuple[ApexComponentFilter, ...] = ()
 
+    def selects_whole_app(self) -> bool:
+        """True when no `-page` or `-component` narrows the export (ADT #655)."""
+        return not (self.page_selection or self.component_filters)
+
     def matches(self, action: str, relative: str) -> bool:
         if action in WHOLE_APP_ACTIONS or not (self.page_selection or self.component_filters):
             return True

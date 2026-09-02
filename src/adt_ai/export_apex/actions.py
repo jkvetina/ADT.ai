@@ -201,7 +201,7 @@ class ApexActionTimingMixin:
         store: ApexStore,
         application: ApexApplication,
         action: str,
-        operation: Callable[[], None],
+        operation: Callable[[], object],
     ) -> None:
         elapsed = reporter.run(
             ACTION_HEADERS[action],
@@ -223,7 +223,7 @@ class ApexActionTimingMixin:
         timers: dict[Any, Any],
         store: ApexStore,
         action: str,
-        operation: Callable[[], None],
+        operation: Callable[[], object],
     ) -> None:
         """Run a schema-level action, timed under the workspace slot.
 

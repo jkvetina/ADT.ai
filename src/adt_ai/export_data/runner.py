@@ -4,12 +4,13 @@ import csv
 import io
 from collections.abc import Callable
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Protocol
 
 from adt_ai.export_data import queries
 from adt_ai.export_data.groups import GroupRules, group_for, resolve_data_group_rules
-from adt_ai.export_data.inventory import DataDiscovery, DataTable
+from adt_ai.export_data.inventory import DataColumn, DataDiscovery, DataTable
 from adt_ai.export_data.lob_update_scripts import include_update_scripts
 from adt_ai.export_data.sidecars import (  # noqa: F401  (re-exported for existing importers)
     SIDE_CAR_DATA_TYPES,
@@ -169,21 +170,28 @@ class ExportDataRunner:
         writer.writerow(csv_columns)
         sidecar_key_columns = _key_columns(table, query_columns)
         sql_table_name = _sql_table_name(table.schema, table.name, request.config)
+        # Folded filename -> the raw key that took it, for this table's export.
+        claimed_row_keys: dict[str, str] = {}
         for row_number, row in enumerate(rows, start=1):
-            writer.writerow([row_value(row, column) for column in csv_columns])
+            writer.writerow([_csv_cell(row_value(row, column)) for column in csv_columns])
             update_scripts.extend(_write_sidecar_values(
-                path            = path,
-                table_name      = table.name,
-                row             = row,
-                row_number      = row_number,
-                key_columns     = sidecar_key_columns,
-                sidecar_columns = sidecar_columns,
-                written         = written_sidecars,
-                sql_table_name  = sql_table_name,
+                path             = path,
+                table_name       = table.name,
+                row              = row,
+                row_number       = row_number,
+                key_columns      = sidecar_key_columns,
+                sidecar_columns  = sidecar_columns,
+                written          = written_sidecars,
+                sql_table_name   = sql_table_name,
+                claimed_row_keys = claimed_row_keys,
             ))
             row_count += 1
         text_files.write_bytes(path, buffer.getvalue().encode("utf-8"))
-        if sidecar_columns:
+        # A `where` predicate narrows what was SELECTed, so "not written this
+        # run" stops meaning "gone from the table" and pruning would delete the
+        # sidecars of rows that are still there (`#670`). The run cannot tell
+        # the two apart, so under a filter it deletes nothing.
+        if sidecar_columns and not where_filter:
             _prune_sidecar_folder(path.with_suffix(""), written_sidecars)
         primary_columns = _key_columns(table, csv_columns)
         if primary_columns:
@@ -194,6 +202,12 @@ class ExportDataRunner:
                 config          = request.config,
                 where_filter    = where_filter,
                 sql_table_name  = sql_table_name,
+                null_safe_key   = not _has_primary_key(table, csv_columns),
+                column_types    = {
+                    column.name.upper(): column.data_type
+                    for column in columns
+                },
+                identity_columns = _always_identity_columns(columns),
             )
             if merge_sql:
                 text_files.write_text(
@@ -201,6 +215,43 @@ class ExportDataRunner:
                     merge_sql + include_update_scripts(update_scripts),
                 )
         return path, row_count
+
+
+class _ExactNumber(Decimal):
+    """A NUMBER the CSV writer prints in full rather than in exponent notation.
+
+    `csv.QUOTE_NONNUMERIC` leaves a Decimal unquoted, which is what keeps a
+    number a number in the file, and prints it with `str()`, which switches to
+    `1E+3` once the exponent leaves a narrow window. The CSV is read back by
+    the MERGE builder and by people, so the plain form is pinned here (`#670`).
+    """
+
+    def __str__(self) -> str:
+        return format(self, "f")
+
+
+def _csv_cell(value: Any) -> Any:
+    """One CSV cell, for the two value types `csv.writer` renders wrongly (`#670`).
+
+    A RAW arrives as `bytes`, whose `str()` is Python's `b'\\x01\\xffA'` repr, so
+    it is hex-encoded the way `HEXTORAW` reads it back. A NUMBER arrives as a
+    `Decimal` (see `shared/db.fetch_all`) and keeps every digit it was stored
+    with, unquoted.
+    """
+    if isinstance(value, bytes | bytearray | memoryview):
+        return bytes(value).hex().upper()
+    if isinstance(value, Decimal):
+        return _ExactNumber(value)
+    return value
+
+
+def _always_identity_columns(columns: list[DataColumn]) -> set[str]:
+    """The lower-cased columns Oracle refuses to let DML write (`#670`)."""
+    return {
+        column.name.lower()
+        for column in columns
+        if column.identity.strip().upper() == "ALWAYS"
+    }
 
 
 def _sql_table_name(schema: str, table_name: str, config: dict[str, Any]) -> str:
@@ -360,6 +411,18 @@ def _key_columns(table: DataTable, columns: list[str]) -> list[str]:
     return [name for _, name in unique]
 
 
+def _has_primary_key(table: DataTable, columns: list[str]) -> bool:
+    """Whether `_key_columns` answered with a primary key rather than the UQ fallback.
+
+    A UNIQUE constraint permits NULLs and a primary key does not, which is what
+    decides whether the MERGE join has to be NULL-safe (`#670`).
+    """
+    return any(
+        column.pk is not None and column.name in columns
+        for column in table.columns
+    )
+
+
 def _merge_sql_from_csv(
     path: Path,
     table_name: str,
@@ -367,8 +430,17 @@ def _merge_sql_from_csv(
     config: dict[str, Any],
     where_filter: str,
     sql_table_name: str | None = None,
+    null_safe_key: bool = False,
+    column_types: dict[str, str] | None = None,
+    identity_columns: set[str] | None = None,
 ) -> str:
-    columns, batches = _csv_select_batches(path, config)
+    """`column_types` types the CSV cells; `identity_columns` are the unwritable ones.
+
+    Both arrive from the table's own inventory (`#670`). Without them every cell
+    is rendered as a text literal and no column is excluded, which is the shape
+    a caller with no inventory in hand gets.
+    """
+    columns, batches = _csv_select_batches(path, config, column_types)
     if not columns:
         return ""
     # The MERGE/DELETE target carries the owner under `keep_owner`; every config
@@ -376,17 +448,29 @@ def _merge_sql_from_csv(
     table = (sql_table_name or table_name).lower()
     lower_columns = [column.lower() for column in columns]
     lower_primary = [column.lower() for column in primary_columns]
-    update_columns = [column for column in lower_columns if column not in lower_primary]
+    # An ALWAYS identity column is exported and may be the key, but Oracle
+    # refuses an INSERT that names it (ORA-32795) and an UPDATE that sets it.
+    identity = identity_columns or set()
+    update_columns = [
+        column
+        for column in lower_columns
+        if column not in lower_primary and column not in identity
+    ]
+    insert_columns = [column for column in lower_columns if column not in identity]
     merge_config = _merge_config(config, table_name)
     skip_delete = "" if is_enabled(merge_config.get("delete"), default=False) else "--"
-    skip_insert = "" if is_enabled(merge_config.get("insert"), default=True) else "--"
+    skip_insert = (
+        ""
+        if is_enabled(merge_config.get("insert"), default=True) and insert_columns
+        else "--"
+    )
     skip_update = (
         ""
         if is_enabled(merge_config.get("update"), default=True) and update_columns
         else "--"
     )
     primary_join = "\n    " + "\n    AND ".join(
-        f"t.{column} = s.{column}"
+        _join_predicate(column, null_safe_key)
         for column in lower_primary
     ) + "\n"
     updates = queries.update_assignments(update_columns, skip_update)
@@ -403,12 +487,38 @@ def _merge_sql_from_csv(
                 skip_insert    = skip_insert,
                 skip_update    = skip_update,
                 where_filter   = _commented_where_filter(where_filter, skip_delete),
+                insert_columns = insert_columns,
             )
         )
     return "".join(statements)
 
 
-def _csv_select_batches(path: Path, config: dict[str, Any]) -> tuple[list[str], list[list[str]]]:
+def _join_predicate(column: str, null_safe: bool) -> str:
+    """One `ON` comparison, NULL-safe when the key came from the UNIQUE fallback.
+
+    A UNIQUE constraint permits NULLs, and `t.c = s.c` is never TRUE for one, so
+    every NULL-keyed row failed to match and was inserted again on each replay
+    (`#670`). A primary key cannot be NULL, so it keeps the plain equality and
+    the index path that comes with it.
+    """
+    if not null_safe:
+        return f"t.{column} = s.{column}"
+    return f"(t.{column} = s.{column} OR (t.{column} IS NULL AND s.{column} IS NULL))"
+
+
+def _csv_select_batches(
+    path: Path,
+    config: dict[str, Any],
+    column_types: dict[str, str] | None = None,
+) -> tuple[list[str], list[list[str]]]:
+    """Read the CSV back as text and let the destination column type shape each literal.
+
+    This read used to pass `csv.QUOTE_NONNUMERIC`, which casts every unquoted
+    field through `float()` (`#670`): 9007199254740993 came back as
+    9007199254740992.0 and an exported `1` was replayed as `1.0`. The column's
+    Oracle type is already known here, so it decides numeric-versus-text rather
+    than the parser guessing from the quoting.
+    """
     columns: list[str] = []
     batches: list[list[str]] = []
     delimiter = str(config.get("csv_delimiter") or ";")
@@ -418,7 +528,6 @@ def _csv_select_batches(path: Path, config: dict[str, Any]) -> tuple[list[str], 
             handle,
             delimiter      = delimiter,
             lineterminator = "\n",
-            quoting        = csv.QUOTE_NONNUMERIC,
         )
         for index, row in enumerate(reader):
             if not columns:
@@ -426,7 +535,7 @@ def _csv_select_batches(path: Path, config: dict[str, Any]) -> tuple[list[str], 
             batch_index = index // batch_size
             if batch_index == len(batches):
                 batches.append([])
-            batches[batch_index].append(queries.row_select(row, columns))
+            batches[batch_index].append(queries.row_select(row, columns, column_types))
     return columns, batches
 
 

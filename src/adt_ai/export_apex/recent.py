@@ -118,7 +118,8 @@ def _changes_since_label(
     """
     if changed_since is not None:
         return changed_since
-    return _recent_since(recent_days, db_now)
+    # Reached only from `-recent N`, which always carries its window.
+    return _recent_since(recent_days or 0, db_now)
 
 def open_application_section(
     request: Any,
@@ -233,6 +234,14 @@ WHOLE_APP_ACTIONS = frozenset({"full", "apexlang"})
 class RecentComponentFilter:
     page_ids: frozenset[int] | None = None
     component_slugs: frozenset[str] = frozenset()
+
+    def selects_whole_app(self) -> bool:
+        """True when no `-recent` watermark narrows the export.
+
+        The prune step asks this before deleting what a run did not write: a
+        narrowed run wrote a subset on purpose (ADT #655).
+        """
+        return self.page_ids is None
 
     def matches(self, action: str, relative: str) -> bool:
         if action in WHOLE_APP_ACTIONS or self.page_ids is None:

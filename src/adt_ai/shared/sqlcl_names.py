@@ -25,13 +25,18 @@ from typing import TYPE_CHECKING, Any
 import yaml as pyyaml
 from ruamel.yaml import YAML
 
-from adt_ai.connection.stored_secrets import SECRET_SAFE_YAML_WIDTH
 from adt_ai.shared import text_files
 
 if TYPE_CHECKING:
     from adt_ai.shared.connections import Connection
 
 SQLCL_NAME_PREFIX = "ADT_"
+
+# Line width for every writer that touches a connection file (#670, moved out of
+# `connection/stored_secrets.py`: `shared/` never imports a command package, and
+# this module -- itself `shared/` -- needed the constant too). Wide enough that a
+# stored secret stays on its own key's line: see the note in `connection.runner._yaml`.
+SECRET_SAFE_YAML_WIDTH = 4096
 
 # The generic filename identifies no project; the parent folder does.
 _GENERIC_FILE_STEMS = {"connections"}
@@ -60,7 +65,29 @@ def derive_sqlcl_name(
         parts.append(environment)
     if multi_schema:
         parts.append(schema)
+    parts.append(path_discriminator(source_file))
     return SQLCL_NAME_PREFIX + "_".join(_sanitize(part) for part in parts)
+
+
+def path_discriminator(source_file: Path) -> str:
+    """Six hex characters of the connection file's own resolved path.
+
+    Everything else in the name comes from the file's stem, or from its parent
+    folder for the generic `connections.yaml`, and the SQLcl store is PER USER,
+    not per project. So two projects whose folders share a name (or two
+    `connections.path` overrides each pointing at a `connections.yaml`) took the
+    same `ADT_<name>` in that one store. The fingerprint check
+    (`sqlcl_connect.py`) compares only against the project's own YAML, so once
+    project B registered, project A connected `-name` and ran, silently, against
+    B's database (ADT #660).
+
+    A name already recorded as `sqlcl:` in a connection file wins over this
+    derivation (`connections._sqlcl_name`), so an existing registration keeps the
+    name it has and a user's own override is untouched; only a project that has
+    never registered takes the new shape.
+    """
+    resolved = str(Path(source_file).expanduser().resolve())
+    return hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:6]
 
 
 def _sanitize(value: str) -> str:

@@ -46,7 +46,7 @@ def build_prefix_rules(prefixes: Iterable[str], group: str | None = None) -> Gro
 
     Each prefix names its own group by default, which is one folder per prefix
     per object type. `group` overrides that for every prefix at once, so
-    `-groups ICT_VPD ICT_ABC -force VPD` lands both in `<type>/VPD/` (ADT #416).
+    `-groups APP_VPD APP_ABC -force VPD` lands both in `<type>/VPD/` (ADT #416).
 
     Group folder names are always upper-cased, matching the move action's
     contract that explicit prefixes become uppercase `<type>/<GROUP>/` folders.

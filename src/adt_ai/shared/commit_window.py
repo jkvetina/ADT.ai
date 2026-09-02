@@ -25,6 +25,7 @@ import subprocess
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 from adt_ai.shared.git_files import run_git
 
@@ -34,7 +35,7 @@ DEFAULT_HISTORY_BOTTOM_DAYS = 365
 _FIELD = "\x1f"
 
 
-def resolve_history_floor(config: dict) -> int | None:
+def resolve_history_floor(config: dict[str, Any]) -> int | None:
     """`patch_history_bottom_days` from project config, or the shipped default.
 
     Returns None when the project asks for the whole history (0 or negative),

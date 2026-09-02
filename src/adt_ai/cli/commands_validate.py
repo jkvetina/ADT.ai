@@ -17,6 +17,7 @@ from adt_ai.shared.progress import FixedWidthProgressPrinter
 from adt_ai.validate.files import ValidateTarget, resolve_targets
 from adt_ai.validate.report import UNRECOGNISED, CompileMessage, message_lines
 from adt_ai.validate.runner import (
+    SqlclRequest,
     ValidateReporter,
     ValidateRequest,
     ValidateRunner,
@@ -148,7 +149,7 @@ def _print_messages(header: str, messages: tuple[CompileMessage, ...]) -> None:
     print()
 
 
-def _sqlcl_request(debug: bool):
+def _sqlcl_request(debug: bool) -> SqlclRequest:
     """Echo the generated script under ``-debug``, mirroring ``DebugQueryGateway``.
 
     Read from the module global at call time so the CLI facade's patch sync can

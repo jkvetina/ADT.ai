@@ -8,7 +8,7 @@ The shipped `config/config.yaml` comments every key it carries, so that file is 
 
 ## Config, connections and wallets
 
-Config defaults load from the shipped ADT.ai `config/` folder first, then project config overlays them from `-config-dir`, `<root>/config/` and `<root>/`, so a project always wins over a global default.
+Config defaults load from the shipped ADT.ai `config/` folder first, then the project's own config overlays them, so a project always wins over a global default. The project's config is `<root>/config/` and then `<root>/`, unless `-config-dir` is given, which replaces both with the folders it names rather than adding to them. `STARTUP.sql` resolves the same way.
 
 Connection files resolve by **first match wins**. ADT.ai loads the first candidate that exists and merges no layers. The order, where the folder is the `<root>` directory's own name:
 

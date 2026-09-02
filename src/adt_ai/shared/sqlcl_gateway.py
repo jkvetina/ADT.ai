@@ -137,7 +137,15 @@ class SqlclGateway(OracleGateway):
         self,
         sql: str,
         params: Mapping[str, Any] | None = None,
+        exact_numbers: bool = False,
     ) -> list[dict[str, Any]]:
+        """`exact_numbers` is accepted and has nothing to do here (`#670`).
+
+        The driver's float rounding it exists to avoid never happens on this
+        transport: SQLcl returns every column as JSON text, so the digits arrive
+        as they were stored. Declaring the keyword keeps `sqlcl_only` a transport
+        swap, which is the one thing this class promises.
+        """
         return self._select(sql, params, prologue="", epilogue="")
 
     def read_only_fetch_all(
@@ -167,7 +175,7 @@ class SqlclGateway(OracleGateway):
             )
             if part
         )
-        output = self._run(body, sql)
+        output = self._run_session(body, sql)
         _raise_on_error(output, sql)
 
     # `sqlcl_request` is inherited unchanged and deliberately keeps its own
@@ -200,13 +208,19 @@ class SqlclGateway(OracleGateway):
             )
             if part
         )
-        output = self._run(body, sql)
+        output = self._run_session(body, sql)
         _raise_on_error(output, sql)
         return _rows(output, sql)
 
-    def _run(self, body: str, sql: str) -> str:
+    def _run_session(self, body: str, sql: str) -> str:
+        # Named apart from `OracleGateway._run`, which it does NOT override:
+        # that one builds and runs a whole generated script, this one hands a
+        # body to the already-open SQLcl session and decorates the failure.
+        # One name for two unrelated calls is how a subclass ends up reached
+        # through its base class's signature.
         try:
-            return self.session.run(body)
+            output: str = self.session.run(body)
+            return output
         except SqlclSessionError as error:
             _attach_sql(error, sql)
             raise

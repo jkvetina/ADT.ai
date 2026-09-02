@@ -36,8 +36,16 @@ from adt_ai.shared.db import QueryGateway
 RESULT_BLOCK_START = "/* ADT-RESULT"
 RESULT_BLOCK_END   = "*/"
 
+# Anchored on the closing marker exactly as the writer emits it, alone on its own
+# line. A bare non-greedy `.*?` stopped at the FIRST `*/` in the block, so a
+# result row whose data contained `*/` truncated the block and left its tail in
+# the file as live SQL (ADT #650).
 _RESULT_BLOCK_RE = re.compile(
-    r"\n" + re.escape(RESULT_BLOCK_START) + r"\n.*?" + re.escape(RESULT_BLOCK_END),
+    r"\n"
+    + re.escape(RESULT_BLOCK_START)
+    + r"\n.*?\n"
+    + re.escape(RESULT_BLOCK_END)
+    + r"(?=\n|\Z)",
     re.DOTALL,
 )
 
@@ -194,7 +202,9 @@ class DiscoveryRunner:
             outcomes.append(outcome)
             index += 1
 
-        if sections and not request.no_log:
+        # `path is None` is exactly `request.no_log`, set together above; the
+        # path is what the sections are appended to, so it is the half to test.
+        if sections and path is not None:
             append_sections(path, sections)
             ensure_discovery_ignored(request.root)
         return DiscoveryResult(

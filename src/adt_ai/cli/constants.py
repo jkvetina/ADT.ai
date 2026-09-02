@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import TextIO
+from typing import Any, NoReturn, TextIO
 
 import yaml
 
@@ -28,6 +28,7 @@ from adt_ai.export_apex.inventory import (
     ApexOwnerCount,
     ApexWorkspace,
 )
+from adt_ai.export_apex.owner import ApexOwnerResolutionError, resolve_configured_apex_owner_schema
 from adt_ai.export_apex.runner import ApexExportRequest, ApexExportRunner
 from adt_ai.export_data.inventory import DataTable
 from adt_ai.export_data.runner import ExportDataRequest, ExportDataRunner
@@ -72,7 +73,6 @@ from adt_ai.recompile.runner import (
     RecompileRunner,
 )
 from adt_ai.search_repo.runner import SearchRepoError, SearchRepoRequest, SearchRepoRunner
-from adt_ai.shared.apex_owner import ApexOwnerResolutionError, resolve_configured_apex_owner_schema
 from adt_ai.shared.config import ConfigError, ConfigLoader
 from adt_ai.shared.connections import ConnectionError as ConnectionConfigError
 from adt_ai.shared.connections import ConnectionLoader, ConnectionResult
@@ -202,7 +202,7 @@ class AdtArgumentError(Exception):
 
 
 class AdtArgumentParser(argparse.ArgumentParser):
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         kwargs.setdefault("allow_abbrev", False)
         super().__init__(*args, **kwargs)
 
@@ -210,7 +210,7 @@ class AdtArgumentParser(argparse.ArgumentParser):
         help_text = super().format_help()
         return help_text if help_text.endswith("\n\n") else f"{help_text}\n"
 
-    def error(self, message: str) -> None:
+    def error(self, message: str) -> NoReturn:
         raise AdtArgumentError(message)
 
 
@@ -221,8 +221,109 @@ class AdtArgumentParser(argparse.ArgumentParser):
 # because `_StdoutTracker` is what `cli/runtime.py`, `cli/context.py` and four
 # test files reach for by name and the underscore is not a hint to stop.
 from adt_ai.cli.stream_tracker import (  # noqa: E402,F401 (re-exported for existing importers)
+    TextSink,
     _StderrTracker,
     _StdoutTracker,
 )
 
-__all__ = [name for name in globals() if not name.startswith("__") or name == "__version__"]
+__all__ = [
+    "APEX_EXPORT_ACTIONS",
+    "APEX_VERSION_QUERY",
+    "ActionReporter",
+    "AdtArgumentError",
+    "AdtArgumentParser",
+    "ApexApplication",
+    "ApexDiscovery",
+    "ApexExportRequest",
+    "ApexExportRunner",
+    "ApexFlowError",
+    "ApexFlowRefreshRequest",
+    "ApexFlowRefreshResult",
+    "ApexFlowRefreshRunner",
+    "ApexFlowStore",
+    "ApexOwnerCount",
+    "ApexOwnerResolutionError",
+    "ApexWorkspace",
+    "BranchInfo",
+    "CalendarError",
+    "CalendarRequest",
+    "CalendarRunner",
+    "Callable",
+    "CompileError",
+    "ConfigError",
+    "ConfigLoader",
+    "ConnectionConfigError",
+    "ConnectionLoader",
+    "ConnectionResult",
+    "ConsoleExportDbReporter",
+    "DATABASE_VERSION_OLD_QUERY",
+    "DATABASE_VERSION_QUERY",
+    "DEFAULT_ROW_LIMIT",
+    "DROPBOX_PATH_RE",
+    "DataTable",
+    "DependencyIndexRequest",
+    "DependencyIndexRunner",
+    "DependencyStore",
+    "DiscoveryRequest",
+    "DiscoveryRunner",
+    "DoctorRequest",
+    "DoctorRunner",
+    "DottedProgressBar",
+    "ExportDataRequest",
+    "ExportDataRunner",
+    "ExportDbRequest",
+    "ExportDbRunner",
+    "FlowApp",
+    "FlowEdge",
+    "FlowPage",
+    "GatewayFactory",
+    "MViewAction",
+    "Mapping",
+    "MaterializedView",
+    "ObjectOverview",
+    "OracleGateway",
+    "PLSCOPE_SESSION_STATEMENT",
+    "PUBLIC_COMMANDS",
+    "PUBLIC_MODULES",
+    "Path",
+    "QueryGateway",
+    "REMOVED_COMPATIBILITY_FLAGS",
+    "REVEAL_DEFAULT_LIMIT",
+    "RebuildRequest",
+    "RebuildRunner",
+    "RecompileReporter",
+    "RecompileRequest",
+    "RecompileRunner",
+    "SearchRepoError",
+    "SearchRepoRequest",
+    "SearchRepoRunner",
+    "Sequence",
+    "SynonymInfo",
+    "TextIO",
+    "TextSink",
+    "ValidateRequest",
+    "ValidateRunner",
+    "_StderrTracker",
+    "_StdoutTracker",
+    "__version__",
+    "_current_branch",
+    "annotations",
+    "argparse",
+    "branch_commits",
+    "dataclass",
+    "date",
+    "datetime",
+    "format_action_line",
+    "print_adt_header",
+    "print_adt_table",
+    "print_module_banner",
+    "resolve_configured_apex_owner_schema",
+    "reveal_branches",
+    "switch_to_branch",
+    "sys",
+    "timedelta",
+    "write_all_dumps",
+    "write_dump",
+    "write_file_results",
+    "yaml",
+]

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 # materialized-view health (staleness, compile state, last refresh, indexes).
-# Modeled on CORE23's core_daily_materialized_views_v but rewritten against the
+# Modeled on the CORE framework's core_daily_materialized_views_v but rewritten against the
 # portable user_* views so it works in any schema. Scoped by name/prefix/ignore;
 # object_type is irrelevant here because -mviews opts MVs in explicitly.
 MATERIALIZED_VIEWS_QUERY = """
@@ -57,7 +57,7 @@ ORDER BY m.mview_name
 
 
 # synonym health: local synonyms mapped to targets, privileges, grantability, and validity.
-# Modeled on CORE23's core_daily_synonyms_v, scoped with the portable objects_add /
+# Modeled on the CORE framework's core_daily_synonyms_v, scoped with the portable objects_add /
 # objects_ignore CTE. The report-only flag has no :object_type or :force bind.
 SYNONYMS_QUERY = """
 WITH objects_add AS (
@@ -133,7 +133,7 @@ ORDER BY owner, status, synonym_name, object_type, object_name, privileges
 
 
 # disabled object health: disabled constraints/triggers and invalid/function-disabled indexes.
-# Modeled on CORE23's core_daily_disabled_objects_v, scoped with the portable
+# Modeled on the CORE framework's core_daily_disabled_objects_v, scoped with the portable
 # objects_add / objects_ignore CTE. Alone among the report-only flags, -disabled spans
 # three object types, so it honours :object_type (-type) as well as :object_name
 # (-name): each UNION branch already emits its type as a literal, so the filter just
@@ -239,7 +239,7 @@ ORDER BY owner, object_type, object_name
 
 
 # scheduler job health: today's run details, status, duration, count, and error text.
-# Modeled on CORE23's core_daily_schedulers_v, scoped with the portable
+# Modeled on the CORE framework's core_daily_schedulers_v, scoped with the portable
 # objects_add / objects_ignore CTE. The report-only flag has no :object_type or
 # :force bind.
 SCHEDULER_JOBS_QUERY = """

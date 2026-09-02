@@ -41,6 +41,8 @@ def _resolve_target_app_id(flag: str, app_id: int, target_app: str | None) -> in
     if flag == "PAGE":
         return app_id
     if flag == "CROSS_APP":
+        if target_app is None:
+            return None
         try:
             return int(target_app)
         except (TypeError, ValueError):

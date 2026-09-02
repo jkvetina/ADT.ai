@@ -9,10 +9,16 @@ from adt_ai.cli.constants import (
     ConnectionConfigError,
     ConnectionResult,
 )
+from adt_ai.export_apex.inventory import ApexApplication
 from adt_ai.shared.apex_store import ApexStore
+from adt_ai.shared.connections import ConnectionNotFoundError
 
 
-def listed_applications(discovery, schemas: list[str], app_ids=None) -> list:
+def listed_applications(
+    discovery: ApexDiscovery,
+    schemas: list[str],
+    app_ids: list[int] | None = None,
+) -> list[ApexApplication]:
     """Every application across `schemas`, flattened in schema order.
 
     `#360` wrapped this in a `READING THE APEX INVENTORY:` section with a row
@@ -20,7 +26,7 @@ def listed_applications(discovery, schemas: list[str], app_ids=None) -> list:
     one thing worth having here was `dependencies` and `flow` sharing a single
     listing path instead of two copies of the same loop.
     """
-    found = []
+    found: list[ApexApplication] = []
     for schema in schemas:
         found.extend(discovery.applications(owner=schema, app_ids=app_ids))
     return found
@@ -45,12 +51,24 @@ def apex_lookup_schema(
     `flow -refresh` had this same expression without it (`#638`) and every
     connection carrying `defaults: {}` failed there while `-reveal` beside it
     worked; both callers share this one function now.
+
+    An environment configuring neither leaves the fallback with nothing to stand
+    in, and `schemas[0]` on an empty list is an `IndexError`, so a plain
+    configuration mistake reached the reader as `UNEXPECTED ERROR:` with a
+    Python type on it. Raising the typed error instead lands it on the
+    `CONFIGURATION NOT FOUND:` screen, which names the file to edit (`#670`).
     """
     try:
         default_schemas = connections.default_schemas(environment, kind="apex")
     except ConnectionConfigError:
         default_schemas = []
-    return default_schemas[0] if default_schemas else schemas[0]
+    if default_schemas:
+        return default_schemas[0]
+    if not schemas:
+        raise ConnectionNotFoundError(
+            f"No schemas configured for environment: {environment}"
+        )
+    return schemas[0]
 
 
 def _apex_app_id_value(app_id: str | int) -> str | int:

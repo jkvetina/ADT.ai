@@ -18,6 +18,14 @@ from pathlib import Path
 # deliberately not counted as a deploy.
 DEPLOY_LOG_RE = re.compile(r"^\d{8}-\d{6}_.+_(SUCCESS|ERROR)\.log$", re.IGNORECASE)
 
+# The legacy marker's outcome word, matched whole. A bare `"SUCCESS" in text`
+# pair read the marker as a bag of substrings, so a folder whose marker had
+# collected the deploy transcript flipped to `ERROR` on an object called
+# `ERROR_LOG` or a `0 ERRORS` summary line, and `target_status` then re-deployed
+# a patch that had already landed (`#658`). Underscores and digits count as word
+# characters here because the names that caused it are Oracle identifiers.
+LEGACY_MARKER_RE = re.compile(r"(?<![A-Z0-9_])(SUCCESS|ERROR)(?![A-Z0-9_])")
+
 
 def deploy_log_records(path: Path) -> list[tuple[int, str, str, str]]:
     """Every deploy log in the folder as ``(stamped, when, target, outcome)``, oldest first.
@@ -53,7 +61,8 @@ def deploy_log_records(path: Path) -> list[tuple[int, str, str, str]]:
         if target in stamped_targets:
             continue
         text = log_path.read_text(encoding="utf-8", errors="replace").upper()
-        outcome = "SUCCESS" if "SUCCESS" in text and "ERROR" not in text else "ERROR"
+        markers = set(LEGACY_MARKER_RE.findall(text))
+        outcome = "SUCCESS" if markers == {"SUCCESS"} else "ERROR"
         when = datetime.fromtimestamp(log_path.stat().st_mtime).strftime("%Y%m%d-%H%M%S")
         records.append((0, when, target, outcome))
     return sorted(records)

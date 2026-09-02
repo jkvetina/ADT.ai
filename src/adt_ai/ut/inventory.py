@@ -34,11 +34,24 @@ RESULT_SKIPPED = "SKIP"
 
 @dataclass(frozen=True)
 class SuiteTest:
+    """One ``%test`` annotation, in the spellings something actually reads.
+
+    ``description`` is what utPLSQL's report calls the test, so it is how a
+    verdict is resolved back to a procedure name (``junit._known_test_name``);
+    ``line`` breaks a tie when the dictionary has no declaration order for it;
+    and ``disabled`` / ``disabled_reason`` are what a `SKIP` row says for itself
+    (``render.print_test_rows``).
+
+    A ``path`` field sat here until `#670`, carrying utPLSQL's own runnable
+    identifier. Nothing ever read it: the runner composes the path it runs from
+    the owner and the package name, so this was a column fetched, a field
+    stored, and a question never asked.
+    """
+
     package         : str
     name            : str
     description     : str = ""
     line            : int | None = None
-    path            : str = ""
     disabled        : bool = False
     disabled_reason : str = ""
 
@@ -56,11 +69,16 @@ class SuitePackage:
     nothing, and ``module`` is empty for every package when a project has turned
     the roll-ups off. The roll-up tells those apart by its own switch, never by
     looking for a blank here.
+
+    A ``description`` field carried the `%suite` annotation's own text until
+    `#670`, and no section ever printed it. Adding one is a console redesign,
+    which `PROJECTS/ADT.ai/DELIVERABLES/SOP.md` §Legacy parity makes Jan's call,
+    so the field went rather than sitting here looking like a feature that had
+    been decided on.
     """
 
     name        : str
     status      : str = "VALID"
-    description : str = ""
     tests       : tuple[SuiteTest, ...] = field(default_factory=tuple)
     skip_reason : str = ""
     target      : str = ""
@@ -205,7 +223,7 @@ def coverage_percent(packages: tuple[PackageCoverage, ...] | list[PackageCoverag
     contribute a denominator. Pooling the measured blocks alone therefore
     answered "how well is the reached code reached", which is not the question a
     module row is read for: Jan's 2026-08-09 run printed `COM 3 1639 21 88.0`
-    where `ICT_COM_INVOICE` is 224 well-tested lines and the group's other 1415
+    where `APP_COM_INVOICE` is 224 well-tested lines and the group's other 1415
     lines had never executed (card `#250`).
 
     So the pooled block figure is scaled by **reach**, the share of the set's

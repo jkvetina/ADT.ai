@@ -146,6 +146,7 @@ class RecompileDiscovery:
     DISABLED_OBJECTS_QUERY = queries.DISABLED_OBJECTS_QUERY
     SCHEDULER_JOBS_QUERY = queries.SCHEDULER_JOBS_QUERY
     OBJECTS_MISSING_PLSCOPE_QUERY = queries.OBJECTS_MISSING_PLSCOPE_QUERY
+    INVALID_OBJECT_NAMES_QUERY = queries.INVALID_OBJECT_NAMES_QUERY
     TRAILING_OBJECTS_QUERY = queries.TRAILING_OBJECTS_QUERY
     TRAILING_VIEWS_QUERY = queries.TRAILING_VIEWS_QUERY
     OBJECT_SOURCE_QUERY = queries.OBJECT_SOURCE_QUERY
@@ -239,6 +240,18 @@ class RecompileDiscovery:
         catalog read; does not touch ``RecompileRunner`` or open a connection.
         """
         rows = self.gateway.fetch_all(self.OBJECTS_MISSING_PLSCOPE_QUERY, {})
+        return [RecompileObject(str(row["OBJECT_TYPE"]), str(row["OBJECT_NAME"])) for row in rows]
+
+    def invalid_object_names(self) -> list[RecompileObject]:
+        """Every invalid object in the schema, ignoring the run's -type/-name (#670).
+
+        The root-cause ranking's one unscoped read. It never becomes a compile
+        list, so it cannot widen what the run touches; it only lets the
+        classification tell "the object Oracle blamed is itself invalid, fix that
+        first" from "it is not there at all", which the scoped list gets wrong
+        for anything the run's own filters excluded.
+        """
+        rows = self.gateway.fetch_all(self.INVALID_OBJECT_NAMES_QUERY, {})
         return [RecompileObject(str(row["OBJECT_TYPE"]), str(row["OBJECT_NAME"])) for row in rows]
 
     def errors_summary(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import sys
+from typing import TextIO
 
 from adt_ai.shared.announce import mark_announced, mark_finished
 
@@ -14,7 +15,7 @@ OPENING_GAP = 1
 SECTION_GAP = 2
 
 
-def print_adt_header(message: str, append: str = "", file=None) -> None:
+def print_adt_header(message: str, append: str = "", file: TextIO | None = None) -> None:
     """A titled section: two blank lines above it when something closed above,
     one when nothing did (ADT #468, corrected by #494).
 
@@ -106,7 +107,7 @@ def schema_label(schema: object) -> str:
     """Render a schema name for the console: an Oracle identifier is uppercase.
 
     A schema reaches a header with whatever casing it was spelled, a connection
-    file keyed ``ict_owner`` and a ``-schema ict_owner`` argument both survive to
+    file keyed ``app_owner`` and a ``-schema app_owner`` argument both survive to
     the screen verbatim, while the dictionary they name is uppercase. ``#237``
     uppercased the ``REFRESHING`` header inline and left the four others raw, so
     one run printed both casings a dozen lines apart (ADT #240).
@@ -136,7 +137,7 @@ def module_banner(title: str = "") -> str:
     return f"{ADT_TOOL_NAME}{MODULE_BANNER_SEPARATOR}{title}"
 
 
-def print_module_banner(title: str = "", file=None) -> None:
+def print_module_banner(title: str = "", file: TextIO | None = None) -> None:
     """Print the command H1 through the one shared renderer.
 
     Underlined across its full width, unlike the ``append`` form, where the rule
@@ -180,7 +181,7 @@ def row_left_margin(header: str) -> str:
     return f"{ROW_INDENT}{header} " if header else ROW_INDENT
 
 
-def _commit_line() -> None:
+def commit_line() -> None:
     """Put a finished row's terminating newline on the stream now, not later.
 
     The runtime's ``_StdoutTracker`` holds trailing newlines back so the shared
@@ -191,6 +192,12 @@ def _commit_line() -> None:
     including across the ``apex_timers.yaml`` write that sits between two
     export actions. A row that is done is done: closing it here removes the
     window in which anything else can land on its line (ADT #323).
+
+    **Public, and called from `shared/fixed_width.py` as well, since ADT #670.**
+    The labelled fixed-width row is the other kind of row a command finishes,
+    and its three closers were still ending on a plain ``print``, so `#323`'s
+    window stayed open on every one of them. One helper for both families,
+    because a second copy is how the two ends of a split drift.
     """
     commit = getattr(sys.stdout, "commit_pending", None)
     if callable(commit):
@@ -240,7 +247,7 @@ class DottedProgressBar:
         """
         print(f"{self._row_break(header)}\r{self.failed_text(header)}", flush=True)
         self._open_row = None
-        _commit_line()
+        commit_line()
 
     def _row_break(self, header: str) -> str:
         """The newline that keeps a new row off a line another row still owns.
@@ -297,7 +304,7 @@ class DottedProgressBar:
         print(f"{self._row_break(header)}\r{line}", end=end, flush=True)
         self._open_row = None if close else header
         if close:
-            _commit_line()
+            commit_line()
         elif percent >= 100:
             # **A bar at 100% is a result wearing an open line.** Every bar in
             # the repo holds the figure at 99 until its units are all accounted
@@ -359,4 +366,37 @@ from adt_ai.shared.fixed_width import (  # noqa: E402,F401  (facade: re-exported
     streamed,
 )
 
-__all__ = [name for name in globals() if not name.startswith("_")]
+__all__ = [
+    "ADT_TOOL_NAME",
+    "DEFAULT_VALUE_WIDTH",
+    "DROPBOX_PATH_RE",
+    "DottedProgressBar",
+    "FAILED_STATUS",
+    "FixedWidthProgressPrinter",
+    "LABEL_ELISION",
+    "LEADER_DOTS_MINIMUM",
+    "MODULE_BANNER_SEPARATOR",
+    "OPENING_GAP",
+    "ROW_INDENT",
+    "SECTION_GAP",
+    "annotations",
+    "commit_line",
+    "fit_label",
+    "fixed_width_count_line",
+    "fixed_width_count_suffix",
+    "fixed_width_row",
+    "fixed_width_status_line",
+    "format_seconds",
+    "mark_announced",
+    "mark_finished",
+    "module_banner",
+    "open_section",
+    "print_adt_header",
+    "print_module_banner",
+    "progress_dot_capacity",
+    "re",
+    "row_left_margin",
+    "schema_label",
+    "streamed",
+    "sys",
+]

@@ -24,7 +24,6 @@ from adt_ai.cli.constants import (
     write_file_results,
 )
 from adt_ai.cli.context import (
-    DebugQueryGateway,
     StartupContext,
     _config_search_paths,
     _flatten_arg_groups,
@@ -35,13 +34,14 @@ from adt_ai.cli.context import (
     _print_startup_debug,
     _repo_root,
 )
-from adt_ai.cli.gateways import build_gateway
+from adt_ai.cli.gateways import build_gateway, debug_wrapped
 from adt_ai.cli.recompile_reporters import (
     _print_invalid_object_errors,
     _print_recompile_overview_table,
     print_root_causes,
 )
 from adt_ai.cli.schema_sections import run_schema_sections
+from adt_ai.recompile.contracts import DependentsProvider
 from adt_ai.recompile.render import (
     _MVIEW_COLUMNS,
     _ConsoleMViewReporter,
@@ -106,7 +106,9 @@ def _is_focused_run(request: RecompileRequest) -> bool:
     )
 
 
-def _invalid_dependents_provider(args: argparse.Namespace, schema: str):
+def _invalid_dependents_provider(
+    args: argparse.Namespace, schema: str
+) -> DependentsProvider:
     """Reverse edges among the still-invalid objects, read from the local mirror.
 
     ``dependencies -refresh`` already maintains ``config/internal/dependencies.db``; this
@@ -164,7 +166,9 @@ def _run_recompile_for_schema(
             if gateway_factory
             else build_gateway(startup, connection)
         )
-        return DebugQueryGateway(gateway) if args.debug else gateway
+        # Shared wrap, so the console guard keeps the nesting `build_gateway`
+        # documents (`#670`). No cache here: the runner reconnects per pass.
+        return debug_wrapped(gateway, debug=args.debug)
 
     _print_connection_block(recompile_gateway_factory(), connection, debug=args.debug)
 
@@ -311,18 +315,22 @@ def _run_discovery(
         schema = default_schemas[0] if default_schemas else "APP"
     connection = connections.resolve(environment=environment, schema=schema)
 
-    gateway = (
+    gateway = debug_wrapped(
         gateway_factory(schema)
         if gateway_factory
-        else build_gateway(startup, connection)
+        else build_gateway(startup, connection),
+        debug=args.debug,
     )
-    if args.debug:
-        gateway = DebugQueryGateway(gateway)
 
-    _print_connection_block(gateway, connection, debug=args.debug)
-
+    # Ahead of the connection block, the way `recompile` and both exporters
+    # already print it. Behind it, the STARTUP rows were the newest thing on
+    # screen when the statement ran, so `-debug` alone put a silent blocking
+    # phase in front of every discovery. `#670` stopped `-debug` masking that
+    # from the console guard, which is how it was found.
     if args.debug:
         _print_startup_debug(startup)
+
+    _print_connection_block(gateway, connection, debug=args.debug)
 
     result = DiscoveryRunner(gateway, fatal_error=_is_database_connection_error).run(
         DiscoveryRequest(

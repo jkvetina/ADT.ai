@@ -253,3 +253,11 @@ class _StderrTracker(_StdoutTracker):
         if text:
             self._stdout_tracker.commit_pending()
         return super().write(text)
+
+
+#: Anything the CLI writes a finished line to: the runtime's own stdout
+#: wrapper, or a plain stream such as `sys.stderr` when a machine format sends
+#: the chrome off stdout. The wrapper is deliberately NOT a `TextIO` -- it
+#: defines `write`/`flush` and delegates the rest -- so the sink is this union
+#: rather than the file protocol alone.
+type TextSink = TextIO | _StdoutTracker

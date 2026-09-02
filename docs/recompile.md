@@ -45,7 +45,13 @@ adtai recompile -env DEV -jobs
 
 ## Output
 
-A run reads the overview, recompiles, retries failures in reverse order on a fresh connection, then re-checks. When anything is still invalid it prints three more sections and exits non-zero:
+A run reads the overview, recompiles, retries whatever failed on a fresh connection, then re-checks.
+
+The retry runs in reverse order, and repeats for as long as each pass compiles something new. Reversing alone is enough when the dependencies run with the alphabet, and not enough when they criss-cross.
+
+`A` needs `C`, `C` needs `B`, `B` needs nothing: one retry leaves `A` and `C` invalid on a schema two more passes would finish. A pass that compiles nothing new is where it stops, so a genuinely broken object costs one wasted pass and never a loop.
+
+When anything is still invalid the run prints three more sections and exits non-zero:
 
 ```text
 OBJECTS OVERVIEW:
@@ -105,6 +111,8 @@ A flat list stops helping once it is long. Drop a sequence and the package that 
 
 `BLAST` counts the invalid objects that clear transitively once this one compiles, blank for none, and it orders the table: most downstream damage first, ties broken by error count. What to fix is listed below the table, grouped by verdict, because a qualified culprit is longer than any column left at 80 characters.
 
+**Every knock-on is counted under one root only.** An object that two unrelated roots both break belongs to the nearer of them, because fixing either root alone would not clear it, and two rows each claiming it would add up to more damage than the schema has. Where one root is upstream of another, both figures still count what sits below them, so the head of a chain reports the whole chain.
+
 Each heading doubles as the verdict's definition:
 
 - **MISSING**, an object or identifier it needs is not there. The listed name is what to restore.
@@ -112,12 +120,17 @@ Each heading doubles as the verdict's definition:
 - **SOURCE**, the object's own text does not parse (`PLS-00103`). Nothing upstream to fix, so no list follows it.
 - **UNKNOWN**, invalid with no compile error to explain it. Also listless.
 
+A fifth verdict appears in the `CAUSE` column and has no list of its own:
+
+- **CYCLE**, the blame runs in a circle. A blames B and B blames A, which a half-applied deployment leaves behind routinely. Every member of such a circle is a knock-on by its own evidence, so the table would have had no rows at all. One member is promoted instead, the one with the most compile errors of its own, ties broken by type then name. Fix it and the circle breaks; the rest clear behind it.
+
 The knock-ons are classified but not listed again: `INVALID OBJECTS:` above already names them.
 
-The ranking reads three sources, because no one of them is enough:
+The ranking reads four sources, because no one of them is enough:
 
 - **The compile errors.** Oracle usually names the culprit, and whether that culprit is itself invalid separates a knock-on from a root. An owner prefix is stripped only when it is the connected schema's own.
 - **The stored source**, for errors that name nothing. `ORA-00942` reports no object and Oracle records no dependency row for a reference that never resolved, so the error's own line and position are read back from `user_source` for exactly those lines.
+- **The schema's invalid objects**, all of them, whatever `-type` and `-name` narrowed the run to. It answers one question, is the object Oracle blamed itself invalid, and the answer must not depend on what the run selected: a `-type "PACKAGE BODY"` run cannot see the spec that broke the body, and used to report it as MISSING and tell you to restore something already there. Only the classification reads this list. What gets compiled stays scoped exactly as you asked.
 - **The dependency mirror**, `config/internal/dependencies.db`, read offline and never refreshed here. It supplies the edges no error text carries, which is what makes `BLAST` meaningful. A project with no mirror ranks on the compile errors alone; that is never an error. Keep it current with `adtai dependencies -refresh -schema <SCHEMA>`.
 
 There is no lock report. It read `gv$locked_object`, which needs a DBA grant no application schema holds, and Oracle offers no unprivileged substitute. Nothing is lost operationally: the connection bootstrap sets `DDL_LOCK_TIMEOUT = 10`, so a lock wait is bounded, and an object that stays locked surfaces as its own compile error.
@@ -141,7 +154,7 @@ Words are rejoined only when they name a real type, which is what keeps two type
 
 ## Force, and narrowing by drift
 
-Bare `-force` recompiles every matching object, not just the invalid ones. Combined with a compile modifier (`-native`, `-interpreted`, `-level`, `-scope`, `-warnings`) it instead recompiles only the objects whose **current** settings drift from the state you asked for, and then applies the full requested state rather than the mismatched setting alone:
+Bare `-force` recompiles every matching object, not just the invalid ones, and each of them exactly once. Combined with a compile modifier (`-native`, `-interpreted`, `-level`, `-scope`, `-warnings`) it instead recompiles only the objects whose **current** settings drift from the state you asked for, and then applies the full requested state rather than the mismatched setting alone:
 
 ```bash
 adtai recompile -env DEV -force -level 2

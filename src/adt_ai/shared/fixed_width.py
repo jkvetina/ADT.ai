@@ -18,7 +18,14 @@ columns on a 78-column grid, 2026-08-20.
 
 from __future__ import annotations
 
-from adt_ai.shared.progress import ROW_INDENT, DottedProgressBar, print_adt_header
+from collections.abc import Callable
+
+from adt_ai.shared.progress import (
+    ROW_INDENT,
+    DottedProgressBar,
+    commit_line,
+    print_adt_header,
+)
 
 #: How short the leader run may get before the label yields instead.
 #:
@@ -195,6 +202,10 @@ class FixedWidthProgressPrinter:
         dots_len = self.line_width - len(left) - len(right) - 2
         dots = "." * max(LEADER_DOTS_MINIMUM, dots_len)
         print(f" {dots} {right}")
+        # A row with its value on it is finished, so its newline goes out now
+        # rather than waiting for whatever prints next to flush it (`#670`);
+        # `DottedProgressBar` closes its own rows this way since `#323`.
+        commit_line()
         self._active_left = None
 
     def fail(
@@ -223,9 +234,14 @@ class FixedWidthProgressPrinter:
         dots_len = self.line_width - len(left) - len(status) - 2
         dots = "." * max(LEADER_DOTS_MINIMUM, dots_len)
         print(f" {dots} {status}")
+        commit_line()  # as in `finish` above, and `fail` comes through here
         self._active_left = None
 
     def line(self, text: str) -> None:
+        # Deliberately NOT committed. This prints whatever it is handed, a
+        # trailing blank included, and the shared `TIMER` footer normalizes
+        # exactly those retractable blanks at the end of a run (`#269`). Only a
+        # row carrying a VALUE is finished; a free line is still the caller's.
         print(text)
 
 
@@ -240,7 +256,7 @@ def open_section(title: str) -> FixedWidthProgressPrinter:
     return FixedWidthProgressPrinter()
 
 
-def streamed(progress: FixedWidthProgressPrinter, label: str, read):
+def streamed[T](progress: FixedWidthProgressPrinter, label: str, read: Callable[[], T]) -> T:
     """Stream `label`, run `read`, close the row with how much came back.
 
     The whole shape of the console contract in one call, for the commonest case

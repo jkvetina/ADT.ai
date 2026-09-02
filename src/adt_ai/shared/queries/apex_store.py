@@ -123,4 +123,21 @@ APEX_WATERMARK_UPSERT = (
     "ON CONFLICT(environment, app_id, format) DO UPDATE SET exported_at = excluded.exported_at"
 )
 
-__all__ = [name for name in globals() if not name.startswith("_")]
+__all__ = [
+    "APEX_APPLICATIONS_QUERY",
+    "APEX_APPLICATION_QUERY",
+    "APEX_CHECKSUM_UPSERT",
+    "APEX_DEVELOPERS_QUERY",
+    "APEX_DEVELOPER_UPSERT",
+    "APEX_STORE_LIFT_1",
+    "APEX_STORE_SCHEMA",
+    "APEX_TIMERS_QUERY",
+    "APEX_TIMER_UPSERT",
+    "APEX_WATERMARKS_QUERY",
+    "APEX_WATERMARK_QUERY",
+    "APEX_WATERMARK_UPSERT",
+    "META_TABLE_DDL",
+    "WATERMARKS_DDL",
+    "annotations",
+    "apex_application_upsert",
+]

@@ -13,14 +13,13 @@ from adt_ai.cli.constants import (
     print_module_banner,
 )
 from adt_ai.cli.context import (
-    DebugQueryGateway,
     _flatten_arg_groups,
     _load_startup_context,
     _print_connection_block,
     _print_startup_debug,
 )
 from adt_ai.cli.export_reporters import ConsoleExportDataReporter
-from adt_ai.cli.gateways import build_gateway
+from adt_ai.cli.gateways import build_gateway, cached_schema_gateway_factory
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.export_data.groups import resolve_group_inputs
 
@@ -67,18 +66,15 @@ def _run_export_data(
         _print_startup_debug(startup)
 
     group_rules = resolve_group_inputs(startup.config_search_paths)
-    gateway_cache: dict[str, QueryGateway] = {}
 
     def default_gateway_factory(schema: str) -> QueryGateway:
         return build_gateway(startup, schema_connections[schema])
 
-    selected_gateway_factory = gateway_factory or default_gateway_factory
-
-    def export_data_gateway_factory(schema: str) -> QueryGateway:
-        if schema not in gateway_cache:
-            gateway = selected_gateway_factory(schema)
-            gateway_cache[schema] = DebugQueryGateway(gateway) if args.debug else gateway
-        return gateway_cache[schema]
+    # Per-schema cache and `-debug` wrap in one shared helper, so the console
+    # guard keeps the nesting `build_gateway` documents (`#670`).
+    export_data_gateway_factory = cached_schema_gateway_factory(
+        gateway_factory or default_gateway_factory, debug=args.debug
+    )
 
     runner = ExportDataRunner(export_data_gateway_factory)
 

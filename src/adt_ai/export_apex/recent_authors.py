@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from adt_ai.export_apex.inventory import ApexApplication
@@ -129,7 +129,7 @@ def _identity_key(value: object) -> str:
     return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
 
 
-def _unique_nonblank(values: list[str | None]) -> list[str]:
+def _unique_nonblank(values: Iterable[str | None]) -> list[str]:
     seen: set[str] = set()
     unique: list[str] = []
     for value in values:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 from adt_ai.dependencies import queries
@@ -52,10 +52,11 @@ def _constraint_by_name(
     connection: sqlite3.Connection,
     constraint_name: str,
 ) -> dict[str, Any] | None:
-    return connection.execute(
+    row: dict[str, Any] | None = connection.execute(
         queries.FK_CONSTRAINT_BY_NAME_QUERY,
         (constraint_name,),
     ).fetchone()
+    return row
 
 
 def _constraint_by_key(
@@ -63,10 +64,11 @@ def _constraint_by_key(
     owner: str,
     constraint_name: str,
 ) -> dict[str, Any] | None:
-    return connection.execute(
+    row: dict[str, Any] | None = connection.execute(
         queries.FK_CONSTRAINT_BY_KEY_QUERY,
         (owner, constraint_name),
     ).fetchone()
+    return row
 
 
 def _table_foreign_keys(
@@ -128,7 +130,9 @@ def _constraint_tree_row(
     }
 
 
-def _iterate_frames(frame, *first_call) -> None:
+def _iterate_frames(
+    frame: Callable[..., Iterator[tuple[Any, ...]]], *first_call: Any
+) -> None:
     """Drive ``frame`` generators with an explicit stack.
 
     Depth-first with exact recursion semantics, each ``yield`` is a deferred
@@ -152,7 +156,9 @@ def _collect_references(
     seen: set[tuple[Any, Any]],
     result: list[tuple[tuple[str, ...], dict[str, Any]]],
 ) -> None:
-    def frame(row: Mapping[str, Any], path: tuple[str, ...]):
+    def frame(
+        row: Mapping[str, Any], path: tuple[str, ...]
+    ) -> Iterator[tuple[Any, ...]]:
         key = (row["OWNER"], row["CONSTRAINT_NAME"])
         if key in seen:
             return
@@ -185,7 +191,9 @@ def _collect_dependencies(
     seen: set[tuple[Any, Any]],
     result: list[tuple[tuple[str, ...], dict[str, Any]]],
 ) -> None:
-    def frame(owner: str, table_name: str, path: tuple[str, ...]):
+    def frame(
+        owner: str, table_name: str, path: tuple[str, ...]
+    ) -> Iterator[tuple[Any, ...]]:
         for key_constraint in _table_key_constraints(connection, owner, table_name):
             child_fks = _referencing_foreign_keys(
                 connection, key_constraint["OWNER"], key_constraint["CONSTRAINT_NAME"]

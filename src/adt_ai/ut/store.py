@@ -259,7 +259,9 @@ def record_run(
                     variant,
                 ),
             )
-            run_id = int(cursor.lastrowid)
+            run_id = cursor.lastrowid
+            if run_id is None:  # pragma: no cover - sqlite sets it on an INSERT
+                return None
             connection.executemany(
                 queries.INSERT_PACKAGE_STATEMENT,
                 [
@@ -389,7 +391,7 @@ MIGRATIONS: tuple[Migration, ...] = (Migration(None, "1", _lift_legacy),)
 def _key(schema: str) -> str:
     """Schemas are Oracle identifiers, so the store keys on one spelling.
 
-    `-schema ICT_OWNER` and `-schema ict_owner` are the same schema, and
+    `-schema APP_OWNER` and `-schema app_owner` are the same schema, and
     `dependencies.db` already carries the scar of not normalising: it holds both
     casings side by side with two refresh stamps five days apart.
     """

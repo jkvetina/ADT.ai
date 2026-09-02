@@ -3,7 +3,7 @@ name: adt
 description: "Lean ADT.ai command router for Oracle/APEX work. Invoke only when the user explicitly asks an agent to use the ADT skill by name; never auto-load it for repository work, general discussion, development, review, command lookup, or incidental mentions of ADT."
 metadata:
   created: "2026-06-10"
-  updated: "2026-09-02 01:32"
+  updated: "2026-09-02 22:09"
   version: "2.0.0"
   tags: [oracle, apex, deployment, cli, database]
 ---
@@ -41,7 +41,7 @@ adtai calendar -calendar
 
 ## connection: edit connection configuration
 
-Read [docs/connection.md](../../docs/connection.md) and, for credentials, [docs/connection_passwords.md](../../docs/connection_passwords.md). Changes preview by default and apply only with `-go`. Let password actions prompt; do not put passwords or literal encryption keys in shell history. Prefer key-file paths for `-old-key`, `-new-key`, and `-key`.
+Read [docs/connection.md](../../docs/connection.md) and, for credentials, [docs/connection_passwords.md](../../docs/connection_passwords.md). Changes preview by default and apply only with `-go`. Let password actions prompt; do not put passwords or literal encryption keys in shell history. Prefer key-file paths for `-old-key`, `-new-key`, and `-key`. With no terminal attached the prompt reads stdin, so `-create -go` and `-add-schema -go` write their file with no password, while `-set-pwd` and `-set-wallet-pwd` refuse and ask for a terminal.
 
 ```bash
 adtai connection -add-schema -env DEV -schema APP
@@ -116,7 +116,7 @@ adtai recompile -schema APP
 
 ## search_repo: search Git history
 
-Read [docs/search_repo.md](../../docs/search_repo.md). Searching is read-only. `-restore` writes historical copies; adding `-stage` replaces original paths and stages them in Git.
+Read [docs/search_repo.md](../../docs/search_repo.md). Searching is read-only. `-restore` writes historical copies; adding `-stage` replaces original paths and stages them in Git, refusing a file with uncommitted changes rather than overwrite it.
 
 ```bash
 adtai search_repo -name APP_ORDERS -files

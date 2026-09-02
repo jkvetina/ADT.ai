@@ -2,7 +2,7 @@
 
 An Oracle owner is an uppercase identifier, but ADT never reads it from the
 dictionary: it comes from a `-schema` argument or a connection-file key, where
-`ict_owner` is as likely as `ICT_OWNER`. The query side has always known that
+`app_owner` is as likely as `APP_OWNER`. The query side has always known that
 (`store._owner_params` uppercases its filter). The write side did not, so
 `record_refresh` and the `refresh_schema*` writers stored the caller's own
 spelling, and refreshing one schema both ways produced two scopes holding two
@@ -12,7 +12,7 @@ That is not a cosmetic split. `patch/files.py` names every install target
 `schema.upper()`, so `patch -create`'s gate, its `Run:` hint and `#367`'s
 auto-refresh all speak the uppercase name, while `patch/staleness.py` folded the
 two refresh stamps onto one key and kept whichever the query returned last. On
-`IVORY_DEV`, 2026-08-20, that was the lowercase one, frozen two hours behind:
+`a client DEV environment`, 2026-08-20, that was the lowercase one, frozen two hours behind:
 the gate read a stamp its own remedy could not advance, so the command refused
 identically however many times it was run (ADT `#413`).
 
@@ -49,7 +49,7 @@ _SCHEMA_SCOPE = "schema"
 def normalize_owner(owner: str) -> str:
     """The one spelling a schema is stored under.
 
-    Trimmed as well as uppercased: a `-schema ' ict_owner'` typo would otherwise
+    Trimmed as well as uppercased: a `-schema ' app_owner'` typo would otherwise
     open a third scope that no `.upper()` anywhere else could ever match.
     """
     return str(owner).strip().upper()
@@ -95,7 +95,7 @@ def _winner(spellings: set[str], stamps: dict[str, str], upper: str) -> str:
     """The spelling whose refresh is current, ties going to the canonical one.
 
     Read off the `refreshes` stamps rather than guessed from the case: the newest
-    refresh is the one that describes the schema, and on `IVORY_DEV` that
+    refresh is the one that describes the schema, and on `a client DEV environment` that
     happened to be the uppercase row while on another project it would not be.
     A scope with no stamp at all has never completed a refresh, so it sorts
     below every scope that has.

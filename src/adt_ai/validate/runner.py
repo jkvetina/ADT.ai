@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from adt_ai.shared.db import run_sqlcl_script
+from adt_ai.shared.sqlcl_quoting import reject_unquotable
 from adt_ai.validate.files import ValidateTarget
 from adt_ai.validate.report import FolderReport, parse_validate_output
 
@@ -99,5 +100,8 @@ class ValidateRunner:
 
 
 def _build_script(target: ValidateTarget) -> str:
-    # Quoted so a path with spaces survives SQLcl's own tokenizer.
-    return "\n".join([VALIDATE_COMMAND.format(input=target.path.as_posix()), "exit;"])
+    # Quoted so a path with spaces survives SQLcl's own tokenizer, and refused
+    # when the path holds a `"` SQLcl's quoting cannot carry (ADT #653).
+    path = target.path.as_posix()
+    reject_unquotable(path, role="staging folder")
+    return "\n".join([VALIDATE_COMMAND.format(input=path), "exit;"])

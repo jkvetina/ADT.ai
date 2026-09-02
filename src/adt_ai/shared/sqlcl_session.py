@@ -82,6 +82,12 @@ START_TIMEOUT_SECONDS = 90.0
 # `query_timeout_seconds`, so a long-running query is not cut off by the transport.
 STATEMENT_TIMEOUT_SECONDS = 1_200.0
 
+# How long a shutdown waits for the reader thread to notice its console is gone.
+# The console has already been killed by then, so `read` is returning rather than
+# blocking and this is measured in milliseconds; the budget only exists so a
+# console that somehow never returns cannot wedge the shutdown that killed it.
+PUMP_JOIN_SECONDS = 5.0
+
 _SENTINEL = "<<<ADT-SQLCL-{n}>>>"
 _PROMPT = "SQL>"
 
@@ -157,6 +163,7 @@ class SqlclSession:
         self.launcher = launcher
         self._console: Any = None
         self._lines: Queue[str | None] = Queue()
+        self._pump_thread: threading.Thread | None = None
         self._counter = 0
         self._secrets: set[str] = set()
 
@@ -214,6 +221,7 @@ class SqlclSession:
                 console.wait(5)
         finally:
             console.close()
+            self._join_pump()
 
     def _abort(self) -> None:
         """Kill and reap a console that cannot become a usable session."""
@@ -226,6 +234,26 @@ class SqlclSession:
             console.wait(5)
         with contextlib.suppress(Exception):
             console.close()
+        self._join_pump()
+
+    def _join_pump(self) -> None:
+        """Reap the reader thread, after the console it reads has been closed.
+
+        A console that is killed and reaped leaves its pump behind unless
+        somebody waits for it (ADT #670), and `_abort` exists precisely so the
+        caller can try `start` again: one leaked thread per retry, each still
+        holding a handle on a console the session has already forgotten.
+
+        Called last on both shutdown paths, because the join is only short when
+        the console is already closed -- that is what makes the blocked `read`
+        return. The wait is bounded for the same reason every other wait here
+        is: the thread is a daemon, so a console that never returns costs a
+        leaked reader at exit rather than a command that will not end.
+        """
+        pump, self._pump_thread = self._pump_thread, None
+        if pump is None:
+            return
+        pump.join(timeout=PUMP_JOIN_SECONDS)
 
     def __enter__(self) -> SqlclSession:
         self.start()
@@ -249,36 +277,46 @@ class SqlclSession:
         # that differs per platform (ADT #449). Everything below this line is the
         # same on a pty and on a pseudo console.
         self._console = open_console(self.launcher, dict(_sqlcl_environment()))
-        threading.Thread(target=self._pump, daemon=True).start()
+        # Kept on the instance so both shutdown paths can reap it (ADT #670).
+        self._pump_thread = threading.Thread(target=self._pump, daemon=True)
+        self._pump_thread.start()
 
     def _pump(self) -> None:
         if self._console is None:
             raise SqlclSessionError("SQLcl console is not open")
         console = self._console
+        # Both bound ONCE, so this reader keeps writing to the queue it was
+        # started for. `start` hands a retry a fresh `Queue`, and a reader that
+        # re-read `self._lines` at every put would drop its EOF marker into that
+        # one, telling a console spawned seconds ago that it had already exited
+        # (ADT #670). `_join_pump` should mean no reader is ever still running
+        # by then; this is what makes the failure impossible rather than
+        # unlikely.
+        lines = self._lines
         buffer = b""
         try:
             while True:
                 chunk = console.read(65536)
                 if not chunk:
-                    self._lines.put(None)
+                    lines.put(None)
                     return
                 buffer += chunk
                 *complete, buffer = buffer.split(b"\n")
                 for line in complete:
                     # `clean` is the identity on a pty and takes the rendering
                     # escapes off a pseudo console (ADT #449).
-                    self._lines.put(
+                    lines.put(
                         console.clean(line.decode("utf-8", "replace")).rstrip("\r")
                     )
                 # The prompt carries no newline, so flush a tail ending in one.
                 tail = console.clean(buffer.decode("utf-8", "replace"))
                 if tail.rstrip().endswith(_PROMPT):
-                    self._lines.put(tail)
+                    lines.put(tail)
                     buffer = b""
         except BaseException:
             # A dead reader must wake startup/the active exchange. Without the
             # EOF marker the foreground waits until its full 90/1200s deadline.
-            self._lines.put(None)
+            lines.put(None)
 
     def _await_prompt(self, timeout: float = START_TIMEOUT_SECONDS) -> None:
         deadline = time.monotonic() + timeout

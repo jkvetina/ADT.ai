@@ -106,7 +106,28 @@ def _project_relative(path: Path, root: Path) -> str:
         return _display(path)
 
 
-def _print_database_error(error: Exception) -> None:
+def _print_debug_hint(debug_available: bool) -> None:
+    """The traceback hint, on the commands that can actually act on it.
+
+    Every failure screen closed with it unconditionally, and five commands have
+    never declared the flag: `calendar`, `dependencies`, `doctor`, `rebuild` and
+    `search_repo`. `console.md` §Which command takes which says so three sections
+    below the failure-screen table that promised the hint on every refusal, and
+    the same page opens the shared-arguments section with "A flag a command does
+    not take is a parser error, not a flag it ignores" -- so the line was advice
+    that fails with `unrecognized arguments: -debug` when you follow it (`#656`).
+
+    The caller passes ``hasattr(args, "debug")``: argparse gives a namespace the
+    attribute only where the parser declared the flag, so the parser stays the
+    single authority and a command gaining `-debug` gains the hint with it.
+    """
+    if not debug_available:
+        return
+    print("Use -debug to show the Python traceback.", file=sys.stderr)
+    print(file=sys.stderr)
+
+
+def _print_database_error(error: Exception, *, debug_available: bool = True) -> None:
     # A failing query attaches its SQL to the exception (OracleGateway). When the
     # SQL is present the failure happened *after* connecting, so it is a query
     # error, not a connection failure, show the offending query and a query
@@ -127,8 +148,7 @@ def _print_database_error(error: Exception) -> None:
             "Check the connection file and wallet under ADT.ai connections/wallets, then rerun.",
             file=sys.stderr,
         )
-    print("Use -debug to show the Python traceback.", file=sys.stderr)
-    print(file=sys.stderr)
+    _print_debug_hint(debug_available)
 
 
 def _config_error_screen(error: Exception) -> tuple[str, str | None]:
@@ -138,7 +158,7 @@ def _config_error_screen(error: Exception) -> tuple[str, str | None]:
     return "CONFIGURATION NOT FOUND:", _PROJECT_FOLDER_REMEDY
 
 
-def _print_config_error(error: Exception) -> None:
+def _print_config_error(error: Exception, *, debug_available: bool = True) -> None:
     # A configuration that cannot be LOCATED and one that was found and read are
     # different failures. ADT #182 split the first pair (a missing config file
     # against a `path_objects` value ADT cannot use) and ADT #407 finished the
@@ -153,7 +173,7 @@ def _print_config_error(error: Exception) -> None:
     # configuration failure at all, so it goes to the shared database banner,
     # whose wallet and credential advice is the remedy that fits it.
     if isinstance(error, ConnectFailedError):
-        _print_database_error(error)
+        _print_database_error(error, debug_available=debug_available)
         return
     header, remedy = _config_error_screen(error)
     settle_screen_before_error()
@@ -162,11 +182,10 @@ def _print_config_error(error: Exception) -> None:
     print(file=sys.stderr)
     if remedy is not None:
         print(remedy, file=sys.stderr)
-    print("Use -debug to show the Python traceback.", file=sys.stderr)
-    print(file=sys.stderr)
+    _print_debug_hint(debug_available)
 
 
-def _print_sqlcl_error(error: Exception) -> None:
+def _print_sqlcl_error(error: Exception, *, debug_available: bool = True) -> None:
     # SQLcl exiting non-zero is a failure ADT.ai raises on purpose, so it gets a
     # banner that says so rather than the internal-surprise catch-all. The
     # message IS the captured transcript: printed on its own lines, never after
@@ -176,11 +195,10 @@ def _print_sqlcl_error(error: Exception) -> None:
     print_adt_header("SQLCL SCRIPT FAILED:", file=sys.stderr)
     print(_display(error), file=sys.stderr)
     print(file=sys.stderr)
-    print("Use -debug to show the Python traceback.", file=sys.stderr)
-    print(file=sys.stderr)
+    _print_debug_hint(debug_available)
 
 
-def _print_unexpected_error(error: Exception) -> None:
+def _print_unexpected_error(error: Exception, *, debug_available: bool = True) -> None:
     # Catch-all for any failure that is not a recognised config/database error.
     # The command banner has already printed (it is the first handler statement),
     # so this only adds a friendly framing instead of leaking a raw traceback.
@@ -197,5 +215,4 @@ def _print_unexpected_error(error: Exception) -> None:
     else:
         print(f"{type(error).__name__}: {message}", file=sys.stderr)
     print(file=sys.stderr)
-    print("Use -debug to show the Python traceback.", file=sys.stderr)
-    print(file=sys.stderr)
+    _print_debug_hint(debug_available)

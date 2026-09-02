@@ -111,4 +111,20 @@ EXPIRED_RUNS_QUERY = (
 DELETE_PACKAGES_STATEMENT = "DELETE FROM package_coverage WHERE run_id IN ({marks})"
 DELETE_RUNS_STATEMENT = "DELETE FROM runs WHERE run_id IN ({marks})"
 
-__all__ = [name for name in globals() if not name.startswith("_")]
+__all__ = [
+    "ADD_VARIANT_STATEMENT",
+    "DELETE_PACKAGES_STATEMENT",
+    "DELETE_RUNS_STATEMENT",
+    "DROP_LEGACY_INDEX_STATEMENT",
+    "EXPIRED_RUNS_QUERY",
+    "INSERT_PACKAGE_STATEMENT",
+    "INSERT_RUN_STATEMENT",
+    "LIFT_RECORDED_AT_STATEMENT",
+    "META_TABLE_DDL",
+    "RUNS_QUERY",
+    "RUN_COLUMNS_PRAGMA",
+    "RUN_COUNT_QUERY",
+    "RUN_PERCENTS_QUERY",
+    "STORE_SCHEMA_SCRIPT",
+    "annotations",
+]

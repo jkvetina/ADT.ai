@@ -18,7 +18,9 @@ the schema would fetch rows nothing can render.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from typing import Any
 
 from adt_ai.shared.db import QueryGateway
 from adt_ai.ut import queries
@@ -164,9 +166,9 @@ def resolve_targets(
     """Each suite's `ut_match` name, resolved against the packages that exist.
 
     **A suite is often named for what it tests ABOUT a package, not for the
-    package.** `ict_int_ariba_pushback_ut` derives `ICT_INT_ARIBA_PUSHBACK`,
-    which is no package in `ICT_OWNER`; the code it exercises is
-    `ict_int_ariba`. Four more suites in that one schema are the same shape, and
+    package.** `app_int_ariba_pushback_ut` derives `APP_INT_ARIBA_PUSHBACK`,
+    which is no package in `APP_OWNER`; the code it exercises is
+    `app_int_ariba`. Four more suites in that one schema are the same shape, and
     every one of them ran green while its blocks were collected by the profiler
     and dropped by the report (`#436`). So a name that resolves to nothing falls
     back to the longest package it is a prefix of, which is a name the schema
@@ -174,11 +176,11 @@ def resolve_targets(
 
     **Longest first, and it stops on the first hit.** A suite whose derived name
     IS a package keeps it, so nothing that already paired can be re-pointed, and
-    a schema holding both `ICT_INT_ARIBA` and `ICT_INT` credits an ARIBA suite to
+    a schema holding both `APP_INT_ARIBA` and `APP_INT` credits an ARIBA suite to
     ARIBA rather than to whichever name happens to be shorter.
 
-    **Nothing resolves, nothing is invented.** `ict_int_fusion_ariba_ut` walks
-    `ICT_INT_FUSION_ARIBA`, `ICT_INT_FUSION`, `ICT_INT` and finds none of them;
+    **Nothing resolves, nothing is invented.** `app_int_fusion_ariba_ut` walks
+    `APP_INT_FUSION_ARIBA`, `APP_INT_FUSION`, `APP_INT` and finds none of them;
     its target stays empty and `cells.coverage_cell` marks the row unpaired.
     Attaching it to some near name would put a figure another suite earned beside
     a suite that did not earn it, which is worse than saying nothing.
@@ -204,7 +206,7 @@ def _resolve(target: str, known: set[str]) -> str:
     return ""
 
 
-def _type(row: dict) -> str:
+def _type(row: Mapping[str, Any]) -> str:
     """A row's source type, in the one spelling everything downstream uses.
 
     Both queries map ``ALL_OBJECTS``' ``PACKAGE``/``TYPE`` onto ``PACKAGE BODY``
@@ -218,7 +220,7 @@ def _type(row: dict) -> str:
     return str(row.get("OBJECT_TYPE") or PACKAGE_BODY)
 
 
-def _key(row: dict) -> tuple[str, str]:
+def _key(row: Mapping[str, Any]) -> tuple[str, str]:
     """The ``(type, name)`` a measured row is filed under, name upper-cased."""
     return _type(row), str(row.get("OBJECT_NAME") or "").upper()
 

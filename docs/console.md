@@ -93,6 +93,8 @@ A refusal names what to go and fix, so the header is chosen by what your next mo
 
 Every one exits non-zero, prints the command banner above and the `TIMER` footer below, and ends with the `-debug` hint. `-debug` re-raises instead, for the traceback.
 
+The hint prints only where the parser declares `-debug`. `calendar`, `dependencies`, `doctor`, `rebuild` and `search_repo` never did, so they close on the message alone: a flag a command does not take is a parser error, and advice you cannot follow is worse than none.
+
 The project-folder footer belongs to the first row alone. When every connection failure took that first screen, a hand-edited YAML typo, an unauthenticated vault CLI and a failed SQLcl connect all reported `CONFIGURATION NOT FOUND:` and advised running from a folder holding the file that had just been read.
 
 ### Multi-schema runs
@@ -143,7 +145,7 @@ Eight flags mean the same thing wherever they are accepted, so they are document
 | Argument | Repeatable | Default | Description |
 | -------- | ---------- | ------- | ----------- |
 | `-root`, `--root` | No | `.` | Project root folder. Config and connection files resolve from here, and so does the Git history the history commands read. |
-| `-config-dir`, `--config-dir` | Yes | none | Folder holding project config YAML. ADT.ai loads the shipped defaults first, then overlays these. |
+| `-config-dir`, `--config-dir` | Yes | none | Folder holding project config YAML. ADT.ai loads the shipped defaults first, then overlays these instead of `<root>/config/` and `<root>/`. |
 | `-env`, `--env` | No | connection default environment | Connection environment to use, for example `DEV`. |
 | `-schema`, `--schema` | Yes (one per run on `connection` and `discovery`) | environment default schema | Schema to work on. Where it repeats, pass it several times, space-separate it (`-schema APP CORE`), use comma lists, or use `%` patterns such as `CORE%`. A literal `_` or `%` is escaped with `\`, quoted so the shell leaves it alone: `-schema 'APP\_%'`. |
 | `-key`, `--key` | No | `ADT_KEY` or `ADT_KEY_CMD` | Encryption key value or path to a key file. Prefer a file path; a literal value is visible in shell history and the process list. |
@@ -168,7 +170,9 @@ A flag a command does not take is a parser error, not a flag it ignores.
 
 ### How the files are found
 
-`-root` is where a project starts. Config is layered rather than replaced: ADT.ai reads the shipped `ADT.ai/config/` defaults first, then overlays `-config-dir` folders, then `<root>/config/`, then `<root>/`. A project-local value therefore wins over a shipped one.
+`-root` is where a project starts. ADT.ai reads the shipped `ADT.ai/config/` defaults first and overlays the project's own config on top, so a project-local value wins over a shipped one. The project's config is `<root>/config/` and then `<root>/`, and `STARTUP.sql` resolves the same way.
+
+**`-config-dir` replaces both of those folders** with the ones it names rather than adding to them. That is what lets one project's command run against another project's config with nothing from the current folder leaking in.
 
 Connection files work the other way round. It is **first match wins**, with no merging, and the candidates are tried in this order, where `<FOLDER>` is the `-root` directory's own name:
 

@@ -18,7 +18,7 @@ now sits in the same folder.
 **The key is the schema and the `-name` variant together.** `-name` selects the
 suites that *run* (`#231`, the flag narrows the run, not just the printed rows),
 so a filtered run is a genuinely smaller job than an unfiltered one. Keying on
-the schema alone would let a two-second `-name ICT_SEC%` run seed the countdown
+the schema alone would let a two-second `-name APP_SEC%` run seed the countdown
 of a thirty-eight-second full run, and the estimate would be wrong in whichever
 direction the user last ran.
 """
@@ -75,9 +75,15 @@ def previous_seconds(path: Path, schema: str, variant: str) -> float:
     target means, see `progress.SuiteProgressBar`.
     """
     variants = _variants(load_yaml_mapping(path), schema)
+    recorded = variants.get(variant) or 0
+    # Two refusals rather than one, because they answer different values: a
+    # stored list or mapping is not a number at all, and a string that is not
+    # a number only says so once `float()` has looked at it.
+    if not isinstance(recorded, int | float | str):
+        return 0.0
     try:
-        return float(variants.get(variant) or 0)
-    except (TypeError, ValueError):
+        return float(recorded)
+    except ValueError:
         return 0.0
 
 
@@ -102,7 +108,7 @@ def _schema_key(schema: str) -> str:
     """Oracle schemas are uppercase identifiers; the key follows.
 
     ADT.ai learns the name from a connection-file key or a `-schema` argument,
-    where `ict_owner` is as likely as `ICT_OWNER`, the same reason the console
+    where `app_owner` is as likely as `APP_OWNER`, the same reason the console
     renders it through `schema_label()`. Folding it here too is what stops one
     run seeding a history no other run reads. Storage only: the raw spelling
     still owns paths and the connection itself.

@@ -43,6 +43,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          # The whole history, so the guard below can ask whether the tag is
+          # reachable from main; a depth-1 checkout cannot answer that.
+          fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -63,6 +66,31 @@ jobs:
             ref="${{ github.ref }}"
             echo "tag=${ref#refs/tags/}" >> "$GITHUB_OUTPUT"
             echo "dry-run=false" >> "$GITHUB_OUTPUT"
+          fi
+      # v0.9.6's tag was pushed three times at three commits while its Release
+      # record was already public: each push started a fresh build of different
+      # bytes against one record and one immutable PyPI version. A tag is
+      # released once. The tag has to sit on main (the reviewed merge, not a
+      # branch tip), and a tag whose Release is already published is refused
+      # outright: a failed run past this point means a new patch version and a
+      # fresh tag, never a moved one. The record the publish contract creates is
+      # a DRAFT, invisible to this read-only token, so the read below answers
+      # 404 for "draft or nothing" and a body only for "already public".
+      - name: The tag sits on main and has not been released before
+        if: steps.resolve.outputs.dry-run == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.resolve.outputs.tag }}"
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$(git rev-parse "$tag^{commit}")" origin/main; then
+            echo "::error::$tag is not reachable from main; release the reviewed merge commit" >&2
+            exit 1
+          fi
+          state="$(gh api "repos/${{ github.repository }}/releases/tags/$tag" --jq '.draft' 2>/dev/null || echo missing)"
+          if [ "$state" = "false" ]; then
+            echo "::error::$tag already has a published release; cut a new patch version, never move a tag" >&2
+            exit 1
           fi
       # Build tooling is pinned; the runtime dependency floors in
       # pyproject.toml stay deliberately broad. Pinning what builds the wheel
@@ -214,6 +242,33 @@ jobs:
         run: >-
           python .github/scripts/release_supply_chain.py downloaded
           --manifest release/release-manifest.json --downloaded published
+
+  finalize:
+    # The Release goes public here and nowhere else. The publish contract
+    # creates it as a draft, so a reader of /releases sees nothing until the
+    # wheel is built, attested, attached, served by PyPI and read back
+    # byte-for-byte; v0.9.6 was public with no assets while its build was
+    # still failing. The Latest badge is granted in the same step and read
+    # back, because a release can be published while /releases/latest still
+    # serves the previous version (`#438`).
+    name: publish the release record
+    needs: [build, assets, publish, downloaded]
+    if: needs.build.outputs.dry-run == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the draft Release and hand it the Latest badge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ needs.build.outputs.tag }}"
+          gh release edit "$tag" --repo "${{ github.repository }}" --draft=false --latest
+          latest="$(gh api "repos/${{ github.repository }}/releases/latest" --jq '.tag_name')"
+          if [ "$latest" != "$tag" ]; then
+            echo "::error::/releases/latest serves $latest after publishing $tag" >&2
+            exit 1
+          fi
 
   rehearsal:
     # `workflow_dispatch` with dry_run walks every stage above over the same

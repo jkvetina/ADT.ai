@@ -18,6 +18,12 @@ from adt_ai.connection.errors import ConnectionEditError
 from adt_ai.shared import crypto
 from adt_ai.shared.config import is_enabled
 
+# Re-exported (`as` same-name is the explicit-reexport idiom both mypy --strict
+# and ruff's F401 recognize): `connection/runner.py` still imports the constant
+# from here rather than from `shared` directly (#670 moved the definition out of
+# this module, not its public name).
+from adt_ai.shared.sqlcl_names import SECRET_SAFE_YAML_WIDTH as SECRET_SAFE_YAML_WIDTH
+
 if TYPE_CHECKING:
     from adt_ai.connection.runner import ConnectionEditRequest
 
@@ -29,10 +35,6 @@ ENCRYPTABLE_PAIRS = (
     ("wallet_pwd", "wallet_pwd!"),
     ("wallet_password", "wallet_password!"),
 )
-
-# Line width for every writer that touches a connection file. Wide enough that a
-# stored secret stays on its own key's line: see the note in `runner._yaml`.
-SECRET_SAFE_YAML_WIDTH = 4096
 
 
 def fingerprint_key(value_key: str) -> str:

@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import argparse
 import re
+from collections.abc import Mapping
 from datetime import datetime
+from functools import partial
 from pathlib import Path
+from typing import Any
 
 # The month-grid renderer lives in the calendar package; aliased here so the
 # `_print_calendar_grid` call site and its tests keep their existing name.
 from adt_ai.calendar.render import render_calendar_grid as _print_calendar_grid
-from adt_ai.cli.commands_history_reveal import _run_rebuild_reveal
+from adt_ai.cli.commands_history_reveal import GIT_LOOKUP_FAILURES, _run_rebuild_reveal
 from adt_ai.cli.constants import (
     CalendarError,
     CalendarRequest,
     CalendarRunner,
+    ConfigError,
     ConfigLoader,
     RebuildRequest,
     RebuildRunner,
@@ -30,6 +34,7 @@ from adt_ai.cli.context import (
     _repo_root,
 )
 from adt_ai.patch.object_folders import object_folder_resolver
+from adt_ai.rebuild.models import RebuildError
 from adt_ai.rebuild.render import ConsoleRebuildReporter
 from adt_ai.shared.commit_cache import DEFAULT_COMMITS_TEMPLATE, open_store
 from adt_ai.shared.commit_window import resolve_history_floor
@@ -78,7 +83,7 @@ def _run_rebuild(args: argparse.Namespace) -> int:
         cache_file_template = str(
             config.get("repo_commits_file") or DEFAULT_COMMITS_TEMPLATE
         )
-        branches = _flatten_arg_groups(args.branch)
+        branches = _flatten_arg_groups(args.branch) or []
         branch_label = _rebuild_branch_label(root, branches)
         # Default mode is an incremental update since the last cached commit.
         # An explicit -limit window runs a full bounded rebuild instead. (In
@@ -108,7 +113,14 @@ def _run_rebuild(args: argparse.Namespace) -> int:
             request,
             reporter=ConsoleRebuildReporter(branch_label, since_label=since_date),
         )
-    except Exception as exc:
+    # What this block can legitimately fail with, and nothing else (`#670`):
+    # the runner's own refusal (a `-branch` that is not in the repo), a config
+    # value that is not a number (`resolve_history_floor`), a config file that
+    # cannot be read, and the git failures the walk shares with `-reveal`. A
+    # bare `except Exception` swallowed `TypeError` and friends too, so a defect
+    # in this file printed the same one-line `Error:` a missing branch does,
+    # with no traceback and no `-debug` hint.
+    except (RebuildError, ConfigError, ValueError, *GIT_LOOKUP_FAILURES) as exc:
         print(f"Error: {exc}")
         print()
         return 1
@@ -121,7 +133,7 @@ def _run_rebuild(args: argparse.Namespace) -> int:
 VERIFY_LINE_WIDTH = 78
 
 # The branch column is what gives way when the row is too wide. A 40-wide column
-# put `build/JANK  9451 commits, 75522-84972, CONTIGUOUS` at 83 characters and
+# put `build/DEMO  9451 commits, 75522-84972, CONTIGUOUS` at 83 characters and
 # the cap took the verdict off the end, printing `CONTI`: the row's whole answer,
 # clipped, on the one command whose job is to report it. Real numbers are what
 # showed it, on a store whose floor is 75522 because the history window seeded it
@@ -233,9 +245,7 @@ def _run_search_repo(args: argparse.Namespace) -> int:
                     record.files[:file_limit],
                     nested    = nested,
                     folder_of = folder_of,
-                    decorate  = lambda path, leaf, statuses=record.file_statuses: (
-                        f"{statuses.get(path, 'M')} | {leaf}"
-                    ),
+                    decorate  = partial(_status_cell, statuses=record.file_statuses),
                     depth     = 2,
                 )
             print()
@@ -308,7 +318,7 @@ def _resolve_calendar_month(value: str) -> str:
     return value
 
 
-def _history_config(args: argparse.Namespace, root: Path) -> dict:
+def _history_config(args: argparse.Namespace, root: Path) -> dict[str, Any]:
     """Load history configuration; malformed configuration is never downgraded."""
     return ConfigLoader(
         _config_search_paths(getattr(args, "config_dir", None), root, _repo_root())
@@ -327,13 +337,24 @@ def _commits_template(args: argparse.Namespace, root: Path) -> str:
 
 def _search_repo_file_limit(args: argparse.Namespace) -> int:
     if args.files is not None:
-        return args.files
+        return int(args.files)
     if args.file or args.type or args.name:
         return 20
     return 0
 
 def _display_commit_date(value: str) -> str:
     return value[:16].replace("T", " ")
+
+
+def _status_cell(path: str, leaf: str, *, statuses: Mapping[str, str]) -> str:
+    """One `<STATUS> | <leaf>` file row for the rebuild listing.
+
+    A named function rather than the lambda-with-a-default this replaced: the
+    default was there to bind `record.file_statuses` per commit, which is what
+    `partial` says outright, and a lambda carrying an extra parameter cannot
+    be read against the two-argument `decorate` hook it is passed to.
+    """
+    return f"{statuses.get(path, 'M')} | {leaf}"
 
 
 def _rebuild_branch_label(root: Path, branches: list[str]) -> str:

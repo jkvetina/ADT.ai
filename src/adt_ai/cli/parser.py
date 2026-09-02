@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from typing import cast
 
 from adt_ai.cli.constants import (
     PUBLIC_MODULES,
@@ -72,7 +73,11 @@ def _command_title(command: str) -> str:
 def _command_parser(parser: argparse.ArgumentParser, command: str) -> argparse.ArgumentParser:
     for action in parser._actions:
         if isinstance(action, argparse._SubParsersAction):
-            return action.choices[command]
+            # `choices` holds `ArgumentParser` values at runtime and is untyped
+            # in the stubs for a bare `_SubParsersAction`, so the one lookup is
+            # narrowed here rather than at each of the three call sites that all
+            # want one parser back.
+            return cast(argparse.ArgumentParser, action.choices[command])
     raise KeyError(command)
 
 

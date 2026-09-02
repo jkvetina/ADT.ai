@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 # ruff: noqa: F401 - compatibility facade re-exports moved helpers.
+from pathlib import Path
+
 import adt_ai.rebuild.cache as _cache
 from adt_ai.rebuild.cache import (
     _build_records as _cache_build_records,
@@ -25,6 +27,7 @@ from adt_ai.rebuild.reveal import (
     reveal_branches,
     switch_to_branch,
 )
+from adt_ai.shared.commit_discovery import CommitRecord
 
 
 class _NullReporter:
@@ -48,7 +51,7 @@ def _build_records(
     request: RebuildRequest,
     branches: list[str],
     reporter: RebuildReporter,
-) -> tuple[dict[str, dict[int, object]], dict[str, object]]:
+) -> tuple[dict[str, dict[int, CommitRecord]], dict[str, Path]]:
     original_commit_files = _cache._commit_files
     _cache._commit_files = _commit_files
     try:
@@ -75,4 +78,27 @@ class RebuildRunner:
         )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = [
+    "BranchInfo",
+    "CommitRecord",
+    "Path",
+    "REVEAL_DEFAULT_LIMIT",
+    "RebuildError",
+    "RebuildReporter",
+    "RebuildRequest",
+    "RebuildResult",
+    "RebuildRunner",
+    "RevealResult",
+    "_NullReporter",
+    "_build_records",
+    "_cache",
+    "_cache_build_records",
+    "_commit_files",
+    "_current_branch",
+    "_require_branches_exist",
+    "_resolve_branches",
+    "annotations",
+    "branch_commits",
+    "reveal_branches",
+    "switch_to_branch",
+]

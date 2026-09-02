@@ -105,6 +105,8 @@ Terms inside one flag are AND-matched, and different flags are AND-matched with 
 
 `-stage` writes to the original path instead and runs `git add` on it. When a restore with `-stage` matches more than one version of one file, the newest match wins in the working tree, so name a specific `-commit` or `-hash` when staging.
 
+A file with uncommitted local changes is never overwritten this way: `-stage` refuses it and lists it under `COULD NOT RESTORE:` instead, so the edit is never silently lost.
+
 ## Arguments
 
 | Argument | Repeatable | Default | Description |

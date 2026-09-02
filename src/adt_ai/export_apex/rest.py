@@ -39,9 +39,9 @@ def _cleanup_sqlcl(output: str) -> list[str]:
 # SQLcl releases the WHENEVER guard after the connect block, so errors raised by
 # the request body keep their own semantics, which means a ``rest export;`` that
 # failed still leaves SQLcl exiting 0. An empty module list is legitimate on its
-# own (a schema may genuinely publish no REST services), but an empty list *plus*
-# an Oracle/SQLcl diagnostic is a failed export that wrote no files and reported
-# nothing (ADT #188).
+# own (a schema may genuinely publish no REST services), but an Oracle/SQLcl
+# diagnostic anywhere in the transcript is a failed export that wrote no files
+# and reported nothing (ADT #188).
 _SQLCL_ERROR_PREFIXES = ("ORA-", "SP2-", "PLS-")
 
 
@@ -51,6 +51,24 @@ def _rest_export_error(lines: list[str]) -> str | None:
         if line.lstrip().startswith(_SQLCL_ERROR_PREFIXES):
             return line.strip()
     return None
+
+# The statement that closes the export's own PL/SQL block, and therefore the only
+# proof SQLcl got to the end of one. Spelled once because two readers depend on
+# it: `_split_rest_modules` ends its walk here, and `_rest_export_completed`
+# decides whether that walk saw a whole export or the front of one.
+_REST_TERMINATOR = "COMMIT;"
+
+
+def _rest_export_completed(lines: list[str]) -> bool:
+    """Did the transcript reach the export's own closing ``COMMIT;``?
+
+    A `rest export;` killed part-way, by the `rest_timeout_seconds` deadline or a
+    dropped session, prints no diagnostic at all, and the split flushes whatever
+    the last `ORDS.DEFINE_MODULE` block held as if it were a finished module. So
+    a transcript that carries modules but never terminates is untrustworthy, not
+    partial, and nothing from it may be written (ADT #670).
+    """
+    return any(line.strip() == _REST_TERMINATOR for line in lines)
 
 # `ORDS.CREATE_ROLE` and `ORDS.DEFINE_PRIVILEGE` close a `rest export`, and both
 # are schema-scoped: one privilege can name several modules, so it belongs to
@@ -82,7 +100,7 @@ def _split_rest_modules(lines: list[str]) -> tuple[list[str], list[list[str]], l
         stripped = line.strip()
         if state == "done":
             continue
-        if stripped == "COMMIT;":
+        if stripped == _REST_TERMINATOR:
             if current:
                 modules.append(current)
                 current = []
@@ -162,8 +180,14 @@ def rest_timeout_seconds(config: Mapping[str, object]) -> int:
     mistake, and honouring it would restore the unbounded run this exists to
     end.
     """
+    raw = config.get("rest_timeout_seconds")
+    # The narrowing is the old `except TypeError` written as a test: a YAML
+    # mapping is `object`-valued, and anything that is not a number or a
+    # numeric string was already falling through to the default.
+    if not isinstance(raw, int | float | str):
+        return DEFAULT_REST_TIMEOUT_SECONDS
     try:
-        value = int(config.get("rest_timeout_seconds"))  # type: ignore[arg-type]
+        value = int(raw)
     except (TypeError, ValueError):
         return DEFAULT_REST_TIMEOUT_SECONDS
     return value if value > 0 else DEFAULT_REST_TIMEOUT_SECONDS

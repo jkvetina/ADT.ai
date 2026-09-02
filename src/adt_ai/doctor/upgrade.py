@@ -14,6 +14,7 @@ from adt_ai.doctor._base import (
     _normalize_target_version,
     _version_key,
 )
+from adt_ai.shared.zip_extract import safe_extractall
 
 
 def _matching_tag(tags: set[str], release: str) -> str:
@@ -396,18 +397,15 @@ class DoctorUpgradeMixin(DoctorHost):
         "permission denied", which is why a freshly upgraded SQLcl reported
         ``not found`` on the following run. Re-apply each member's stored mode.
 
-        Each member is checked before extraction so a crafted ``../`` (or
-        absolute) path cannot escape ``target`` and overwrite files elsewhere.
+        The containment check that refuses a crafted ``../`` (or absolute)
+        entry lives in `shared/zip_extract.safe_extractall` (#670), the same
+        guard the wallet zip extractor in `shared/sqlcl_connect.py` uses.
         """
-        target_root = target.resolve()
+        safe_extractall(archive, target, what="SQLcl zip")
         for member in archive.infolist():
-            member_path = (target / member.filename).resolve()
-            if target_root != member_path and target_root not in member_path.parents:
-                raise RuntimeError(f"Unsafe SQLcl zip entry: {member.filename}")
-            extracted = Path(archive.extract(member, target))
             mode = member.external_attr >> 16
             if mode:
-                extracted.chmod(mode & 0o7777)
+                (target / member.filename).chmod(mode & 0o7777)
 
     @staticmethod
     def _ensure_executable(launcher: Path) -> None:

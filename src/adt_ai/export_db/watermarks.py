@@ -12,10 +12,17 @@ importing `ExportDbRequest` back from the module that imports this one.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from adt_ai.shared.recent_state import RecentStore, may_advance
 
+if TYPE_CHECKING:
+    # Named for the checker only, which is what the module docstring above
+    # says this module exists to avoid doing at runtime.
+    from adt_ai.export_db.request import ExportDbRequest
 
-def is_narrowed(request) -> bool:
+
+def is_narrowed(request: ExportDbRequest) -> bool:
     """Whether the run selected a subset of the schema rather than covering it.
 
     A narrowed run must never advance a watermark: a `-name`/`-type`/`-by`/`-my`
@@ -33,14 +40,14 @@ def is_narrowed(request) -> bool:
     )
 
 
-def stored_watermark(request, schema: str) -> str | None:
+def stored_watermark(request: ExportDbRequest, schema: str) -> str | None:
     if request.environment is None:
         return None
     return RecentStore.load(request.root).get("export_db", [request.environment, schema])
 
 
 def advance_watermark(
-    request,
+    request: ExportDbRequest,
     schema: str,
     candidate: str | None,
     stored: str | None,

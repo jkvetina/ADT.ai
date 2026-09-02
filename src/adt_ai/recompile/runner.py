@@ -7,6 +7,8 @@ objects are still invalid and summarize their errors.
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 from adt_ai.recompile.contracts import (
     DependentsProvider as DependentsProvider,
 )
@@ -47,6 +49,28 @@ from adt_ai.recompile.root_causes import rank_for_run
 from adt_ai.shared.db import QueryGateway
 
 
+class _ObjectScope(TypedDict):
+    """The four binds every object-wide statement declares."""
+
+    object_name: str
+    object_type: str
+    prefix: str
+    ignore: str
+
+
+class _NameScope(TypedDict):
+    """`_ObjectScope` minus `object_type`, for the single-object-class reports.
+
+    Spelled as its own shape rather than a total=False variant of the one
+    above: an unused named bind fails against a real database, so which keys
+    a statement gets is the contract, not an optional extra.
+    """
+
+    object_name: str
+    prefix: str
+    ignore: str
+
+
 class RecompileRunner:
     def __init__(
         self,
@@ -64,7 +88,7 @@ class RecompileRunner:
         self.dependents_for: DependentsProvider = lambda _nodes: {}
 
     def run(self, request: RecompileRequest) -> RecompileResult:
-        scope = {
+        scope: _ObjectScope = {
             "object_name" : request.object_name,
             "object_type" : request.object_type,
             "prefix"      : request.prefix,
@@ -75,7 +99,7 @@ class RecompileRunner:
         # binds each statement actually declares: python-oracledb hands the dict
         # straight to cursor.execute, and an unused named bind fails against a real
         # database while passing silently through FakeGateway.
-        name_scope = {
+        name_scope: _NameScope = {
             "object_name" : request.object_name,
             "prefix"      : request.prefix,
             "ignore"      : request.ignore,
@@ -148,10 +172,10 @@ class RecompileRunner:
             mview_actions: list[MViewAction] = []
             for mview in mviews:
                 self.reporter.begin_mview(mview)
-                actions = _apply_mview_actions(gateway, [mview], request)
-                mview_actions.extend(actions)
+                acted = _apply_mview_actions(gateway, [mview], request)
+                mview_actions.extend(acted)
                 current = mview
-                if actions:
+                if acted:
                     reread = discovery.materialized_views(
                         object_name = mview.object_name,
                         prefix      = request.prefix,
@@ -214,21 +238,30 @@ class RecompileRunner:
                     raise
                 troublemakers.append(obj)
 
-        # retry the leftovers in reverse on a fresh connection (errors swallowed)
+        # Retry the leftovers in reverse on a fresh connection (errors swallowed),
+        # and keep retrying while a pass still resolves something.
+        #
+        # **One reversed pass is not enough, and the shortfall is not exotic.**
+        # The compile order is alphabetical within object type, so a dependency
+        # that runs against the alphabet is repaired by reversing it, which is
+        # what the single pass was for. A dependency graph that criss-crosses,
+        # A needs C, C needs B, B needs D, is resolvable in no fixed order at
+        # all: one pass leaves A and C invalid and the run reports failure on a
+        # schema that two more passes would have finished, with nothing on
+        # screen to say a retry was even close.
+        #
+        # A pass that compiles nothing new cannot be helped by another one, so
+        # that is where it stops. Every other pass strictly shrinks the list, so
+        # the loop is bounded by the number of troublemakers, and the console
+        # shape is unchanged: this whole block prints nothing, then and now.
         if troublemakers:
             gateway = self.gateway_factory()
-            for obj in reversed(troublemakers):
-                try:
-                    gateway.execute(self._statement_for(obj, request))
-                except Exception:
-                    # Unreachable with request.debug=True: the *first* compile loop
-                    # above already re-raises the moment any object fails, before
-                    # troublemakers is ever populated, so this retry loop only ever
-                    # runs with debug False. Kept for structural symmetry with that
-                    # loop's except.
-                    if request.debug:
-                        raise  # pragma: no cover, see comment above
-                    pass
+            pending = list(troublemakers)
+            while pending:
+                remaining = self._retry_pass(gateway, pending, request)
+                if len(remaining) == len(pending):
+                    break
+                pending = remaining
 
         # reconnect for the final re-check, mirroring old ADT
         gateway = self.gateway_factory()
@@ -255,6 +288,35 @@ class RecompileRunner:
             success       = not invalid,
         )
 
+    @classmethod
+    def _retry_pass(
+        cls,
+        gateway: QueryGateway,
+        pending: list[RecompileObject],
+        request: RecompileRequest,
+    ) -> list[RecompileObject]:
+        """One reversed sweep over the leftovers; what still failed comes back.
+
+        Reversed because that is the cheap half of the fix: the first pass runs
+        alphabetically within type, so a spec compiled after its body is exactly
+        what one reversal repairs. Successive passes alternate direction as a
+        side effect, which costs nothing and helps a graph that reads either way.
+        """
+        remaining: list[RecompileObject] = []
+        for obj in reversed(pending):
+            try:
+                gateway.execute(cls._statement_for(obj, request))
+            except Exception:
+                # Unreachable with request.debug=True: the *first* compile loop
+                # in run() already re-raises the moment any object fails, before
+                # troublemakers is ever populated, so this pass only ever runs
+                # with debug False. Kept for structural symmetry with that
+                # loop's except.
+                if request.debug:
+                    raise  # pragma: no cover, see comment above
+                remaining.append(obj)
+        return remaining
+
     @staticmethod
     def _statement_for(obj: RecompileObject, request: RecompileRequest) -> str:
         return build_compile_statement(
@@ -270,7 +332,7 @@ class RecompileRunner:
     @staticmethod
     def _trailing_view_candidates(
         discovery: RecompileDiscovery,
-        scope: dict[str, str],
+        scope: _ObjectScope,
     ) -> list[TrailingObject]:
         """Which in-scope views actually carry trailing whitespace (#122).
 

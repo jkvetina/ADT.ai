@@ -20,6 +20,7 @@ from adt_ai.export_data.groups import (
     plan_data_group_moves,
 )
 from adt_ai.export_data.runner import _data_folder
+from adt_ai.shared.config import as_int
 
 
 def run_data_groups_move(
@@ -47,7 +48,7 @@ def run_data_groups_move(
         )
         return 2
 
-    groups_min = int(config.get("groups_min", 5))
+    groups_min = as_int(config.get("groups_min", 5))
     exit_code = 0
     for schema in schemas:
         data_folder = _data_folder(root, dict(config), schema)

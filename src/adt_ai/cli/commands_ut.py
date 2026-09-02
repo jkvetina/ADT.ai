@@ -8,14 +8,13 @@ from adt_ai.cli.constants import (
     print_module_banner,
 )
 from adt_ai.cli.context import (
-    DebugQueryGateway,
     StartupContext,
     _flatten_arg_groups,
     _load_startup_context,
     _print_connection_block,
     _print_startup_debug,
 )
-from adt_ai.cli.gateways import build_gateway
+from adt_ai.cli.gateways import build_gateway, debug_wrapped
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.ut.grouping import gated_packages
 from adt_ai.ut.limits import error_limit, packages_below, resolve_gate
@@ -73,13 +72,14 @@ def _run_ut_for_schema(
     naming: UtNaming | None = None,
 ) -> int:
     connection = startup.connections.resolve(environment=environment, schema=schema)
-    gateway = (
+    # Shared wrap, so the console guard keeps the nesting `build_gateway`
+    # documents (`#670`).
+    gateway = debug_wrapped(
         gateway_factory(schema)
         if gateway_factory
-        else build_gateway(startup, connection)
+        else build_gateway(startup, connection),
+        debug=args.debug,
     )
-    if args.debug:
-        gateway = DebugQueryGateway(gateway)
     _print_connection_block(gateway, connection, debug=args.debug)
 
     # -name is multi-pattern (append + nargs="+"), matching recompile/export_db.
@@ -195,7 +195,9 @@ def _run_ut_for_schema(
     # already printed, and what follows is only the list of packages under the
     # bar. It survives `-compact` for the reason `ERRORS & FAILURES:` does, a
     # status word does not say WHICH package has to be covered.
-    if below:
+    # `below` is `()` whenever `threshold` is None, set together above; the
+    # threshold is the half the gate renderer needs, so it is the half to test.
+    if below and threshold is not None:
         print_coverage_gate(below, threshold)
     return 0 if passed else 1
 

@@ -27,6 +27,7 @@ from adt_ai.ut.cells import (
     status_cell,
 )
 from adt_ai.ut.grouping import (
+    ModuleRow,
     by_module,
     flatten,
     outcomes_by_package,
@@ -174,7 +175,7 @@ def print_compact_row(result: Ut3Result, *, passed: bool) -> None:
     )
 
 
-def _module_row(name: str, rows: list[dict[str, object]]) -> dict[str, object]:
+def _module_row(name: str, rows: list[ModuleRow]) -> dict[str, object]:
     """One roll-up row: a named group, the unnamed total, or the compact score.
 
     All three go through one builder so the total can never be a different

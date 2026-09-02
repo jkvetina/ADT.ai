@@ -99,6 +99,8 @@ TIMER: 0s
 - **Refresh** (`-refresh`) connects through the default APEX schema, resolves the application's owner, reconnects through that schema, and reloads the application's metadata, pages and edges. A refresh is a full rewrite in one transaction: the old rows are deleted and replaced, never appended to.
 - **Delete** (`-delete`) removes the application, its pages and its edges from the store.
 
+One action per run. `-refresh`, `-delete`, `-to` and `-from` name four different jobs, so two of them in one invocation is an argument error and exits `2` rather than the first one quietly winning.
+
 ## What counts as an edge
 
 An edge is any link from a source component to a target page: page branches, buttons, list entries, tabs, navigation-bar entries and report column links. Report column links use the APEX dictionary's `COLUMN_ALIAS` value as the label, since that is the field the report-column views expose.

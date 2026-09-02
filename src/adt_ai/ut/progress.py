@@ -1,11 +1,11 @@
 """`RUNNING TESTS:`, the dotted bar a default `ut` run watches.
 
-Under `-name` the heading names the patterns, `RUNNING TESTS FOR ICT_INT%:`, so
+Under `-name` the heading names the patterns, `RUNNING TESTS FOR APP_INT%:`, so
 the one line on screen while the suites run says which part of the schema is
 running. See `section_title`.
 
 The section it replaced printed a status row per test, which on Jan's
-`ICT_OWNER` is 1156 rows: `SUMMARY PER SUITE:` landed past the end of the terminal's
+`APP_OWNER` is 1156 rows: `SUMMARY PER SUITE:` landed past the end of the terminal's
 scrollback and the report was correct and unreadable. `-dense` answered that
 with 35 counted lines, and those counts turned out to be `SUMMARY PER SUITE:` again, one
 section early. So the whole axis moved (Jan, 2026-08-13): the per-test listing
@@ -70,7 +70,7 @@ def section_title(names: tuple[str, ...] = ()) -> str:
 
     Upper-cased because every other word in an ADT section header is, and the
     patterns are Oracle identifiers-with-wildcards where case carries no meaning:
-    `-name ict_int%` and `-name ICT_INT%` select the same suites, so they must
+    `-name app_int%` and `-name APP_INT%` select the same suites, so they must
     not print two different headings.
 
     `-name` is repeatable and multi-value, so the heading joins what was passed

@@ -9,6 +9,7 @@ runs a command against one.
 from __future__ import annotations
 
 import argparse
+import subprocess
 from pathlib import Path
 
 from adt_ai.cli.constants import (
@@ -28,6 +29,18 @@ REVEAL_NAME_WIDTH = 78
 # `-switch` prints the branch name and each commit line flush-left, every line
 # capped at this width so a long branch name or commit subject can't wrap.
 SWITCH_LINE_WIDTH = 78
+
+# What a git-backed lookup here can legitimately fail with, and nothing else
+# (`#670`). `run_git` runs with `check=True`, so a non-zero git exit arrives as
+# `CalledProcessError`; `git_checkout` reports a refused checkout as
+# `RuntimeError` carrying git's own stderr; git missing from PATH is an
+# `OSError`. A bare `except Exception` around the same calls also swallowed
+# `TypeError` and friends, so a defect in this module reported itself as a tidy
+# `Error:` line with exit 1, indistinguishable from a dirty working tree and
+# carrying no traceback and no `-debug` hint. The siblings in
+# `commands_history.py` (`_run_search_repo`, `_run_calendar`) already narrow to
+# their runner's own error types; these three are the ones that did not.
+GIT_LOOKUP_FAILURES = (RuntimeError, OSError, subprocess.SubprocessError)
 
 
 def _run_rebuild_reveal(
@@ -57,7 +70,7 @@ def _run_rebuild_reveal(
         result = reveal_branches(
             root, patterns=patterns, mine=mine, since=since_date, limit=limit
         )
-    except Exception as exc:
+    except GIT_LOOKUP_FAILURES as exc:
         print(f"Error: {exc}")
         print()
         return 1
@@ -91,7 +104,7 @@ def _run_rebuild_switch(
         result = reveal_branches(
             root, patterns=patterns, mine=mine, since=since_date, limit=None
         )
-    except Exception as exc:
+    except GIT_LOOKUP_FAILURES as exc:
         print(f"Error: {exc}")
         print()
         return 1
@@ -108,7 +121,7 @@ def _run_rebuild_switch(
     if _current_branch(root) != target.name:
         try:
             switch_to_branch(root, target.name)
-        except Exception as exc:
+        except GIT_LOOKUP_FAILURES as exc:
             print(f"Error: {exc}")
             print()
             return 1

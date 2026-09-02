@@ -196,7 +196,7 @@ class DependencyStore(DependencyQueries):
         offset alone rather than erasing it.
 
         A schema scope is normalized the way its mirror rows are, so `-schema
-        ict_owner` and `-schema ICT_OWNER` stamp one row rather than two (ADT
+        app_owner` and `-schema APP_OWNER` stamp one row rather than two (ADT
         #413). An app scope is a numeric id and carries no case question.
         """
         if scope_type == "schema":
@@ -245,3 +245,27 @@ class DependencyStore(DependencyQueries):
 
     def __exit__(self, *_exc: object) -> None:
         self.close()
+
+__all__ = [
+    "Any",
+    "DEFAULT_MAX_DEPTH",
+    "DROP_SCHEMA",
+    "DependencyQueries",
+    "DependencyStore",
+    "Iterable",
+    "LEGACY_TABLES",
+    "MIGRATIONS",
+    "Mapping",
+    "Migration",
+    "Path",
+    "SCHEMA",
+    "SCHEMA_VERSION",
+    "annotations",
+    "build_db",
+    "dict_factory",
+    "fold_owner_case",
+    "normalize_owner",
+    "open_store",
+    "queries",
+    "refresh",
+]

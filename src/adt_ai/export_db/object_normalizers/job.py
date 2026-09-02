@@ -54,8 +54,8 @@ def _is_enabled(lines: list[str]) -> bool:
     then appends a separate `dbms_scheduler.enable(...)` call when, and only when,
     the job is actually enabled. The template used to emit that ENABLE
     unconditionally, so a deliberately disabled job exported as an enabled one and
-    deploying the file switched it on. Measured on IVORY 2026-08-20:
-    `ICT_COM_INVOICE_TRIGGER_JOB` is `ENABLED = FALSE` and its own comment reads
+    deploying the file switched it on. Measured on a client database 2026-08-20:
+    `APP_COM_INVOICE_TRIGGER_JOB` is `ENABLED = FALSE` and its own comment reads
     "ENABLE ONLY when the pending-invoices region ships (decision D2)".
     """
     return any(

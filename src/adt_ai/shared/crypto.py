@@ -172,7 +172,8 @@ def encrypt(value: str, key: str) -> str:
 def decrypt(value: bytes | str, key: str) -> str:
     salt, iterations, token = _split(value)
     try:
-        return _fernet(key, salt, iterations).decrypt(token).decode("utf-8")
+        plaintext: bytes = _fernet(key, salt, iterations).decrypt(token)
+        return plaintext.decode("utf-8")
     except (InvalidToken, ValueError, TypeError) as error:
         raise CryptoError("Could not decrypt encrypted value") from error
 
@@ -263,4 +264,5 @@ def _derive(key: str, salt: bytes, iterations: int) -> bytes:
         salt       = salt,
         iterations = iterations,
     )
-    return derivation.derive((7 * key).encode("utf-8"))
+    derived: bytes = derivation.derive((7 * key).encode("utf-8"))
+    return derived

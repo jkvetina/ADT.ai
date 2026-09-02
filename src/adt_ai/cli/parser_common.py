@@ -1,5 +1,18 @@
 from __future__ import annotations
 
+import argparse
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # Annotation only. `constants` is the CLI's re-export hub and importing it
+    # here at runtime would drag the whole monolith into six small parser
+    # modules that need one name from it.
+    from adt_ai.cli.constants import AdtArgumentParser
+
+#: What `build_parser` hands each `add_*_parsers` below: argparse's subparsers
+#: action, parameterised by the parser class the CLI registers with it.
+type SubParsers = argparse._SubParsersAction[AdtArgumentParser]
+
 # Where a git-backed `-my` gets its answer, spelled once (ADT #469).
 #
 # Four commands used to say "matched against git config user.email" in four
@@ -15,7 +28,7 @@ from __future__ import annotations
 COMMIT_IDENTITY_HELP = "matched against IDENTITY.yaml email, or git config user.email"
 
 
-def add_connection_key_argument(parser) -> None:
+def add_connection_key_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--key",
         "-key",

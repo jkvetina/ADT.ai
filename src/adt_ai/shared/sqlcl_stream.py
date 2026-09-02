@@ -49,9 +49,25 @@ def _require_reader(reader: threading.Thread | None) -> threading.Thread:
     return reader
 
 
-def _timed_out(timeout_seconds: float | None, collected: Sequence[str]) -> SqlclTimeoutError:
-    """The one message both transports report a killed child with."""
-    transcript = "\n".join(collected).strip()
+def keep_every_line(line: str) -> str:
+    """The default `scrub`: a transport given no scrubber changes nothing."""
+    return line
+
+
+def _timed_out(
+    timeout_seconds: float | None,
+    collected: Sequence[str],
+    scrub: Callable[[str], str],
+) -> SqlclTimeoutError:
+    """The one message both transports report a killed child with.
+
+    The transcript goes through `scrub` first, exactly as the non-streaming
+    branch scrubs its own partial output (`sqlcl_script._run_sqlcl`): the lines
+    handed to `on_line` were scrubbed by the caller's lambda, but `collected`
+    holds them raw, so a timeout could put a cleartext connect line into the
+    error message and from there into a deployment log (ADT #661).
+    """
+    transcript = scrub("\n".join(collected)).strip()
     return SqlclTimeoutError(
         f"SQLcl did not finish within {timeout_seconds:g} seconds and was killed."
         + (f"\n{transcript}" if transcript else "")
@@ -64,6 +80,7 @@ def stream_on_pty(
     environment: Mapping[str, str],
     timeout_seconds: float | None,
     on_line: Callable[[str], None],
+    scrub: Callable[[str], str] = keep_every_line,
 ) -> tuple[str, int]:
     """POSIX: run ``command`` with its output on a pty, line by line (ADT #434).
 
@@ -129,7 +146,7 @@ def stream_on_pty(
         while True:
             remaining = None if deadline is None else deadline - time.monotonic()
             if remaining is not None and remaining <= 0:
-                raise _timed_out(timeout_seconds, collected)
+                raise _timed_out(timeout_seconds, collected, scrub)
             if not select.select([master], [], [], remaining if remaining else 1.0)[0]:
                 continue
             try:
@@ -165,6 +182,7 @@ def stream_on_pipe(
     environment: Mapping[str, str],
     timeout_seconds: float | None,
     on_line: Callable[[str], None],
+    scrub: Callable[[str], str] = keep_every_line,
 ) -> tuple[str, int]:
     """Windows: run ``command`` on a pipe, handing over each finished line.
 
@@ -235,7 +253,7 @@ def stream_on_pipe(
         _kill_and_reap(process)
         if reader is not None:
             reader.join(timeout=5.0)
-        raise _timed_out(timeout_seconds, collected) from expired
+        raise _timed_out(timeout_seconds, collected, scrub) from expired
     except BaseException:
         _kill_and_reap(process)
         if reader is not None:
@@ -263,6 +281,7 @@ def open_stream(
     environment: Mapping[str, str],
     timeout_seconds: float | None,
     on_line: Callable[[str], None],
+    scrub: Callable[[str], str] = keep_every_line,
 ) -> tuple[str, int]:
     """The live-reader transport this platform has.
 
@@ -271,5 +290,5 @@ def open_stream(
     platform fact to route around, never an import to catch.
     """
     if os.name == "nt":
-        return stream_on_pipe(command, root, environment, timeout_seconds, on_line)
-    return stream_on_pty(command, root, environment, timeout_seconds, on_line)
+        return stream_on_pipe(command, root, environment, timeout_seconds, on_line, scrub)
+    return stream_on_pty(command, root, environment, timeout_seconds, on_line, scrub)

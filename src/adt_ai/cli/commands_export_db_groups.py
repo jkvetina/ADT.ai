@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Mapping
+from pathlib import Path
 
 from adt_ai.export_db.files import ObjectFileResolver
 from adt_ai.export_db.group_moves import (
@@ -19,11 +20,12 @@ from adt_ai.export_db.group_moves import (
     plan_group_moves,
 )
 from adt_ai.export_db.groups import GroupRules, detect_groups_by_prefix
+from adt_ai.shared.config import as_int
 
 
 def run_groups_move(
     args: argparse.Namespace,
-    root: object,
+    root: Path,
     config: Mapping[str, object],
     schemas: list[str],
 ) -> int:
@@ -39,20 +41,20 @@ def run_groups_move(
     rename: folding a whole auto-detected layout into one folder is not a layout,
     so a name beside bare `-groups` is refused rather than obeyed.
     """
-    resolver = ObjectFileResolver.from_config(root=root, config=config)
+    resolver = ObjectFileResolver.from_config(root=root, config=dict(config))
     prefixes = parse_group_prefixes(args.groups)
     forced_group = args.force if isinstance(args.force, str) else None
     if forced_group and not prefixes:
         print(
             f"export_db: -force {forced_group} needs the prefixes it renames; "
-            f"name them on -groups, as in -groups ICT_VPD ICT_ABC -force {forced_group}.",
+            f"name them on -groups, as in -groups APP_VPD APP_ABC -force {forced_group}.",
             file=sys.stderr,
         )
         return 2
     if prefixes:
         rules = build_prefix_rules(prefixes, group=forced_group)
     else:
-        groups_min = int(config.get("groups_min", 5))
+        groups_min = as_int(config.get("groups_min", 5))
         type_rules: dict[str, dict[str, str]] = {}
         for object_type, names in resolver.flat_object_names(schemas).items():
             detected = detect_groups_by_prefix(names, groups_min)

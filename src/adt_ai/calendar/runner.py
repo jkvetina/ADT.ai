@@ -9,6 +9,7 @@ from pathlib import Path
 from adt_ai.rebuild.models import RebuildRequest
 from adt_ai.rebuild.runner import RebuildRunner
 from adt_ai.shared.commit_cache import DEFAULT_COMMITS_TEMPLATE, open_store
+from adt_ai.shared.commit_store import StoredCommit
 from adt_ai.shared.git_files import default_branch_ref, fetch_origin, run_git
 from adt_ai.shared.identity import resolve_commit_email
 
@@ -206,7 +207,7 @@ def _commits_from_cache(
     return commits
 
 
-def _branch_records(root: Path, branch: str, template: str) -> list:
+def _branch_records(root: Path, branch: str, template: str) -> list[StoredCommit]:
     with open_store(root, branch, template) as store:
         return store.records(branch)
 
@@ -260,12 +261,14 @@ def _commit_label(
 
 
 def _branch_has_prefix(name: str, prefix: str | None) -> bool:
-    return bool(prefix) and prefix.lower() in name.lower()
+    return prefix is not None and bool(prefix) and prefix.lower() in name.lower()
 
 
 def _branch_prefix_label(branches: list[str], prefix: str | None) -> str | None:
     for name in branches:
-        if _branch_has_prefix(name, prefix):
+        # `_branch_has_prefix` is false for a `None` prefix, so the label below
+        # is only reached with one.
+        if prefix is not None and _branch_has_prefix(name, prefix):
             return extract_ticket(name, prefix) or prefix.upper()
     return None
 

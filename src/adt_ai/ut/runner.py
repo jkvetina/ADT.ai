@@ -50,7 +50,6 @@ from adt_ai.ut.session import Ut3Reporter, Ut3Request, Ut3Result
 # get_suites_info returns describes the tree around them (UT_SUITE,
 # UT_SUITE_CONTEXT, UT_LOGICAL_SUITE).
 _TEST_ITEM_TYPE = "UT_TEST"
-_SUITE_ITEM_TYPE = "UT_SUITE"
 
 
 class Ut3Runner:
@@ -84,8 +83,8 @@ class Ut3Runner:
         # less coverage for a package reached only by an excluded suite. That
         # under-report is the accepted cost (Jan, 2026-08-07): a flag that
         # silently means two different things is the worse defect, and the
-        # symptom was `-coverage -name ICT_INT%` running the whole schema and
-        # taking the same 38 seconds as `-name ICT%` while appearing to filter.
+        # symptom was `-coverage -name APP_INT%` running the whole schema and
+        # taking the same 38 seconds as `-name APP%` while appearing to filter.
         self.reporter.discovering(ut_owner)
         packages = self._discover(ut_owner, request.names, naming)
 
@@ -121,8 +120,13 @@ class Ut3Runner:
 
         outcomes: list[TestOutcome] = []
         timings: list[SuiteTiming] = []
-        # The run so far, so the `finally` below can hand the reporter something
-        # renderable even when a suite raised on the way here.
+        # The run so far, **re-folded after every suite** rather than once after
+        # the loop (`#670`). The comment that stood here claimed the `finally`
+        # below could hand the reporter something renderable when a suite raised,
+        # and it could not: `outcomes` and `timings` reached `result` only after
+        # the last suite, so an exception on suite k discarded suites 1..k-1,
+        # every one of which had already run and been measured. Folding per suite
+        # costs one tuple copy each and makes the claim true.
         result = Ut3Result(packages=packages, modules=naming.modules_enabled)
         try:
             for package in packages:
@@ -132,13 +136,27 @@ class Ut3Runner:
                 # Wall clock around the whole call, so the figure covers the
                 # round trip and the suite's own setup, see `SuiteTiming`.
                 started_at = time.monotonic()
-                suite_outcomes = self._run_suite(ut_owner, package)
+                try:
+                    suite_outcomes = self._run_suite(ut_owner, package)
+                except Exception as exc:
+                    # **A suite that raises is one red suite, not a lost run.**
+                    # utPLSQL does not raise for a failing test, so anything
+                    # arriving here is the suite failing to run at all: an ORA on
+                    # the producer side, a dropped connection, a `%beforeall`
+                    # that blew up. That is the "reported nothing parsable" state
+                    # the module docstring already counts as a failure, and
+                    # `unreported` is its established shape, one ERROR outcome
+                    # per discovered test carrying the cause. Letting it
+                    # propagate reported nothing about ANY suite, this one
+                    # included, and threw away results the reader had already
+                    # sat through.
+                    suite_outcomes = unreported(package, f"the suite did not run: {exc}")
                 timings.append(
                     SuiteTiming(package=package.name, seconds=time.monotonic() - started_at)
                 )
                 outcomes.extend(suite_outcomes)
+                result = replace(result, outcomes=tuple(outcomes), timings=tuple(timings))
                 self.reporter.suite_end(package, suite_outcomes)
-            result = replace(result, outcomes=tuple(outcomes), timings=tuple(timings))
             # **Everything the run can already say is said before the three
             # round trips that end and read the profiler.** They are one wait
             # from the reader's side and the console announces it with the
@@ -196,14 +214,14 @@ class Ut3Runner:
             )
         )
 
+        # `UT_SUITE` rows carried the `%suite` description into
+        # `SuitePackage.description` until `#670`; nothing printed it, and the
+        # field went with the capture. The tree rows are still skipped one line
+        # below, which is all this loop ever needed them for.
         tests_by_package: dict[str, list[SuiteTest]] = {}
-        suite_description: dict[str, str] = {}
         for item in items:
             package = str(item.get("OBJECT_NAME") or "").upper()
-            item_type = str(item.get("ITEM_TYPE") or "").upper()
-            if item_type == _SUITE_ITEM_TYPE:
-                suite_description.setdefault(package, str(item.get("ITEM_DESCRIPTION") or ""))
-            if item_type != _TEST_ITEM_TYPE:
+            if str(item.get("ITEM_TYPE") or "").upper() != _TEST_ITEM_TYPE:
                 continue
             tests_by_package.setdefault(package, []).append(
                 SuiteTest(
@@ -211,7 +229,6 @@ class Ut3Runner:
                     name            = str(item.get("ITEM_NAME") or ""),
                     description     = str(item.get("ITEM_DESCRIPTION") or ""),
                     line            = item.get("ITEM_LINE_NO"),
-                    path            = str(item.get("PATH") or ""),
                     disabled        = bool(item.get("DISABLED_FLAG")),
                     disabled_reason = str(item.get("DISABLED_REASON") or ""),
                 )
@@ -231,7 +248,6 @@ class Ut3Runner:
                 SuitePackage(
                     name        = name,
                     status      = status,
-                    description = suite_description.get(name.upper(), ""),
                     tests       = tests,
                     skip_reason = _skip_reason(status, tests),
                     # Both derived by Oracle in the discovery query, from
@@ -272,7 +288,7 @@ def _declaration_order(rows: list[dict[str, object]]) -> dict[tuple[str, str], i
         subprogram = row.get("SUBPROGRAM_ID")
         if not package or not procedure or subprogram is None:
             continue
-        order.setdefault((package, procedure), int(subprogram))
+        order.setdefault((package, procedure), int(str(subprogram)))
     return order
 
 
@@ -310,4 +326,33 @@ def _skip_reason(status: str, tests: tuple[SuiteTest, ...]) -> str:
     return ""
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = [
+    "QueryGateway",
+    "SKIP_INVALID",
+    "SKIP_NOT_A_SUITE",
+    "SuitePackage",
+    "SuiteTest",
+    "SuiteTiming",
+    "TestOutcome",
+    "Ut3Reporter",
+    "Ut3Request",
+    "Ut3Result",
+    "Ut3Runner",
+    "UtNaming",
+    "_TEST_ITEM_TYPE",
+    "_declaration_order",
+    "_in_spec_order",
+    "_skip_reason",
+    "annotations",
+    "build_coverage_report",
+    "in_declaration_order",
+    "matches_sql_like",
+    "parse_junit",
+    "queries",
+    "replace",
+    "require_database_session",
+    "row_line",
+    "time",
+    "unreported",
+    "uuid",
+]

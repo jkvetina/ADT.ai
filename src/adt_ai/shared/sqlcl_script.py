@@ -316,6 +316,11 @@ def run_sqlcl_script(
                 environment,
                 timeout_seconds,
                 lambda line: on_line(_scrub_secrets(line, secrets)),
+                # The transport collects the RAW lines for its own timeout
+                # message, so it gets the scrubber too. Otherwise a timeout
+                # carries a cleartext connect line the callback already elided
+                # (ADT #661).
+                lambda text: _scrub_secrets(text, secrets),
             )
         else:
             # ``-S`` (silent) suppresses the banner and command echo so SQLcl does

@@ -14,6 +14,10 @@ class DataColumn:
     data_type: str
     pk       : int | None = None
     uq       : int | None = None
+    #: `ALWAYS` or `BY DEFAULT` for an identity column, empty for every other
+    #: column. An ALWAYS one may be exported and joined on but never named in an
+    #: INSERT or an UPDATE SET, which raises ORA-32795 / ORA-54015 (`#670`).
+    identity : str = ""
 
 
 @dataclass(frozen=True)
@@ -76,6 +80,7 @@ class DataDiscovery:
                 data_type = _row_value(row, "DATA_TYPE"),
                 pk        = _optional_int(row, "PK"),
                 uq        = _optional_int(row, "UQ"),
+                identity  = _row_value(row, "IDENTITY_GENERATION"),
             )
             for row in rows
         ]
@@ -87,8 +92,13 @@ class DataDiscovery:
         where_filter: str,
         order_by: str,
     ) -> list[dict[str, Any]]:
+        # `exact_numbers` (`#670`): the export writes the digits it read into a
+        # CSV, so a NUMBER(p,s) arriving as the driver's default float loses
+        # precision no later step can recover. Only the row fetch asks for it;
+        # the dictionary queries above want ordinary ints.
         return self.gateway.fetch_all(
             self.data_query(table_name, columns, where_filter, order_by),
+            exact_numbers = True,
         )
 
     @staticmethod

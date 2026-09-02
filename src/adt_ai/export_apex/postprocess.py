@@ -213,5 +213,7 @@ def _blob_bytes(value: Any) -> bytes:
     if isinstance(value, bytes):
         return value
     if hasattr(value, "read"):
-        return value.read()
+        # A LOB handle, whose `read()` the driver types as `Any`.
+        payload: bytes = value.read()
+        return payload
     return bytes(value)

@@ -34,6 +34,8 @@ from zipfile import ZipFile
 from adt_ai.shared.connections import DEFAULT_PORT, Connection
 from adt_ai.shared.oracle_session import DDL_LOCK_TIMEOUT_STATEMENT
 from adt_ai.shared.sqlcl_names import CONNMGR_DELETE_COMMAND, credential_fingerprint
+from adt_ai.shared.sqlcl_quoting import quote_sqlcl_argument, reject_unquotable
+from adt_ai.shared.zip_extract import safe_extractall
 
 # SQLcl prints "Session altered." (a FEEDBACK message, which ``sql -S`` does not
 # suppress) for the DDL_LOCK_TIMEOUT ALTER SESSION injected into every payload.
@@ -228,6 +230,11 @@ def _connect_line(
     username = connection.username
     password = connection.password.reveal() or ""
     service  = connection.service or connection.sid or ""
+    # The password goes into the line as `user/"pw"@dsn`, and SQLcl offers no
+    # escape for a `"` inside that token: the line ends early and SQLcl connects
+    # with a truncated credential or prompts (ADT #653). Refused by name rather
+    # than emitted broken; `&` needs nothing, `SET DEFINE OFF` covers it.
+    reject_unquotable(password, role="database password")
     if save_name is None:
         save = ""
     elif savepwd:
@@ -243,7 +250,8 @@ def _connect_line(
             if wallet_path.suffix != ".zip"
             else wallet_path
         )
-        return f'connect {save}-cloudconfig "{wallet_zip}" {username}/"{password}"@{service}'
+        quoted_wallet = quote_sqlcl_argument(wallet_zip, role="wallet path")
+        return f'connect {save}-cloudconfig {quoted_wallet} {username}/"{password}"@{service}'
     if connection.hostname:
         dsn = f"{connection.hostname}:{connection.port or DEFAULT_PORT}/{service}"
     else:
@@ -278,21 +286,27 @@ def _ensure_wallet_folder(wallet_path: Path) -> Path:
     else:
         zip_path = wallet_path.with_suffix(".zip")
         wallet_folder = wallet_path
-    if _wallet_needs_extract(wallet_folder) and zip_path.is_file():
+    if zip_path.is_file() and _wallet_needs_extract(wallet_folder, zip_path):
         _extract_wallet_zip(zip_path, wallet_folder)
     return wallet_folder
 
 
-def _wallet_needs_extract(wallet_folder: Path) -> bool:
-    return not (wallet_folder / "tnsnames.ora").is_file()
+def _wallet_needs_extract(wallet_folder: Path, zip_path: Path) -> bool:
+    """True when the extracted folder is missing, or older than the zip beside it.
+
+    The mtime half is ADT #651: the test used to be `tnsnames.ora` absent alone,
+    so a rotated wallet zip dropped at the same path was never unpacked again.
+    SQLcl reads the zip directly and was fine; the thick client and everything
+    reading `TNS_ADMIN` kept the stale folder, which is a connection failing on
+    an expired credential that the file on disk had already replaced.
+    """
+    tnsnames = wallet_folder / "tnsnames.ora"
+    if not tnsnames.is_file():
+        return True
+    return zip_path.stat().st_mtime > tnsnames.stat().st_mtime
 
 
 def _extract_wallet_zip(zip_path: Path, wallet_folder: Path) -> None:
     wallet_folder.mkdir(parents=True, exist_ok=True)
     with ZipFile(zip_path) as archive:
-        target = wallet_folder.resolve()
-        for member in archive.infolist():
-            member_path = (wallet_folder / member.filename).resolve()
-            if target != member_path and target not in member_path.parents:
-                raise RuntimeError(f"Unsafe wallet zip entry: {member.filename}")
-        archive.extractall(wallet_folder)
+        safe_extractall(archive, wallet_folder, what="wallet zip")

@@ -34,7 +34,12 @@ def _tgt_node(edge: FlowEdge, page_names: dict[int, str | None]) -> tuple[str, s
             _node_id("x", edge.target_app_id, edge.target_page),
             f"app {edge.target_app_id} p{edge.target_page}",
         )
-    return _node_id("p", edge.app_id, edge.target_page), _page_label(edge.target_page, page_names)
+    return (
+        _node_id("p", edge.app_id, edge.target_page),
+        # A same-app edge always names its target page; only a CROSS_APP edge,
+        # handled above, can leave it unset.
+        _page_label(edge.target_page or 0, page_names),
+    )
 
 
 def _graph_edges(edges: Iterable[FlowEdge]) -> list[FlowEdge]:

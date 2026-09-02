@@ -73,7 +73,7 @@ Leave `jira_prefix` empty to count every commit you authored across all branches
 
 ## Choosing the author
 
-The default author is your own `git config user.email`, and activity is sourced from the stored commits you wrote. `-by` replaces that with an email or name substring, and it is repeatable, so several people can share one grid.
+The default author is your own `git config user.email`, and activity is sourced from the stored commits you wrote. `-by` replaces that with an email substring, and it is repeatable, so several people can share one grid.
 
 ## Arguments
 
@@ -82,6 +82,6 @@ The default author is your own `git config user.email`, and activity is sourced 
 | `-branch`, `--branch` | No | all branches | Restrict the report to a single branch instead of every branch. |
 | `-month`, `--month` | No | current month | Month to show, in `YYYY-MM` format. |
 | `-calendar [OFFSET]`, `--calendar [OFFSET]` | No | `0` | Month selector by offset. Bare `-calendar` is the current month; an integer is that many months back. |
-| `-by`, `--by` | Yes | your `git config user.email` | Author email or name substring, repeatable. Replaces the default "my commits" author. |
+| `-by`, `--by` | Yes | your `git config user.email` | Author email substring, repeatable. Replaces the default "my commits" author. |
 
 Shared options (-root, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

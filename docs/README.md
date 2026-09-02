@@ -1,6 +1,6 @@
 # ADT.ai Documentation
 
-This is the public documentation index for ADT.ai `0.9.6`.
+This is the public documentation index for ADT.ai `0.9.7`.
 
 ## Commands
 

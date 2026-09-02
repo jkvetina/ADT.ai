@@ -1,17 +1,17 @@
 """The one renderer for every console list whose rows are file paths (ADT #504).
 
-Jan, 2026-08-24, reading a `PROCESSED FILES: ICT_OWNER` block: every row repeated
-`ict_owner/database/tables/` and the folder was the part he was reading past. The
+Jan, 2026-08-24, reading a `PROCESSED FILES: APP_OWNER` block: every row repeated
+`app_owner/database/tables/` and the folder was the part he was reading past. The
 rows group under their folder now, each file indented two spaces further, with
 the trailing slash kept so a folder line cannot be mistaken for a file::
 
-      - ict_owner/database/synonyms/
+      - app_owner/database/synonyms/
         - UT/
-          - be_between.sql
+          - ut_dates.sql
 
 **One row is one directory** (ADT #507). `#504` gave the list exactly two levels,
 a folder row and a leaf row, so every directory the folder rule did not claim
-stayed glued onto one of them: `UT/be_between.sql` sat on a leaf and
+stayed glued onto one of them: `UT/ut_dates.sql` sat on a leaf and
 `patch_scripts/APP309/tables_after/` on a folder line. The renderer walks from
 the ANCHOR folder down to the file instead, one row per level, which is what puts
 a script's slot and an `export_db -groups` sub-folder on rows of their own.

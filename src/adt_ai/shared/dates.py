@@ -114,7 +114,9 @@ def within_recent_window(
     built" rather than "this window cannot see them".
 
     ``now`` is injected so a caller can pin the boundary; it defaults to the
-    client clock, which is what every consumer of this window already uses.
+    client clock, which is what every consumer of this window already uses. An
+    **offset-bearing** ``value`` is moved onto that same clock first, see
+    `_on_the_client_clock` below.
     """
     if recent_days is None:
         return True
@@ -122,7 +124,36 @@ def within_recent_window(
     if float(recent_days).is_integer() or not isinstance(value, datetime):
         day = value.date() if isinstance(value, datetime) else value
         return day >= _window_floor_day(recent_days, moment)
-    return value >= moment - timedelta(days=recent_days)
+    return _on_the_client_clock(value) >= moment - timedelta(days=recent_days)
+
+
+def _on_the_client_clock(value: datetime) -> datetime:
+    """One instant read on the same clock ``now`` is, so the two can be compared.
+
+    Commit dates are stored from git's `%aI`, which keeps the offset the commit
+    was made at ("2026-08-22 12:00:25+02:00"), and `datetime.fromisoformat`
+    hands that offset straight through. `now` on this side is the naive client
+    clock, and Python refuses to compare the two, so every fractional `-recent`
+    raised `TypeError: can't compare offset-naive and offset-aware datetimes`
+    (ADT #670). `patch -recent 1/24` and `search_repo -recent 1/24` both died on
+    it, in a traceback rather than a filter.
+
+    Converted, never merely stripped: `12:00:25+02:00` is not 12:00:25 here, and
+    dropping the offset would place the commit wherever the reader happens to
+    sit. `astimezone()` with no argument is the client's own zone, which is the
+    zone `datetime.now()` above reports in.
+
+    **Only the sub-day branch calls this.** A whole-day window answers "which
+    calendar day was this made on", and the day it wants is the one the commit
+    carries; shifting an offset-bearing stamp into the reader's timezone first
+    would move a late-evening commit into the next day for everyone east of its
+    author. Naive values are returned untouched rather than round-tripped
+    through `astimezone()`, which for a pre-epoch stamp is a platform question
+    and not one this filter should be asking.
+    """
+    if value.tzinfo is None:
+        return value
+    return value.astimezone().replace(tzinfo=None)
 
 
 def _window_floor_day(recent_days: int | float, now: datetime) -> date:

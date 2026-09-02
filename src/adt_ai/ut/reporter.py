@@ -305,9 +305,17 @@ class ConsoleUt3Reporter(Ut3Reporter):
         if self._bar is not None:
             self._bar.advance()
             return
-        if self._verbose:
-            print_test_rows(outcomes, close_block=False)
-            self._block_open = True
+        # **Only `-verbose` gets this far**, and the guard that said so was a
+        # branch nothing could take (`#670`). `discovered` opens a bar for every
+        # non-silent, non-verbose run that has a runnable suite, and a run with
+        # no runnable suite never reaches a suite's end, so "no bar, not
+        # verbose" is not a state this method can be called in.
+        #
+        # `package.tests` rides along so a `%disabled` test's reason prints under
+        # its own SKIP row, the same block the batch render produces. The two
+        # paths stay byte-for-byte identical.
+        print_test_rows(outcomes, close_block=False, tests=package.tests)
+        self._block_open = True
 
     def close(self) -> None:
         """End the bar, once, when the suites are done.

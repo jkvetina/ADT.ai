@@ -20,8 +20,15 @@ from __future__ import annotations
 # is imported by ``reporter`` ahead of ``render``, and a second edge into the
 # export_db package from here re-enters ``adt_ai.cli`` while it is still
 # initialising. One module owns that dependency and this one borrows it.
+from typing import TYPE_CHECKING
+
 from adt_ai.ut.cells import percent_cell
 from adt_ai.ut.render import print_adt_header, print_adt_table
+
+if TYPE_CHECKING:
+    # `store` imports this module's package siblings at runtime, so the
+    # change record is named for the checker only.
+    from adt_ai.ut.store import CoverageChange
 
 CHANGES_TITLE = "COVERAGE CHANGED SINCE LAST RUN:"
 
@@ -38,7 +45,7 @@ def print_coverage_changes_header() -> None:
     print_adt_header(CHANGES_TITLE)
 
 
-def print_coverage_changes_rows(changes) -> None:
+def print_coverage_changes_rows(changes: tuple[CoverageChange, ...]) -> None:
     """One row per suite whose target package's ratio moved.
 
     **Only what moved.** Two full summaries already list every suite, so a third
@@ -55,7 +62,7 @@ def print_coverage_changes_rows(changes) -> None:
     empty section is a readable answer, but ``print_adt_table`` on an empty list
     renders a column header and a rule with nothing under them, which reads as a
     table whose rows failed to arrive rather than as a run where nothing changed.
-    Measured on ``ICT_ADM_NUMBERING%`` against ``ICT_OWNER``, where every unit
+    Measured on ``APP_ADM_NUMBERING%`` against ``APP_OWNER``, where every unit
     test for the empty case was green: they asserted no suite row was present and
     never looked at what the empty table renders as.
     """

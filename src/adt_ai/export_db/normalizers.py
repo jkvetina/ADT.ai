@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
+from adt_ai.export_db.normalizer_clauses import owner_qualifier_stripper
+
 
 @dataclass(frozen=True)
 class NormalizationContext:
@@ -196,8 +198,8 @@ def _normalize_common(
         payload = _replace_outside_sql_strings(
             payload,
             lambda chunk: re.sub(
-                rf"\b[A-Za-z0-9_$#]+\.(?={re.escape(context.object_name.lower())}\b)",
-                "",
+                rf"\b(?P<owner>[A-Za-z0-9_$#]+)\.(?={re.escape(context.object_name.lower())}\b)",
+                owner_qualifier_stripper(context.object_owner),
                 chunk,
             ),
         )

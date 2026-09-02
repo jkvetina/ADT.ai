@@ -66,6 +66,11 @@ _SOURCES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     ),
 }
 
+#: The same map, exported: the connection editor drops the command keys a stored
+#: value supersedes, and reads which they are from here rather than keeping a
+#: second copy of the pairing `block_secret` refuses on (ADT #651).
+SECRET_SOURCES = _SOURCES
+
 # Every command key this module owns, for the `-like` clone strip in
 # `connection/runner.py`: a vault path names its environment, so carrying one
 # into a cloned environment would point UAT at the DEV credential.

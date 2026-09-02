@@ -48,8 +48,28 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Callable
+from types import FrameType
+from typing import Any, Protocol, cast
 
 STRICT_ENV_FLAG = "ADT_STRICT_CONSOLE"
+
+
+class ScreenState(Protocol):
+    """The part of the runtime's stdout wrapper this module reads.
+
+    Declared structurally rather than imported: the wrapper lives in
+    `cli/stream_tracker.py`, and `shared` importing `cli` would invert the
+    layering for three attribute lookups. A protocol also keeps the `hasattr`
+    probe below honest: anything that answers these is a tracker as far as this
+    module is concerned, which is exactly what the probe tests for.
+    """
+
+    announced: bool
+
+    def mark_announced(self) -> None: ...
+
+    def mark_finished(self) -> None: ...
 
 
 # Every violation seen since the last `reset_violations()`, in order. The guard
@@ -87,9 +107,9 @@ def strict_mode() -> bool:
     return os.environ.get(STRICT_ENV_FLAG) == "1"
 
 
-def _tracker() -> object | None:
+def _tracker() -> ScreenState | None:
     """The runtime's stdout wrapper, or `None` when the CLI is not printing."""
-    return sys.stdout if hasattr(sys.stdout, "announced") else None
+    return cast("ScreenState", sys.stdout) if hasattr(sys.stdout, "announced") else None
 
 
 def settle_screen_before_error() -> None:
@@ -181,7 +201,7 @@ def _caller() -> str:
     the symptom; the call site is what the next person actually needs, and
     hunting it through a pytest traceback is what made the first sweep slow.
     """
-    frame = sys._getframe(1)
+    frame: FrameType | None = sys._getframe(1)
     while frame is not None:
         if frame.f_globals.get("__name__") != __name__:
             name = frame.f_globals.get("__name__", "?")
@@ -207,33 +227,48 @@ class AnnouncedGateway:
     this only under `strict_mode()`.
     """
 
-    def __init__(self, wrapped: object) -> None:
+    # `Any` rather than a gateway protocol, and deliberately: `__getattr__` below
+    # forwards EVERY name this class does not define, so the wrapper's contract is
+    # "whatever you wrapped, plus a guard on six methods". A protocol would name a
+    # surface the class does not actually require and would reject the partial
+    # fakes each command's tests hand it, which is the one thing this wrapper
+    # exists to accept.
+    wrapped: Any
+
+    def __init__(self, wrapped: Any) -> None:
         self.wrapped = wrapped
 
-    def connect(self, *args, **kwargs):
+    def connect(self, *args: Any, **kwargs: Any) -> Any:
         guard("connect")
         return self.wrapped.connect(*args, **kwargs)
 
-    def fetch_all(self, sql, params=None):
+    def fetch_all(self, sql: Any, params: Any = None, exact_numbers: bool = False) -> Any:
         guard(sql)
-        return self.wrapped.fetch_all(sql, params)
+        # Forwarded only when the caller asked for it (`#670`). The class
+        # docstring's contract is that it accepts the partial fakes command
+        # tests hand it, and most of those spell `fetch_all(self, sql,
+        # params=None)`; passing a keyword none of them declares would break
+        # every one of them for the sake of the one caller that wants it.
+        if not exact_numbers:
+            return self.wrapped.fetch_all(sql, params)
+        return self.wrapped.fetch_all(sql, params, exact_numbers=True)
 
-    def read_only_fetch_all(self, sql, params=None):
+    def read_only_fetch_all(self, sql: Any, params: Any = None) -> Any:
         guard(sql)
         return self.wrapped.read_only_fetch_all(sql, params)
 
-    def execute(self, sql, params=None):
+    def execute(self, sql: Any, params: Any = None) -> Any:
         guard(sql)
         return self.wrapped.execute(sql, params)
 
-    def sqlcl_request(self, request, *args, **kwargs):
+    def sqlcl_request(self, request: Any, *args: Any, **kwargs: Any) -> Any:
         guard(request)
         return self.wrapped.sqlcl_request(request, *args, **kwargs)
 
-    def close(self):
+    def close(self) -> Any:
         return self.wrapped.close()
 
-    def __reduce__(self):
+    def __reduce__(self) -> tuple[Any, ...]:
         """Survive being sent to a worker process, wrapper and all.
 
         `export_apex` runs each export action in a `multiprocessing.Pool`, which
@@ -261,10 +296,10 @@ def unwrap(gateway: object) -> object:
     return gateway.wrapped if isinstance(gateway, AnnouncedGateway) else gateway
 
 
-def announced_factory(factory):
+def announced_factory(factory: Callable[..., Any]) -> Callable[..., AnnouncedGateway]:
     """Wrap whatever gateway a factory returns, keeping its call shape."""
 
-    def build(*args, **kwargs):
+    def build(*args: Any, **kwargs: Any) -> AnnouncedGateway:
         return AnnouncedGateway(factory(*args, **kwargs))
 
     return build
