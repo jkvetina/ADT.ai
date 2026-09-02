@@ -4,6 +4,7 @@ import sys
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 # `owns_file` and `object_name_from_file` were written here for ADT #412 and
 # moved to `shared/` for ADT #471, where `patch` and `search_repo` can reach them
@@ -13,6 +14,13 @@ from adt_ai.shared.object_files import object_name_from_file as object_name_from
 from adt_ai.shared.object_files import owns_file as owns_file
 from adt_ai.shared.safe_paths import simple_component
 from adt_ai.shared.yaml_io import load_yaml_mapping, store_yaml_mapping
+
+if TYPE_CHECKING:
+    # Both import this module at runtime (`files` for `GroupRules` and
+    # `group_for`, `request` for the resolver that carries them), so naming
+    # them for the checker is the only direction that does not close a cycle.
+    from adt_ai.export_db.files import ObjectFileResolver
+    from adt_ai.export_db.request import ExportDbRequest
 
 
 def prefix_words(name: str, max_words: int = 2) -> str:
@@ -171,7 +179,7 @@ def _common_prefix(names: Iterable[str], max_words: int = 2) -> str:
     return "_".join(shared)
 
 
-def resolve_group_rules(request, resolver) -> GroupRules:
+def resolve_group_rules(request: ExportDbRequest, resolver: ObjectFileResolver) -> GroupRules:
     """Seed with explicit/persisted rules, then learn from the tree on disk.
 
     Both halves it joins already live here, so it moved off `ExportDbRunner`

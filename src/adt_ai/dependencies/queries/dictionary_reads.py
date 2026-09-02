@@ -266,6 +266,35 @@ BEGIN
 END;
 """.strip()
 
+# What the scan above concluded about each fragment it could NOT compile, which
+# is the half `APEX_USED_DB_OBJECTS` cannot report: a fragment that fails to
+# parse resolves to no object at all, so it leaves no dependency row and
+# disappears from every other APEX_USED_* read. ADT #676 deploys against this.
+#
+# `ERROR_MESSAGE` arrived with the 24.2 view shape, so the caller gates on
+# `supports_apex_used_views` exactly as the dependency reads do. Ordered so a
+# diff between two scans of the same application is stable.
+APEX_COMPONENT_ERRORS_QUERY = """
+SELECT page_id,
+       component_type_name AS component_type,
+       component_display_name AS component_name,
+       property_name,
+       error_message
+FROM apex_used_db_object_comp_props
+WHERE application_id = :app_id
+  AND error_message IS NOT NULL
+ORDER BY page_id, component_display_name, property_name
+""".strip()
+
+# The denominator beside it: how many fragments the scan actually looked at. A
+# zero here is a scan that did not run, which reads very differently from a scan
+# that ran and found nothing, and the log has to be able to tell them apart.
+APEX_COMPONENT_SCAN_COUNT_QUERY = """
+SELECT COUNT(*) AS analyzed
+FROM apex_used_db_object_comp_props
+WHERE application_id = :app_id
+""".strip()
+
 # Columns are inferred from the APEX dictionary and verified live before commit.
 APEX_USED_DB_OBJECTS_QUERY = """
 SELECT workspace, application_id,
@@ -365,8 +394,20 @@ def supports_apex_used_views(apex_version: str | None) -> bool:
 
 
 def _uses_apex_24_2_used_objects_query(apex_version: str | None) -> bool:
+    """Whether this release carries the reshaped ``APEX_USED_*`` views.
+
+    24.2 renamed the columns (`used_db_object_name` -> `referenced_name`, and so
+    on) and every release since has kept the new shape, so this is a floor with
+    no ceiling. It carried one until ADT #676: `< (26, 1)` was added from the
+    26.1 release notes rather than from the dictionary, and 26.1 fell back to the
+    pre-24.2 query and died on `ORA-00904: "USED_DB_OBJECT_NAME"` -- which is
+    exactly the error a version gate written against a real instance cannot
+    make. Measured on APEX 26.1: `APEX_USED_DB_OBJECTS` carries `id`,
+    `referenced_owner`, `referenced_name`, `referenced_type` and carries no
+    `used_db_object_name` at all, i.e. the 24.2 shape.
+    """
     parsed = _apex_version_tuple(apex_version)
-    return bool(parsed) and (24, 2) <= parsed < (26, 1)
+    return bool(parsed) and parsed >= (24, 2)
 
 
 # Kept as a module-local alias: the parser itself now lives in shared/ so

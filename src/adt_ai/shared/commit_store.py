@@ -42,6 +42,7 @@ import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from adt_ai.shared import queries
 from adt_ai.shared.sqlite_store import Migration, open_store
@@ -52,8 +53,12 @@ SCHEMA_VERSION = "2"
 #: the foreign key `commit_files` always kept by hand declared with a cascade.
 #: The step starts from ``None`` because a version 1 file keeps its row in
 #: `meta`, which to the shared opener is a file carrying no version at all.
+def _lift_1(connection: sqlite3.Connection) -> None:
+    connection.executescript(queries.COMMIT_STORE_LIFT_1)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
-    Migration(None, "2", lambda connection: connection.executescript(queries.COMMIT_STORE_LIFT_1)),
+    Migration(None, "2", _lift_1),
 )
 
 
@@ -155,10 +160,16 @@ class CommitStore:
     # -- reads -------------------------------------------------------------
 
     def floor(self, branch: str) -> int | None:
-        return self.connection.execute(queries.COMMIT_FLOOR_QUERY, (branch,)).fetchone()[0]
+        lowest: int | None = self.connection.execute(
+            queries.COMMIT_FLOOR_QUERY, (branch,)
+        ).fetchone()[0]
+        return lowest
 
     def ceiling(self, branch: str) -> int | None:
-        return self.connection.execute(queries.COMMIT_CEILING_QUERY, (branch,)).fetchone()[0]
+        highest: int | None = self.connection.execute(
+            queries.COMMIT_CEILING_QUERY, (branch,)
+        ).fetchone()[0]
+        return highest
 
     def numbers(self, branch: str) -> dict[str, int]:
         """Every stored commit hash mapped to its number."""
@@ -193,7 +204,7 @@ class CommitStore:
             for row in self.connection.execute(queries.COMMIT_BY_PATH_QUERY, (branch, path))
         ]
 
-    def _with_files(self, branch: str, rows: list[tuple]) -> list[StoredCommit]:
+    def _with_files(self, branch: str, rows: list[tuple[Any, ...]]) -> list[StoredCommit]:
         if not rows:
             return []
         numbers = [row[1] for row in rows]
@@ -321,7 +332,7 @@ class CommitStore:
                 for number, item in fresh
             ],
         )
-        rows: list[tuple] = []
+        rows: list[tuple[Any, ...]] = []
         for number, item in fresh:
             for path, hash_ in item.files.items():
                 # NULL, not a default letter: a caller that has no status does

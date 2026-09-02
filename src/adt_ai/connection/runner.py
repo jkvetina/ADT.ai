@@ -17,7 +17,7 @@ from adt_ai.connection.stored_secrets import (
 from adt_ai.shared import crypto, text_files
 from adt_ai.shared.connections import DEFAULT_PORT
 from adt_ai.shared.secret import Secret
-from adt_ai.shared.secret_command import COMMAND_KEYS
+from adt_ai.shared.secret_command import COMMAND_KEYS, SECRET_SOURCES
 
 # Keys that belong to a stored secret: the value, its encryption marker, and the
 # key fingerprint recorded beside it (ADT #399). They are stripped together when
@@ -87,7 +87,8 @@ class ConnectionEditRequest:
 
     def plaintext(self, name: ConnectionEditSecretField) -> str | None:
         """Return one credential explicitly at its non-rendering consumer."""
-        return getattr(self, name).reveal()
+        secret: Secret = getattr(self, name)
+        return secret.reveal()
 
 
 @dataclass(frozen=True)
@@ -178,6 +179,22 @@ def _strip_env_secrets(env_node: dict[str, Any]) -> dict[str, Any]:
     return plain
 
 
+def _drop_command_keys(target: dict[str, Any], value_key: str) -> None:
+    """Remove the `_cmd` keys that would now name a SECOND source for this secret.
+
+    Writing a stored password beside a `pwd_cmd` (or a `wallet_pwd_cmd`) leaves
+    the block naming two sources for one secret, and `block_secret` refuses such
+    a file outright, so `connection` wrote a file that no longer connects, with
+    the refusal pointing at keys the user never touched (ADT #651). The stored
+    value just written is the one they chose; the command is what it replaces.
+    """
+    for command_keys, stored_keys in SECRET_SOURCES.values():
+        if value_key not in stored_keys:
+            continue
+        for key in command_keys:
+            target.pop(key, None)
+
+
 class ConnectionEditor:
     """Round-trip editor for an ADT connections YAML file.
 
@@ -234,7 +251,9 @@ class ConnectionEditor:
             written     = request.apply,
         )
 
-    def _add_env(self, yaml: YAML, data: Any, request: ConnectionEditRequest):
+    def _add_env(
+        self, yaml: YAML, data: Any, request: ConnectionEditRequest
+    ) -> tuple[str, str]:
         env = request.environment
         if env in data:
             raise ConnectionEditError(f"environment already exists: {env}")
@@ -260,7 +279,9 @@ class ConnectionEditor:
             db["sid"] = request.sid
         return {"db": db, "defaults": {}, "schemas": {}}
 
-    def _create_connection(self, yaml: YAML, data: Any, request: ConnectionEditRequest):
+    def _create_connection(
+        self, yaml: YAML, data: Any, request: ConnectionEditRequest
+    ) -> tuple[str, str]:
         env_node = data.get(request.environment) if isinstance(data, dict) else None
         if not isinstance(env_node, dict):
             env_node = self._fresh_env(request)
@@ -377,7 +398,9 @@ class ConnectionEditor:
         new_env["schemas"] = {}
         return new_env
 
-    def _add_schema(self, yaml: YAML, data: Any, request: ConnectionEditRequest):
+    def _add_schema(
+        self, yaml: YAML, data: Any, request: ConnectionEditRequest
+    ) -> tuple[str, str]:
         env_node = self._require_environment(data, request.environment)
         schema = request.schema
         schemas = env_node.get("schemas")
@@ -400,7 +423,7 @@ class ConnectionEditor:
         preview = self._dump_node(yaml, {schema: {"db": {"user": user}}})
         return summary, preview
 
-    def _set_pwd(self, data: Any, request: ConnectionEditRequest):
+    def _set_pwd(self, data: Any, request: ConnectionEditRequest) -> tuple[str, str]:
         env_node = self._require_environment(data, request.environment)
         schemas = env_node.get("schemas")
         schema_node = schemas.get(request.schema) if isinstance(schemas, dict) else None
@@ -419,7 +442,7 @@ class ConnectionEditor:
         summary = f"set password for {request.environment}.{request.schema}"
         return summary, ""
 
-    def _set_wallet_pwd(self, data: Any, request: ConnectionEditRequest):
+    def _set_wallet_pwd(self, data: Any, request: ConnectionEditRequest) -> tuple[str, str]:
         env_node = self._require_environment(data, request.environment)
         if request.password:
             wallet = env_node.get("wallet")
@@ -456,12 +479,14 @@ class ConnectionEditor:
             target[value_key] = stored
             target[marker_key] = "Y"
             write_fingerprint(target, value_key, recorded)
+            _drop_command_keys(target, value_key)
             return
         target[value_key] = password
         target.pop(marker_key, None)
         # A fingerprint outliving the encrypted value it described would make
         # the loader refuse a password that is not encrypted at all.
         target.pop(fingerprint_key(value_key), None)
+        _drop_command_keys(target, value_key)
 
     def _require_environment(self, data: Any, env: str) -> Any:
         env_node = data.get(env) if isinstance(data, dict) else None
@@ -473,3 +498,29 @@ class ConnectionEditor:
         buffer = io.StringIO()
         yaml.dump(node, buffer)
         return buffer.getvalue().rstrip("\n")
+
+__all__ = [
+    "Any",
+    "COMMAND_KEYS",
+    "ConnectionEditError",
+    "ConnectionEditRequest",
+    "ConnectionEditResult",
+    "ConnectionEditSecretField",
+    "ConnectionEditor",
+    "DEFAULT_PORT",
+    "Literal",
+    "Path",
+    "SECRET_SAFE_YAML_WIDTH",
+    "SECRET_SOURCES",
+    "Secret",
+    "YAML",
+    "annotations",
+    "crypto",
+    "dataclass",
+    "field",
+    "fingerprint_key",
+    "io",
+    "rekey_secrets",
+    "text_files",
+    "write_fingerprint",
+]

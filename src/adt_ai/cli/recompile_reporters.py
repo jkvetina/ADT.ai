@@ -44,7 +44,7 @@ _CAUSE_SECTIONS = (
 def _object_label(object_type: str, object_name: str) -> str:
     """``TYPE.NAME``, the one identifier every section of the report shares.
 
-    The name alone is ambiguous and measurably so: ANDRITZ DBADMIN carries
+    The name alone is ambiguous and measurably so: a client DBADMIN schema carries
     ``UT_UTILS`` as both a ``PACKAGE`` and a ``PACKAGE BODY``, two objects with
     different errors. The type is what tells them apart (#212).
     """
@@ -200,7 +200,7 @@ def _distinct_compile_errors(
 ) -> list[tuple[tuple[int, int], str]]:
     """This object's real errors, each once, at the lowest place it was reported.
 
-    Two filters, both measured against the live ANDRITZ DBADMIN run: cascade rows
+    Two filters, both measured against the live a client DBADMIN schema run: cascade rows
     go (they restate a failure whose real cause is printed beside them), and a
     message repeated at several positions collapses to its lowest ``line.pos``,
     a missing grant referenced eight times is one thing to fix, not eight.
@@ -262,7 +262,7 @@ def _clean_compile_error_message(text: str) -> str:
 
     `user_errors.text` keeps whatever whitespace the compiler wrote, and several
     rows end with a newline, `ORA-00904: "WM_CONCAT": invalid identifier` on
-    ANDRITZ DBADMIN among them. Rendered raw in the table this list replaced, that
+    a client DBADMIN schema among them. Rendered raw in the table this list replaced, that
     newline ended the row early and the column's remaining width printed as a line
     of spaces underneath. Normalizing still matters for the list: it is what makes
     the dedupe key stable, and what lets `textwrap` own every line break.

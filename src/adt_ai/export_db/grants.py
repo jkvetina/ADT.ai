@@ -13,7 +13,8 @@ under the export's own header, like the object pulls above them.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING, Any
 
 from adt_ai.export_db.config import _requested_object_type_matches
 from adt_ai.export_db.content import (
@@ -26,6 +27,11 @@ from adt_ai.export_db.files import ObjectFileWriter, ObjectWriteRequest
 from adt_ai.export_db.inventory import DatabaseObject, ObjectDiscovery
 from adt_ai.shared.config import is_enabled
 
+if TYPE_CHECKING:
+    # `request` reaches this module through `inventory`, so the request type
+    # is named for the checker only.
+    from adt_ai.export_db.request import ExportDbRequest
+
 # The object type all four artifacts already carry. Named once so the yield
 # below, the overview row and the compact label cannot drift onto three
 # spellings. Jan wrote `GRANTS` when he asked for it on screen (`#382`); the
@@ -34,7 +40,7 @@ from adt_ai.shared.config import is_enabled
 GRANT_OBJECT_TYPE = "GRANT"
 
 
-def exports_grants(request) -> bool:
+def exports_grants(request: ExportDbRequest) -> bool:
     """Will this request write GRANT artifacts at all?
 
     The two guards `grant_contents` opens with, lifted so the overview row and
@@ -54,10 +60,10 @@ def exports_grants(request) -> bool:
 
 
 def grant_artifacts(
-    request,
-    schema,
+    request: ExportDbRequest,
+    schema: str,
     discovery: ObjectDiscovery,
-    split_patterns,
+    split_patterns: Callable[[Any], list[str] | None],
     writer: ObjectFileWriter,
 ) -> tuple[list[tuple[DatabaseObject, str]], bool]:
     """This schema's GRANT artifacts, and whether any of them actually moved.
@@ -94,10 +100,10 @@ def grant_artifacts(
 
 
 def grant_contents(
-    request,
-    schema,
+    request: ExportDbRequest,
+    schema: str,
     discovery: ObjectDiscovery,
-    split_patterns,
+    split_patterns: Callable[[Any], list[str] | None],
 ) -> Iterable[tuple[DatabaseObject, str]]:
     """Yield one schema's GRANT artifacts, read on the caller's own discovery.
 

@@ -16,7 +16,7 @@ from adt_ai.shared.commit_cache import (
 )
 from adt_ai.shared.commit_discovery import commit_ref_matches
 from adt_ai.shared.dates import within_recent_window
-from adt_ai.shared.git_files import run_git, run_git_bytes
+from adt_ai.shared.git_files import git_status_porcelain, run_git, run_git_bytes
 from adt_ai.shared.identity import resolve_commit_email
 from adt_ai.shared.sql_like import matches_sql_like
 
@@ -205,8 +205,25 @@ class SearchRepoRunner:
     ) -> tuple[list[Path], list[str]]:
         restored: list[Path] = []
         failed: list[str] = []
+        # `-stage` writes every matching version to the one working-tree path,
+        # so without this the OLDEST version landed last and got staged, against
+        # the newest-wins promise in docs/search_repo.md. Records arrive
+        # newest-first, so the first writer of a path is the newest (ADT #659).
+        # Without `-stage` each version has a path of its own and none collide.
+        staged_paths: set[str] = set()
         for record in records:
             for file_path in record.files:
+                if request.stage and file_path in staged_paths:
+                    continue
+                if request.stage and git_status_porcelain(root, file_path):
+                    # `-stage` writes straight onto this working-tree path and
+                    # `git add`s the result, so an uncommitted local edit here
+                    # would be overwritten and staged with no trace. Refuse it,
+                    # the same way a stale cache entry is refused below, rather
+                    # than silently discard the edit (ADT #670).
+                    failed.append(file_path)
+                    staged_paths.add(file_path)
+                    continue
                 try:
                     payload = run_git_bytes(root, ["show", f"{record.id}:{file_path}"])
                 except subprocess.CalledProcessError:
@@ -225,6 +242,7 @@ class SearchRepoRunner:
                 text_files.write_bytes(target, payload)
                 restored.append(target)
                 if request.stage:
+                    staged_paths.add(file_path)
                     run_git(root, ["add", file_path])
         return restored, failed
 

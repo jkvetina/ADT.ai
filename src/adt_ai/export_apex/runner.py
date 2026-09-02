@@ -5,6 +5,7 @@ import shutil
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -183,7 +184,7 @@ class ApexExportRunner(
             # block's closing blank. Every consumer sits in the loop below, so
             # first use lands after that application's section title. A schema
             # with no application reaches none, and exports nothing either.
-            cached_developers: dict[str, Mapping[str, str]] | None = None
+            cached_developers: Mapping[str, Mapping[str, str]] | None = None
 
             def workspace_developers(
                 gateway: QueryGateway = gateway,
@@ -338,13 +339,12 @@ class ApexExportRunner(
                         store,
                         application,
                         "files",
-                        lambda gateway=gateway, application=application, resolver=resolver: (
-                            self._write_static_files(
-                                gateway,
-                                resolver,
-                                application,
-                                application.app_id,
-                            )
+                        partial(
+                            self._write_static_files,
+                            gateway,
+                            resolver,
+                            application,
+                            application.app_id,
                         ),
                     )
                 if request.actions.get("files_ws") and schema_slice:
@@ -353,9 +353,7 @@ class ApexExportRunner(
                         timers,
                         store,
                         "files_ws",
-                        lambda gateway=gateway, application=application, resolver=resolver: (
-                            self._write_static_files(gateway, resolver, application, 0)
-                        ),
+                        partial(self._write_static_files, gateway, resolver, application, 0),
                     )
                 if request.actions.get("rest") and schema_slice:
                     self._run_schema_action(
@@ -363,8 +361,8 @@ class ApexExportRunner(
                         timers,
                         store,
                         "rest",
-                        lambda gateway=gateway, resolver=resolver: self._write_rest_export(
-                            gateway, resolver, request.config
+                        partial(
+                            self._write_rest_export, gateway, resolver, request.config
                         ),
                     )
                 self._store_checksum(gateway, request, application)
@@ -413,7 +411,7 @@ class ApexExportRunner(
                     print_apexlang_skip_row()
                 continue
 
-            def operation(sql: str = sql, action: str = action) -> list[dict[str, Any]]:
+            def operation(sql: str = sql, action: str = action) -> CollectionWriteResult:
                 gateway.execute(
                     sql,
                     _bind_params(
@@ -479,4 +477,106 @@ class ApexExportRunner(
         )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = [
+    "ACTION_HEADERS",
+    "APEXLANG_MIN_APEX_RELEASE",
+    "Any",
+    "ApexActionTimingMixin",
+    "ApexApplication",
+    "ApexCollectionWriterMixin",
+    "ApexComponentFilter",
+    "ApexExplicitFilter",
+    "ApexExportRequest",
+    "ApexExportRunner",
+    "ApexFileResolver",
+    "ApexPageSelection",
+    "ApexProgressReporter",
+    "ApexSchemaLevelMixin",
+    "ApexStore",
+    "ApexWatermarkMixin",
+    "Callable",
+    "CollectionWriteResult",
+    "ConsoleApexProgressReporter",
+    "FixedWidthProgressPrinter",
+    "GatewayFactory",
+    "Mapping",
+    "Path",
+    "QueryGateway",
+    "RecentComponentFilter",
+    "TEXT_ACTIONS",
+    "_WATERMARKED_FORMATS",
+    "_bind_params",
+    "_blob_bytes",
+    "_changes_since_label",
+    "_checksum_value",
+    "_clean_page_author",
+    "_clean_split_sql",
+    "_cleanup_sqlcl",
+    "_component_row",
+    "_default_id_offset",
+    "_embedded_relative",
+    "_enrich_sql",
+    "_enrichments",
+    "_export_options",
+    "_extract_first",
+    "_flag",
+    "_has_explicit",
+    "_is_partial",
+    "_matches_prefix",
+    "_merge_app_groups",
+    "_normalize_text_line_endings",
+    "_override_apex_release",
+    "_page_id_from_export_path",
+    "_parse_app_group_blocks",
+    "_payload_for",
+    "_plsql_block",
+    "_print_application_export_header",
+    "_print_components",
+    "_print_recent_components",
+    "_print_schema_export_header",
+    "_recent_component_filter",
+    "_recent_since",
+    "_render_app_group_blocks",
+    "_reports_recent_changes",
+    "_rest_module_name",
+    "_rest_prefixes",
+    "_schema_block",
+    "_schema_definition",
+    "_skip_collection_file",
+    "_split_rest_modules",
+    "_store_application_checksum",
+    "_store_application_metadata",
+    "_store_workspace_developers",
+    "_strip_app_prefix",
+    "_target_path",
+    "_used_on_pages",
+    "_workspace_developers_from_rows",
+    "annotations",
+    "dataclass",
+    "dedupe_recent_rows",
+    "deep_component_filters",
+    "deep_db_object_rows",
+    "is_bare_recent",
+    "is_sub_day_window",
+    "is_watermarking",
+    "may_advance",
+    "merge_workspace_developers",
+    "open_application_section",
+    "open_segment_bar",
+    "partial",
+    "print_apexlang_skip_row",
+    "print_recent_changes",
+    "queries",
+    "read_db_now",
+    "recent_author_label",
+    "recent_authors",
+    "recent_components",
+    "require_database_session",
+    "row_value",
+    "schema_level_only",
+    "shutil",
+    "skipped_by_apex_release",
+    "text_files",
+    "time",
+    "workspace_developers_from_mapping",
+]

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from adt_ai.cli.constants import DEFAULT_ROW_LIMIT
-from adt_ai.cli.parser_common import add_connection_key_argument
+from adt_ai.cli.parser_common import SubParsers, add_connection_key_argument
 from adt_ai.shared.dates import recent_window
 from adt_ai.shared.recent_state import BARE_RECENT
 from adt_ai.ut.limits import GATE_FROM_CONFIG
 
 
-def add_database_parsers(subparsers) -> None:
+def add_database_parsers(subparsers: SubParsers) -> None:
     # NOT "show debug info" (ADT #326), which was the one -debug row of eleven
     # that named neither what is shown nor where it comes from. Both this flag
     # and -verbose above append themselves to the SQLcl DIFF command

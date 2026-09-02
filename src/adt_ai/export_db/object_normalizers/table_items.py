@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
+from adt_ai.export_db.normalizer_clauses import strip_default_clauses
 from adt_ai.export_db.normalizers import (
     NormalizationContext,
     _code_positions,
@@ -12,6 +13,16 @@ from adt_ai.export_db.normalizers import (
     _replace_outside_sql_strings,
 )
 from adt_ai.export_db.object_normalizers.table_folds import _FoldedConstraint
+
+_IDENTITY_DEFAULTS = (
+    r"MINVALUE\s+1",
+    r"INCREMENT\s+BY\s+1",
+    r"CACHE\s+20",
+    r"NOORDER",
+    r"NOCYCLE",
+    r"NOKEEP",
+    r"NOSCALE",
+)
 
 
 def _is_constraint_item(item_type: str) -> bool:
@@ -110,17 +121,8 @@ def _cleanup_table_item(item: str) -> str:
     item = re.sub(r"\s+ENABLE\b", "", item, flags=re.IGNORECASE)
     item = re.sub(r"\s+USING\s+INDEX\b.*", "", item, flags=re.IGNORECASE)
     item = re.sub(r"\s+TABLESPACE\s+\S+", "", item, flags=re.IGNORECASE)
-    item = re.sub(r"\s+MAXVALUE\s+9{10,}", "", item, flags=re.IGNORECASE)
-    for token in (
-        " MINVALUE 1",
-        " INCREMENT BY 1",
-        " CACHE 20",
-        " NOORDER",
-        " NOCYCLE",
-        " NOKEEP",
-        " NOSCALE",
-    ):
-        item = item.replace(token, "")
+    item = re.sub(r"\s+MAXVALUE\s+9{10,}(?!\d)", "", item, flags=re.IGNORECASE)
+    item = strip_default_clauses(item, _IDENTITY_DEFAULTS)
     item = item.replace("NUMBER(*,0)", "INTEGER")
     item = re.sub(r"\bNUMBER\(\*,0\)", "INTEGER", item, flags=re.IGNORECASE)
     item = re.sub(r"TIMESTAMP\s+\((\d+)\)", r"TIMESTAMP(\1)", item)

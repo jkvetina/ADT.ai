@@ -7,6 +7,7 @@ from adt_ai.export_db.normalizers import (
     _ensure_sql_terminator,
     _ensure_statement_semicolon,
     _trim_trailing_blank_lines,
+    sql_spans,
 )
 
 _FOR_EACH_ROW  = re.compile(r"\bFOR\s+EACH\s+ROW\b", re.IGNORECASE)
@@ -33,17 +34,31 @@ def _take_generated_status_statements(lines: list[str]) -> tuple[list[str], str 
     and is dropped outright; DISABLE carries real state, so it is returned to
     the caller and re-emitted below the terminator, where it is a statement of
     its own and the file actually runs.
+
+    The match runs on the line's CODE spans only (ADT #652): the same words in a
+    string literal or a comment are prose, and matching raw text made the body's
+    own `-- ALTER TRIGGER ... DISABLE;` note disable the trigger on export.
     """
     kept: list[str] = []
     disable: str | None = None
     for line in lines:
-        if _ALTER_ENABLE.match(line):
+        code = _code_only(line)
+        if _ALTER_ENABLE.match(code):
             continue
-        if _ALTER_DISABLE.match(line):
+        if _ALTER_DISABLE.match(code):
             disable = line.strip()
             continue
         kept.append(line)
     return kept, disable
+
+def _code_only(line: str) -> str:
+    """`line` with its string and comment spans blanked out, offsets preserved."""
+    chars = list(line)
+    for kind, start, end in sql_spans(line, identifiers=True):
+        if kind == "code":
+            continue
+        chars[start:end] = " " * (end - start)
+    return "".join(chars)
 
 def _split_for_each_row(lines: list[str]) -> list[str]:
     """Put the trigger header's FOR EACH ROW clause on a line of its own.

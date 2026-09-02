@@ -19,6 +19,18 @@ ADT.ai exports only the formats named on the command line. There are no configur
 
 `-page` and `-component` narrow the split, readable and embedded output and the matching page comment YAML. They select no format on their own, so name one. Filtered runs do not update the application cache.
 
+## A full export leaves no stale file behind
+
+`-split`, `-embedded` and `-apexlang` each own a folder, and an unfiltered run of one of them deletes the files in that folder it did not write. A page or component deleted in App Builder therefore leaves no orphan `.sql`, report file or `.apx` in the repository.
+
+`-split` sweeps the `.sql` files under `application/`, `-embedded` sweeps the `.sql`, `.js` and `.css` files under `embedded_code/`, `-apexlang` sweeps the `.apx` and `.json` files under `apexlang/`. Every other export folder is left alone, and so is the `.yaml` a `-readable` export writes under the same `application/` tree.
+
+Each sweep is limited to the extensions its format writes, so a file of your own kept beside an export, a `NOTES.md` next to the APEXlang tree or inside `embedded_code/`, is never deleted.
+
+The sweep runs against what the export actually wrote rather than clearing the folder first, so an unchanged file keeps its modification time. A run narrowed by `-page`, `-component` or `-recent` wrote a subset on purpose and never sweeps, except `-apexlang`, which those flags do not narrow.
+
+`-full` and `-readable` write no folder of their own and delete nothing.
+
 `-deep` beside `-page` also exports the components recorded for those pages in the dependency mirror, LOVs, lists and authorization schemes among them, and prints a `DB OBJECTS` section of the database objects those pages use.
 
 Version handling reads the one APEX version the connection block already printed. `-apexlang` on an older instance is skipped and the run continues, so `-all` never fails on a pre-26.1 environment. The skip is announced only when you named the format yourself, and is silent under `-all`.
@@ -27,7 +39,7 @@ Version handling reads the one APEX version the connection block already printed
 
 `-apexlang` writes the folder tree beside `readable/` and `embedded_code/`: `application.apx`, `pages/`, `shared-components/`, `workspace-components/`, and the deployment and project metadata. Members land verbatim, since `.apx` is compiler input, so none of the SQL-export postprocessing applies.
 
-The folder is recreated on every export, so a component deleted in App Builder leaves no stale `.apx`. `-page`, `-component` and `-recent` never filter it, and an APEXlang run never advances a `-recent` watermark.
+The folder is swept on every export, so a component deleted in App Builder leaves no stale `.apx`. The sweep covers the `.apx` and `.json` members the format writes and nothing else, so anything else you keep in that folder stays. `-page`, `-component` and `-recent` never filter it, and an APEXlang run never advances a `-recent` watermark.
 
 **Static files are deliberately left out.** An APEXlang export carries the application's static files as binary payloads, and ADT.ai skips those members so the repository never holds two copies, `-files` being the single static-file channel. The metadata that references them is still exported.
 

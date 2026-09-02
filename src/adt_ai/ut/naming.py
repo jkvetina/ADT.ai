@@ -14,7 +14,7 @@ command. Four config values replace all five:
 * ``ut_module`` , capture group 1 is the module a **suite** belongs to
   (``'^[^_]+_([^_]+)'``), which drives the ``SUMMARY PER MODULE:`` roll-up. It must not be
   anchored to anything that has to follow the module token, since a module whose
-  whole implementation is one package (``ICT_VPD_UT``) ends there.
+  whole implementation is one package (``APP_VPD_UT``) ends there.
 
 **These are Oracle regular expressions, and every one of them is evaluated by
 Oracle.** ``REGEXP_LIKE`` selects the test packages inside the dictionary query,
@@ -44,17 +44,17 @@ DEFAULT_UT_MATCH = "^(.+)_UT$"
 
 # **Not anchored to the test-package suffix**, and that is the point. Anchored to
 # `.+_UT$` (as it shipped in card `#244`) it needed a fourth token, so a
-# three-token suite like `ICT_INT_UT` was unparseable and grouped blank despite
+# three-token suite like `APP_INT_UT` was unparseable and grouped blank despite
 # having run. Card `#247` dropped the anchor so the expression could also read a
 # package under test's own name, for the coverage roll-up that grouped the whole
 # schema; card `#291` removed that roll-up, and only suites are grouped now, but
 # the anchor stays off, because the suite half of the argument stands on its own.
 #
 # **It does not require a trailing `_` either** (card `#248`). Prefix plus module
-# and nothing after it is a real name: `ICT_VPD` is a module whose whole
+# and nothing after it is a real name: `APP_VPD` is a module whose whole
 # implementation is one package, and demanding a third token put it, and only it
 #, in the unattributed group, immediately above the unnamed total row, where the
-# two cannot be told apart. Measured by Jan on `ICT_OWNER@ORCLPDB1`: one package
+# two cannot be told apart. Measured by Jan on `APP_OWNER@DEVDB`: one package
 # of 58. The anchor never bounded anything the capture group did not already
 # bound, since `[^_]+` stops at the next underscore whether or not one is
 # required to follow it.

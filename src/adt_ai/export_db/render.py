@@ -9,7 +9,7 @@ five other modules that render one.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from adt_ai.export_db.grants import GRANT_OBJECT_TYPE
 from adt_ai.export_db.inventory import DatabaseObject
@@ -158,7 +158,7 @@ class ConsoleExportDbReporter(ExportDbReporter):
         # The counted object rows waiting on the grant reads, or None when this
         # segment has no overview to render. See `overview` and
         # `overview_grants`.
-        self._overview_rows: list[Mapping[str, object]] | None = None
+        self._overview_rows: Sequence[Mapping[str, object]] | None = None
         # Whether this segment printed an overview section header. It is what
         # `start_export` consults before suppressing itself on a zero run: the
         # header is the thing that already said the run found nothing, and

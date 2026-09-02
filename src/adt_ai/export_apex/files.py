@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.export_apex.inventory import ApexApplication
-from adt_ai.shared.apex_paths import APEXLANG_DIR
+from adt_ai.shared.apex_paths import APEXLANG_DIR, app_folder_depth, app_folder_segment
 from adt_ai.shared.config import reject_unresolved_placeholders
 from adt_ai.shared.path_template import (
     APEX_APP_TOKEN_NAMES,
@@ -167,8 +167,24 @@ def _render_app_folder(template: str, application: ApexApplication) -> Path:
     }
     rendered = template
     for name in APEX_APP_TOKEN_NAMES:
-        rendered = rendered.replace(f"{{${name}}}", values[name] or "")
-    return _clean_relative(rendered)
+        # Each value becomes ONE folder segment. The guard above vets the
+        # template; nothing vetted what the template substituted into it, and
+        # `APP_NAME` is free text, so an application called `ORDERS/23` nested a
+        # folder of its own (ADT #670).
+        rendered = rendered.replace(f"{{${name}}}", app_folder_segment(values[name] or ""))
+    folder = _clean_relative(rendered)
+    # A segment that renders to nothing is refused rather than dropped. Losing
+    # the last one puts every application in the schema's own apex root; losing
+    # an inner one leaves a folder one level shallower than `patch` counts, so
+    # the reader takes the application id off the wrong name (ADT #474).
+    if not folder.parts or len(folder.parts) != app_folder_depth(template):
+        raise ValueError(
+            f"apex_path_app rendered no folder for application {application.app_id}: "
+            f"template {template!r} has a segment that is empty for this application. "
+            "Give the application the missing value in APEX, or drop the token from "
+            "the template."
+        )
+    return folder
 
 
 def _clean_relative(path: str | Path) -> Path:

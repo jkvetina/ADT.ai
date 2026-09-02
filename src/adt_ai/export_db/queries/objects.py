@@ -205,7 +205,7 @@ AND o.object_name = :object_name
 
 # Unlike a JOB, an mview log needs no invented signal: its LOG_TABLE is an ordinary
 # TABLE in `user_objects`, and a table's LAST_DDL_TIME is a true DDL timestamp that
-# DML does not move (measured on IVORY 2026-08-20: 123 tables took DML at 05:07 with
+# DML does not move (measured on a client database 2026-08-20: 123 tables took DML at 05:07 with
 # LAST_DDL_TIME still reading 08-11 / 08-13). So the window binds here exactly as it
 # does for every other type, and this type never needed the widening ADT #414 gave it.
 MVIEW_LOGS_QUERY = """

@@ -95,8 +95,14 @@ PATH_SUFFIXES = ("", "sqlcl/bin")
 
 SHELL_TIMEOUT_SECONDS = 10
 
-_EXPORT_LINE = re.compile(r"^\s*export\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
-_DECLARE_LINE = re.compile(r"^\s*declare\s+-x\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+_EXPORT_PREFIX = re.compile(r"^\s*export\s+")
+_DECLARE_PREFIX = re.compile(r"^\s*declare\s+-x\s+")
+# One shell WORD. Quoted runs keep the spaces inside them, and runs that touch
+# glue into a single word, which is what `'it'\''s'` is; that is why this is a
+# tokenizer and not a `str.split()`.
+_WORD = re.compile(r"(?:'[^']*'|\"[^\"]*\"|\\.|[^\s'\"])+")
+# The `NAME=` a word opens with, if it is an assignment at all.
+_ASSIGNMENT = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=")
 _VARIABLE_REFERENCE = re.compile(
     r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)"
 )
@@ -223,14 +229,47 @@ def _parse_exports(
     home  : Path,
 ) -> None:
     for line in text.splitlines():
-        match = _EXPORT_LINE.match(line)
+        for name, raw in _assignments(line, _EXPORT_PREFIX):
+            if name in values:
+                continue  # first file wins
+            literal, quoted = _unquote(raw)
+            values[name] = literal if quoted else _expand(literal, values, env, home)
+
+
+def _assignments(line: str, *prefixes: re.Pattern[str]) -> list[tuple[str, str]]:
+    """Every `NAME=VALUE` one `export` / `declare -x` line sets, in order.
+
+    A shell statement sets as many variables as it carries words, and
+    `export ADT_KEY=abc123 ORACLE_HOME=/opt/oracle` is a perfectly ordinary two.
+    Read to end-of-line as a single value it gave `ADT_KEY` the whole tail and
+    never saw `ORACLE_HOME` at all (ADT #670). The corrupt value was the smaller
+    half of that: `_sentinels_resolved` only asks whether a sentinel is truthy,
+    so the mangled one read as resolved and suppressed the login-shell fallback
+    that would have got both right.
+
+    Quoting is honoured BEFORE the split rather than after it, because the
+    quotes are what say where a value ends; `JAVA_TOOL_OPTIONS="-a -b"` is one
+    variable, not two words. A word opening with `#` ends the line: a comment
+    can spell something shaped exactly like an assignment, and the rest of a
+    sentence is not an environment.
+
+    A word that carries no `NAME=` (`export -f helper`, a bare `export ADT_ENV`)
+    sets nothing and is stepped over rather than ending the line, so the real
+    assignments beside it still arrive.
+    """
+    for prefix in prefixes:
+        match = prefix.match(line)
         if match is None:
             continue
-        name, raw = match.group(1), match.group(2)
-        if name in values:
-            continue  # first file wins
-        literal, quoted = _unquote(raw)
-        values[name] = literal if quoted else _expand(literal, values, env, home)
+        found: list[tuple[str, str]] = []
+        for word in _WORD.findall(line[match.end():]):
+            if word.startswith("#"):
+                break
+            assignment = _ASSIGNMENT.match(word)
+            if assignment is not None:
+                found.append((assignment.group(1), word[assignment.end():]))
+        return found
+    return []
 
 
 def _unquote(raw: str) -> tuple[str, bool]:
@@ -238,10 +277,6 @@ def _unquote(raw: str) -> tuple[str, bool]:
     value = raw.strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
         return value[1:-1].replace("'\\''", "'"), value[0] == "'"
-    # An unquoted value ends at an inline comment.
-    comment = value.find(" #")
-    if comment != -1:
-        value = value[:comment].rstrip()
     return value, False
 
 
@@ -275,11 +310,8 @@ def _read_from_shell(shell: str, runner: ShellRunner | None) -> dict[str, str]:
         return {}
     values: dict[str, str] = {}
     for line in (output or "").splitlines():
-        match = _EXPORT_LINE.match(line) or _DECLARE_LINE.match(line)
-        if match is None:
-            continue
-        name, raw = match.group(1), match.group(2)
-        values.setdefault(name, _unquote(raw)[0])
+        for name, raw in _assignments(line, _EXPORT_PREFIX, _DECLARE_PREFIX):
+            values.setdefault(name, _unquote(raw)[0])
     return values
 
 

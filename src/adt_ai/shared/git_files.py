@@ -16,17 +16,43 @@ class ChangedFile:
     content_hash: str | None = None
 
 
+def run_git_paths(root: Path, args: list[str]) -> list[str]:
+    r"""Path output from a git command, split on NUL rather than on newlines.
+
+    **Every git command that prints paths goes through this.** Git C-quotes any
+    path outside plain ASCII in its default output, so `příklad.sql` comes back
+    as `"database/tables/p\305\231\303\255klad.sql"`, quotes and octal escapes
+    and all. That quoted spec resolves to nothing, so every Czech-named object
+    silently vanished from `rebuild`, `search_repo`, `patch -create` and the hash
+    index with no message (ADT #664). `-z` turns the quoting off and terminates
+    each path with NUL, which is also the only separator a filename cannot
+    contain, so a path holding a newline survives too.
+
+    The caller passes the command WITHOUT `-z`; it is appended here so no call
+    site can forget it.
+    """
+    output = run_git_bytes(root, [*args, "-z"]).decode("utf-8", errors="surrogateescape")
+    return [record for record in output.split("\0") if record]
+
+
 def changed_files(root: Path, commit_hash: str) -> list[ChangedFile]:
-    diff_lines = run_git(
+    # `--name-status -z` emits the status and the path as SEPARATE NUL-terminated
+    # records rather than one tab-joined line, so they are read in pairs, except
+    # a rename or copy, which carries its source and its destination.
+    records = run_git_paths(
         root,
         ["diff-tree", "--root", "--no-commit-id", "--name-status", "-r", commit_hash],
-    ).splitlines()
+    )
     entries: list[tuple[str, str]] = []
-    for line in diff_lines:
-        if "\t" not in line:
-            continue
-        status, path = line.split("\t", 1)
+    index = 0
+    while index + 1 < len(records):
+        status = records[index]
+        width = 3 if status[:1] in {"R", "C"} else 2
+        # The destination is the path the commit now carries; for R/C it is the
+        # third record, and a truncated stream falls back to the second.
+        path = records[min(index + width - 1, len(records) - 1)]
         entries.append((status[0], path))
+        index += width
 
     # Fetch every changed blob for this commit in a single `git cat-file --batch`
     # process instead of one `git show` per file: a commit touching N files used
@@ -65,7 +91,7 @@ def _blob_contents(root: Path, commit_hash: str, paths: list[str]) -> dict[str, 
     completed = subprocess.run(
         ["git", "cat-file", "--batch"],
         cwd=root,
-        input=specs.encode(),
+        input=specs.encode("utf-8", errors="surrogateescape"),
         capture_output=True,
         check=True,
         env=safe_subprocess_environment(),
@@ -130,6 +156,9 @@ def file_payload_hash(payload: bytes | str, encoding: str = "utf-8") -> str:
     return "" if value == "da39a3ee5e6b4b0d3255bfef95601890afd80709" else value
 
 
+BOM = "﻿"
+
+
 def _canonical_payload(payload: bytes | str, encoding: str) -> bytes:
     if isinstance(payload, bytes):
         try:
@@ -142,7 +171,12 @@ def _canonical_payload(payload: bytes | str, encoding: str) -> bytes:
             return payload
     else:
         text = payload
-    return text_files.normalize(text).strip().encode(encoding)
+    # A BOM is an encoding marker, not content, and `str.strip()` does not remove
+    # it, so a BOM-prefixed file never hash-matched its stripped twin and every
+    # baseline read it as MODIFIED for good (ADT #664). It goes before the trim,
+    # for the same reason the line endings do: two spellings of one payload have
+    # to reach one hash.
+    return text_files.normalize(text).lstrip(BOM).strip().encode(encoding)
 
 
 def run_git(root: Path, args: list[str]) -> str:
@@ -280,6 +314,38 @@ def git_status_porcelain(root: Path, path: str) -> str:
         check=False,
         env=safe_subprocess_environment(),
     ).stdout.strip()
+
+
+def git_status_paths(root: Path, paths: list[str]) -> dict[str, str]:
+    """One ``git status --porcelain -z`` call answering every path in ``paths``.
+
+    `patch/report.py::_uncommitted` and `patch/files.py::file_source_modes`
+    used to call :func:`git_status_porcelain` once per file, spawning one `git
+    status` subprocess per patch file (ADT #670); this batches every path the
+    caller has into a single call, through the same `-z` NUL-terminated reader
+    the rest of this module already uses so a non-ASCII path is not silently
+    dropped by C-quoting the way `#664` found plain `ls-files` doing it.
+
+    A path missing from the returned mapping is clean (git printed nothing for
+    it). Both call sites only ever ask about ordinary working-tree edits on a
+    known path, never a rename, so a rename/copy's second (pre-rename) NUL
+    field is read as-is rather than paired off the way `changed_files` pairs
+    `diff-tree -z`; it lands as one extra, unmatched key that no real caller
+    looks up, never as a wrong answer for a path that IS in ``paths``.
+
+    Empty ``paths`` answers ``{}`` without spawning a process at all: nothing
+    to ask git about is not the same question as everything being clean.
+    """
+    if not paths:
+        return {}
+    output = run_git_bytes(
+        root, ["status", "--porcelain", "-z", "--", *paths]
+    ).decode("utf-8", errors="surrogateescape")
+    statuses: dict[str, str] = {}
+    for record in output.split("\0"):
+        if record:
+            statuses[record[3:]] = record
+    return statuses
 
 
 def git_checkout(root: Path, name: str) -> None:

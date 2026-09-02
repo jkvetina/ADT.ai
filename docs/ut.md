@@ -136,7 +136,8 @@ TEST RESULTS:
 - **The four status words are `PASS`, `FAIL`, `ERROR` and `SKIP`**, each a single constant that is both the column header that counts it and the word a row prints, so a row can never read one spelling under a header that reads another.
 - **`UNIT TESTS SUITES:` always prints inside this mode**, header and column row included, even when the list is empty: a run that matched nothing reports it in the same shape as a run that matched ten. Only runnable suites are listed.
 - **Order is fixed and not the reporter's.** Packages print A to Z, and tests in the order the package specification declares them, so a results block reads down the same way the source does.
-- **Test rows print the procedure name, never the `%test` description.** utPLSQL puts the description in the reported name whenever the annotation carries one; the procedure name is what a reader greps for in the source.
+- **Test rows print the procedure name, never the `%test` description.** utPLSQL puts the description in the reported name whenever the annotation carries one; the procedure name is what a reader greps for in the source. Two tests sharing one description each keep their own name and their own verdict, resolved in the order the report emits them.
+- **A `%disabled(<reason>)` test prints that reason under its own `SKIP` row**, indented two spaces past it so it reads as that row's continuation. A skipped row raises exactly one question and the annotation already carries the answer. A `%disabled` with no text prints the row alone.
 - **`TEST RESULTS:` prints as the run proceeds.** The package name lands before `ut.run` is called for that suite, so a slow suite visibly hangs on its own name.
 - **A name longer than the grid is trimmed in the middle**, never left to overhang it: the tail is what tells rows sharing a procedure apart, and the dot leader never falls below two dots.
 
@@ -198,6 +199,7 @@ The zero-test row is the important one: **a zero-test run is a failure, not an e
 - Test packages compiled into the schema being tested, or into the `ut_owner` schema. `ut` runs suites; it does not install them, and deploying one is the project's own deployment path.
 - The ordinary query path, never the read-only one: running a test writes to utPLSQL's own output buffer, and a read-only session makes the reporter's data producer fail to start rather than report anything.
 - One `ut.run` call per suite rather than one per test, so the fixtures run once each. A **skipped** test (`%disabled`) neither passes nor fails: its row reads `SKIP` and it lands in no verdict column, so a suite quietly disabled wholesale shows up as a package with test rows and no counts rather than as green.
+- **A suite that cannot run at all is one red suite, not a lost run.** A dropped connection, an ORA on the reporter's side or a `%beforeall` that blows up produces an `ERROR` row per test in that suite, carrying the cause, and the run carries on to the next one. Every suite that had already finished keeps its results and its timing, and the exit code is non-zero.
 
 ## Arguments
 

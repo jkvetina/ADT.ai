@@ -190,6 +190,23 @@ def is_enabled(value: Any, default: bool = False) -> bool:
     return str(value).strip().upper() in {"1", "TRUE", "Y", "YES", "ON"}
 
 
+def as_int(value: Any) -> int:
+    """``int(value)``, with the argument narrowed so a checker can read it.
+
+    A config value arrives as whatever YAML made of it, which is ``object`` to
+    a reader, and ``int(object)`` is not something a type checker accepts. This
+    is the one place that narrowing is written down, beside ``is_enabled``.
+
+    **It changes nothing about what a value MEANS**, failures included: a
+    number or a numeric string converts, and anything else raises, exactly as
+    the inline ``int()`` calls it replaces did. Whether a malformed key is
+    fatal stays each caller's own decision, and each one already had it.
+    """
+    if not isinstance(value, int | float | str):
+        raise TypeError(f"expected a number, got {type(value).__name__}")
+    return int(value)
+
+
 def _as_list(value: Any) -> list[str]:
     if value is None:
         return []

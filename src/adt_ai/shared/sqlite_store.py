@@ -36,6 +36,23 @@ from adt_ai.shared.queries import sqlite_store as queries
 #: The path SQLite reads as "no file at all".
 MEMORY = ":memory:"
 
+#: How long a connection waits for a writer holding the file, in seconds.
+#:
+#: The driver's own default is five, which ordinary work reaches: a `rebuild`
+#: writing a branch's commits takes longer than that, and a second command
+#: reading the same store during it got `sqlite3.OperationalError: database is
+#: locked` -- a message that reads as a corrupt store rather than as a queue
+#: (ADT #670). Thirty says "wait for the other command to finish" while still
+#: ending, so a genuinely stuck lock is still reported rather than waited on
+#: forever.
+#:
+#: WAL would remove most of the contention and is deliberately NOT enabled: the
+#: stores live under `config/` and `.adt/` INSIDE the user's own repository, and
+#: WAL leaves `-wal`/`-shm` sidecars beside every one of them. Litter in a
+#: working tree that is not ours to litter, in exchange for a wait nobody
+#: notices.
+BUSY_TIMEOUT_SECONDS = 30.0
+
 #: A store version's spelling everywhere: the value of the `_meta` row.
 Version = str | None
 
@@ -60,7 +77,7 @@ class Migration:
 
     source: Version
     target: str
-    apply: Callable[[sqlite3.Connection], None]
+    apply: Callable[[sqlite3.Connection], object]
 
     def __post_init__(self) -> None:
         if self.source == self.target:
@@ -118,11 +135,14 @@ def has_table(connection: sqlite3.Connection, name: str) -> bool:
 
 
 def _connect(db_path: str | Path) -> sqlite3.Connection:
+    # The timeout is spelled on both branches rather than on the one that can
+    # contend: one opener means one reading, and a second spelling here is how
+    # the five copies this module replaced drifted apart in the first place.
     if isinstance(db_path, str) and db_path == MEMORY:
-        return sqlite3.connect(MEMORY)
+        return sqlite3.connect(MEMORY, timeout=BUSY_TIMEOUT_SECONDS)
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    return sqlite3.connect(str(path))
+    return sqlite3.connect(str(path), timeout=BUSY_TIMEOUT_SECONDS)
 
 
 def _lift(
@@ -158,6 +178,7 @@ def _scalar(connection: sqlite3.Connection, sql: str, params: tuple[Any, ...] = 
 
 
 __all__ = [
+    "BUSY_TIMEOUT_SECONDS",
     "MEMORY",
     "Migration",
     "StoreVersionError",

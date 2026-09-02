@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import textwrap
 
-from adt_ai.export_db.runner import print_adt_header
+from adt_ai.shared.progress import print_adt_header
 from adt_ai.ut.inventory import RESULT_ERRORED, RESULT_FAILED
 from adt_ai.ut.layout import DETAIL_INDENT, HEADING_INDENT, MESSAGE_WIDTH
 from adt_ai.ut.runner import Ut3Result
@@ -33,7 +33,7 @@ def print_problems(result: Ut3Result, limit: int | None = None) -> None:
     header.
 
     **The section is capped, and the cap is why the tables below it are legible.**
-    Jan's 2026-08-11 run on `ICT_OWNER` produced 397 stanzas over 3 060 lines, so
+    Jan's 2026-08-11 run on `APP_OWNER` produced 397 stanzas over 3 060 lines, so
     the roll-up came off the bottom of a terminal whose scrollback could not hold
     them, the header, the column row and the separator were all printed and all
     gone, which reads exactly like a renderer that dropped them. Nothing here was

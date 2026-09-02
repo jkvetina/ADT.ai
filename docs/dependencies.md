@@ -69,7 +69,7 @@ TIMER: 3s
 - The two numbers are `changed | total`. Detail views are bulk-pulled and filtered locally, so the second is what came back and the first is what mattered. Under `-force` or a named deep refresh only the fetched count shows, because those scopes are deleted before the fresh rows go in.
 - A failing table completes its row with `FAILED` before the database error block prints the SQL that failed.
 - A multi-schema refresh reads schema by schema, each with its own connection block and its own `TIMER`, banner printed once.
-- With `-format yaml` or `-format md` this chrome moves to stderr, so stdout stays clean and pipeable.
+- With `-format yaml` or `-format md` this chrome moves to stderr, so stdout stays clean and pipeable. A refresh prints no document, so under those formats it writes nothing to stdout at all: connection block, headers, progress rows and `TIMER` are all chrome and all go to stderr.
 
 A query prints one table and opens no connection:
 

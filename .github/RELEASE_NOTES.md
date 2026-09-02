@@ -1,19 +1,24 @@
-- **ADT.ai installs from PyPI.** `pip install adt-ai` is the install, and `pip install --upgrade adt-ai` the upgrade. Cloning the repository and installing that checkout stays documented as the route for working on ADT.ai itself. The README, `SETUP.md` and the setup skill all lead with the package.
-- **Releases ship one immutable artifact set, published without a stored token.** A tag builds the wheel and sdist once, records their digests beside a `SHA256SUMS` file and a CycloneDX SBOM, attests their provenance, and re-derives every digest at each later stage. Publishing is PyPI trusted publishing over OIDC.
-- **The exact released wheel is installed and exercised on Linux, macOS and Windows before it ships.** Each clean-room job runs `pip check`, `doctor -init` and `doctor -offline`, requires all eleven scaffold files, and compares the packaged patch-template resources against the wheel. The supported floor is Python 3.14 or newer.
-- **Repository governance and package metadata are complete.** `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, a pull-request template and two issue forms ship with the release; a private advisory is the only security route. Package metadata carries authors, keywords, project URLs and accurate classifiers.
-- **`flow -refresh` resolves the APEX schema itself.** A connection whose `defaults` are empty no longer stops with `Default apex schema not configured` before its first query; the command works out which schema to read the APEX inventory through, as `export_apex -reveal` already did.
-- **Runtime state, parsers and credentials fail closed.** Impossible import, console, session and reader states raise typed errors even under `python -O`; Oracle failures and SQLcl JSON are accepted only across exact boundaries; and connection secrets stay masked with one audited plaintext boundary before encryption or a private-file write.
-- **Every SQLite store follows one convention, and each has a documented schema.** The five stores share one opener, one version table and one set of naming and timestamp rules, and existing files are migrated in place. Seven pages under `docs/storage*.md` carry an ER diagram and a column table each.
-- **`ut` reads coverage for every utPLSQL source type.** Package bodies, type bodies, procedures, functions and triggers are all collected and kept, keyed by type and name. Nothing on screen moves: a printed figure still describes the packages a run's suites test, and `docs/ut_coverage.md` says why.
-- **New documentation pages.** `docs/why.md` makes the case for adopting ADT.ai command group by command group, and `docs/apex_round_trip.md` walks the APEX loop end to end with a runnable command per step, every transcript captured from a live run.
-- **The Windows script transport is measured rather than assumed.** A hosted Windows job puts the production SQLcl runner and its live reader in front of a real SQLcl, so the pipe transport, the end-of-input guarantee and the live progress rows rest on a recorded run rather than one report.
+- **`export_data` writes values Oracle reads back unchanged.** RAW travels as hex through `HEXTORAW`, NUMBER is fetched exactly and written digit for digit, and DATE and TIMESTAMP carry their own format model, so a MERGE no longer depends on the session's NLS settings.
+- **A filtered `export_data` run no longer deletes the sidecar files of rows it did not select.** Pruning removed the LOB files of every row a `where` predicate excluded. A filtered run now deletes nothing, because it cannot tell a dropped row from an unselected one.
+- **MERGE keys survive NULLs and identity columns.** A unique-constraint key joins NULL-safe instead of re-inserting every NULL-keyed row on each replay, and a `GENERATED ALWAYS AS IDENTITY` column is joined on but kept out of INSERT and UPDATE, which Oracle refuses.
+- **`export_apex` refuses a REST export that failed halfway.** SQLcl exits successfully when `rest export` fails after some modules printed, and the truncated transcript was written as a module file. A failed export now writes nothing at all.
+- **The `-apexlang` and `-embedded` sweeps delete only what they wrote.** Both passed no extension filter, so any file under those folders the run did not produce was removed, including notes kept beside an export.
+- **An APEX application name becomes one safe folder name.** A name is free text, so `ORDERS/23` silently nested a folder and `ORDERS:23` broke Windows checkouts. Reserved characters collapse to underscores and a token resolving to nothing stops the export.
+- **`dependencies -refresh -app` runs on APEX 26.1.** A version gate treated the reshaped `APEX_USED_*` views as ending at 26.1, so a 26.1 instance fell back to the older query and died on `ORA-00904`. The 24.2 shape is a floor now, with no ceiling above it.
+- **A patch survives an apostrophe in an object or owner name.** Signature rows, lock rows and the APEX drop script spliced names into single-quoted PL/SQL unquoted, so a name like `IT'S_PKG` ended the literal early and broke the block.
+- **`patch -create -search TERM` opens no database.** The search is a discovery run, but the dependency refresh ran before the gate that decides it, so a stale mirror still cost a connection and a rewrite.
+- **`recompile` reports the cause and finishes the work.** A mutual invalidation yields a root cause instead of an empty `ROOT CAUSES:`, the retry repeats until a pass resolves nothing new, and each knock-on is counted under one root.
+- **A scoped `recompile` no longer calls an invalid object missing.** A `-type` or `-name` run could not see the object that broke its target, so it advised restoring one already there. Bare `-force` also compiles each object once rather than twice.
+- **A `ut` suite that cannot run is one red suite, not a lost run.** An exception mid-run discarded every suite that had already finished. Two tests sharing a description now keep their own verdicts, and a disabled test prints the reason it was disabled.
+- **`search_repo -stage` never overwrites uncommitted work.** A restore with staging replaced the working copy of a file holding local edits; a dirty target is refused and listed under `COULD NOT RESTORE:`.
+- **`doctor` always comes back.** Its version probes ran with no timeout; a wedged one is reported as a row after ten seconds instead of hanging behind a half-drawn table.
+- **Smaller, cleaner packaging.** The source distribution ships the package and its documentation without tests, scenarios or coverage output, and the whole package is checked by strict mypy rather than thirteen files.
 
 ## Verification
 
-Fun fact: build verified by 6277 private unit tests over 14 cores in 1:10 with 100% code coverage.
+Fun fact: build verified by 6757 private unit tests over 14 cores in 0:38 with 100% code coverage.
 
-Release evidence: 68 user-story stories passed, 0 failed, and 2 unverified.
+Release evidence: 73 user-story stories passed, 0 failed, and 2 unverified.
 
 The maintained private test suite is available with the existing [GitHub Sponsors Company tier](https://github.com/sponsors/jkvetina).
 

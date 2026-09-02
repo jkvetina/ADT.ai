@@ -23,10 +23,15 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.yaml_io import load_yaml_mapping, store_yaml_mapping
+
+if TYPE_CHECKING:
+    # `request` reaches this module through `timeless_types`, so the request
+    # type is available to the checker only.
+    from adt_ai.export_db.request import ExportDbRequest
 
 MODULE = "export_db"
 
@@ -108,7 +113,7 @@ def changed_jobs(
     ]
 
 
-def job_baseline(request, schema: str) -> dict[str, str] | None:
+def job_baseline(request: ExportDbRequest, schema: str) -> dict[str, str] | None:
     """The stored signatures a windowed run compares this schema's jobs against.
 
     `None` disables the comparison entirely, which is what an unwindowed run gets:
@@ -125,7 +130,7 @@ def job_baseline(request, schema: str) -> dict[str, str] | None:
 
 
 def advance_job_signatures(
-    request,
+    request: ExportDbRequest,
     schema: str,
     signatures: Mapping[str, str] | None,
     narrowed: bool,

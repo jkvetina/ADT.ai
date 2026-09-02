@@ -23,7 +23,6 @@ from adt_ai.cli.constants import (
 )
 from adt_ai.cli.context import (
     ApexAppSelection,
-    DebugQueryGateway,
     _app_in_selection,
     _flatten_arg_groups,
     _load_startup_context,
@@ -31,7 +30,8 @@ from adt_ai.cli.context import (
     _print_connection_block,
 )
 from adt_ai.cli.export_apex_owners import apex_lookup_schema, listed_applications
-from adt_ai.cli.gateways import build_gateway
+from adt_ai.cli.gateways import build_gateway, cached_schema_gateway_factory
+from adt_ai.shared.connections import Connection
 from adt_ai.shared.internal_paths import internal_path
 
 _NO_FLOW_DB_MESSAGE = (
@@ -40,6 +40,38 @@ _NO_FLOW_DB_MESSAGE = (
 _APP_REQUIRED_MESSAGE = "An application id is required: pass -app N."
 _COMPONENT_DISPLAY_LIMIT = 30
 _REPORT_COLUMN_LINK_TYPES = {"IR_COL_LINK", "RPT_COL_LINK"}
+
+
+def _flow_argument_error(args: argparse.Namespace) -> str | None:
+    """Refuse two actions in one invocation instead of picking a winner.
+
+    `flow` has four of them and used to rank them: `-refresh` returned before
+    `-delete` was read, `-delete` before `-to`/`-from`, and `-to` before
+    `-from`. So `flow -app 100 -refresh -delete` deleted nothing and said
+    nothing, and `-to 5 -from 5` answered half the question asked. Silent
+    precedence is the shape ADT.ai rejects everywhere else -- `console.md`
+    §Which command takes which puts it as "A flag a command does not take is a
+    parser error, not a flag it ignores", and the same holds for a flag it takes
+    but cannot honour here (`#656`).
+
+    Returned (non-``None``) by the dispatcher before the command runs, exactly
+    like ``_dependencies_argument_error``, so misuse lands on the parser-style
+    error screen with exit 2 rather than inside a handler that already printed
+    its banner.
+    """
+    actions = [
+        flag
+        for flag, present in (
+            ("-refresh", bool(getattr(args, "refresh", False))),
+            ("-delete", bool(getattr(args, "delete", False))),
+            ("-to", getattr(args, "to_page", None) is not None),
+            ("-from", getattr(args, "from_page", None) is not None),
+        )
+        if present
+    ]
+    if len(actions) > 1:
+        return f"{' / '.join(actions)} are separate actions; pass one per run"
+    return None
 
 
 def _run_flow(
@@ -59,6 +91,9 @@ def _run_flow(
     root    = Path(args.root).expanduser().resolve()
     db_path = internal_path(root, "flow.db")
 
+    # One action per run: `_flow_argument_error` has already refused any pair on
+    # the dispatcher's side, so the order these are read in is arbitrary rather
+    # than a precedence rule (`#656`).
     if args.refresh:
         return _refresh_flow(args, root, db_path, gateway_factory, selection)
 
@@ -111,10 +146,9 @@ def _refresh_flow(
     environment = args.env or connections.default_environment
     configured_schemas = connections.schema_names(environment)
     lookup_schema = apex_lookup_schema(connections, environment, configured_schemas)
-    connection_cache: dict[str, object] = {}
-    gateway_cache: dict[str, QueryGateway] = {}
+    connection_cache: dict[str, Connection] = {}
 
-    def connection_for(schema_name: str) -> object:
+    def connection_for(schema_name: str) -> Connection:
         if schema_name not in connection_cache:
             connection_cache[schema_name] = connections.resolve(
                 environment=environment,
@@ -126,13 +160,11 @@ def _refresh_flow(
     def default_gateway_factory(schema_name: str) -> QueryGateway:
         return build_gateway(startup, connection_for(schema_name), project_root=root)
 
-    selected_gateway_factory = gateway_factory or default_gateway_factory
-
-    def flow_gateway_factory(schema_name: str) -> QueryGateway:
-        if schema_name not in gateway_cache:
-            gateway = selected_gateway_factory(schema_name)
-            gateway_cache[schema_name] = DebugQueryGateway(gateway) if args.debug else gateway
-        return gateway_cache[schema_name]
+    # Per-schema cache and `-debug` wrap in one shared helper, so the console
+    # guard keeps the nesting `build_gateway` documents (`#670`).
+    flow_gateway_factory = cached_schema_gateway_factory(
+        gateway_factory or default_gateway_factory, debug=args.debug
+    )
 
     if selection.has_ranges:
         # Discover apps across all configured schemas and filter in Python.
@@ -283,7 +315,9 @@ def _component_label(edge: FlowEdge) -> str:
 
 def _invalid_report_column_component(component: str) -> bool:
     component = component.strip()
-    return bool(component) and (component.startswith("<") or re.search(r"\s", component))
+    return bool(component) and bool(
+        component.startswith("<") or re.search(r"\s", component)
+    )
 
 
 def _report_column_fallback(edge: FlowEdge) -> str:

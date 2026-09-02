@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from adt_ai.cli.constants import REVEAL_DEFAULT_LIMIT
-from adt_ai.cli.parser_common import COMMIT_IDENTITY_HELP
+from adt_ai.cli.parser_common import COMMIT_IDENTITY_HELP, SubParsers
 from adt_ai.shared.dates import recent_window
 from adt_ai.shared.recent_state import BARE_RECENT
 
 
-def add_history_parsers(subparsers) -> None:
+def add_history_parsers(subparsers: SubParsers) -> None:
     calendar = subparsers.add_parser(
         "calendar",
         description="show your Git activity across all branches as a calendar",

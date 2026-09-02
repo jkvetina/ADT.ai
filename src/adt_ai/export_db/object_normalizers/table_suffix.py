@@ -31,22 +31,52 @@ def _format_table_suffix(suffix: str, context: NormalizationContext) -> list[str
     if inmemory_lines:
         return [*inmemory_lines, *trailing_lines]
 
-    match = re.search(
+    partition_lines = _format_partition_suffix(suffix)
+    if partition_lines:
+        return [*partition_lines, *trailing_lines]
+
+    return [";", *trailing_lines]
+
+def _format_partition_suffix(suffix: str) -> list[str]:
+    """The table's partitioning clause, folded for RANGE INTERVAL and kept as written otherwise.
+
+    An interval-partitioned table grows its partitions itself, so exporting the
+    seed alone round-trips. Every other scheme carries its partitions in the
+    definition: a LIST partition's values, a plain RANGE partition's bounds and
+    a HASH scheme's `PARTITIONS n` are all schema, and there is no VALUES clause
+    in a HASH scheme to fold to in the first place. So they are preserved raw,
+    the way the CLUSTER and INMEMORY branches above preserve theirs.
+
+    Until ADT #662 anything but RANGE INTERVAL fell through to a bare `;` and the
+    table exported as unpartitioned with exit 0.
+    """
+    interval_match = re.search(
         r"PARTITION BY RANGE \(([^)]+)\)\s+INTERVAL\s+\((NUMTODSINTERVAL\([^)]+\))\)",
         suffix,
         flags=re.IGNORECASE,
     )
-    if not match:
-        return [";", *trailing_lines]
+    if interval_match:
+        column_name, interval = interval_match.groups()
+        partition_name = _extract_partition_name(suffix)
+        return [
+            f"PARTITION BY RANGE ({column_name}) INTERVAL({interval}) (",
+            f"    PARTITION {partition_name} VALUES()",
+            ");",
+        ]
 
-    column_name, interval = match.groups()
-    partition_name = _extract_partition_name(suffix)
-    return [
-        f"PARTITION BY RANGE ({column_name}) INTERVAL({interval}) (",
-        f"    PARTITION {partition_name} VALUES()",
-        ");",
-        *trailing_lines,
-    ]
+    match = re.search(
+        r"\bPARTITION\s+BY\b(?P<body>.*?)(?=;|\bCREATE\b|\bALTER\b|$)",
+        suffix,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return []
+
+    raw = suffix[match.start() : match.end()].strip()
+    lines = [re.sub(r"\s+", " ", line.strip()) for line in raw.splitlines() if line.strip()]
+    if lines:
+        lines[-1] = lines[-1].rstrip(";") + ";"
+    return lines
 
 def _format_inmemory_suffix(suffix: str) -> list[str]:
     match = re.search(

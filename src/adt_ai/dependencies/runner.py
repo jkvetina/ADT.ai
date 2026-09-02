@@ -22,15 +22,19 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, cast
 
 from adt_ai.dependencies import plscope, queries, refresh
 from adt_ai.dependencies.store import DependencyStore
 from adt_ai.export_apex import queries as export_apex_queries
-from adt_ai.export_db.render import print_adt_header
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.internal_paths import internal_path
-from adt_ai.shared.progress import fixed_width_count_line, fixed_width_status_line
+from adt_ai.shared.progress import (
+    DottedProgressBar,
+    fixed_width_count_line,
+    fixed_width_status_line,
+    print_adt_header,
+)
 from adt_ai.shared.recent_state import is_bare_recent, recent_days
 
 
@@ -300,6 +304,33 @@ class DependencyIndexRunner:
             store.close()
 
 
+class DependencyProgress(Protocol):
+    """What `DependencyIndexRunner` calls on whatever it was given.
+
+    A Protocol rather than a base class: the two implementations below are
+    the no-op and the test adapter, and the real console reporter is
+    `FixedWidthProgressPrinter`, which lives in `shared/` and knows nothing
+    about this module. Structural typing is what lets all three arrive here
+    without the runner importing the console or the console importing this.
+    """
+
+    #: The console printer hands out a real bar; the two no-op reporters
+    #: below have no terminal line to draw one on and hand out nothing.
+    def bar(self) -> DottedProgressBar | None: ...
+
+    def begin(self, label: str, *, indent: str = ...) -> None: ...
+
+    def finish(
+        self, label: str, count: int, *, total: int | None = ..., indent: str = ...
+    ) -> None: ...
+
+    def line(self, text: str) -> None: ...
+
+    def fail(self, label: str, *, status: str = ..., indent: str = ...) -> None: ...
+
+    def status(self, label: str, status: str, *, indent: str = ...) -> None: ...
+
+
 class _NoProgressReporter:
     def bar(self) -> None:
         return None
@@ -369,9 +400,11 @@ class _CallableProgressReporter:
         self._progress(fixed_width_status_line(label, status, indent=indent))
 
 
-def _progress_reporter(progress: Any):
+def _progress_reporter(progress: Any) -> DependencyProgress:
     if progress is None:
         return _NoProgressReporter()
     if callable(progress):
         return _CallableProgressReporter(progress)
-    return progress
+    # Anything else is a reporter the caller built itself, the console
+    # `FixedWidthProgressPrinter` above all; it is taken at its word.
+    return cast(DependencyProgress, progress)

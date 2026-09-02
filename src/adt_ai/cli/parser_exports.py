@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from adt_ai.cli.parser_common import add_connection_key_argument
+from adt_ai.cli.parser_common import SubParsers, add_connection_key_argument
 from adt_ai.shared.dates import recent_window
 from adt_ai.shared.recent_state import BARE_RECENT
 
 
-def add_export_parsers(subparsers) -> None:
+def add_export_parsers(subparsers: SubParsers) -> None:
     export_db = subparsers.add_parser(
         "export_db",
         description="export database objects",

@@ -36,4 +36,13 @@ META_VERSION_UPSERT = (
     "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
 )
 
-__all__ = [name for name in globals() if not name.startswith("_")]
+__all__ = [
+    "FOREIGN_KEYS_ON",
+    "FOREIGN_KEYS_QUERY",
+    "META_TABLE_DDL",
+    "META_VERSION_QUERY",
+    "META_VERSION_UPSERT",
+    "TABLE_COUNT_QUERY",
+    "TABLE_EXISTS_QUERY",
+    "annotations",
+]

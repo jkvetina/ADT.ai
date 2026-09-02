@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from adt_ai.shared.commit_cache import (
     DEFAULT_COMMITS_TEMPLATE,
@@ -42,6 +43,9 @@ from adt_ai.shared.patch_folders import (  # noqa: F401  (re-exported for existi
     patch_id,
 )
 
+if TYPE_CHECKING:  # `rebuild` imports this module, so the runtime import stays local.
+    from adt_ai.rebuild.models import RebuildReporter
+
 FIELD_SEPARATOR = "\x1f"
 
 
@@ -51,7 +55,7 @@ def ensure_commit_store_current(
     branch: str,
     cache_file_template: str = DEFAULT_COMMITS_TEMPLATE,
     history_bottom_days: int | None = None,
-    reporter: object | None = None,
+    reporter: RebuildReporter | None = None,
 ) -> str:
     """Bring one branch's commit store level with git, and say which branch.
 
@@ -196,7 +200,7 @@ class GitCommitCache:
         self,
         request: PatchRequest,
         *,
-        reporter: object | None = None,
+        reporter: RebuildReporter | None = None,
         top_up: bool = True,
     ) -> list[CommitRecord]:
         return _filter_records(
@@ -207,7 +211,7 @@ class GitCommitCache:
         self,
         request: PatchRequest,
         *,
-        reporter: object | None = None,
+        reporter: RebuildReporter | None = None,
         top_up: bool = True,
     ) -> list[CommitRecord]:
         """Every commit in the scanned window, before any filter runs.
@@ -241,7 +245,7 @@ class GitCommitCache:
         return [_as_record(item, request) for item in reversed(stored)]
 
     @staticmethod
-    def _top_up(request: PatchRequest, branch: str, *, reporter: object | None) -> None:
+    def _top_up(request: PatchRequest, branch: str, *, reporter: RebuildReporter | None) -> None:
         ensure_commit_store_current(
             request.root,
             branch              = branch,
@@ -319,3 +323,33 @@ from adt_ai.shared.commit_selection import (  # noqa: E402,F401  (re-exported)
     commit_ref_matches,
     matches_author,
 )
+
+__all__ = [
+    "ChangedFile",
+    "CommitRecord",
+    "DEFAULT_COMMITS_TEMPLATE",
+    "FIELD_SEPARATOR",
+    "GitCommitCache",
+    "PATCH_FOLDER_RE",
+    "PatchFolder",
+    "PatchRequest",
+    "Path",
+    "StoredCommit",
+    "TYPE_CHECKING",
+    "_detected_patch",
+    "_filter_records",
+    "annotations",
+    "classify_file",
+    "commit_ref_matches",
+    "current_branch",
+    "dataclass",
+    "discover_patch_folders",
+    "ensure_commit_store_current",
+    "matches_author",
+    "matches_patch_selector",
+    "named_patch_refs",
+    "open_store",
+    "parse_patch_folder",
+    "patch_folder_match_targets",
+    "patch_id",
+]

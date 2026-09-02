@@ -39,9 +39,9 @@ sections lay text on are `layout.py`, so they cannot drift apart.
 
 from __future__ import annotations
 
-from adt_ai.export_db.runner import print_adt_header, print_adt_table
 from adt_ai.shared.announce import mark_announced
-from adt_ai.shared.progress import FixedWidthProgressPrinter
+from adt_ai.shared.progress import FixedWidthProgressPrinter, print_adt_header
+from adt_ai.shared.tables import print_adt_table
 from adt_ai.ut.cells import (
     SUMMARY_NUMERIC,
     count_cell,
@@ -57,6 +57,7 @@ from adt_ai.ut.inventory import (
     RESULT_PASSED,
     PackageCoverage,
     SuitePackage,
+    SuiteTest,
     TestOutcome,
 )
 from adt_ai.ut.layout import DETAIL_INDENT, HEADING_INDENT
@@ -83,7 +84,7 @@ def print_suites(packages: tuple[SuitePackage, ...]) -> None:
     """The matched suites, one row each, printed before anything runs.
 
     **`-verbose` output only** (Jan, card `#348`): a default run watches the bar
-    and this table said, at ninety rows on `ICT_OWNER`, what the bar's `N TESTS`
+    and this table said, at ninety rows on `APP_OWNER`, what the bar's `N TESTS`
     label says in one. The mode that asks for a row per test is the mode that
     wants the list of what will produce them.
 
@@ -159,10 +160,14 @@ def print_package_heading(package: SuitePackage) -> None:
 def print_package_results(package: SuitePackage, outcomes: tuple[TestOutcome, ...]) -> None:
     """One block per suite: the package heading, then a row per test."""
     print_package_heading(package)
-    print_test_rows(outcomes)
+    print_test_rows(outcomes, tests=package.tests)
 
 
-def print_test_rows(outcomes: tuple[TestOutcome, ...], close_block: bool = True) -> None:
+def print_test_rows(
+    outcomes: tuple[TestOutcome, ...],
+    close_block: bool = True,
+    tests: tuple[SuiteTest, ...] = (),
+) -> None:
     """The one row builder both the streamed and the batch render go through.
 
     A passing row's right-hand text is its elapsed seconds, not the word
@@ -174,7 +179,22 @@ def print_test_rows(outcomes: tuple[TestOutcome, ...], close_block: bool = True)
     heading and at the end of the run instead. Same bytes, later: the blank is
     what retires the heading's claim on the screen, and the coverage read runs
     after the last block (`#372`, `#359`).
+
+    ``tests`` is the suite's discovered tests, and it earns its place with one
+    line: a `%disabled(<reason>)` test prints its reason under its own `SKIP`
+    row (`#670`). Discovery has fetched that reason since the command was
+    written and no section had ever shown it, so a row said a test did not run
+    and left the reader to open the package and find out why. It is a
+    continuation line rather than a cell because a reason is prose, and prose in
+    a fixed-width column is what SOP §Console output contract calls free text in
+    a table column. Omit ``tests`` and the rows print exactly as before, which
+    is what a caller holding only outcomes gets.
     """
+    reasons = {
+        test.name.upper(): test.disabled_reason
+        for test in tests
+        if test.disabled and test.disabled_reason
+    }
     cells = [test_status_cell(outcome) for outcome in outcomes]
     # **The block's own widest value, not the printer's default reservation.**
     # A streamed label is on screen before its value exists, so the room the
@@ -191,6 +211,11 @@ def print_test_rows(outcomes: tuple[TestOutcome, ...], close_block: bool = True)
         # pair is the only way to get a labelled fixed-width line.
         printer.begin(outcome.test)
         printer.status(outcome.test, cell)
+        reason = reasons.get(outcome.test.upper())
+        if reason:
+            # Two spaces past the row it explains, so it reads as that row's
+            # continuation and never as another test.
+            print(f"{DETAIL_INDENT}  {reason}")
     if close_block:
         print()
 
@@ -309,4 +334,44 @@ def print_summary_rows(result: Ut3Result) -> None:
     )
 
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = [
+    "DETAIL_INDENT",
+    "FixedWidthProgressPrinter",
+    "HEADING_INDENT",
+    "PackageCoverage",
+    "RESULT_ERRORED",
+    "RESULT_FAILED",
+    "RESULT_PASSED",
+    "SUITES_TITLE",
+    "SUMMARY_NUMERIC",
+    "SUMMARY_TITLE",
+    "SuitePackage",
+    "SuiteTest",
+    "TestOutcome",
+    "Ut3Result",
+    "_SUITE_COLUMNS",
+    "_SUMMARY_COLUMNS",
+    "annotations",
+    "count",
+    "count_cell",
+    "coverage_cell",
+    "mark_announced",
+    "outcomes_by_package",
+    "percent_cell",
+    "print_adt_header",
+    "print_adt_table",
+    "print_coverage_gate",
+    "print_package_heading",
+    "print_package_results",
+    "print_results",
+    "print_results_header",
+    "print_suites",
+    "print_suites_header",
+    "print_suites_rows",
+    "print_summary",
+    "print_summary_header",
+    "print_summary_rows",
+    "print_test_rows",
+    "seconds_cell",
+    "test_status_cell",
+]

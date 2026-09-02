@@ -4,6 +4,11 @@ from dataclasses import dataclass
 
 from adt_ai.export_apex.inventory import ApexDiscovery
 
+# Moved from `shared/apex_owner.py` (#670): this module resolves an APEX
+# application owner against `ApexDiscovery`, an `export_apex` type, so it
+# belongs in `export_apex` rather than `shared` -- `shared/` never imports a
+# command package (`shared/file_list.py`).
+
 
 @dataclass(frozen=True)
 class ApexOwnerResolution:

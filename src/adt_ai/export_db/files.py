@@ -146,23 +146,6 @@ class ObjectFileResolver:
         path = self.path_for(database_object)
         return path.with_name(f"{path.stem}.fix{path.suffix}")
 
-    def missing_files(self, database_objects: list[DatabaseObject]) -> list[Path]:
-        expected = {
-            self.path_for(database_object).resolve() for database_object in database_objects
-        }
-        existing: set[Path] = set()
-        schemas = sorted({database_object.schema for database_object in database_objects})
-        for object_type, layout in self.object_types.items():
-            for search_root in self._search_roots_for(object_type, layout, schemas):
-                if not search_root.exists():
-                    continue
-                existing.update(
-                    file_path.resolve()
-                    for file_path in search_root.rglob(f"*{layout.extension}")
-                    if not file_path.name.endswith(f".fix{layout.extension}")
-                )
-        return sorted(existing - expected)
-
     def missing_objects(
         self,
         database_objects: list[DatabaseObject],
@@ -197,12 +180,6 @@ class ObjectFileResolver:
                         )
                     )
         return sorted(missing, key=lambda item: (item.object_type, item.name))
-
-    def delete_missing_files(self, database_objects: list[DatabaseObject]) -> list[Path]:
-        missing = self.missing_files(database_objects)
-        for file_path in missing:
-            file_path.unlink()
-        return missing
 
     def delete_missing_objects(self, database_objects: list[DatabaseObject]) -> list[Path]:
         deleted: list[Path] = []

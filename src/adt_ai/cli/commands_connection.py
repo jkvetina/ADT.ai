@@ -11,6 +11,7 @@ from adt_ai.cli.constants import (
     print_module_banner,
 )
 from adt_ai.cli.context import (
+    StartupContext,
     _config_search_paths,
     _connection_file_candidates,
     _connection_search_paths,
@@ -27,6 +28,7 @@ from adt_ai.connection.runner import (
 )
 from adt_ai.shared import crypto
 from adt_ai.shared.connections import ConnectionNotFoundError
+from adt_ai.shared.secret import Secret
 
 _CONNECTION_ACTIONS = (
     ("create", "create"),
@@ -92,9 +94,9 @@ def _connection_request(
         environment = args.env,
         schema      = args.schema,
         username    = args.user,
-        password    = password,
+        password    = Secret(password),
         wallet      = args.wallet,
-        wallet_password = wallet_password,
+        wallet_password = Secret(wallet_password),
         hostname    = args.host,
         port        = args.port,
         service     = args.service,
@@ -107,38 +109,83 @@ def _connection_request(
         default     = args.default,
         apply       = apply,
         encrypt     = args.encrypt,
-        key         = args.key,
-        old_key     = getattr(args, "old_key", None),
-        new_key     = getattr(args, "new_key", None),
+        key         = Secret(args.key),
+        old_key     = Secret(getattr(args, "old_key", None)),
+        new_key     = Secret(getattr(args, "new_key", None)),
     )
 
 
-def _collect_connection_password(action: str, args: argparse.Namespace):
+def _prompt_password(prompt: str) -> str | None:
+    """One hidden password, or None when stdin has nothing left to give.
+
+    With no usable terminal `getpass` falls back to reading a line off stdin,
+    and that read raises `EOFError` the moment the stream is closed or spent,
+    which is the ordinary state of a CI job, a deployment script and an agent
+    session alike. Nothing caught it, so every password action died on
+    `UNEXPECTED ERROR: EOFError` and wrote no file at all (`#675`). The callers
+    below decide what an exhausted stdin means for their own action; here it is
+    only reported, never guessed at.
+
+    `KeyboardInterrupt` deliberately passes through. Ctrl-C is an abort rather
+    than an empty answer, and the runtime already ends on 130 and a one-line
+    "Interrupted by user."
+    """
+    try:
+        return getpass.getpass(prompt)
+    except EOFError:
+        return None
+
+
+def _no_password_available(action: str) -> str:
+    return (
+        f"-{action} needs a password, and nothing arrived at the prompt; "
+        "run it from a terminal"
+    )
+
+
+def _collect_connection_password(
+    action: str, args: argparse.Namespace
+) -> tuple[str | None, str | None]:
     label = args.env if action == "set-wallet-pwd" else f"{args.env}.{args.schema}"
     if action in {"set-pwd", "set-wallet-pwd"}:
-        first = getpass.getpass(f"New password for {label}: ")
+        # These two write a password by definition, so a blank is already a
+        # refusal and an exhausted stdin cannot be read as one either way. It
+        # takes its own message: "did not match" would name the wrong problem,
+        # and a confirmation that never ran matched nothing.
+        first = _prompt_password(f"New password for {label}: ")
+        if first is None:
+            return None, _no_password_available(action)
         if not first:
             return None, f"a password is required for -{action}"
-        if first != getpass.getpass("Confirm password: "):
+        confirmation = _prompt_password("Confirm password: ")
+        if confirmation is None:
+            return None, _no_password_available(action)
+        if first != confirmation:
             return None, "passwords did not match"
         return first, None
-    # add-schema: a password is optional; a blank entry skips writing pwd.
-    return (getpass.getpass(f"Password for {label} (leave blank to skip): ") or None), None
+    # add-schema: a password is optional; a blank entry skips writing pwd, and
+    # so does a stdin with nothing on it.
+    return _prompt_password(f"Password for {label} (leave blank to skip): ") or None, None
 
 
 def _collect_create_passwords(args: argparse.Namespace) -> tuple[str | None, str | None]:
-    schema_password = getpass.getpass(
+    schema_password = _prompt_password(
         f"Password for {args.env}.{args.schema} (leave blank to skip): "
-    ) or None
+    )
     wallet_password = None
-    if args.wallet:
-        wallet_password = getpass.getpass(
+    # A blank schema password still leaves a wallet worth asking about. An
+    # exhausted stdin does not, so the second prompt is skipped rather than
+    # printed at a reader with no way to answer it.
+    if args.wallet and schema_password is not None:
+        wallet_password = _prompt_password(
             f"Wallet password for {args.env} (leave blank to skip): "
-        ) or None
-    return schema_password, wallet_password
+        )
+    return (schema_password or None), (wallet_password or None)
 
 
-def _connection_edit_path(args: argparse.Namespace, *, allow_missing: bool):
+def _connection_edit_path(
+    args: argparse.Namespace, *, allow_missing: bool
+) -> tuple[StartupContext | None, Path]:
     if not allow_missing:
         startup = _load_startup_context(args)
         return startup, startup.connection_files[0]

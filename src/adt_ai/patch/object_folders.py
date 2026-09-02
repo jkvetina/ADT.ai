@@ -6,8 +6,8 @@ template lives here. This module is that argument, spelled once.
 
 **The level is the `path_objects` type folder, never the file's own directory.**
 Jan's example, 2026-08-24, is what settles it: three synonyms all sitting in a
-`UT/` group folder listed under `ict_owner/database/synonyms/`, with
-`UT/be_between.sql` on the leaf. Grouping by the parent directory would have
+`UT/` group folder listed under `app_owner/database/synonyms/`, with
+`UT/ut_dates.sql` on the leaf. Grouping by the parent directory would have
 printed `synonyms/UT/`, and so would grouping by the longest prefix the paths
 share, so neither is the rule he asked for. A group move relocates a file and
 does not change what the file IS (`#498`), so one type still reads as one folder.

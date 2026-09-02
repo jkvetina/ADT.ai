@@ -8,11 +8,13 @@ the ``discovery/render.py`` split.
 
 from __future__ import annotations
 
-from adt_ai.export_db.runner import (
-    _commit_stdout,
-    _compute_adt_layout,
-    print_adt_header,
-    print_adt_table,
+from adt_ai.recompile.contracts import MViewAction, TrailingAction
+from adt_ai.recompile.inventory import (
+    DisabledObject,
+    MaterializedView,
+    SchedulerJobRun,
+    SynonymInfo,
+    TrailingObject,
 )
 from adt_ai.recompile.queries import mview_type_code
 from adt_ai.recompile.runner import RecompileReporter
@@ -21,10 +23,16 @@ from adt_ai.shared.object_list import (
     print_listing_gap,
     type_separator,
 )
-from adt_ai.shared.progress import schema_label
+from adt_ai.shared.progress import print_adt_header, schema_label
+from adt_ai.shared.tables import (
+    _AdtTableLayout,
+    _commit_stdout,
+    _compute_adt_layout,
+    print_adt_table,
+)
 
 
-def _mview_status(mview) -> str:
+def _mview_status(mview: MaterializedView) -> str:
     """Combine staleness and compile state into one STATUS cell, e.g. 'FRESH / VALID'."""
     return f"{mview.staleness or ''} / {mview.compile_state or ''}"
 
@@ -56,7 +64,7 @@ _JOBS_COLUMNS = ("JOB_NAME", "LAST_START_DATE", "DURAT", "CPU")
 _JOB_STATUS_ORDER = ("FAILED", "SUCCEEDED")
 
 
-def _mview_row_cells(mview) -> dict[str, object]:
+def _mview_row_cells(mview: MaterializedView) -> dict[str, object]:
     """One materialized-view row as an ordered column→cell mapping.
 
     TYPE resolves the configured refresh_method to a clean F/C (FORCE picks F vs C
@@ -75,13 +83,13 @@ def _mview_row_cells(mview) -> dict[str, object]:
     }
 
 
-def _mview_row_values(mview) -> list[object]:
+def _mview_row_values(mview: MaterializedView) -> list[object]:
     """The MV row as a positional list in ``_MVIEW_COLUMNS`` order."""
     cells = _mview_row_cells(mview)
     return [cells[column] for column in _MVIEW_COLUMNS]
 
 
-def _disabled_row_cells(item) -> dict[str, object]:
+def _disabled_row_cells(item: DisabledObject) -> dict[str, object]:
     """One disabled-object row as an ordered column→cell mapping."""
     return {
         "OBJECT_NAME": item.object_name,
@@ -89,11 +97,11 @@ def _disabled_row_cells(item) -> dict[str, object]:
     }
 
 
-def _disabled_type(item) -> str:
+def _disabled_type(item: DisabledObject) -> str:
     return (item.object_type or "").upper()
 
 
-def print_disabled_tables(disabled_objects) -> None:
+def print_disabled_tables(disabled_objects: list[DisabledObject]) -> None:
     """Render -disabled as one compact table per disabled object type."""
     for object_type, heading in _DISABLED_SECTION_TYPES:
         print_adt_header(heading)
@@ -107,7 +115,7 @@ def print_disabled_tables(disabled_objects) -> None:
         )
 
 
-def _job_status(item) -> str:
+def _job_status(item: SchedulerJobRun) -> str:
     return (item.status or "UNKNOWN").upper()
 
 
@@ -117,7 +125,7 @@ def _format_job_duration(value: object | None) -> str:
     return str(value).split(".", 1)[0]
 
 
-def _job_row_cells(item) -> dict[str, object]:
+def _job_row_cells(item: SchedulerJobRun) -> dict[str, object]:
     """One scheduler-job run row as an ordered column→cell mapping."""
     return {
         "JOB_NAME":        item.job_name,
@@ -127,7 +135,7 @@ def _job_row_cells(item) -> dict[str, object]:
     }
 
 
-def print_job_tables(jobs) -> None:
+def print_job_tables(jobs: list[SchedulerJobRun]) -> None:
     """Render -jobs as one compact table per scheduler status."""
     extra_statuses = sorted({_job_status(job) for job in jobs} - set(_JOB_STATUS_ORDER))
     for status in [*_JOB_STATUS_ORDER, *extra_statuses]:
@@ -152,7 +160,11 @@ def _print_trailing_updated_header(total: int) -> None:
     print_adt_header(f"UPDATED {total} OBJECTS:")
 
 
-def print_trailing_updated_objects(trailing, trailing_actions, silent: bool = False) -> None:
+def print_trailing_updated_objects(
+    trailing: list[TrailingObject],
+    trailing_actions: list[TrailingAction],
+    silent: bool = False,
+) -> None:
     """Batch fallback listing the rewritten objects, for non-streamed callers.
 
     Shares the shared row formatter and the header with the streamed reporter, so
@@ -179,7 +191,7 @@ def print_trailing_updated_objects(trailing, trailing_actions, silent: bool = Fa
     _print_trailing_failures(trailing_actions)
 
 
-def _print_trailing_failures(trailing_actions) -> None:
+def _print_trailing_failures(trailing_actions: list[TrailingAction]) -> None:
     # a failed rewrite lists its error below the list, keyed by object name and
     # styled like the COMPILE ERRORS / mview action message lists.
     failed_actions = [action for action in trailing_actions if not action.ok and action.error]
@@ -208,7 +220,7 @@ class _ConsoleTrailingReporter(RecompileReporter):
         self._streamed_rows = False
         self.streamed = False
 
-    def begin_trailing(self, candidates) -> None:
+    def begin_trailing(self, candidates: list[TrailingObject]) -> None:
         self.streamed = True
         self._formatter = ObjectRowFormatter()
         self._streamed_rows = False
@@ -218,14 +230,14 @@ class _ConsoleTrailingReporter(RecompileReporter):
         print_listing_gap()
         _commit_stdout()
 
-    def trailing_object(self, candidate) -> None:
+    def trailing_object(self, candidate: TrailingObject) -> None:
         if self._silent:
             return
         self._streamed_rows = True
         for row in self._formatter.stream_rows(candidate.object_type, candidate.object_name):
             print(row, flush=True)
 
-    def end_trailing(self, trailing_actions) -> None:
+    def end_trailing(self, trailing_actions: list[TrailingAction]) -> None:
         if not self._silent:
             # The last type group closes here, where the caller finally knows
             # there is no next object: the same moment `export_db`'s runner
@@ -237,22 +249,22 @@ class _ConsoleTrailingReporter(RecompileReporter):
         _print_trailing_failures(trailing_actions)
 
 
-def _synonym_owner(synonym) -> str:
+def _synonym_owner(synonym: SynonymInfo) -> str:
     return synonym.owner or "UNKNOWN"
 
 
-def _synonym_status(synonym) -> str:
+def _synonym_status(synonym: SynonymInfo) -> str:
     return synonym.status or "UNKNOWN"
 
 
-def _synonym_privileges(synonym) -> list[str]:
+def _synonym_privileges(synonym: SynonymInfo) -> list[str]:
     if not synonym.privileges:
         return [""]
     privileges = [privilege.strip() for privilege in synonym.privileges.split(",")]
     return [privilege for privilege in privileges if privilege] or [""]
 
 
-def _synonym_sort_key(synonym) -> tuple[str, str, str, str, str]:
+def _synonym_sort_key(synonym: SynonymInfo) -> tuple[str, str, str, str, str]:
     return (
         _synonym_owner(synonym),
         _synonym_status(synonym),
@@ -262,7 +274,7 @@ def _synonym_sort_key(synonym) -> tuple[str, str, str, str, str]:
     )
 
 
-def _synonym_row_cells(synonym, privilege: str) -> dict[str, object]:
+def _synonym_row_cells(synonym: SynonymInfo, privilege: str) -> dict[str, object]:
     return {
         "SYNONYM_NAME": synonym.synonym_name,
         "OBJECT_NAME":  synonym.object_name or "",
@@ -273,7 +285,7 @@ def _synonym_row_cells(synonym, privilege: str) -> dict[str, object]:
     }
 
 
-def print_synonym_tables(synonyms) -> None:
+def print_synonym_tables(synonyms: list[SynonymInfo]) -> None:
     """Render -synonyms as one compact table per target owner."""
     sorted_synonyms = sorted(synonyms, key=_synonym_sort_key)
     if not sorted_synonyms:
@@ -315,7 +327,7 @@ class _ConsoleMViewReporter(RecompileReporter):
 
     def __init__(self) -> None:
         self.streamed = False
-        self._layout = None
+        self._layout: _AdtTableLayout | None = None
 
     def reading_mviews(self) -> None:
         # The title goes up before the listing query, so the wait sits under the
@@ -325,7 +337,7 @@ class _ConsoleMViewReporter(RecompileReporter):
         # returned yet.
         print_adt_header("MATERIALIZED VIEWS:")
 
-    def begin_mviews(self, mviews) -> None:
+    def begin_mviews(self, mviews: list[MaterializedView]) -> None:
         self.streamed = True
         rows = [_mview_row_cells(mview) for mview in mviews]
         self._layout = _compute_adt_layout(rows, list(_MVIEW_COLUMNS), {})
@@ -337,21 +349,34 @@ class _ConsoleMViewReporter(RecompileReporter):
         print(self._layout.separator_line())
         _commit_stdout()
 
-    def begin_mview(self, mview) -> None:
-        values = _mview_row_values(mview)
-        print(self._layout.cells_segment(values, 0, 1), end="", flush=True)
+    def _row_layout(self) -> _AdtTableLayout:
+        """The widths `begin_mviews` measured, for the two halves of a row.
 
-    def end_mview(self, mview) -> None:
+        A row cannot be drawn before the table it belongs to is open, and the
+        runner calls `begin_mviews` before the first `begin_mview` for exactly
+        that reason. Named here rather than assumed, so a caller that drives the
+        reporter out of order says so instead of raising on `None` two frames
+        further down.
+        """
+        if self._layout is None:  # pragma: no cover, ordering is the runner's
+            raise RuntimeError("begin_mviews must open the table before a row is drawn")
+        return self._layout
+
+    def begin_mview(self, mview: MaterializedView) -> None:
+        values = _mview_row_values(mview)
+        print(self._row_layout().cells_segment(values, 0, 1), end="", flush=True)
+
+    def end_mview(self, mview: MaterializedView) -> None:
         values = _mview_row_values(mview)
         # rstrip only here, on the half that completes the line: the leading
         # segment above is mid-line and must keep its gutter, or the two halves
         # stop rejoining byte-for-byte with the batch ``row_line`` (ADT #237).
         print(
-            self._layout.cells_segment(values, 1, len(_MVIEW_COLUMNS)).rstrip(),
+            self._row_layout().cells_segment(values, 1, len(_MVIEW_COLUMNS)).rstrip(),
             flush=True,
         )
 
-    def end_mviews(self, mview_actions) -> None:
+    def end_mviews(self, mview_actions: list[MViewAction]) -> None:
         # close the table with the trailing blank print_adt_table emits, then list
         # any failed refresh/compile below it (keyed by name, like the batch render).
         print()

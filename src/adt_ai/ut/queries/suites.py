@@ -67,8 +67,13 @@ ORDER BY o.object_name
 """
 
 # utPLSQL's parsed annotations: one row per suite, context, and test. ITEM_TYPE
-# separates them (UT_SUITE / UT_SUITE_CONTEXT / UT_LOGICAL_SUITE / UT_TEST), and
-# PATH is the runnable identifier `ut.run` accepts.
+# separates them (UT_SUITE / UT_SUITE_CONTEXT / UT_LOGICAL_SUITE / UT_TEST).
+#
+# `i.path` was selected here until `#670` on the reasoning that it is the
+# runnable identifier `ut.run` accepts. It is not the one this command uses:
+# `Ut3Runner._run_suite` composes `<owner>.<package>` itself, so the column was
+# fetched into a field nothing ever read. A column nobody reads is a column that
+# cannot be wrong, which is what kept it here for six cards.
 SUITE_ITEMS_QUERY = """
 SELECT
     i.object_owner,
@@ -77,7 +82,6 @@ SELECT
     i.item_type,
     i.item_description,
     i.item_line_no,
-    i.path,
     i.disabled_flag,
     i.disabled_reason
 FROM TABLE(ut_runner.get_suites_info(:owner)) i
@@ -127,4 +131,11 @@ SELECT
 FROM TABLE(ut.run(:path, ut_junit_reporter())) t
 """
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = [
+    "PACKAGE_PROCEDURES_QUERY",
+    "REBUILD_ANNOTATION_CACHE_STATEMENT",
+    "RUN_SUITE_QUERY",
+    "SUITE_ITEMS_QUERY",
+    "SUITE_PACKAGES_QUERY",
+    "annotations",
+]

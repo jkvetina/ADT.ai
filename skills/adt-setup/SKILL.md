@@ -101,7 +101,7 @@ To keep secrets outside the project repo, point the project config at an externa
 ```yaml
 connections:
   path: /secure/path/connections
-  file: CORE23.yaml
+  file: SALES.yaml
   wallet_path: /secure/path/connections/wallets
 ```
 

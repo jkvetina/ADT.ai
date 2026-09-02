@@ -167,7 +167,7 @@ def object_stem_for_type(
     Stripping the extension and uppercasing are two different questions and only
     the first one was ever wrong. A caller that renders the name into generated
     SQL keeps whatever case the file carries, because a patch script is a
-    compatibility contract and `ict_areas` becoming `ICT_AREAS` would rewrite
+    compatibility contract and `app_areas` becoming `APP_AREAS` would rewrite
     every ALTER a project has, for no behaviour: an unquoted Oracle identifier is
     case-insensitive. A caller matching against the data dictionary wants
     `object_name_for_type`, since `user_objects` stores the upper form.

@@ -33,6 +33,12 @@ DEFAULT_MAX_DEPTH = 20
 
 class DependencyQueries:
     """Every read `DependencyStore` answers, over `self.connection`."""
+
+    #: Declared, never assigned here: the mixin reads the one open connection its
+    #: host sets in `DependencyStore.__init__`, and a checker reading this half on
+    #: its own has no other way to know the attribute exists.
+    connection: Any
+
     def _resolve_types(self, type_: str, name: str, owner_params: list[str]) -> list[str]:
         """Return object types to query against.
 

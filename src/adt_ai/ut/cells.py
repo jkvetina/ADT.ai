@@ -58,7 +58,7 @@ def module_cell(module: str) -> str:
     **Both module tables end on a total row whose name is deliberately blank**,
     Jan's shape: a `TOTAL` label would sort and read as a module. So a group with
     no name cannot also be blank, or the table prints two nameless rows and says
-    nothing about which is which. That is exactly what `-coverage -name ICT%`
+    nothing about which is which. That is exactly what `-coverage -name APP%`
     printed on 2026-08-08 (card `#248`): an unattributed row of one package at the
     top and the 58-package total at the bottom, both unnamed.
 
@@ -78,7 +78,7 @@ def module_cell(module: str) -> str:
 # and Oracle collected nothing) and from `0.0` (it was measured and nothing ran).
 #
 # Those three were one cell until `#436`. Jan read a blank beside eight green
-# tests as a defect and it was: `ict_int_ariba_pushback_ut` had no target,
+# tests as a defect and it was: `app_int_ariba_pushback_ut` had no target,
 # `ut_match` having derived a name no package answers to, and the cell had no way
 # to say so.
 UNPAIRED_COVERAGE = "?"

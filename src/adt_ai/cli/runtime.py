@@ -3,17 +3,16 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from collections.abc import Callable, Sequence
-from contextlib import ExitStack
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import TextIO
 
 from adt_ai import __version__
 from adt_ai.cli.commands_connection import _run_connection
 from adt_ai.cli.commands_dependencies import _dependencies_argument_error, _run_dependencies
 from adt_ai.cli.commands_export_data import _run_export_data
 from adt_ai.cli.commands_exports import _run_export_apex, _run_export_db
-from adt_ai.cli.commands_flow import _run_flow
+from adt_ai.cli.commands_flow import _flow_argument_error, _run_flow
 from adt_ai.cli.commands_history import _run_calendar, _run_rebuild, _run_search_repo
 from adt_ai.cli.commands_recompile import _run_discovery, _run_doctor, _run_recompile
 from adt_ai.cli.commands_ut import _run_ut3
@@ -25,6 +24,7 @@ from adt_ai.cli.constants import (
     ConfigError,
     ConnectionConfigError,
     GatewayFactory,
+    TextSink,
     _StderrTracker,
     _StdoutTracker,
     print_adt_header,
@@ -54,13 +54,43 @@ from adt_ai.shared.internal_paths import migrate_internal_files
 from adt_ai.shared.sqlcl_script import SqlclScriptError
 
 
-def _run_static_screen(
-    render: Callable[[], None],
-    *,
-    exit_code: int = 0,
-    timer_stdout: TextIO | None = None,
-    completion_args: argparse.Namespace | None = None,
-) -> int:
+class _TrackedScreen:
+    """The stdout/stderr tracker pair one screen runs behind.
+
+    The trackers are what the console guard reads and what holds trailing
+    newlines back so the shared ``TIMER`` footer can still retract them
+    (``cli/stream_tracker.py``), so every screen in this file installs both and
+    every screen takes both down again. That was written out three times, and
+    the footer-target rule beside it twice, which is three places to keep in
+    step with each other and with whatever a tracker becomes next (`#670`).
+    """
+
+    def __init__(self, stdout: _StdoutTracker, stderr: _StdoutTracker) -> None:
+        self.stdout = stdout
+        self.stderr = stderr
+
+    def footer_target(self, exit_code: int, default: TextSink | None = None) -> TextSink:
+        """Where the ``TIMER`` footer goes.
+
+        A failed run whose message went to stderr keeps its footer there, under
+        the message, rather than on a stdout the reader may have piped away.
+        ``default`` is the caller's own routing for the success case
+        (``dependencies -format yaml`` sends chrome to stderr); without one the
+        footer follows the output.
+        """
+        if exit_code != 0 and self.stderr.had_output:
+            return self.stderr
+        return self.stdout if default is None else default
+
+
+@contextmanager
+def _tracked_screen() -> Iterator[_TrackedScreen]:
+    """Install the tracker pair for one screen, and restore the real streams.
+
+    A context manager rather than a paired call, so a failure between the
+    install and the command's own ``try`` cannot leave the process printing
+    through a tracker that nobody will finalize.
+    """
     original_stdout = sys.stdout
     original_stderr = sys.stderr
     tracked_stdout = (
@@ -75,26 +105,34 @@ def _run_static_screen(
     )
     sys.stdout = tracked_stdout
     sys.stderr = tracked_stderr
-    started_at = time.monotonic()
     try:
-        render()
+        yield _TrackedScreen(tracked_stdout, tracked_stderr)
     finally:
-        footer_stdout = (
-            tracked_stderr
-            if exit_code != 0 and tracked_stderr.had_output
-            else (timer_stdout or tracked_stdout)
-        )
-        _print_completion_timer(
-            started_at,
-            stdout=footer_stdout,
-            completion_args=completion_args,
-            exit_code=exit_code,
-        )
         tracked_stdout.finalize()
         if tracked_stderr is not tracked_stdout:
             tracked_stderr.finalize()
         sys.stdout = original_stdout
         sys.stderr = original_stderr
+
+
+def _run_static_screen(
+    render: Callable[[], None],
+    *,
+    exit_code: int = 0,
+    timer_stdout: TextSink | None = None,
+    completion_args: argparse.Namespace | None = None,
+) -> int:
+    with _tracked_screen() as screen:
+        started_at = time.monotonic()
+        try:
+            render()
+        finally:
+            _print_completion_timer(
+                started_at,
+                stdout=screen.footer_target(exit_code, timer_stdout),
+                completion_args=completion_args,
+                exit_code=exit_code,
+            )
     return exit_code
 
 
@@ -121,14 +159,26 @@ def _run_command_argument_error(
     )
 
 
-def _run_top_level_argument_error(message: str) -> int:
+def _run_top_level_argument_error(
+    message: str,
+    raw_args: Sequence[str] | None = None,
+) -> int:
+    # Same completion contract as the command-level screen above, and
+    # `console.md` §Completion sounds states it once for both: `-beep` fires
+    # "on any executable path, argument errors and connection failures
+    # included". This screen alone passed no args, so `adtai -bogus -beep` was
+    # silent while `adtai export_db -bogus -beep` chimed (`#656`).
     def render() -> None:
         print_module_banner("ERROR")
         print(f"Error: {message}")
         print()
         _print_module_overview()
 
-    return _run_static_screen(render, exit_code=2)
+    return _run_static_screen(
+        render,
+        exit_code=2,
+        completion_args=_completion_args_from_raw(raw_args or []),
+    )
 
 
 def _run_top_level_error(error: Exception) -> int:
@@ -154,10 +204,21 @@ def main(
 
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     debug_requested = "-debug" in raw_argv or "--debug" in raw_argv
-    if not raw_argv or raw_argv in (["-h"], ["--help"]):
+    if not raw_argv:
         return _run_module_overview()
-    if raw_argv and _is_unknown_command(raw_argv[0]):
+    if _is_unknown_command(raw_argv[0]):
+        # A word that is not a command is named as one, which is more use than
+        # the overview alone, so this runs before the help check below.
         return _run_invalid_command(raw_argv[0])
+    if raw_argv[0] not in PUBLIC_COMMANDS and _has_help_flag(raw_argv):
+        # Top-level help, however it was spelled. The test was `raw_argv in
+        # (["-h"], ["--help"])`, so `adtai -h extra` fell through to argparse's
+        # own help action and printed the raw `usage:` block `console.md`
+        # §Top-level help says this screen never shows (`#670`). Past the check
+        # above, a first token that is not a command starts with `-`, so this
+        # cannot swallow a command's own `-h`, which takes the per-command help
+        # screen further down.
+        return _run_module_overview()
 
     try:
         parser = build_parser()
@@ -175,7 +236,7 @@ def main(
     except AdtArgumentError as error:
         if raw_argv[0] in PUBLIC_COMMANDS:
             return _run_command_argument_error(raw_argv[0], str(error), raw_argv[1:])
-        return _run_top_level_argument_error(str(error))
+        return _run_top_level_argument_error(str(error), raw_argv)
     except SystemExit as error:
         return int(error.code or 0)
     except Exception as error:
@@ -196,25 +257,33 @@ def main(
     # runs before the banner, so it neither prints nor raises (internal_paths).
     _migrate_internal_files(args)
 
-    if args.command in {"dependencies", "depends"}:
+    # `dependencies` is spelled one way: PUBLIC_MODULES gives it no aliases, so
+    # `adtai depends` never reaches here at all -- `_is_unknown_command` refuses
+    # it above. The dead branch made the alias look supported to every reader of
+    # this file, which is how one gets documented (`#656`).
+    if args.command == "dependencies":
         dependencies_error = _dependencies_argument_error(args)
         if dependencies_error is not None:
-            return _run_command_argument_error(raw_argv[0], dependencies_error)
+            return _run_command_argument_error(
+                raw_argv[0], dependencies_error, raw_argv[1:]
+            )
+    if args.command == "flow":
+        flow_error = _flow_argument_error(args)
+        if flow_error is not None:
+            return _run_command_argument_error(raw_argv[0], flow_error, raw_argv[1:])
 
-    original_stdout = sys.stdout
-    original_stderr = sys.stderr
-    tracked_stdout = (
-        original_stdout
-        if isinstance(original_stdout, _StdoutTracker)
-        else _StdoutTracker(original_stdout)
-    )
-    tracked_stderr = (
-        original_stderr
-        if isinstance(original_stderr, _StdoutTracker)
-        else _StderrTracker(original_stderr, tracked_stdout)
-    )
-    sys.stdout = tracked_stdout
-    sys.stderr = tracked_stderr
+    with _tracked_screen() as screen:
+        exit_code = _run_command(args, screen, gateway_factory)
+
+    return exit_code
+
+
+def _run_command(
+    args: argparse.Namespace,
+    screen: _TrackedScreen,
+    gateway_factory: GatewayFactory | None,
+) -> int:
+    """Dispatch one parsed invocation behind an installed tracker pair."""
     resources = ExitStack()
     gateway_resources = resources.enter_context(gateway_scope())
     if gateway_factory is not None and strict_mode():
@@ -227,7 +296,7 @@ def main(
         # wrapper deduplicates cached factories by identity before teardown.
         gateway_factory = gateway_resources.track_factory(gateway_factory)
     started_at = time.monotonic()
-    timer_stdout = _command_timer_stdout(args, tracked_stdout)
+    timer_stdout = _command_timer_stdout(args, screen.stdout)
     exit_code = 0
     try:
         if args.command == "calendar":
@@ -265,42 +334,36 @@ def main(
         exit_code = 1
         if getattr(args, "debug", False):
             raise
-        _print_config_error(error)
+        _print_config_error(error, debug_available=hasattr(args, "debug"))
     except Exception as error:
         exit_code = 1
         if getattr(args, "debug", False):
             raise
+        # `hasattr` rather than the value: the namespace carries the attribute
+        # exactly where the parser declared the flag, so the five commands that
+        # never took `-debug` stop closing their refusals by advising it (`#656`).
+        debug_available = hasattr(args, "debug")
         if isinstance(error, SqlclScriptError):
-            _print_sqlcl_error(error)
+            _print_sqlcl_error(error, debug_available=debug_available)
         elif _is_user_database_error(error):
-            _print_database_error(error)
+            _print_database_error(error, debug_available=debug_available)
         else:
-            _print_unexpected_error(error)
+            _print_unexpected_error(error, debug_available=debug_available)
     finally:
         resources.close()
         # A completed multi-schema run (run_schema_sections) already printed
         # its own per-segment TIMER footers and set this latch on loop
         # completion only, a mid-loop failure leaves it unset, so the shared
         # footer below still covers that case exactly as before.
-        if getattr(tracked_stdout, "final_timer_emitted", False):
+        if getattr(screen.stdout, "final_timer_emitted", False):
             _notify_completion(args, exit_code)
         else:
-            footer_stdout = (
-                tracked_stderr
-                if exit_code != 0 and tracked_stderr.had_output
-                else timer_stdout
-            )
             _print_completion_timer(
                 started_at,
-                stdout=footer_stdout,
+                stdout=screen.footer_target(exit_code, timer_stdout),
                 completion_args=args,
                 exit_code=exit_code,
             )
-        tracked_stdout.finalize()
-        if tracked_stderr is not tracked_stdout:
-            tracked_stderr.finalize()
-        sys.stdout = original_stdout
-        sys.stderr = original_stderr
 
     return exit_code
 
@@ -349,46 +412,30 @@ def _run_module_overview() -> int:
 
 
 def _run_invalid_command(command: str) -> int:
-    original_stdout = sys.stdout
-    original_stderr = sys.stderr
-    tracked_stdout = (
-        original_stdout
-        if isinstance(original_stdout, _StdoutTracker)
-        else _StdoutTracker(original_stdout)
-    )
-    tracked_stderr = (
-        original_stderr
-        if isinstance(original_stderr, _StdoutTracker)
-        else _StderrTracker(original_stderr, tracked_stdout)
-    )
-    sys.stdout = tracked_stdout
-    sys.stderr = tracked_stderr
-    started_at = time.monotonic()
-    try:
-        print_module_banner("ERROR")
-        print(f"Error: unknown command `{command}`.")
-        print()
-        if command == "init":
-            print("Use:")
-            print("  adtai doctor -init")
+    with _tracked_screen() as screen:
+        started_at = time.monotonic()
+        try:
+            print_module_banner("ERROR")
+            print(f"Error: unknown command `{command}`.")
             print()
-        elif command in {"update", "upgrade"}:
-            print("Use one of:")
-            print("  adtai doctor -update")
-            print("  adtai doctor -sqlcl")
-            print()
-        _print_module_overview()
-    finally:
-        _print_completion_timer(started_at, stdout=tracked_stdout)
-        tracked_stdout.finalize()
-        if tracked_stderr is not tracked_stdout:
-            tracked_stderr.finalize()
-        sys.stdout = original_stdout
-        sys.stderr = original_stderr
+            if command == "init":
+                print("Use:")
+                print("  adtai doctor -init")
+                print()
+            elif command in {"update", "upgrade"}:
+                print("Use one of:")
+                print("  adtai doctor -update")
+                print("  adtai doctor -sqlcl")
+                print()
+            _print_module_overview()
+        finally:
+            # The whole screen is on stdout, message included, so the footer
+            # follows it rather than asking `footer_target` about stderr.
+            _print_completion_timer(started_at, stdout=screen.stdout)
     return 1
 
 
-def _command_timer_stdout(args: argparse.Namespace, stdout: TextIO) -> TextIO:
+def _command_timer_stdout(args: argparse.Namespace, stdout: TextSink) -> TextSink:
     if args.command == "dependencies" and getattr(args, "format", "table") != "table":
         return sys.stderr
     return stdout

@@ -68,7 +68,7 @@ PROJECT_CONFIG_TEMPLATE = """
 # Optional external connection and wallet locations:
 # connections:
 #   path: /secure/path/connections
-#   file: CORE23.yaml
+#   file: SALES.yaml
 #   wallet_path: /secure/path/connections/wallets
 """.lstrip()
 

@@ -89,6 +89,29 @@ path = "src/adt_ai/__init__.py"
 "requirements.txt" = "adt_ai/doctor/resources/requirements.txt"
 "config/patch_template" = "adt_ai/doctor/resources/config/patch_template"
 
+[tool.hatch.build.targets.sdist]
+# An sdist is the source a user builds the wheel from, not a mirror of the
+# repository. Hatch ships every tracked file by default, which put 70 MB of
+# documentation artwork into a 721 KB package (v0.9.6's sdist weighed 70.6 MB)
+# and would ship the private suite from a checkout that carries one. The
+# README links its pictures by absolute URL, so nothing the sdist installs or
+# renders needs them; the CI workflows, the test suite, and the release notes
+# describe the repository rather than the package. The private folders that a
+# checkout never carries are listed too: the build copies by allowlist, and
+# this is the second line behind it, in the file the build backend reads.
+exclude = [
+    "/.github",
+    "/.pytest_cache",
+    "/docs/images",
+    "/htmlcov",
+    "/images",
+    "/TEST_SCENARIOS",
+    "/test_scenarios",
+    "/tests",
+    "/USER_STORIES",
+    "/user_stories",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py314"
@@ -118,14 +141,29 @@ python_version = "3.14"
 strict = true
 warn_unused_ignores = true
 show_error_codes = true
-files = [
-    "src/adt_ai/doctor",
-    "src/adt_ai/shared/env_check.py",
-    "src/adt_ai/shared/file_list.py",
-    "src/adt_ai/shared/git_files.py",
-    "src/adt_ai/shared/subprocess_env.py",
-    "src/adt_ai/shared/text_files.py",
+# The whole package, since #670. The boundary was Doctor plus five shared
+# files while the rest of the tree carried typing debt; by the 1.0 audit the
+# other 320 files passed strict mypy unchanged, and a gate that read 13 of them
+# let a regression in the other 320 land with no signal.
+files = ["src/adt_ai"]
+
+# The runtime dependencies, which the type venv does not install: it carries the
+# checker and `types-PyYAML` and nothing else, so every one of these resolves to
+# "cannot find implementation or library stub" rather than to a signature. The
+# entry says the import is a third-party boundary, which is the honest shape --
+# and it is scoped per distribution rather than set globally, so a first-party
+# module that fails to resolve still fails the gate. `types-PyYAML` is
+# deliberately absent from the list: `yaml` HAS stubs here and must keep being
+# checked against them.
+[[tool.mypy.overrides]]
+module = [
+    "chime.*",
+    "cryptography.*",
+    "oracledb.*",
+    "ruamel.*",
+    "winpty.*",
 ]
+ignore_missing_imports = true
 # Public build strips private history commands, leaving this generated
 # aggregator with imports that are intentionally not normalized by ruff.
 "src/adt_ai/cli/commands_history.py" = ["F401", "I001"]

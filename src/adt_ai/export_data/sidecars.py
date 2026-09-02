@@ -14,6 +14,7 @@ the file it left behind last time.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -74,15 +75,19 @@ def _write_sidecar_values(
     key_columns: list[str],
     sidecar_columns: list[DataColumn],
     written: set[Path],
+    claimed_row_keys: dict[str, str],
     sql_table_name: str | None = None,
 ) -> list[str]:
     """`sql_table_name` is how the generated UPDATE names the table.
 
     It carries the owner under `keep_owner` and is otherwise `table_name`; the
     unqualified `table_name` stays the one that names files and config lookups.
+
+    `claimed_row_keys` is the export's filename-collision ledger, shared across
+    the rows of one table; see `_sidecar_row_key`.
     """
     folder_created = False
-    row_key = _sidecar_row_key(row, key_columns, row_number)
+    row_key = _sidecar_row_key(row, key_columns, row_number, claimed_row_keys)
     update_scripts: list[str] = []
     for column in sidecar_columns:
         value = row_value(row, column.name)
@@ -150,14 +155,50 @@ def _read_lob_value(value: Any) -> Any:
     return value
 
 
-def _sidecar_row_key(row: dict[str, Any], key_columns: list[str], row_number: int) -> str:
+def _sidecar_row_key(
+    row: dict[str, Any],
+    key_columns: list[str],
+    row_number: int,
+    claimed: dict[str, str],
+) -> str:
+    """The filename stem for this row's sidecars, unique within the export.
+
+    Every character a filename cannot carry folds to `_`, so distinct keys can
+    fold to one name: `2024/001` and `2024_001` both become `2024_001`, the
+    second row overwrote the first's sidecar, and both still got a `@` line in
+    the MERGE script pointing at the survivor (ADT #654).
+
+    `claimed` maps a folded name to the raw key that took it. The first row to
+    fold to a name keeps it, so a repository whose keys never collide sees no
+    churn; a later row folding to the same name is disambiguated by a short
+    digest of its own raw key, which is stable across runs. Rows arrive ordered
+    by the key columns (`runner.py` builds the ORDER BY), so "first" is the same
+    row every time.
+
+    The ledger is keyed case-folded (`#670`) because a filename collision is
+    decided by the filesystem, not by Python: `ABC` and `abc` are two dict keys
+    and one file on macOS and Windows, so without the fold the second row
+    silently overwrote the first's sidecar and both rows still got a `@` line
+    pointing at the survivor. Folding ALWAYS, rather than only on a
+    case-insensitive host, keeps one export identical on every platform.
+    """
     if not key_columns:
         return f"row_{row_number:06d}"
-    key = "__".join(
+    raw = "__".join(str(row_value(row, column)) for column in key_columns)
+    # Every part is non-empty (`_sidecar_name_part` falls back to "null"/"value"),
+    # so a non-empty key column list always folds to a usable stem.
+    folded = "__".join(
         _sidecar_name_part(row_value(row, column))
         for column in key_columns
     )
-    return key or f"row_{row_number:06d}"
+    owner = claimed.setdefault(folded.casefold(), raw)
+    if owner == raw:
+        return folded
+    return f"{folded}__{_raw_key_digest(raw)}"
+
+
+def _raw_key_digest(raw: str) -> str:
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:8]
 
 
 def _sidecar_name_part(value: Any) -> str:

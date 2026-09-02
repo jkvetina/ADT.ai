@@ -3,10 +3,14 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
 
 from adt_ai.cli.constants import (
     ConfigLoader,
+    ConnectionConfigError,
+    ConnectionResult,
     DependencyIndexRequest,
     DependencyIndexRunner,
     DependencyStore,
@@ -17,7 +21,6 @@ from adt_ai.cli.constants import (
 )
 from adt_ai.cli.context import (
     ApexAppSelection,
-    DebugQueryGateway,
     _app_in_selection,
     _config_search_paths,
     _flatten_arg_groups,
@@ -34,17 +37,42 @@ from adt_ai.cli.dependencies_reporters import (
 )
 from adt_ai.cli.export_apex_owners import listed_applications, resolve_apex_owner_routes
 from adt_ai.cli.export_reporters import ConsoleApexRevealReporter
-from adt_ai.cli.gateways import build_gateway
+from adt_ai.cli.gateways import build_gateway, cached_schema_gateway_factory
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.dependencies.store import DEFAULT_MAX_DEPTH
 from adt_ai.export_apex.inventory import ApexApplication, ApexDiscovery
 from adt_ai.shared.apex_store import ApexStore
+from adt_ai.shared.connections import Connection
 from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.progress import FixedWidthProgressPrinter, schema_label
 
 _NO_DEPENDENCY_INDEX_MESSAGE = (
     "No dependency database found. Run 'adt dependencies -refresh' to build it."
 )
+
+
+@contextmanager
+def _refresh_chrome_stream(machine_format: bool) -> Iterator[None]:
+    """Where one refresh segment's console output goes.
+
+    A refresh prints no document at all: the connection block, both headers, the
+    APEX applications table and the runner's progress rows are chrome to the last
+    byte. Under `-format yaml`/`md` that whole screen belongs on stderr beside the
+    timer, so `dependencies -refresh -format yaml` leaves stdout empty and stays
+    pipeable, which is what the routing beside `timer_stdout` already claimed and
+    only the footer honoured (`#656`).
+
+    Redirecting the segment keeps that one decision in one place instead of a
+    `file=` threaded through five printers, and the caller wraps the segment body
+    rather than the `run_schema_sections` call: that one marks its final-timer
+    latch on the real `sys.stdout` after the loop, and a redirect spanning it
+    would set the latch on stderr and earn the run a second `TIMER` footer.
+    """
+    if not machine_format:
+        yield
+        return
+    with redirect_stdout(sys.stderr):
+        yield
 
 
 def _query_requested(args: argparse.Namespace) -> bool:
@@ -102,9 +130,34 @@ def _dependencies_argument_error(args: argparse.Namespace) -> str | None:
     return None
 
 
+def _refresh_lookup_schema(
+    connections: ConnectionResult,
+    environment: str | None,
+) -> str | None:
+    """The schema the APEX axis of a refresh reads the inventory through.
+
+    The configured default wins, else the first schema the environment lists,
+    else nothing. ``default_schemas`` RAISES on an unconfigured default rather
+    than returning an empty list, so written inline as
+    ``defaults[0] if defaults else configured[0]`` the fallback can never run:
+    a connection file carrying ``schemas:`` and no ``defaults:`` failed
+    ``dependencies -refresh -app 100-200`` on the configuration screen instead
+    of reading its first schema (`#670`). Same shape, and the same reason, as
+    ``export_apex_owners.apex_lookup_schema``.
+    """
+    try:
+        defaults = connections.default_schemas(environment)
+    except ConnectionConfigError:
+        defaults = []
+    if defaults:
+        return defaults[0]
+    configured = connections.schema_names(environment)
+    return configured[0] if configured else None
+
+
 def _resolve_refresh_app_ids(
     selection: ApexAppSelection | None,
-    connections,
+    connections: ConnectionResult,
     environment: str | None,
     gateway_factory: GatewayFactory,
 ) -> list[int]:
@@ -122,12 +175,7 @@ def _resolve_refresh_app_ids(
         return [int(app_id) for app_id in selection.explicit_ids]
 
     configured_schemas = connections.schema_names(environment)
-    defaults = connections.default_schemas(environment)
-    lookup_schema = (
-        defaults[0]
-        if defaults
-        else (configured_schemas[0] if configured_schemas else None)
-    )
+    lookup_schema = _refresh_lookup_schema(connections, environment)
     if lookup_schema is None:
         return []
     discovery = ApexDiscovery(gateway_factory(lookup_schema))
@@ -263,27 +311,23 @@ def _refresh_dependency_index(
         schemas = connections.default_schemas(environment)
 
     debug = getattr(args, "debug", False)
-    connection_cache: dict[str, object] = {}
+    connection_cache: dict[str, Connection] = {}
 
-    def connection_for(schema: str):
+    def connection_for(schema: str) -> Connection:
         if schema not in connection_cache:
             connection_cache[schema] = connections.resolve(
                 environment=environment, schema=schema
             )
         return connection_cache[schema]
 
-    gateway_cache: dict[str, QueryGateway] = {}
-
     def default_gateway_factory(schema: str) -> QueryGateway:
         return build_gateway(startup, connection_for(schema))
 
-    base_gateway_factory = gateway_factory or default_gateway_factory
-
-    def selected_gateway_factory(schema: str) -> QueryGateway:
-        if schema not in gateway_cache:
-            gateway = base_gateway_factory(schema)
-            gateway_cache[schema] = DebugQueryGateway(gateway) if debug else gateway
-        return gateway_cache[schema]
+    # Per-schema cache and `-debug` wrap in one shared helper, so the console
+    # guard keeps the nesting `build_gateway` documents (`#670`).
+    selected_gateway_factory = cached_schema_gateway_factory(
+        gateway_factory or default_gateway_factory, debug=debug
+    )
 
     # -app reuses the shared APEX selection parser: explicit ids flow through
     # unchanged; ranges (MIN-MAX / MIN+) are resolved against discovered apps.
@@ -305,14 +349,24 @@ def _refresh_dependency_index(
     # fall back to the default schema.
     app_schema: str | None = schemas[0] if schemas else None
     if apps and app_schema is None:
-        owner_routes = resolve_apex_owner_routes(root, connections, environment, apps)
-        app_schema = owner_routes.sole_owner or owner_routes.default_schema
+        try:
+            owner_routes = resolve_apex_owner_routes(root, connections, environment, apps)
+        except ConnectionConfigError:
+            # Routing exists to skip a wasted default-schema connection, so it
+            # has a question to answer only where a default is configured; the
+            # resolver raises rather than saying so. Without one the fallback
+            # this command already discovered the range through is the only
+            # connection the file describes (`#670`).
+            app_schema = _refresh_lookup_schema(connections, environment)
+        else:
+            app_schema = owner_routes.sole_owner or owner_routes.default_schema
 
     silent = getattr(args, "silent", False)
     runner = DependencyIndexRunner(selected_gateway_factory)
     # -format yaml/md keeps stdout pure data even for -refresh chrome, matching
     # the runtime's own _command_timer_stdout routing for this command.
-    timer_stdout = sys.stderr if getattr(args, "format", "table") != "table" else None
+    machine_format = getattr(args, "format", "table") != "table"
+    timer_stdout = sys.stderr if machine_format else None
 
     # Segments: one per -schema axis schema, plus (when the app axis targets a
     # schema not already in that list) one final app-only segment. When
@@ -322,7 +376,7 @@ def _refresh_dependency_index(
     if app_schema and apps and app_schema not in segments:
         segments.append(app_schema)
 
-    def run_one(schema: str) -> int:
+    def refresh_segment(schema: str) -> int:
         is_schema_segment = schema in schemas
         is_app_segment = schema == app_schema and bool(apps)
         # **The application rows are read before the connection block, not
@@ -338,7 +392,7 @@ def _refresh_dependency_index(
             discovered_apps = _stored_apex_applications(root, apps)
             if not discovered_apps:
                 discovered_apps = _discover_apex_applications(
-                    selected_gateway_factory(app_schema), app_schema, apps
+                    selected_gateway_factory(schema), schema, apps
                 )
 
         versions = _print_connection_block(
@@ -362,7 +416,7 @@ def _refresh_dependency_index(
                 ConsoleApexRevealReporter().applications(schema, discovered_apps)
         elif is_schema_segment:
             # The schema is uppercased into the sentence rather than trailing a
-            # colon: `REFRESHING: ict_owner` left the dashed rule stopping at the
+            # colon: `REFRESHING: app_owner` left the dashed rule stopping at the
             # colon, one word short of the line it was underlining (ADT #237).
             # Uppercasing is `schema_label`'s job, not an inline `.upper()`, the
             # inline call is what let the other headers drift (ADT #240).
@@ -385,6 +439,10 @@ def _refresh_dependency_index(
         )
         return 0
 
+    def run_one(schema: str) -> int:
+        with _refresh_chrome_stream(machine_format):
+            return refresh_segment(schema)
+
     return run_schema_sections(
         segments, run_one, first_started_at=handler_started_at, timer_stdout=timer_stdout
     )
@@ -404,7 +462,11 @@ def _stored_apex_applications(root: Path, apps: list[int]) -> list[ApexApplicati
             rows = [store.application(app) for app in apps]
     except Exception:
         return []
-    if not all(rows):
+    # Every app has to have answered: a partial hit means the store is behind the
+    # instance, and the caller's fallback is a live discovery query, not half a
+    # list. Filtered rather than `all(rows)` so the rows below are known non-None.
+    found = [row for row in rows if row]
+    if len(found) != len(rows):
         return []
     return [
         ApexApplication(
@@ -418,7 +480,7 @@ def _stored_apex_applications(root: Path, apps: list[int]) -> list[ApexApplicati
             pages        = None,
             updated_at   = str(row.get("updated_at") or ""),
         )
-        for app, row in zip(apps, rows, strict=True)
+        for app, row in zip(apps, found, strict=True)
     ]
 
 

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from adt_ai.cli.parser_common import add_connection_key_argument
+from adt_ai.cli.parser_common import SubParsers, add_connection_key_argument
 from adt_ai.connection.runner import DEFAULT_PORT as CONNECTION_DEFAULT_PORT
 
 
-def add_admin_parsers(subparsers) -> None:
+def add_admin_parsers(subparsers: SubParsers) -> None:
     doctor = subparsers.add_parser(
         "doctor",
         description="check local ADT.ai environment setup and run explicit updates",
@@ -94,7 +94,7 @@ def add_admin_parsers(subparsers) -> None:
     connection.add_argument(
         "--user",
         "-user",
-        help="database user for -add-schema (defaults to the schema name)",
+        help="with -create or -add-schema, the db user (defaults to the schema name)",
     )
     connection.add_argument(
         "--like",
@@ -102,14 +102,22 @@ def add_admin_parsers(subparsers) -> None:
         metavar = "ENV",
         help    = "with -add-env, clone this environment's db/wallet (secrets stripped)",
     )
-    connection.add_argument("--host", "-host", help="with -add-env, set the db hostname")
+    # `-create` reads these four the same way `-add-env`/`-add-schema` do
+    # (`connection/runner.py` `_create_connection`); the help said `-add-env`
+    # alone, so the README's own first-connection example used flags the help
+    # claimed it could not (`#670`).
+    connection.add_argument(
+        "--host", "-host", help="with -create or -add-env, set the db hostname"
+    )
     connection.add_argument(
         "--port",
         "-port",
         type = int,
-        help = f"with -add-env, set the db port (default: {CONNECTION_DEFAULT_PORT})",
+        help = f"with -create or -add-env, set the db port (default: {CONNECTION_DEFAULT_PORT})",
     )
-    connection.add_argument("--service", "-service", help="with -add-env, set the db service")
+    connection.add_argument(
+        "--service", "-service", help="with -create or -add-env, set the db service"
+    )
     connection.add_argument("--sid", "-sid", help="with -create, set the db SID")
     connection.add_argument("--wallet", "-wallet", help="with -create, set the wallet name/path")
     connection.add_argument("--workspace", "-workspace", help="with -create, set APEX workspace")

@@ -77,6 +77,20 @@ A password is collected interactively, with hidden input, at apply time only. An
 - `-add-schema -go` prompts once. Leave it blank to add the schema with no password.
 - `-set-pwd` and `-set-wallet-pwd` prompt twice and require a match.
 
+### With no terminal attached
+
+A CI job, a deployment script and an agent session all run with no terminal, and there the prompt reads stdin instead. An empty stdin reaches its end straight away, and that counts as a blank answer.
+
+So `-create -go` and `-add-schema -go` write their file with no password, which is what not supplying one asked for. `-set-pwd` and `-set-wallet-pwd` write a password by definition, so they refuse instead and say to run the command from a terminal.
+
+Reading stdin also means the answers can be piped in, one line per prompt:
+
+```bash
+printf 'schema-secret\n' | adtai connection -add-schema -env DEV -schema APP -go
+```
+
+That one is for a machine, not for you. Run it from your own terminal and the prompt reads the terminal, so whatever is on the pipe is ignored and it waits for you to type.
+
 Passwords are written as cleartext by default, and a cleartext write removes the matching encryption marker so the runtime does not try to decrypt plaintext.
 
 `-encrypt` writes an encrypted value. Its key comes from `-key`, `ADT_KEY`, or `ADT_KEY_CMD`; values and key-file paths are accepted. Prefer a file or secret-manager command. Unlike the prompted database password, literal `-key VALUE` is exposed in shell history and the process list. The formats are on [connection_passwords.md](connection_passwords.md).

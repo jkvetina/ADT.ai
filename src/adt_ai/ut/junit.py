@@ -43,12 +43,16 @@ def parse_junit(package: SuitePackage, document: str) -> tuple[TestOutcome, ...]
     except ElementTree.ParseError:
         return ()
     outcomes = []
+    # Which discovered tests a case has already claimed, by position in
+    # `package.tests`, which is their identity here. It spans the whole document
+    # because the collision it prevents is between two cases (`#670`).
+    resolved: set[int] = set()
     for case in root.iter("testcase"):
         result, message = _case_result(case)
         outcomes.append(
             TestOutcome(
                 package = package.name,
-                test    = _known_test_name(package, case.get("name") or ""),
+                test    = _known_test_name(package, case.get("name") or "", resolved),
                 result  = result,
                 seconds = _seconds(case.get("time")),
                 message = message,
@@ -115,7 +119,7 @@ def _seconds(value: str | None) -> float | None:
         return None
 
 
-def _known_test_name(package: SuitePackage, reported: str) -> str:
+def _known_test_name(package: SuitePackage, reported: str, resolved: set[int]) -> str:
     """Resolve whatever the reporter called a test back to its procedure name.
 
     **A JUnit `testcase name` is not an identifier.** utPLSQL puts the `%test`
@@ -131,12 +135,30 @@ def _known_test_name(package: SuitePackage, reported: str) -> str:
     the **procedure name** is what comes back. The fallback stays the reported
     string: a test utPLSQL ran but discovery never saw is still worth printing
     under whatever it called itself.
+
+    **A description is not unique, so a match is CONSUMED** (`#670`). Nothing
+    stops two `%test` annotations in one package from carrying the same text,
+    and copy-paste makes it ordinary. Scanning the whole list per case resolved
+    both of them to whichever declares first, so the results block printed that
+    one name twice, with the second case's verdict, and the other test vanished:
+    a red run could read green under a name that had passed. `resolved` holds
+    the positions already claimed, so the second case takes the next test with
+    that description and only a genuinely exhausted list falls back to the
+    reported string. Cases arrive in the reporter's order and the list is in
+    declaration order, so the pairing is a guess where the descriptions collide,
+    but it is a guess that keeps every test on screen exactly once.
     """
-    for test in package.tests:
-        if test.name.upper() == reported.upper():
+    for index, test in enumerate(package.tests):
+        if index not in resolved and test.name.upper() == reported.upper():
+            resolved.add(index)
             return test.name
-    for test in package.tests:
-        if test.description and test.description.upper() == reported.upper():
+    for index, test in enumerate(package.tests):
+        if (
+            index not in resolved
+            and test.description
+            and test.description.upper() == reported.upper()
+        ):
+            resolved.add(index)
             return test.name
     return reported
 

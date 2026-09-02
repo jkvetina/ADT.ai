@@ -422,7 +422,7 @@ def _normalize_patterns(values: Iterable[str] | str | None) -> list[str] | None:
 
 
 def has_exact_name_filter(names: Iterable[str] | None) -> bool:
-    normalized = _normalize_list(names)
+    normalized = _normalize_list(names) or []
     return bool(normalized) and all(not _has_wildcard(name) for name in normalized)
 
 

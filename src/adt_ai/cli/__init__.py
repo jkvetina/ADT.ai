@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from types import ModuleType
+from typing import Any
+
 from adt_ai.cli.startup import print_startup_failure as _print_startup_failure
 
 try:
@@ -18,9 +21,12 @@ try:
     from adt_ai.cli import runtime as _runtime
 except Exception as _startup_error:  # noqa: BLE001 - friendly banner instead of raw traceback
     _STARTUP_ERROR: BaseException | None = _startup_error
+    # `except ... as` unbinds its own name at the end of the block, and the
+    # optional one above reads None to a banner that renders no such thing.
+    _STARTUP_FAILURE: BaseException = _startup_error
 
-    def main(*args, **kwargs) -> int:
-        _print_startup_failure(_STARTUP_ERROR)
+    def main(*args: Any, **kwargs: Any) -> int:
+        _print_startup_failure(_STARTUP_FAILURE)
         return 1
 
     def console_main() -> None:
@@ -28,7 +34,7 @@ except Exception as _startup_error:  # noqa: BLE001 - friendly banner instead of
 else:
     _STARTUP_ERROR = None
 
-    _EXPORT_MODULES = (
+    _EXPORT_MODULES: tuple[ModuleType, ...] = (
         _constants,
         _parser,
         _context,
@@ -41,7 +47,7 @@ else:
         _commands_validate,
         _runtime,
     )
-    _PATCH_MODULES = _EXPORT_MODULES[2:]
+    _PATCH_MODULES: tuple[ModuleType, ...] = _EXPORT_MODULES[2:]
     _PATCH_MODULES = (*_PATCH_MODULES, _context_connection, _context_errors)
     _PATCHABLE_NAMES = (
         "CalendarRunner",
@@ -70,18 +76,18 @@ else:
                 if hasattr(_module, _name):
                     setattr(_module, _name, globals()[_name])
 
-    def main(*args, **kwargs):
+    def main(*args: Any, **kwargs: Any) -> int:
         _sync_patches()
         return _runtime.main(*args, **kwargs)
 
     def console_main() -> None:
         raise SystemExit(main())
 
-    def _chime_run_allowed(*args, **kwargs):
+    def _chime_run_allowed(*args: Any, **kwargs: Any) -> bool:
         _sync_patches()
         return _context._chime_run_allowed(*args, **kwargs)
 
-    def _print_connection_versions(*args, **kwargs):
+    def _print_connection_versions(*args: Any, **kwargs: Any) -> Any:
         _sync_patches()
         return _context._print_connection_versions(*args, **kwargs)
 

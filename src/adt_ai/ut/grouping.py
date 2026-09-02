@@ -15,6 +15,8 @@ three different sets.
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 from adt_ai.ut.inventory import (
     RESULT_ERRORED,
     RESULT_FAILED,
@@ -23,22 +25,33 @@ from adt_ai.ut.inventory import (
     SuitePackage,
     TestOutcome,
 )
+from adt_ai.ut.session import Ut3Result
+
 
 # The row shape the module roll-up is built from: one entry per suite, carrying
 # its counted verdicts, its seconds, and the package it tests. Built once here so
 # a group and the total under it read the same records rather than looking each
 # suite up again.
-ModuleRow = dict[str, object]
+class ModuleRow(TypedDict):
+    passed: int
+    failed: int
+    errored: int
+    seconds: float | None
+    #: The suite's TARGET package, `None` for a suite `ut_match` paired to
+    #: nothing. Named on the row rather than looked up again in the renderer.
+    coverage: PackageCoverage | None
 
 
-def outcomes_by_package(result) -> list[tuple[SuitePackage, tuple[TestOutcome, ...]]]:
+def outcomes_by_package(
+    result: Ut3Result,
+) -> list[tuple[SuitePackage, tuple[TestOutcome, ...]]]:
     """Every runnable suite, with the outcomes that belong to it.
 
     A package that could not run (INVALID, or holding no parsed ``%test``) is
     left out here and is therefore absent from every table below: `ut` reports
     suites, and that is not one.
     """
-    grouped = []
+    grouped: list[tuple[SuitePackage, tuple[TestOutcome, ...]]] = []
     for package in result.packages:
         if not package.runnable:
             continue
@@ -51,7 +64,7 @@ def outcomes_by_package(result) -> list[tuple[SuitePackage, tuple[TestOutcome, .
 
 def by_module(
     grouped: list[tuple[SuitePackage, tuple[TestOutcome, ...]]],
-    result,
+    result: Ut3Result,
 ) -> list[tuple[str, list[ModuleRow]]]:
     """One entry per module, A-Z, each holding its suites' counted verdicts.
 
@@ -105,7 +118,7 @@ def flatten(grouped: list[tuple[str, list[ModuleRow]]]) -> list[ModuleRow]:
     return [row for _, rows in grouped for row in rows]
 
 
-def gated_packages(result) -> tuple[PackageCoverage, ...]:
+def gated_packages(result: Ut3Result) -> tuple[PackageCoverage, ...]:
     """Every package this run's suites test, deduplicated, what `-gate` judges.
 
     The same set the `SUMMARY PER MODULE:` total is computed over, so a figure that gates is
@@ -124,7 +137,7 @@ def total_seconds(rows: list[ModuleRow]) -> float | None:
     A group of skipped suites has nothing to report, which ``seconds_cell`` then
     blanks, the same rule a single suite's cell follows.
     """
-    measured = [row["seconds"] for row in rows if row["seconds"] is not None]
+    measured = [seconds for row in rows if (seconds := row["seconds"]) is not None]
     return sum(measured) if measured else None
 
 

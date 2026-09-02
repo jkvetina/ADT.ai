@@ -119,8 +119,8 @@ def _filter_records(records: list[CommitRecord], request: PatchRequest) -> list[
         # missed the pattern built an empty patch and still reported success.
         # That is the same failure `#257` fixed for the patch-code filter, and it
         # gets the same answer, a commit you named is an instruction.
-        pattern = re.compile(request.commit_pattern)
-        filtered = [record for record in filtered if pattern.search(record.summary)]
+        expression = re.compile(request.commit_pattern)
+        filtered = [record for record in filtered if expression.search(record.summary)]
     if request.files_only:
         filtered = [record for record in filtered if record.usable_files or record.deleted_files]
     return filtered

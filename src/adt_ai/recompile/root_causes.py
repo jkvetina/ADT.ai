@@ -27,7 +27,7 @@ Recompiling forever never fixes the last one.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -72,12 +72,18 @@ _IDENTIFIER_TOKEN = re.compile(r"[A-Za-z0-9_$#.]+")
 # "you cannot see it" is a more specific answer than "it is not there".
 _CAUSE_ORDER = ("DERIVED", "GRANT", "MISSING", "SOURCE", "UNKNOWN")
 
+# The verdict one member of a mutual invalidation is promoted to (#670). It is
+# deliberately not a value `_classify` can reach: every member of such a loop
+# reads as DERIVED on its own error row, and only the closed loop says
+# otherwise. See `_blame_cycles` for why the promotion has to happen at all.
+CYCLE = "CYCLE"
+
 
 @dataclass(frozen=True)
 class RootCause:
     object_type: str
     object_name: str
-    # SOURCE | MISSING | GRANT | DERIVED | UNKNOWN
+    # SOURCE | MISSING | GRANT | DERIVED | CYCLE | UNKNOWN
     cause: str
     # what to fix: the object Oracle named, the identifier read out of the source,
     # or "" when nothing in the evidence names one.
@@ -236,29 +242,115 @@ def _classify(
     return ("UNKNOWN", "", "")
 
 
-def _blast_radius(node: str, dependents: dict[str, set[str]]) -> int:
-    """Transitive dependents of ``node`` within the invalid set.
+def _reachable(node: str, dependents: dict[str, set[str]]) -> dict[str, int]:
+    """Every node reachable from ``node``, mapped to how many hops away it is.
 
-    Iterative and ``seen``-guarded: a package spec and body can depend on each
-    other, and a real schema graph has cycles.
+    Breadth-first and ``distances``-guarded: a package spec and body can depend
+    on each other, and a real schema graph has cycles. ``node`` itself appears
+    only when a cycle leads back to it, which is a fact the callers use.
+    """
+    distances: dict[str, int] = {}
+    frontier = [node]
+    hops = 0
+    while frontier:
+        hops += 1
+        further: list[str] = []
+        for current in frontier:
+            for target in dependents.get(current, ()):
+                if target in distances:
+                    continue
+                distances[target] = hops
+                further.append(target)
+        frontier = further
+    return distances
+
+
+def _blast_counts(
+    universe: Sequence[str],
+    root_nodes: set[str],
+    dependents: dict[str, set[str]],
+) -> dict[str, int]:
+    """How many invalid objects each root is actually the one to fix for (#670).
+
+    The walk this replaces counted a root's whole transitive reach, independently
+    per root, so an object downstream of two unrelated roots was counted under
+    both and two `BLAST` figures of 1 described one knock-on. Neither figure was
+    true: fixing either root on its own leaves that object invalid, because the
+    other one still breaks it.
+
+    So every knock-on is OWNED by exactly one root, the nearest one that reaches
+    it, ties broken by ``TYPE.NAME``, which is the identity order the table
+    already sorts on. A root then counts a node when it owns it **or** when it
+    reaches the root that owns it. That second clause is what keeps a chain
+    honest: in ``A -> B -> C`` with A and B both roots, compiling A really does
+    clear both objects below it, and B really does clear C, while two
+    independent roots can no longer both claim the same downstream object.
+    """
+    reach = {root: _reachable(root, dependents) for root in root_nodes}
+    owner: dict[str, str] = {}
+    for node in universe:
+        # A root never owns itself, or a two-object cycle would report a blast of
+        # zero on both members where each genuinely clears the other.
+        candidates = [
+            (distances[node], root)
+            for root, distances in reach.items()
+            if root != node and node in distances
+        ]
+        if candidates:
+            owner[node] = min(candidates)[1]
+    return {
+        root: sum(
+            1
+            for node in universe
+            if node != root
+            and node in reach[root]
+            and (owner[node] == root or owner[node] in reach[root])
+        )
+        for root in root_nodes
+    }
+
+
+def _blame_cycles(blames: dict[str, str]) -> list[list[str]]:
+    """The closed loops in "who does each knock-on blame" (#670).
+
+    **A mutual invalidation classifies every member as DERIVED, so the report
+    ends up with no roots at all and the console prints no `ROOT CAUSES:`
+    section.** Two package bodies that each name the other in a `PLS-00905` are
+    the smallest case, and it is not exotic: it is what a half-applied
+    deployment leaves behind. Each object's own evidence is correct, the work
+    really is elsewhere, and following "elsewhere" walks in a circle forever.
+
+    Each node blames at most one other (the culprit its winning verdict named),
+    so this is a functional graph and a loop is the only shape a walk can close
+    into. Every node is walked once across all starts, hence the ``seen`` guard,
+    and a walk that runs into a previous walk's territory has nothing new to
+    report because that walk already recorded whatever loop it found.
     """
     seen: set[str] = set()
-    queue = list(dependents.get(node, ()))
-    while queue:
-        current = queue.pop()
-        if current in seen or current == node:
+    cycles: list[list[str]] = []
+    for start in sorted(blames):
+        if start in seen:
             continue
-        seen.add(current)
-        queue.extend(dependents.get(current, ()))
-    return len(seen)
+        path: list[str] = []
+        position: dict[str, int] = {}
+        node = start
+        while node in blames and node not in seen:
+            seen.add(node)
+            position[node] = len(path)
+            path.append(node)
+            node = blames[node]
+        if node in position:
+            cycles.append(path[position[node]:])
+    return cycles
 
 
 def analyse(
     invalid: Sequence[ObjectError],
     error_details: Sequence[CompileError],
     schema: str = "",
-    dependents: dict[str, Sequence[str]] | None = None,
+    dependents: Mapping[str, Sequence[str]] | None = None,
     source_lines: dict[tuple[str, str, int], str] | None = None,
+    schema_invalid: Sequence[tuple[str, str]] | None = None,
 ) -> RootCauseReport:
     """Split the invalid set into ranked roots and the knock-ons they explain.
 
@@ -267,14 +359,29 @@ def analyse(
     an absent mirror simply means the ranking runs on error evidence alone).
     ``source_lines`` maps ``(type, name, line)`` to that source line, for the
     errors that name nothing.
+
+    ``schema_invalid`` is the ``(type, name)`` of **every** invalid object in the
+    schema, which is a different set from ``invalid`` the moment ``-type`` or
+    ``-name`` narrows the run (#670). Only the classification reads it, and only
+    to answer "is the object Oracle blamed itself invalid": against the scoped
+    list alone the answer for anything outside the scope was no, so
+    ``adtai recompile -type "PACKAGE BODY"`` reported a body whose own spec had
+    not compiled as ``MISSING`` and told the reader to restore an object that is
+    right there. Omit it and the scoped list stands in, which is the old
+    behaviour and the honest fallback for a caller that has only that list.
     """
     source_lines = source_lines or {}
     # Name → node, for resolving a culprit Oracle named to an invalid object. An
     # object name can carry two types (spec and body); the spec is the one worth
     # pointing at, and it sorts first, so the first write wins.
+    index_source = (
+        list(schema_invalid)
+        if schema_invalid is not None
+        else [(obj.object_type, obj.object_name) for obj in invalid]
+    )
     invalid_names: dict[str, str] = {}
-    for obj in sorted(invalid, key=lambda o: (o.object_name, o.object_type)):
-        invalid_names.setdefault(obj.object_name.upper(), _node(obj.object_type, obj.object_name))
+    for object_type, object_name in sorted(index_source, key=lambda pair: (pair[1], pair[0])):
+        invalid_names.setdefault(object_name.upper(), _node(object_type, object_name))
 
     details_by_object: dict[tuple[str, str], list[CompileError]] = {}
     for detail in error_details:
@@ -285,8 +392,16 @@ def analyse(
     }
 
     verdicts: dict[tuple[str, str], tuple[str, str, int]] = {}
+    # node → the node its winning DERIVED verdict blames, which is the walk
+    # `_blame_cycles` follows. One entry per knock-on, never per error row.
+    blames: dict[str, str] = {}
+    # The way back from a node string to the `verdicts` key, so the cycle pass
+    # can rewrite a verdict without re-parsing `TYPE.NAME` (an object name may
+    # itself contain a dot, so parsing it back is not safe).
+    key_of: dict[str, tuple[str, str]] = {}
     for obj in invalid:
         key = (obj.object_type, obj.object_name)
+        key_of[_node(*key)] = key
         own = [d for d in details_by_object.get(key, []) if not is_cascade_message(d.text or "")]
         classified = [
             _classify(detail, invalid_names, schema, source_lines) for detail in own
@@ -297,6 +412,8 @@ def analyse(
             matching = [item for item in classified if item[0] == candidate]
             if matching:
                 cause, culprit = candidate, matching[0][1]
+                if candidate == "DERIVED":
+                    blames[_node(*key)] = matching[0][2]
                 break
         # An error naming an invalid object is an edge the graph may not carry,
         # a fresh compile failure predates the mirror's last refresh.
@@ -304,6 +421,23 @@ def analyse(
             if item_cause == "DERIVED" and upstream:
                 edges.setdefault(upstream, set()).add(_node(*key))
         verdicts[key] = (cause, culprit, len(own))
+
+    # A closed blame loop leaves the report with no roots at all, so one member
+    # of each loop is promoted: the noisiest, ties by identity. Fixing it is what
+    # breaks the circle, and the rest of the loop clears behind it.
+    for cycle in _blame_cycles(blames):
+        promoted = min(cycle, key=lambda node: (-verdicts[key_of[node]][2], node))
+        key = key_of[promoted]
+        _cause, culprit, errors = verdicts[key]
+        verdicts[key] = (CYCLE, culprit, errors)
+
+    universe = [_node(obj.object_type, obj.object_name) for obj in invalid]
+    root_nodes = {
+        _node(obj.object_type, obj.object_name)
+        for obj in invalid
+        if verdicts[(obj.object_type, obj.object_name)][0] != "DERIVED"
+    }
+    blast = _blast_counts(universe, root_nodes, edges)
 
     roots: list[RootCause] = []
     derived: list[RootCause] = []
@@ -315,7 +449,7 @@ def analyse(
             object_name = obj.object_name,
             cause       = cause,
             culprit     = culprit,
-            blast       = _blast_radius(_node(*key), edges),
+            blast       = blast.get(_node(*key), 0),
             errors      = errors,
         )
         (derived if cause == "DERIVED" else roots).append(entry)
@@ -331,13 +465,17 @@ def rank_for_run(
     schema: str,
     invalid: Sequence[ObjectError],
     error_details: Sequence[CompileError],
-    dependents_for: Callable[[list[str]], dict[str, Sequence[str]]],
+    dependents_for: Callable[[list[str]], Mapping[str, Sequence[str]]],
 ) -> RootCauseReport | None:
-    """Rank one recompile run's leftovers, doing the two reads :func:`analyse` needs.
+    """Rank one recompile run's leftovers, doing the three reads :func:`analyse` needs.
 
-    Both reads are scoped to the damage: source only for the errors that name
-    nothing, graph edges only for the objects still invalid. A run that ends clean
-    returns ``None`` and pays for neither.
+    Two of them are scoped to the damage: source only for the errors that name
+    nothing, graph edges only for the objects still invalid. The third is
+    deliberately not scoped, one whole-schema name read so a culprit outside a
+    ``-type``/``-name`` run can still be recognised as invalid rather than
+    reported as missing (#670); compilation stays scoped, only the classification
+    sees the wider list. A run that ends clean returns ``None`` and pays for none
+    of the three.
     """
     if not invalid:
         return None
@@ -346,7 +484,10 @@ def rank_for_run(
     return analyse(
         invalid,
         error_details,
-        schema       = schema,
-        dependents   = dependents_for(nodes),
-        source_lines = source_lines,
+        schema         = schema,
+        dependents     = dependents_for(nodes),
+        source_lines   = source_lines,
+        schema_invalid = [
+            (obj.object_type, obj.object_name) for obj in discovery.invalid_object_names()
+        ],
     )

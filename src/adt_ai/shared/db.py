@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Callable, Mapping
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Protocol
 
 from adt_ai.shared.connections import DEFAULT_PORT, Connection, InvalidConnectionError
+from adt_ai.shared.db_fakes import FakeGateway  # re-export, see `db_fakes` (`#670`)
 from adt_ai.shared.oracle_session import DDL_LOCK_TIMEOUT_STATEMENT
 from adt_ai.shared.sqlcl_connect import (
     SqlclConnect,
     _ensure_wallet_folder,
+    resolve_wallet_path,
     sqlcl_connect,
 )
+from adt_ai.shared.sqlcl_errors import SqlclNotConnectedError
 from adt_ai.shared.sqlcl_names import credential_fingerprint, record_sqlcl_registration
 from adt_ai.shared.sqlcl_script import run_sqlcl_script
 from adt_ai.shared.startup import apply_startup
@@ -71,11 +75,46 @@ def _close_resource(resource: object) -> None:
         close()
 
 
+#: The arguments the Oracle client library was initialized with in THIS process,
+#: or `None` while it has not been. See `_init_thick_client_once`.
+_THICK_CLIENT_ARGS: dict[str, Any] | None = None
+
+
+def _init_thick_client_once(driver: Any, kwargs: dict[str, Any]) -> None:
+    """`init_oracle_client(**kwargs)`, at most once per process.
+
+    **There is one Oracle client library per process, and it cannot be swapped.**
+    The per-gateway `_thick_initialized` latch only stopped ONE gateway calling
+    twice, so two gateways in one run each called it; that is harmless when the
+    arguments match, because `oracledb` ignores a repeat, and raises when they
+    differ. A `-schema` sweep across two environments with different
+    `client_lib_dir` values died on the second connect with a driver error naming
+    neither connection (ADT #651).
+
+    So the guard is process-wide and keyed on the arguments: the same arguments
+    are a no-op, and different ones raise HERE, naming both sides, rather than
+    from inside the driver.
+    """
+    global _THICK_CLIENT_ARGS
+    if _THICK_CLIENT_ARGS is not None:
+        if kwargs != _THICK_CLIENT_ARGS:
+            raise InvalidConnectionError(
+                "The Oracle client library is already initialized for this run with "
+                f"{_THICK_CLIENT_ARGS or 'the default library'}, and one process can "
+                f"load only one. This connection asks for {kwargs or 'the default library'}. "
+                "Run the two environments as separate commands."
+            )
+        return
+    driver.init_oracle_client(**kwargs)
+    _THICK_CLIENT_ARGS = dict(kwargs)
+
+
 class QueryGateway(Protocol):
     def fetch_all(
         self,
         sql: str,
         params: Mapping[str, Any] | None = None,
+        exact_numbers: bool = False,
     ) -> list[dict[str, Any]]:
         ...
 
@@ -104,66 +143,6 @@ class QueryGateway(Protocol):
 
     def close(self) -> None:
         ...
-
-
-class FakeGateway:
-    def __init__(
-        self,
-        results: Mapping[str, list[dict[str, Any]]] | None = None,
-        sqlcl_output: str = "",
-    ) -> None:
-        self.results = dict(results or {})
-        self.sqlcl_output = sqlcl_output
-        self.queries: list[tuple[str, dict[str, Any]]] = []
-        self.read_only_queries: list[tuple[str, dict[str, Any]]] = []
-        self.statements: list[tuple[str, dict[str, Any]]] = []
-        self.sqlcl_requests: list[tuple[str, Path]] = []
-        self.sqlcl_timeouts: list[float | None] = []
-        self.closed = False
-
-    def fetch_all(
-        self,
-        sql: str,
-        params: Mapping[str, Any] | None = None,
-    ) -> list[dict[str, Any]]:
-        self.queries.append((sql, dict(params or {})))
-        return self.results.get(sql, [])
-
-    def read_only_fetch_all(
-        self,
-        sql: str,
-        params: Mapping[str, Any] | None = None,
-    ) -> list[dict[str, Any]]:
-        self.read_only_queries.append((sql, dict(params or {})))
-        return self.results.get(sql, [])
-
-    def execute(
-        self,
-        sql: str,
-        params: Mapping[str, Any] | None = None,
-    ) -> None:
-        self.statements.append((sql, dict(params or {})))
-
-    def sqlcl_request(
-        self,
-        request: str,
-        root: Path,
-        timeout_seconds: float | None = None,
-        on_line: Callable[[str], None] | None = None,
-    ) -> str:
-        self.sqlcl_requests.append((request, root))
-        self.sqlcl_timeouts.append(timeout_seconds)
-        if on_line is not None:
-            # The real gateway hands a live reader each line as SQLcl prints it,
-            # so the fake replays its canned transcript the same way (ADT #434).
-            # A fake that only returned the finished text would let a
-            # non-streaming implementation pass every progress test.
-            for line in self.sqlcl_output.splitlines():
-                on_line(line)
-        return self.sqlcl_output
-
-    def close(self) -> None:
-        self.closed = True
 
 
 class OracleGateway:
@@ -231,9 +210,21 @@ class OracleGateway:
         self,
         sql: str,
         params: Mapping[str, Any] | None = None,
+        exact_numbers: bool = False,
     ) -> list[dict[str, Any]]:
-        cursor = self.connect().cursor()
+        """`exact_numbers` fetches NUMBER as `Decimal` for THIS cursor (`#670`).
+
+        `export_data` writes the digits it read into a CSV, and the driver's
+        default float loses them: 99999999999999.99 comes back as ...98, and any
+        integer above 2^53 is rounded. Every other caller wants int/float, so
+        this is a per-cursor handler rather than `oracledb.defaults`, which is
+        process-wide.
+        """
+        connection = self.connect()
+        cursor = connection.cursor()
         cursor.arraysize = self.FETCH_ARRAYSIZE
+        if exact_numbers:
+            self._install_exact_number_handler(connection, cursor)
         try:
             cursor.execute(sql, dict(params or {}))
             columns = [column[0] for column in cursor.description or []]
@@ -308,19 +299,26 @@ class OracleGateway:
                 return self._run(plan, body, root, timeout_seconds, on_line)
             try:
                 return self._run(plan, body, root, timeout_seconds, on_line)
-            except RuntimeError:
+            except SqlclNotConnectedError:
                 # Fresh fingerprint, but the local SQLcl store has never seen
                 # the name (the YAML travels with the project, the store does
                 # not). Re-register and retry once.
                 #
-                # This catches `SqlclNotConnectedError` too, and has to: a lost
-                # store entry does not exit non-zero the way this path once
-                # assumed (SQLcl reports `SP2-0640` and exits 0) so before
-                # ADT #232 the retry never ran for the failure it was written
-                # for.
+                # `SqlclNotConnectedError` is the ONLY failure this retry
+                # answers, and it has to be caught by name: a lost store entry
+                # does not exit non-zero the way this path once assumed (SQLcl
+                # reports `SP2-0640` and exits 0), so before ADT #232 the retry
+                # never ran for the failure it was written for.
+                #
+                # Catching bare `RuntimeError` re-ran the body for every other
+                # failure too, because `SqlclScriptError` and `SqlclTimeoutError`
+                # subclass it (ADT #661): a timeout (`export_apex -rest` is the
+                # caller that passes one) killed SQLcl and then waited the whole
+                # deadline a second time, and any body exiting non-zero ran twice
+                # with the first transcript discarded.
                 plan = self._sqlcl_plan(force_register=True)
         output = self._run(plan, body, root, timeout_seconds, on_line)
-        if plan.registers is not None and plan.registers.sqlcl_source:
+        if plan.registers is not None and plan.registers.sqlcl_source and plan.name:
             record_sqlcl_registration(
                 plan.registers.sqlcl_source,
                 plan.registers.environment,
@@ -347,7 +345,7 @@ class OracleGateway:
             {
                 "oci": True,
                 "client_lib_dir": self.connection.client_lib_dir,
-                "tns_admin": self.connection.wallet_path,
+                "tns_admin": self._tns_admin(),
             }
             if self.connection.external_auth
             else {}
@@ -364,6 +362,21 @@ class OracleGateway:
             timeout_seconds = timeout_seconds,
             **extra,
         )
+
+    def _tns_admin(self) -> str | None:
+        """The folder SQLcl reads `tnsnames.ora` from, resolved once for all callers.
+
+        `#670`: this handed SQLcl the raw `wallet_path`, while `_apply_wallet`
+        and `_initialize_thick_client` resolve the same field. A
+        `config/Wallet_X.zip` value therefore pointed TNS_ADMIN at a zip file,
+        relative to a cwd nobody had set, and the alias never resolved. Same two
+        steps as the driver paths: anchor a relative path to the project root,
+        then name the extracted folder rather than the archive.
+        """
+        if not self.connection.wallet_path:
+            return None
+        anchored = resolve_wallet_path(self.connection.wallet_path, self.project_root)
+        return str(_ensure_wallet_folder(anchored.expanduser()))
 
     def _sqlcl_plan(self, *, force_register: bool = False) -> SqlclConnect:
         return sqlcl_connect(
@@ -404,7 +417,7 @@ class OracleGateway:
             kwargs["config_dir"] = str(
                 _ensure_wallet_folder(Path(self.connection.wallet_path).expanduser())
             )
-        driver.init_oracle_client(**kwargs)
+        _init_thick_client_once(driver, kwargs)
         self._thick_initialized = True
 
     def _install_output_type_handler(self, connection: Any, driver: Any) -> None:
@@ -427,6 +440,34 @@ class OracleGateway:
             return None
 
         connection.outputtypehandler = output_type_handler
+
+    def _install_exact_number_handler(self, connection: Any, cursor: Any) -> None:
+        """Map NUMBER to `Decimal` on one cursor, delegating every other type.
+
+        A cursor handler SHADOWS the connection's rather than adding to it, so
+        the CLOB-to-string mapping every LOB sidecar depends on is called
+        through here instead of being replaced (`#670`).
+        """
+        number_type = getattr(self._driver(), "DB_TYPE_NUMBER", None)
+        if number_type is None:
+            return
+        inherited = getattr(connection, "outputtypehandler", None)
+
+        def exact_number_handler(
+            cursor: Any,
+            name: str,
+            default_type: Any,
+            size: Any,
+            precision: Any,
+            scale: Any,
+        ) -> Any:
+            if default_type == number_type:
+                return cursor.var(Decimal, arraysize=cursor.arraysize)
+            if inherited is None:
+                return None
+            return inherited(cursor, name, default_type, size, precision, scale)
+
+        cursor.outputtypehandler = exact_number_handler
 
     def _connect_kwargs(self, driver: Any) -> dict[str, Any]:
         # `auth: external` (ADT #395) passes no user and no password at all: the
@@ -486,9 +527,38 @@ class OracleGateway:
         if not self.connection.hostname:
             return self.connection.service or self.connection.sid or ""
 
-        return driver.makedsn(
+        dsn: str = driver.makedsn(
             self.connection.hostname,
             self.connection.port or DEFAULT_PORT,
             service_name=self.connection.service,
             sid=self.connection.sid,
         )
+        return dsn
+
+__all__ = [
+    "Any",
+    "CALL_TIMEOUT_MS",
+    "CONNECT_TIMEOUT_SECONDS",
+    "Callable",
+    "Connection",
+    "DDL_LOCK_TIMEOUT_STATEMENT",
+    "DEFAULT_PORT",
+    "FakeGateway",
+    "InvalidConnectionError",
+    "Mapping",
+    "OracleGateway",
+    "Path",
+    "Protocol",
+    "QUERY_TIMEOUT_SECONDS",
+    "QueryGateway",
+    "SqlclConnect",
+    "SqlclNotConnectedError",
+    "_attach_sql",
+    "annotations",
+    "apply_startup",
+    "contextlib",
+    "credential_fingerprint",
+    "record_sqlcl_registration",
+    "run_sqlcl_script",
+    "sqlcl_connect",
+]

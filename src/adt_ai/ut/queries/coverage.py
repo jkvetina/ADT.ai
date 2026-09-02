@@ -194,8 +194,14 @@ ORDER BY o.object_type, o.object_name
 # If a reason for a blank `COVERAGE` cell is ever wanted back, that is the query
 # to restore, and `PLSQL_OPTIMIZE_LEVEL` is not to be restored with it. It was
 # selected alongside until 2026-08-06 to flag anything above level 1; measured on
-# ICT_OWNER@ORCLPDB1, every one of the 78 package bodies is at level 2 (Oracle's
+# APP_OWNER@DEVDB, every one of the 78 package bodies is at level 2 (Oracle's
 # default) and `dbmspcc_blocks` still recorded 36 of them, so the flag suppressed
 # every real figure on every default database (card `#227`).
 
-__all__ = [name for name in globals() if not name.startswith("__")]
+__all__ = [
+    "COVERAGE_START_STATEMENT",
+    "COVERAGE_STOP_STATEMENT",
+    "PACKAGE_COVERAGE_QUERY",
+    "SCHEMA_PACKAGES_QUERY",
+    "annotations",
+]

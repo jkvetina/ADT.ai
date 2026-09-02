@@ -158,7 +158,10 @@ def branch_commits(
     else:
         args.append(name)
     commits: list[tuple[str, str]] = []
-    for line in run_git(root, args).splitlines():
+    # "\n" only, for the reason the branch listing above gives: a control
+    # character in a commit subject makes `str.splitlines()` split one commit
+    # into two rows (ADT #659).
+    for line in run_git(root, args).split("\n"):
         if not line.strip():
             continue
         when, _, subject = line.partition("\t")

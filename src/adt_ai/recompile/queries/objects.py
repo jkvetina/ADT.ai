@@ -178,6 +178,14 @@ FROM (
     WHERE 1 = 1
         AND g.object_like       IS NULL
         AND :force              = 'Y'
+        -- The first arm already returns every invalid object, so this one takes
+        -- the VALID ones and nothing else. Without the predicate a bare -force
+        -- (:drift_only = 'N', where the drift arm below applies no status test of
+        -- its own) returned each already-invalid object twice through the union,
+        -- and the runner compiled it twice: on a schema with 200 invalid objects
+        -- that is 200 wasted ALTER ... COMPILE round trips in the slowest part
+        -- of the run (#670).
+        AND o.status            = 'VALID'
         AND o.object_type       IN ('PACKAGE', 'PACKAGE BODY', 'PROCEDURE', 'FUNCTION',
         'TRIGGER', 'VIEW', 'MATERIALIZED VIEW', 'SYNONYM', 'TYPE', 'TYPE BODY')
         -- When -force is combined with a compile modifier (-scope/-level/-native/
@@ -381,6 +389,28 @@ JOIN object_names n
 JOIN source_lines l
     ON s.line       = l.line
 ORDER BY s.type, s.name, s.line
+""".strip()
+
+
+# Every invalid object in the schema, whatever the run's -type/-name narrowed it
+# to (#670). The root-cause ranking asks one question of this list, "is the
+# object Oracle blamed itself invalid", and the answer must not depend on what
+# the run happened to select: against the scoped list alone, a PACKAGE BODY run
+# could not see that its own spec was invalid, so it reported the spec as
+# MISSING and told the reader to restore an object that is right there.
+#
+# Whole-schema scan, no binds, and names only: it never becomes a compile list,
+# so widening it cannot widen what the run touches. SEQUENCE is excluded for the
+# same reason as in the selection query, a sequence carries no compilable body.
+INVALID_OBJECT_NAMES_QUERY = """
+SELECT
+    o.object_type,
+    o.object_name
+FROM user_objects o
+WHERE 1 = 1
+    AND o.status            != 'VALID'
+    AND o.object_type       NOT IN ('SEQUENCE')
+ORDER BY o.object_name, o.object_type
 """.strip()
 
 

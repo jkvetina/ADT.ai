@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING
 from adt_ai.cli.context_debug import DebugQueryGateway
 from adt_ai.shared.announce import AnnouncedGateway, strict_mode
 from adt_ai.shared.config import is_enabled
+from adt_ai.shared.connections import Connection
 from adt_ai.shared.db import OracleGateway, QueryGateway
 from adt_ai.shared.sqlcl_gateway import SqlclGateway
 
@@ -102,7 +103,7 @@ def _track(gateway: QueryGateway) -> QueryGateway:
 
 def build_gateway(
     startup: StartupContext,
-    connection: object,
+    connection: Connection,
     *,
     debug: bool = False,
     project_root: Path | None = None,
@@ -137,3 +138,49 @@ def build_gateway(
     # cli.runtime.main, and between the two every command is covered.
     final = AnnouncedGateway(wired) if strict_mode() else wired
     return _track(final)
+
+
+def debug_wrapped(gateway: QueryGateway, *, debug: bool) -> QueryGateway:
+    """``gateway`` with the ``-debug`` logger UNDER the console guard (`#670`).
+
+    The nesting is not a call site's choice, for the reason ``build_gateway``
+    above states: ``DebugQueryGateway`` prints the statement and then calls
+    ``mark_announced()``, so with the logger on the outside every statement
+    announces itself before ``AnnouncedGateway.guard`` can judge the screen, and
+    a ``-debug`` run reports no console violation whatever it is showing. Seven
+    command modules wrote ``DebugQueryGateway(gateway) if args.debug else
+    gateway`` by hand over a gateway ``cli.runtime.main`` had already guarded,
+    which is exactly that reversed chain.
+
+    An injected factory arrives already guarded, so the guard is unwrapped, the
+    logger goes inside, and the guard is put back. A gateway that carries none
+    (a run outside ``strict_mode``) gets the logger and nothing else.
+    """
+    if not debug:
+        return gateway
+    if isinstance(gateway, AnnouncedGateway):
+        return AnnouncedGateway(DebugQueryGateway(gateway.wrapped))
+    return DebugQueryGateway(gateway)
+
+
+def cached_schema_gateway_factory(
+    base_factory: Callable[[str], QueryGateway],
+    *,
+    debug: bool = False,
+) -> Callable[[str], QueryGateway]:
+    """One gateway per schema, built once and wrapped for ``-debug`` once.
+
+    Every multi-schema command memoised its own ``dict[str, QueryGateway]`` and
+    applied its own debug wrap beside it, which is where the reversed chain
+    above kept being written (`#670`). The cache and the wrap travel together
+    because they are one decision: a schema's gateway is built, wrapped and then
+    reused, so a second caller cannot get a differently-wrapped session.
+    """
+    cache: dict[str, QueryGateway] = {}
+
+    def factory(schema: str) -> QueryGateway:
+        if schema not in cache:
+            cache[schema] = debug_wrapped(base_factory(schema), debug=debug)
+        return cache[schema]
+
+    return factory

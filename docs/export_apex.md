@@ -152,6 +152,12 @@ It is not a format and there is no flag for it. APEX computes it over the whole 
 
 `apex_path_app` names the per-application folder under it and resolves `{$APP_ID}`, `{$APP_ALIAS}`, `{$APP_NAME}` and `{$APP_GROUP}`. Any other token is refused.
 
+An application name or alias is free text, so the value a token resolves to is reduced to a single folder name before it is used. A slash, a backslash, a colon and the other characters a file system reserves each become an underscore.
+
+A run of them becomes one underscore, and a leading or trailing dot or space becomes one too. The separators in the template itself are untouched, so a two-level template still writes two levels.
+
+When a token resolves to nothing at all for an application, the export stops and names that application instead of writing a folder with a level missing.
+
 ## Recent changes, by author
 
 `-recent DAYS` prints the components changed in that window. DAYS may be a fraction of a day, `1/24` for the past hour. A whole-day window runs from midnight, so `-recent 1` means changed today, while a shorter one measures back from now. Bare `-recent` uses the application's stored watermark instead, keyed per environment, application and format.
@@ -187,7 +193,7 @@ Without an explicit format, a non-reveal `-recent` is report-only: it exports no
 | `-readable`, `--readable` | No | off | Export readable YAML. On APEX 26.1+ the format no longer exists, so the slice is skipped silently and writes nothing; use `-apexlang` there. |
 | `-embedded`, `--embedded` | No | off | Export the embedded code report. |
 | `-apexlang`, `--apexlang`, `-apx`, `--apx` | No | off | Export APEXlang source. Requires APEX 26.1+, and on an older instance the slice is skipped with a note, or silently under `-all`. Whole-app format, never filtered and never advancing a watermark. Static-file payloads are skipped by design. |
-| `-rest`, `--rest` | No | off | Export REST services. **Schema-level**, written once per schema, and it runs even when the schema hosts no application. Runs through SQLcl on a named `ADT_…` connection, wallet included. A schema publishing no REST modules exports an empty folder and succeeds; a session that could not connect, or one whose output carries a database error, fails the run with the full SQLcl output attached. Bounded by `rest_timeout_seconds` (default 60). |
+| `-rest`, `--rest` | No | off | Export REST services. **Schema-level**, written once per schema, and it runs even when the schema hosts no application. Runs through SQLcl on a named `ADT_…` connection, wallet included. A schema publishing no REST modules exports an empty folder and succeeds; a session that could not connect, or one whose output carries a database error anywhere in it, fails the run with the full SQLcl output attached. An export that stopped before its closing `COMMIT;`, which is what a run cut off at the deadline looks like, fails the same way. A failed export writes no module file at all, including the modules that had already printed cleanly, so the folder is never left holding half a schema. Bounded by `rest_timeout_seconds` (default 60). |
 | `-files`, `--files` | No | off | Export the static application files. |
 | `-files_ws`, `--files_ws`, `--files-ws` | No | off | Export the static workspace files. **Schema-level**, exactly like `-rest`. |
 | `-compact`, `--compact` | No | off | Replace the per-application blocks and their rows with one time-weighted progress bar per schema segment, keeping the `APEX APPLICATIONS:` overview above it. |

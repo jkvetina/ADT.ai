@@ -6,7 +6,7 @@ from __future__ import annotations
 # UPPER on both sides (`#560`). This module is where that matters and the rest
 # of ADT.ai is not: every other command connects AS the schema and reads the
 # `user_*` views, where the name never appears in a predicate at all, which is
-# why a connection file keyed `ict_owner` exported its database objects for
+# why a connection file keyed `app_owner` exported its database objects for
 # months and revealed no APEX application ever. The bind, not the source, is
 # what gets normalized: the same `schema_name` renders `<schema>` into
 # `path_objects` and `path_apex`, so uppercasing it upstream would move

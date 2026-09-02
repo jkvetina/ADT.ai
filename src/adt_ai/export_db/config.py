@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from adt_ai.shared.config import DEFAULT_PATH_OBJECTS
@@ -109,7 +110,7 @@ def resolve_author_filter(
     by: str | None,
     my: bool,
     config: dict[str, Any],
-    config_search_paths: Iterable[str],
+    config_search_paths: Iterable[str | Path],
 ) -> tuple[str | None, bool, list[str] | None]:
     """Resolve ``-by``/``-my`` into ``(changed_by, my_changes, authors)``.
 

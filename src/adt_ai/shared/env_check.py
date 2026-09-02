@@ -14,6 +14,19 @@ from adt_ai.shared.subprocess_env import safe_subprocess_environment
 CommandRunner = Callable[[Sequence[str]], str]
 ExecutableResolver = Callable[[str], str | None]
 
+# How long a version probe may take before `doctor` stops waiting for it.
+#
+# `git --version`, `java --version` and `sql -V` were the only subprocesses in
+# `shared/` running without one (ADT #670), and a version banner is the cheapest
+# thing any of them does: a probe that has not answered in ten seconds is not
+# slow, it is wedged, on a stalled mount or an unreachable home directory. The
+# limit matches `env_bootstrap.SHELL_TIMEOUT_SECONDS`, the other startup-time
+# probe, so the two agree on how long "not answering" takes to establish.
+#
+# Read from the module inside `_run_command` rather than bound as a default
+# argument, so a test can shorten it without a ten-second wait.
+COMMAND_TIMEOUT_SECONDS = 10
+
 
 @dataclass(frozen=True)
 class CheckResult:
@@ -154,6 +167,7 @@ def _run_command(command: Sequence[str]) -> str:
         capture_output = True,
         text         = True,
         env          = safe_subprocess_environment(),
+        timeout      = COMMAND_TIMEOUT_SECONDS,
     )
     return (completed.stdout or completed.stderr).strip()
 

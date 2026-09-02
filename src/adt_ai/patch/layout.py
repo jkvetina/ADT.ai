@@ -25,7 +25,7 @@ from typing import Any
 # them from here.
 from adt_ai.patch.deploy_paths import deploy_log_folder as deploy_log_folder
 from adt_ai.patch.deploy_paths import ensure_deploy_log_folder as ensure_deploy_log_folder
-from adt_ai.shared.apex_paths import APEXLANG_DIR
+from adt_ai.shared.apex_paths import APEXLANG_DIR, app_folder_depth
 from adt_ai.shared.config import DEFAULT_PATH_OBJECTS, reject_unresolved_placeholders
 
 # `object_layouts` moved to `shared/` with the ownership rule it feeds (ADT #471),
@@ -327,7 +327,12 @@ def is_apex_static_file(path: str, config: dict[str, Any]) -> bool:
 
 
 def _apex_app_depth(config: dict[str, Any]) -> int:
-    return len([part for part in _apex_app_template(config).split("/") if part]) or 1
+    # Through the shared count, which is the one `export_apex/files.py` renders
+    # against: the writer refuses a template whose segments do not all render, so
+    # this reader can trust the depth it counts here to be the depth on disk
+    # (ADT #670). `_APP_TOKEN_RE`'s `[^/]*` is exact for the same reason, a
+    # substituted value can no longer carry a separator.
+    return app_folder_depth(_apex_app_template(config)) or 1
 
 
 def _apex_app_pattern(config: dict[str, Any]) -> re.Pattern[str] | None:
@@ -433,7 +438,10 @@ def _object_name(path: str, config: dict[str, Any], read: Any) -> str | None:
     object_type = database_object_type(path, config)
     if object_type is None:
         return None
-    return read(Path(path).name, object_type, object_layouts(config.get("object_types", {})))
+    name: str | None = read(
+        Path(path).name, object_type, object_layouts(config.get("object_types", {}))
+    )
+    return name
 
 
 def database_schema(path: str, config: dict[str, Any]) -> str:

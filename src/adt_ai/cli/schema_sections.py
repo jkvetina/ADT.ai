@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import contextlib
 import sys
 import time
 from collections.abc import Callable, Sequence
 from typing import TextIO
 
 from adt_ai.cli.context import _print_completion_timer
+from adt_ai.cli.stream_tracker import _StdoutTracker
 
 
 def run_schema_sections(
@@ -51,10 +51,12 @@ def run_schema_sections(
 
 
 def _mark_final_timer_emitted() -> None:
-    # sys.stdout is the runtime's _StdoutTracker; set defensively since a
-    # direct/unit-test caller may leave a plain stream in place.
-    with contextlib.suppress(AttributeError):
-        sys.stdout.final_timer_emitted = True
+    # sys.stdout is the runtime's _StdoutTracker, and the latch is its own
+    # attribute; a direct or unit-test caller may leave a plain stream in
+    # place, which has no latch to set and needs none.
+    stdout = sys.stdout
+    if isinstance(stdout, _StdoutTracker):
+        stdout.final_timer_emitted = True
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

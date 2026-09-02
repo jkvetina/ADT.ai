@@ -149,9 +149,9 @@ class ConnectionResult:
     # An Oracle schema name is a case-insensitive identifier, but ADT.ai reaches this
     # lookup with names from two different places: what the user typed in the
     # connection file, and what a command derived. `patch` derives its group from the
-    # exported folder and uppercases it, so a file keyed `ict_owner` could not serve a
-    # patch group named `ICT_OWNER`, the same project resolved fine for
-    # `dependencies -refresh -schema ict_owner` and failed for `patch -deploy`, which
+    # exported folder and uppercases it, so a file keyed `app_owner` could not serve a
+    # patch group named `APP_OWNER`, the same project resolved fine for
+    # `dependencies -refresh -schema app_owner` and failed for `patch -deploy`, which
     # reads as a broken connection file rather than a lookup rule (`#198`).
     #
     # The exact key still wins, so a file deliberately carrying two casings keeps both.
@@ -205,20 +205,29 @@ class ConnectionResult:
                     context = password_context,
                 )
         wallet_context = f"{environment_name} wallet_pwd"
-        wallet_password = _fetched_secret(db, "wallet_pwd", wallet_context)
-        if wallet_password is None:
-            wallet_password = _decrypt_if_enabled(
-                db.get("wallet_password") or db.get("wallet_pwd"),
-                db.get("wallet_password!") or db.get("wallet_pwd!"),
-                db.get("wallet_password_key") or db.get("wallet_pwd_key"),
-                key     = self.key,
-                context = wallet_context,
-            )
+        if external:
+            # The same reasoning as `pwd` above, and it was missing here: under
+            # `auth: external` the driver never receives a wallet password
+            # (`db.py` returns before that kwarg), so resolving one ran a vault
+            # command (a subprocess that can hang, fail, or prompt) for a value
+            # nothing reads, and could ask for `ADT_KEY` in a mode that needs no
+            # key at all (ADT #651).
+            wallet_password = None
+        else:
+            wallet_password = _fetched_secret(db, "wallet_pwd", wallet_context)
+            if wallet_password is None:
+                wallet_password = _decrypt_if_enabled(
+                    db.get("wallet_password") or db.get("wallet_pwd"),
+                    db.get("wallet_password!") or db.get("wallet_pwd!"),
+                    db.get("wallet_password_key") or db.get("wallet_pwd_key"),
+                    key     = self.key,
+                    context = wallet_context,
+                )
         return Connection(
             environment     = environment_name,
             schema          = schema_name,
             username        = str(db.get("user") or schema_name),
-            password        = password,
+            password        = Secret(password),
             password_mode   = db.get("pwd!"),
             hostname        = db.get("hostname"),
             port            = db.get("port"),
@@ -235,7 +244,7 @@ class ConnectionResult:
                 db.get("wallet_path") or db.get("wallet"),
                 self.wallet_roots,
             ),
-            wallet_password = wallet_password,
+            wallet_password = Secret(wallet_password),
             client_lib_dir  = db.get("client_lib_dir") or db.get("lib_dir"),
             sqlcl_name      = self._sqlcl_name(db, environment_name, schema_name),
             sqlcl_sync      = db.get("sqlcl_sync"),
