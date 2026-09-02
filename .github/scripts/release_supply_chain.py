@@ -36,7 +36,6 @@ import json
 import re
 import sys
 import tarfile
-import tomllib
 import zipfile
 from email.parser import Parser
 from pathlib import Path, PurePosixPath
@@ -172,11 +171,14 @@ def artifact_version(dist: Path) -> str:
     if not version:
         raise ValueError("wheel METADATA carries no Version")
 
-    try:
-        pyproject = tomllib.loads(_sdist_member(sdist, "pyproject.toml").decode("utf-8"))
-        declared = pyproject["project"]["version"]
-    except (KeyError, tomllib.TOMLDecodeError) as error:
-        raise ValueError("sdist has no readable project.version") from error
+    # The sdist states its version in PKG-INFO, not in `pyproject.toml`: `#631`
+    # made the packaged version dynamic, so `project.version` is absent from
+    # every sdist hatchling builds and reading it stopped the release at its
+    # first stage. PKG-INFO is the sdist's own generated metadata, so the two
+    # sides of this comparison stay independently derived.
+    declared = Parser().parsestr(_sdist_member(sdist, "PKG-INFO").decode("utf-8")).get("Version")
+    if not declared:
+        raise ValueError("sdist PKG-INFO carries no Version")
     if declared != version:
         raise ValueError(f"wheel declares {version}, sdist declares {declared}")
     return version
