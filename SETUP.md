@@ -2,21 +2,29 @@
 
 `SETUP.md` is the install and environment reference for humans setting up a machine. It intentionally stays short: use `adtai doctor` to verify the machine, and use [docs/doctor.md](docs/doctor.md) for the detailed Doctor command contract.
 
+ADT.ai supports Python 3.14 or newer.
+
 ## Install
 
-Install ADT.ai from this checkout:
+Install ADT.ai from PyPI:
 
 ```bash
-python3 -m pip install -e .
+python3 -m pip install adt-ai
 ```
 
 Windows uses `python` instead of `python3`:
 
 ```powershell
-python -m pip install -e .
+python -m pip install adt-ai
 ```
 
-This installs both command names:
+To work on ADT.ai itself, install this checkout instead, so an edit takes effect without reinstalling:
+
+```bash
+python3 -m pip install -e .
+```
+
+Either route installs both command names:
 
 ```bash
 adtai --help

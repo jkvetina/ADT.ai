@@ -14,13 +14,14 @@ from adt_ai.doctor._base import (
     PYPI_PACKAGE_URL,
     SQLCL_DOWNLOAD_HOST,
     SQLCL_DOWNLOAD_PAGE,
+    DoctorHost,
     SqlclRelease,
     unescape,
 )
 from adt_ai.shared import text_files
 
 
-class DoctorLatestVersionMixin:
+class DoctorLatestVersionMixin(DoctorHost):
     """Resolve the latest remote version of each tracked component.
 
     The online lookups are the slow part of a `doctor` run, so they are pulled
@@ -70,14 +71,16 @@ class DoctorLatestVersionMixin:
             self._version_executor = None
 
     def _latest_version(self, component: str) -> str:
-        futures = getattr(self, "_latest_version_futures", None)
+        futures: dict[str, Future[str]] | None = getattr(
+            self, "_latest_version_futures", None
+        )
         if futures is not None and component in futures:
             return futures[component].result()
         return self._fetch_latest_version(component)
 
     def _fetch_latest_version(self, component: str) -> str:
-        if self.latest_version_fetcher:  # type: ignore[attr-defined]
-            return self.latest_version_fetcher(component)  # type: ignore[attr-defined]
+        if self.latest_version_fetcher:
+            return self.latest_version_fetcher(component)
         cached = self._read_cached_version(component)
         if cached is not None:
             return cached
@@ -137,13 +140,13 @@ class DoctorLatestVersionMixin:
         # A wheel inside a project's .venv is physically below that project's
         # .git directory. It is still a package install, never an editable ADT.ai
         # checkout that doctor may pull, stash, or check out to a release tag.
-        if not self._package_root_is_checkout:  # type: ignore[attr-defined]
+        if not self._package_root_is_checkout:
             return False
         try:
-            inside_work_tree = self.command_runner(  # type: ignore[attr-defined]
+            inside_work_tree = self.command_runner(
                 ["git", "rev-parse", "--is-inside-work-tree"],
-                self.package_root,  # type: ignore[attr-defined]
-                self._command_env(),  # type: ignore[attr-defined]
+                self.package_root,
+                self._command_env(),
             ).strip()
             return inside_work_tree == "true"
         except Exception:
@@ -151,22 +154,22 @@ class DoctorLatestVersionMixin:
 
     def _git_repo_root(self) -> Path:
         return Path(
-            self.command_runner(  # type: ignore[attr-defined]
+            self.command_runner(
                 ["git", "rev-parse", "--show-toplevel"],
-                self.package_root,  # type: ignore[attr-defined]
-                self._command_env(),  # type: ignore[attr-defined]
+                self.package_root,
+                self._command_env(),
             ).strip()
         )
 
     def _git_head(self, repo_root: Path) -> str:
-        return self.command_runner(  # type: ignore[attr-defined]
+        return self.command_runner(
             ["git", "rev-parse", "HEAD"],
             repo_root,
-            self._command_env(),  # type: ignore[attr-defined]
+            self._command_env(),
         ).strip()
 
     def _latest_sqlcl_release(self) -> SqlclRelease:
-        page = self.oracle_page_fetcher(SQLCL_DOWNLOAD_PAGE)  # type: ignore[attr-defined]
+        page = self.oracle_page_fetcher(SQLCL_DOWNLOAD_PAGE)
         version_match = re.search(
             r"Download\s+the\s+latest\s+version\s+-\s+SQLcl\s+([0-9]+(?:\.[0-9]+)+)",
             page,
@@ -206,7 +209,7 @@ class DoctorLatestVersionMixin:
 
     def _latest_adt_ai_github_release_version(self) -> str:
         try:
-            payload = json.loads(self.oracle_page_fetcher(ADT_AI_GITHUB_LATEST_RELEASE_URL))  # type: ignore[attr-defined]
+            payload = json.loads(self.oracle_page_fetcher(ADT_AI_GITHUB_LATEST_RELEASE_URL))
         except Exception:
             return ""
         version = str(payload.get("tag_name") or payload.get("name") or "").strip()
@@ -218,10 +221,10 @@ class DoctorLatestVersionMixin:
         try:
             repo_root = self._git_repo_root()
             local_head = self._git_head(repo_root)
-            remote_head_line = self.command_runner(  # type: ignore[attr-defined]
+            remote_head_line = self.command_runner(
                 ["git", "ls-remote", "origin", "HEAD"],
                 repo_root,
-                self._command_env(),  # type: ignore[attr-defined]
+                self._command_env(),
             ).strip()
         except Exception:
             return ""
@@ -230,16 +233,16 @@ class DoctorLatestVersionMixin:
         # the repository advances. Returning a synthetic greater version lets the
         # normal comparison mark the row as UPDATE without exposing a commit SHA
         # in the version column.
-        return "999999" if remote_head and remote_head != local_head else self.package_version  # type: ignore[attr-defined]
+        return "999999" if remote_head and remote_head != local_head else self.package_version
 
     def _latest_pypi_version(self, package: str) -> str:
         payload = json.loads(
-            self.oracle_page_fetcher(PYPI_PACKAGE_URL.format(package=package))  # type: ignore[attr-defined]
+            self.oracle_page_fetcher(PYPI_PACKAGE_URL.format(package=package))
         )
         return str(payload.get("info", {}).get("version", ""))
 
     def _latest_java_version(self) -> str:
-        page = self.oracle_page_fetcher(JAVA_DOWNLOAD_PAGE)  # type: ignore[attr-defined]
+        page = self.oracle_page_fetcher(JAVA_DOWNLOAD_PAGE)
         for pattern in (
             r"JDK\s+([0-9]+(?:\.[0-9]+)*)\s+is\s+the\s+latest\s+release",
             r"Java\s+SE\s+Development\s+Kit\s+([0-9]+(?:\.[0-9]+)*)\s+downloads",
@@ -250,7 +253,7 @@ class DoctorLatestVersionMixin:
         raise ValueError("Java version not found on Oracle download page")
 
     def _latest_instant_client_version(self) -> str:
-        page = self.oracle_page_fetcher(INSTANT_CLIENT_PAGE)  # type: ignore[attr-defined]
+        page = self.oracle_page_fetcher(INSTANT_CLIENT_PAGE)
         for pattern in (
             r"latest\s+([0-9]+)(?:ai)?\s+Release\s+Update",
             r"Instant\s+Client[^0-9]+([0-9]+(?:\.[0-9]+)+)",

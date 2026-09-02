@@ -4,7 +4,7 @@ import importlib
 import platform
 import re
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 
 from adt_ai.doctor._base import (
@@ -30,15 +30,15 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         check_results: list[CheckResult],
         *,
         online: bool,
-    ) -> object:  # Iterable[str]
-        checks = self._checks_by_name(check_results)  # type: ignore[attr-defined]
-        adt_ai_value         = self.package_version  # type: ignore[attr-defined]
-        java_value           = self._check_value(checks, "Java", normalizer=_normalize_java_version)  # type: ignore[attr-defined]
-        oracledb_value       = self._check_value(  # type: ignore[attr-defined]
+    ) -> Iterable[str]:
+        checks = self._checks_by_name(check_results)
+        adt_ai_value         = self.package_version
+        java_value           = self._check_value(checks, "Java", normalizer=_normalize_java_version)
+        oracledb_value       = self._check_value(
             checks, "Oracle DB module", normalizer=_normalize_oracledb_version
         )
-        instant_client_value = self._check_value(checks, "Instant Client")  # type: ignore[attr-defined]
-        sqlcl_value          = self._check_value(checks, "SQLcl")  # type: ignore[attr-defined]
+        instant_client_value = self._check_value(checks, "Instant Client")
+        sqlcl_value          = self._check_value(checks, "SQLcl")
 
         # Rebuilt per run: `_online_update_status` fills it as each row resolves,
         # and `_status_action_lines` reads it to decide what may be offered.
@@ -68,18 +68,18 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
             )
             yield format_status_line(
                 "Python",
-                self._check_value(checks, "Python"),  # type: ignore[attr-defined]
-                self._display_status(checks, "Python"),  # type: ignore[attr-defined]
+                self._check_value(checks, "Python"),
+                self._display_status(checks, "Python"),
             )
             yield format_status_line(
                 "Git",
-                self._check_value(checks, "Git", normalizer=_normalize_git_version),  # type: ignore[attr-defined]
-                self._display_status(checks, "Git"),  # type: ignore[attr-defined]
+                self._check_value(checks, "Git", normalizer=_normalize_git_version),
+                self._display_status(checks, "Git"),
             )
             yield format_status_line(
                 "Java",
                 java_value,
-                self._display_status(  # type: ignore[attr-defined]
+                self._display_status(
                     checks,
                     "Java",
                     online_status=None,
@@ -88,7 +88,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
             yield format_status_line(
                 "oracledb",
                 oracledb_value,
-                self._display_status(  # type: ignore[attr-defined]
+                self._display_status(
                     checks,
                     "Oracle DB module",
                     online_status=self._online_update_status(
@@ -99,7 +99,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
             yield format_status_line(
                 "Instant Client",
                 instant_client_value,
-                self._display_status(  # type: ignore[attr-defined]
+                self._display_status(
                     checks,
                     "Instant Client",
                     online_status=None,
@@ -108,7 +108,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
             yield format_status_line(
                 "SQLcl",
                 sqlcl_value,
-                self._display_status(  # type: ignore[attr-defined]
+                self._display_status(
                     checks,
                     "SQLcl",
                     online_status=self._online_update_status("sqlcl", sqlcl_value, online=online),
@@ -135,8 +135,8 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         current (or `-offline`, where nothing was checked at all) this returns
         nothing and the caller drops the whole `ACTIONS:` section.
         """
-        stale = getattr(self, "_stale_components", set())
-        lines = []
+        stale: set[str] = getattr(self, "_stale_components", set())
+        lines: list[str] = []
         if stale & _FULL_UPDATE_COMPONENTS:
             lines.append(
                 "  Run `adtai doctor -update` for full ADT.ai + requirements + SQLcl upgrade."
@@ -146,8 +146,8 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         return lines
 
     def _environment_lines(self, check_results: list[CheckResult]) -> list[str]:
-        env = self._command_env()  # type: ignore[attr-defined]
-        sqlcl_executable = self._sqlcl_executable()  # type: ignore[attr-defined]
+        env = self._command_env()
+        sqlcl_executable = self._sqlcl_executable()
         # SQLCL is the real `sql` launcher resolved from PATH, not the unreliable
         # SQLCL_HOME env var (which may be unset). This is also the exact path the
         # SQLcl upgrade replaces, so the displayed location and the upgrade target
@@ -156,13 +156,13 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
             "ENVIRONMENT:",
             format_status_line(
                 "ADT_ENV",
-                self._env_value("ADT_ENV"),  # type: ignore[attr-defined]
-                self._visible_status(self._env_status("ADT_ENV")),  # type: ignore[attr-defined]
+                self._env_value("ADT_ENV"),
+                self._visible_status(self._env_status("ADT_ENV")),
             ),
             format_status_line(
                 "ADT_KEY",
-                self._adt_key_value(),  # type: ignore[attr-defined]
-                self._visible_status(self._adt_key_status()),  # type: ignore[attr-defined]
+                self._adt_key_value(),
+                self._visible_status(self._adt_key_status()),
             ),
             format_status_line("ARCH", platform.machine() or "unknown"),
             format_status_line("JAVA_TOOL_OPTIONS", env["JAVA_TOOL_OPTIONS"]),
@@ -170,8 +170,8 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
             format_status_line("NLS_LANG", env["NLS_LANG"]),
             format_status_line(
                 "ORACLE_HOME",
-                self._oracle_home(),  # type: ignore[attr-defined]
-                None if self._oracle_home() else "WARN",  # type: ignore[attr-defined]
+                self._oracle_home(),
+                None if self._oracle_home() else "WARN",
             ),
             format_status_line(
                 "SQLCL",
@@ -183,17 +183,17 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
     def _check_results(self) -> list[CheckResult]:
         from adt_ai.shared.env_check import EnvironmentChecker
         checker = EnvironmentChecker(
-            command_runner      = lambda command: self.command_runner(  # type: ignore[attr-defined]
+            command_runner      = lambda command: self.command_runner(
                 command,
                 None,
-                self._command_env(),  # type: ignore[attr-defined]
+                self._command_env(),
             ),
-            executable_resolver = self.executable_resolver,  # type: ignore[attr-defined]
-            env                 = self.env,  # type: ignore[attr-defined]
+            executable_resolver = self.executable_resolver,
+            env                 = self.env,
             python_version      = sys.version.split()[0],
-            oracledb_version    = self.oracledb_version,  # type: ignore[attr-defined]
-            oracle_mode         = self.oracle_mode,  # type: ignore[attr-defined]
-            instant_client      = self.instant_client,  # type: ignore[attr-defined]
+            oracledb_version    = self.oracledb_version,
+            oracle_mode         = self.oracle_mode,
+            instant_client      = self.instant_client,
         )
         return checker.run()
 
@@ -214,7 +214,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         local_status = self._check_status(checks, name)
         if local_status in {"FAIL", "WARN"}:
             return local_status
-        return online_status or self._visible_status(local_status)  # type: ignore[attr-defined]
+        return online_status or self._visible_status(local_status)
 
     def _visible_status(self, status: str) -> str | None:
         return None if status == "OK" else status
@@ -238,7 +238,9 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
             return None
         # Recorded so `_status_action_lines` offers only the upgrades a real
         # check actually justified.
-        getattr(self, "_stale_components", set()).add(component)
+        stale: set[str] = getattr(self, "_stale_components", set())
+        stale.add(component)
+        self._stale_components = stale
         return "UPDATE"
 
     def _check_value(
@@ -259,11 +261,11 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         return normalizer(value) if normalizer else value
 
     def _env_value(self, name: str) -> str:
-        return self.env.get(name) or "<empty>"  # type: ignore[attr-defined]
+        return self.env.get(name) or "<empty>"
 
     def _adt_key_value(self) -> str:
-        value = bool(self.env.get("ADT_KEY"))  # type: ignore[attr-defined]
-        command = bool(self.env.get("ADT_KEY_CMD"))  # type: ignore[attr-defined]
+        value = bool(self.env.get("ADT_KEY"))
+        command = bool(self.env.get("ADT_KEY_CMD"))
         if value and command:
             return "<ambiguous: both set>"
         if value:
@@ -273,43 +275,43 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         return "<empty>"
 
     def _adt_key_status(self) -> str:
-        value = bool(self.env.get("ADT_KEY"))  # type: ignore[attr-defined]
-        command = bool(self.env.get("ADT_KEY_CMD"))  # type: ignore[attr-defined]
+        value = bool(self.env.get("ADT_KEY"))
+        command = bool(self.env.get("ADT_KEY_CMD"))
         return "OK" if value ^ command else "WARN"
 
     def _env_status(self, name: str) -> str:
-        return "OK" if self.env.get(name) else "WARN"  # type: ignore[attr-defined]
+        return "OK" if self.env.get(name) else "WARN"
 
     def _command_version(self, command: str, args: list[str]) -> str:
-        if not self.executable_resolver(command):  # type: ignore[attr-defined]
+        if not self.executable_resolver(command):
             return "not found"
         try:
-            return _first_line(self.command_runner(args, None, self._command_env()))  # type: ignore[attr-defined]
+            return _first_line(self.command_runner(args, None, self._command_env()))
         except Exception:
             return "unknown"
 
     def _sqlcl_version(self) -> str:
-        sqlcl_executable = self._sqlcl_executable()  # type: ignore[attr-defined]
+        sqlcl_executable = self._sqlcl_executable()
         if not sqlcl_executable:
             return ""
         try:
-            output = self.command_runner([sqlcl_executable, "-V"], None, self._command_env())  # type: ignore[attr-defined]
+            output = self.command_runner([sqlcl_executable, "-V"], None, self._command_env())
         except Exception:
             return ""
         match = re.search(r"SQLcl:\s+Release\s+([^\s]+)", output)
         return match.group(1) if match else _first_line(output)
 
     def _oracledb_version(self) -> str:
-        if self.oracledb_version is not None:  # type: ignore[attr-defined]
-            return self.oracledb_version or "not installed"  # type: ignore[attr-defined]
+        if self.oracledb_version is not None:
+            return self.oracledb_version or "not installed"
         try:
             return str(importlib.import_module("oracledb").__version__)
         except Exception:
             return "not installed"
 
     def _oracle_mode(self) -> str:
-        if self.oracle_mode is not None:  # type: ignore[attr-defined]
-            return self.oracle_mode or "unknown"  # type: ignore[attr-defined]
+        if self.oracle_mode is not None:
+            return self.oracle_mode or "unknown"
         try:
             oracledb = importlib.import_module("oracledb")
             return "thin" if oracledb.is_thin_mode() else "thick"
@@ -317,13 +319,13 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
             return "unknown"
 
     def _instant_client_version(self) -> str:
-        if self.instant_client is not None:  # type: ignore[attr-defined]
-            return self.instant_client or "not found"  # type: ignore[attr-defined]
-        version = _instant_client_version(self.env)  # type: ignore[attr-defined]
+        if self.instant_client is not None:
+            return self.instant_client or "not found"
+        version = _instant_client_version(self.env)
         return version or "not found"
 
     def _oracle_home(self) -> str:
-        return self.env.get("ORACLE_HOME") or str(Path.home() / "instantclient_19_16")  # type: ignore[attr-defined]
+        return self.env.get("ORACLE_HOME") or str(Path.home() / "instantclient_19_16")
 
     def _sqlcl_executable(self) -> str:
         """Resolve the `sql` launcher.
@@ -333,7 +335,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         is not on PATH at all do we fall back to a SQLCL_HOME / ORACLE_HOME
         guess. We never require SQLCL_HOME to be set.
         """
-        path_sql = self.executable_resolver("sql")  # type: ignore[attr-defined]
+        path_sql = self.executable_resolver("sql")
         if path_sql:
             return path_sql
         fallback = self._fallback_sqlcl_home() / "bin" / "sql"
@@ -354,7 +356,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         return self._fallback_sqlcl_home()
 
     def _fallback_sqlcl_home(self) -> Path:
-        configured_home = self.env.get("SQLCL_HOME")  # type: ignore[attr-defined]
+        configured_home = self.env.get("SQLCL_HOME")
         if configured_home:
             return Path(configured_home).expanduser()
         return Path(self._oracle_home()).expanduser() / "sqlcl"
@@ -369,4 +371,4 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
             match = re.search(r"""__version__\s*=\s*["']([^"']+)["']""", content)
             if match:
                 return match.group(1)
-        return self.package_version  # type: ignore[attr-defined]
+        return self.package_version

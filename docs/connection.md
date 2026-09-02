@@ -6,8 +6,6 @@
 
 It resolves the same connection file every other command uses, through `-root` and `-config-dir`, and applies one structural change to it. `-create` can create that file when it is missing; the other actions edit an existing one.
 
-<br>
-
 ## Examples
 
 Create the first connection, or fill in a missing field on an existing one:
@@ -39,8 +37,6 @@ adtai connection -rekey -old-key /secure/adt.key -new-key /secure/adt-2027.key -
 
 Exactly one action is required per run: `-create`, `-add-env`, `-add-schema`, `-set-pwd`, `-set-wallet-pwd` or `-rekey`.
 
-<br>
-
 ## Output
 
 Without `-go` the command previews. It names the resolved connection file, says what it would do, and prints the block it would insert. Nothing is written:
@@ -65,7 +61,6 @@ DEV:
       db:
         user: APP
 
-
 TIMER: 0s
 ```
 
@@ -73,8 +68,6 @@ TIMER: 0s
 - A preview never prompts and never renders a secret, so a password action shows the change without the password.
 - The edit is rewritten with a round-trip YAML parser, so comments and key order in the file survive, and only the targeted block is added or changed.
 - `-rekey` is the one action not aimed at a single block. It rewrites every encrypted secret in the file at once, and its preview names each one and renders none.
-
-<br>
 
 ## Database passwords are never on the command line
 
@@ -87,8 +80,6 @@ A password is collected interactively, with hidden input, at apply time only. An
 Passwords are written as cleartext by default, and a cleartext write removes the matching encryption marker so the runtime does not try to decrypt plaintext.
 
 `-encrypt` writes an encrypted value. Its key comes from `-key`, `ADT_KEY`, or `ADT_KEY_CMD`; values and key-file paths are accepted. Prefer a file or secret-manager command. Unlike the prompted database password, literal `-key VALUE` is exposed in shell history and the process list. The formats are on [connection_passwords.md](connection_passwords.md).
-
-<br>
 
 ## Creating a file or an entry
 
@@ -116,8 +107,6 @@ adtai connection -create -env DEV -schema APP -user APP \
 
 With `-default`, ADT.ai writes the APEX default schema when an APEX workspace is configured, and the database default schema otherwise.
 
-<br>
-
 ## Adding a schema or an environment
 
 For `-add-schema` the environment must already exist and the schema must not. The new schema is added as a `db` block naming its user, which defaults to the schema name unless `-user` says otherwise. Host, port and service are inherited from the environment's own `db` block at resolve time, so they are not restated per schema:
@@ -135,8 +124,6 @@ For `-add-env` the environment must not already exist. From scratch it builds a 
 
 With `-like`, the new environment clones the source environment's `db` and `wallet` blocks, with any passwords stripped, then applies whatever `-host`, `-port` or `-service` overrides you passed. A cloned environment starts with no schemas.
 
-<br>
-
 ## Named SQLcl connections
 
 Every SQLcl script ADT generates, REST export included, connects through a **named SQLcl connection** rather than embedding a username, password and wallet path in the script. The password lives in SQLcl's own store, in the operating system's secure storage, so a per-call script carries `connect -name ADT_…` and nothing else.
@@ -150,8 +137,6 @@ Every SQLcl script ADT generates, REST export included, connects through a **nam
 - **Wallets.** Registration passes an absolute wallet path, so a wallet project needs nothing extra.
 - **Opt-out.** Set `sqlcl_named_connections: false` in project `config.yaml` to restore the older inline connect scripts.
 - **Driver.** SQLcl is always launched on the JDBC thin driver, with `ORACLE_HOME` withheld from its environment, because its launcher otherwise reads that variable as a request for the thick driver and builds a URL the JVM cannot satisfy. Nothing else changes: `PATH` still finds the launcher, `TNS_ADMIN` still resolves aliases, wallet connects are unaffected, and ADT's own Python connection keeps thick mode, since only the SQLcl child is started without the variable.
-
-<br>
 
 ## Arguments
 

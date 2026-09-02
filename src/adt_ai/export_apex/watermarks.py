@@ -38,6 +38,7 @@ class ApexWatermarkMixin:
         self,
         request: ApexExportRequest,
         application: ApexApplication,
+        store: ApexStore,
     ) -> str | None:
         """The oldest watermark across the formats this run will export.
 
@@ -48,7 +49,6 @@ class ApexWatermarkMixin:
         if not is_bare_recent(request.recent) or request.environment is None:
             return None
         formats = self._requested_formats(request) or _WATERMARKED_FORMATS
-        store = request.apex_store or ApexStore.load(request.root)
         stored = [
             store.watermark(request.environment, application.app_id, action)
             for action in formats
@@ -62,6 +62,7 @@ class ApexWatermarkMixin:
         request: ApexExportRequest,
         application: ApexApplication,
         candidate: str | None,
+        store: ApexStore,
     ) -> None:
         """Stamp each exported format's own key after the app's pass succeeded.
 
@@ -71,7 +72,6 @@ class ApexWatermarkMixin:
         """
         if candidate is None or request.environment is None or request.recent_report_only:
             return
-        store = request.apex_store or ApexStore.load(request.root)
         for action in self._requested_formats(request):
             if action not in _WATERMARKED_FORMATS:
                 continue

@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import re
 import urllib.error
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from html import unescape
+from importlib.resources.abc import Traversable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
-from adt_ai.shared.env_check import _first_line, _instant_client_version
+from adt_ai.shared.env_check import CheckResult, _first_line, _instant_client_version
 from adt_ai.shared.file_list import file_rows
 
 CommandRunner = Callable[[Sequence[str], Path | None, Mapping[str, str]], str]
@@ -135,6 +136,45 @@ class DoctorResult:
     exit_code        : int = 0
 
 
+class DoctorHost(Protocol):
+    """The concrete runner surface consumed by the Doctor mixins."""
+
+    command_runner        : CommandRunner
+    executable_resolver   : ExecutableResolver
+    env                   : Mapping[str, str]
+    package_version       : str
+    oracledb_version      : str | None
+    oracle_mode           : str | None
+    instant_client        : str | None
+    package_root          : Path
+    resource_root         : Traversable
+    python_executable     : str
+    oracle_page_fetcher   : OraclePageFetcher
+    file_downloader       : FileDownloader
+    latest_version_fetcher: LatestVersionFetcher | None
+    line_callback         : LineCallback | None
+    action_reporter       : ActionReporter | None
+    version_cache_dir     : Path | None
+    version_cache_ttl     : float
+    _package_root_is_checkout: bool
+    _stale_components     : set[str]
+
+    def _add(self, lines: list[str], line: str) -> None: ...
+    def _extend(self, lines: list[str], new_lines: Iterable[str]) -> None: ...
+    def _begin_action(self, label: str) -> None: ...
+    def _end_action(self, lines: list[str], label: str, outcome: str) -> str: ...
+    def _fail_action(self, lines: list[str], label: str, detail: str) -> DoctorResult: ...
+    def _command_env(self) -> dict[str, str]: ...
+    def _check_results(self) -> list[CheckResult]: ...
+    def _adt_ai_version(self, repo_root: Path | None) -> str: ...
+    def _is_git_repo(self) -> bool: ...
+    def _git_repo_root(self) -> Path: ...
+    def _git_head(self, repo_root: Path) -> str: ...
+    def _latest_sqlcl_release(self) -> SqlclRelease: ...
+    def _sqlcl_home(self) -> Path: ...
+    def _sqlcl_version(self) -> str: ...
+
+
 @dataclass(frozen=True)
 class SqlclRelease:
     version     : str
@@ -230,6 +270,7 @@ __all__ = [
     "LatestVersionFetcher",
     "DoctorRequest",
     "DoctorResult",
+    "DoctorHost",
     "SqlclRelease",
     "format_action_line",
     "format_status_line",

@@ -77,9 +77,27 @@ END;
 # `-coverage` closed with. Card `#291` removed that table and nothing renders an
 # executed-line count now, so the aggregate went with it rather than staying as a
 # figure every run computes and no run prints.
+#
+# **All five source types since card `#648`**, where this read `PACKAGE BODY`
+# alone. utPLSQL's own coverage source list is `PACKAGE BODY, TYPE BODY,
+# PROCEDURE, FUNCTION, TRIGGER` and `coverage_start` instruments every one of
+# them, so Oracle was already writing the other four on every run and this
+# predicate was throwing them away. Verified live (FREEPDB1, utPLSQL v3.2.3): a
+# BEFORE INSERT trigger holding one branch produced a `TRIGGER` row of 3 blocks
+# and 2 covered through this exact join, the untaken branch reading 0.
+#
+# **The type travels with the name because the name alone is not a key.**
+# Triggers occupy their own Oracle namespace, so one schema can hold a `TRIGGER`
+# and a `PROCEDURE` both called `AUDIT_ROW`; keyed on the name they collapse into
+# whichever row was read last.
+#
+# Splitting the result is `ut.coverage`'s job rather than this statement's: only
+# `PACKAGE BODY` rows reach the console, and a second query for the other four
+# would be a second round trip per run for rows this one already returns.
 PACKAGE_COVERAGE_QUERY = """
 SELECT
-    u.name                                                      AS package_name,
+    u.name                                                      AS object_name,
+    u.type                                                      AS object_type,
     COUNT(*)                                                    AS blocks_total,
     SUM(CASE WHEN b.covered > 0 THEN 1 ELSE 0 END)              AS blocks_covered
 FROM ut3.ut_coverage_runs r
@@ -91,10 +109,10 @@ FROM ut3.ut_coverage_runs r
 WHERE 1 = 1
     AND r.coverage_run_id   = HEXTORAW(:coverage_run_id)
     AND u.owner             = :owner
-    AND u.type              = 'PACKAGE BODY'
+    AND u.type              IN ('PACKAGE BODY', 'TYPE BODY', 'PROCEDURE', 'FUNCTION', 'TRIGGER')
     AND b.not_feasible      = 0
-GROUP BY u.name
-ORDER BY u.name
+GROUP BY u.name, u.type
+ORDER BY u.type, u.name
 """
 
 # The schema's packages with the size of each body, the half of the measurement
@@ -124,23 +142,45 @@ ORDER BY u.name
 # off the listed package so the removed coverage roll-up could group the whole
 # schema by module. `SUMMARY PER MODULE:` groups the run's **suites**, whose module the
 # discovery query already derives, so nothing reads a package's own module now.
+#
+# **All five source types since card `#648`**, for the same reason the coverage
+# read above widened, and with the same split downstream. The listing is what
+# gives an object nothing entered a row at all, so leaving it package-only would
+# have collected a trigger that fired and silently dropped every trigger that
+# did not, which is the one state the collection most needs to report.
+#
+# **`ALL_OBJECTS` and `dbmspcc_units` do not spell the types the same way.** The
+# dictionary calls the two bodies `PACKAGE` and `TYPE` where coverage and
+# `ALL_SOURCE` both call them `PACKAGE BODY` and `TYPE BODY`; the other three
+# agree. The CASE maps one vocabulary onto the other so a record's type is the
+# coverage spelling throughout and nothing downstream has to translate. Two
+# vocabularies keyed against each other is how a join silently matches nothing.
 SCHEMA_PACKAGES_QUERY = """
 SELECT
     o.object_name,
+    CASE o.object_type
+        WHEN 'PACKAGE'  THEN 'PACKAGE BODY'
+        WHEN 'TYPE'     THEN 'TYPE BODY'
+        ELSE o.object_type
+    END                     AS object_type,
     (
         SELECT COUNT(*)
         FROM all_source s
         WHERE 1 = 1
             AND s.owner         = o.owner
             AND s.name          = o.object_name
-            AND s.type          = 'PACKAGE BODY'
+            AND s.type          = CASE o.object_type
+                                      WHEN 'PACKAGE'  THEN 'PACKAGE BODY'
+                                      WHEN 'TYPE'     THEN 'TYPE BODY'
+                                      ELSE o.object_type
+                                  END
     )                       AS lines
 FROM all_objects o
 WHERE 1 = 1
     AND o.owner             = :owner
-    AND o.object_type       = 'PACKAGE'
+    AND o.object_type       IN ('PACKAGE', 'TYPE', 'PROCEDURE', 'FUNCTION', 'TRIGGER')
     AND NOT REGEXP_LIKE(o.object_name, :ut_pattern, 'i')
-ORDER BY o.object_name
+ORDER BY o.object_type, o.object_name
 """
 
 # A PACKAGE_COMPILE_SETTINGS_QUERY sat here until card `#291`. It read

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
+
+import oracledb
 
 from adt_ai.cli.constants import DROPBOX_PATH_RE, print_adt_header
 from adt_ai.shared.announce import settle_screen_before_error
@@ -30,39 +33,60 @@ _CONFIG_ERROR_SCREENS: tuple[tuple[type[Exception], str, str | None], ...] = (
 )
 
 
-def _is_user_database_error(error: Exception) -> bool:
-    text = str(error)
-    if any(marker in text for marker in ("DPY-", "DPI-", "ORA-", "TNS-")):
-        return True
-    module = type(error).__module__
-    return module.startswith("oracledb")
+_DATABASE_ERROR_CODE_RE = re.compile(
+    r"(?<![\w-])(?:ORA-\d{5}|TNS-\d{5}|DPY-\d{4}|DPI-\d{4})(?=[:\s]|$)",
+    re.IGNORECASE,
+)
 
-def _is_database_connection_error(error: Exception) -> bool:
-    # A connect attempt ADT.ai itself declared failed needs no message reading,
-    # and must not depend on one: the SQLcl transcript carries no ORA code.
-    if isinstance(error, ConnectFailedError):
-        return True
-    text = str(error)
-    connection_markers = (
-        "DPY-",
-        "DPI-",
-        "TNS-",
+_CONNECTION_ERROR_CODES = frozenset(
+    {
         "ORA-01017",
         "ORA-12154",
         "ORA-12514",
         "ORA-12541",
         "ORA-12545",
         "ORA-12560",
-        "Connect failed",
-        "connection",
-        "listener",
-        "tnsnames.ora",
-        "wallet",
-    )
-    return any(marker.lower() in text.lower() for marker in connection_markers)
+        "DPY-4011",
+        "DPY-4026",
+        "DPY-6000",
+        "DPY-6001",
+        "DPY-6002",
+        "DPY-6003",
+        "DPY-6004",
+        "DPY-6005",
+        "DPY-6006",
+        "DPI-1047",
+        "DPI-1072",
+        "TNS-12154",
+        "TNS-12514",
+        "TNS-12541",
+        "TNS-12545",
+        "TNS-12560",
+    }
+)
+
+
+def _database_error_codes(error: Exception) -> set[str]:
+    return {match.group(0).upper() for match in _DATABASE_ERROR_CODE_RE.finditer(str(error))}
+
+
+def _is_user_database_error(error: Exception) -> bool:
+    if isinstance(error, oracledb.Error):
+        return True
+    return bool(_database_error_codes(error))
+
+
+def _is_database_connection_error(error: Exception) -> bool:
+    # A connect attempt ADT.ai itself declared failed needs no message reading,
+    # and must not depend on one: the SQLcl transcript carries no ORA code.
+    if isinstance(error, ConnectFailedError):
+        return True
+    return bool(_database_error_codes(error) & _CONNECTION_ERROR_CODES)
+
 
 def _display(value: object) -> str:
     return DROPBOX_PATH_RE.sub("Dropbox/", str(value))
+
 
 def _project_relative(path: Path, root: Path) -> str:
     """A path as the reader thinks of it: relative to the project root (ADT #415).
@@ -80,6 +104,7 @@ def _project_relative(path: Path, root: Path) -> str:
         return str(path.relative_to(root))
     except ValueError:
         return _display(path)
+
 
 def _print_database_error(error: Exception) -> None:
     # A failing query attaches its SQL to the exception (OracleGateway). When the
@@ -104,6 +129,7 @@ def _print_database_error(error: Exception) -> None:
         )
     print("Use -debug to show the Python traceback.", file=sys.stderr)
     print(file=sys.stderr)
+
 
 def _config_error_screen(error: Exception) -> tuple[str, str | None]:
     for error_type, header, remedy in _CONFIG_ERROR_SCREENS:
@@ -139,6 +165,7 @@ def _print_config_error(error: Exception) -> None:
     print("Use -debug to show the Python traceback.", file=sys.stderr)
     print(file=sys.stderr)
 
+
 def _print_sqlcl_error(error: Exception) -> None:
     # SQLcl exiting non-zero is a failure ADT.ai raises on purpose, so it gets a
     # banner that says so rather than the internal-surprise catch-all. The
@@ -151,6 +178,7 @@ def _print_sqlcl_error(error: Exception) -> None:
     print(file=sys.stderr)
     print("Use -debug to show the Python traceback.", file=sys.stderr)
     print(file=sys.stderr)
+
 
 def _print_unexpected_error(error: Exception) -> None:
     # Catch-all for any failure that is not a recognised config/database error.

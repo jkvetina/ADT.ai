@@ -67,6 +67,7 @@ import contextlib
 import os
 import re
 import subprocess
+import time
 from typing import Any
 
 # A pseudo console renders rather than pipes, so the escapes come off before any
@@ -84,6 +85,10 @@ DUMB_TERMINAL = {
     "TERM"             : "dumb",
     "JAVA_TOOL_OPTIONS": "-Dorg.jline.terminal.dumb=true",
 }
+
+
+class SqlclConsoleStateError(RuntimeError):
+    """A console operation was attempted before its platform handle existed."""
 
 
 def _with_dumb_terminal(environment: dict[str, str]) -> dict[str, str]:
@@ -155,7 +160,8 @@ class PtyConsole:
         self._writer = writer
 
     def read(self, size: int) -> bytes:
-        assert self._master is not None
+        if self._master is None:
+            raise SqlclConsoleStateError("SQLcl console is not open: no pty master")
         try:
             return os.read(self._master, size)
         except OSError:
@@ -171,7 +177,8 @@ class PtyConsole:
         return text
 
     def wait(self, timeout: float) -> None:
-        assert self._process is not None
+        if self._process is None:
+            raise SqlclConsoleStateError("SQLcl console is not open: no child process")
         self._process.wait(timeout=timeout)
 
     def kill(self) -> None:
@@ -248,7 +255,14 @@ class ConPtyConsole:
         return ANSI.sub("", text)
 
     def wait(self, timeout: float) -> None:
-        self._child.wait()
+        if self._child is None:
+            raise SqlclConsoleStateError("SQLcl console is not open: no ConPTY child")
+        deadline = time.monotonic() + timeout
+        while self._child.isalive():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(self.launcher, timeout)
+            time.sleep(min(0.05, remaining))
 
     def kill(self) -> None:
         if self._child is not None:

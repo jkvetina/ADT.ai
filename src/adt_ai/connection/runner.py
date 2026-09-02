@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import io
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from ruamel.yaml import YAML
 
@@ -16,6 +16,7 @@ from adt_ai.connection.stored_secrets import (
 )
 from adt_ai.shared import crypto, text_files
 from adt_ai.shared.connections import DEFAULT_PORT
+from adt_ai.shared.secret import Secret
 from adt_ai.shared.secret_command import COMMAND_KEYS
 
 # Keys that belong to a stored secret: the value, its encryption marker, and the
@@ -40,6 +41,17 @@ _SECRET_KEYS = (
     *COMMAND_KEYS,
 )
 
+ConnectionEditSecretField = Literal[
+    "password", "wallet_password", "key", "old_key", "new_key"
+]
+_EDIT_SECRET_FIELDS: tuple[ConnectionEditSecretField, ...] = (
+    "password",
+    "wallet_password",
+    "key",
+    "old_key",
+    "new_key",
+)
+
 
 @dataclass(frozen=True)
 class ConnectionEditRequest:
@@ -48,9 +60,9 @@ class ConnectionEditRequest:
     environment : str
     schema      : str | None = None
     username    : str | None = None
-    password    : str | None = None
+    password    : Secret = field(default_factory=Secret)
     wallet      : str | None = None
-    wallet_password: str | None = None
+    wallet_password: Secret = field(default_factory=Secret)
     hostname    : str | None = None
     port        : int | None = None
     service     : str | None = None
@@ -63,11 +75,19 @@ class ConnectionEditRequest:
     default     : bool = False
     apply       : bool = False
     encrypt     : bool = False
-    key         : str | None = None
+    key         : Secret = field(default_factory=Secret)
     # -rekey only (ADT #398). Both are required for that action and unused by
     # every other one; `key` stays the single-key flag the write actions use.
-    old_key     : str | None = None
-    new_key     : str | None = None
+    old_key     : Secret = field(default_factory=Secret)
+    new_key     : Secret = field(default_factory=Secret)
+
+    def __post_init__(self) -> None:
+        for name in _EDIT_SECRET_FIELDS:
+            object.__setattr__(self, name, Secret(getattr(self, name)))
+
+    def plaintext(self, name: ConnectionEditSecretField) -> str | None:
+        """Return one credential explicitly at its non-rendering consumer."""
+        return getattr(self, name).reveal()
 
 
 @dataclass(frozen=True)
@@ -294,7 +314,11 @@ class ConnectionEditor:
         wallet.setdefault("wallet", request.wallet)
         if request.wallet_password and "wallet_pwd" not in wallet:
             self._write_password(
-                wallet, "wallet_pwd", "wallet_pwd!", request, request.wallet_password
+                wallet,
+                "wallet_pwd",
+                "wallet_pwd!",
+                request,
+                request.plaintext("wallet_password"),
             )
 
     def _merge_schema(self, schema_node: dict[str, Any], request: ConnectionEditRequest) -> None:
@@ -304,7 +328,9 @@ class ConnectionEditor:
             schema_node["db"] = db
         db.setdefault("user", request.username or request.schema)
         if request.password and "pwd" not in db:
-            self._write_password(db, "pwd", "pwd!", request, request.password)
+            self._write_password(
+                db, "pwd", "pwd!", request, request.plaintext("password")
+            )
 
         if request.workspace:
             apex = schema_node.get("apex")
@@ -365,7 +391,9 @@ class ConnectionEditor:
         user = request.username or schema
         db: dict[str, Any] = {"user": user}
         if request.password:
-            self._write_password(db, "pwd", "pwd!", request, request.password)
+            self._write_password(
+                db, "pwd", "pwd!", request, request.plaintext("password")
+            )
         schemas[schema] = {"db": db}
         summary = f"add schema {request.environment}.{schema}"
         # Preview is structural only, never render the password.
@@ -385,7 +413,9 @@ class ConnectionEditor:
             if not isinstance(db, dict):
                 db = {}
                 schema_node["db"] = db
-            self._write_password(db, "pwd", "pwd!", request, request.password)
+            self._write_password(
+                db, "pwd", "pwd!", request, request.plaintext("password")
+            )
         summary = f"set password for {request.environment}.{request.schema}"
         return summary, ""
 
@@ -396,7 +426,13 @@ class ConnectionEditor:
             if not isinstance(wallet, dict):
                 wallet = {}
                 env_node["wallet"] = wallet
-            self._write_password(wallet, "wallet_pwd", "wallet_pwd!", request, request.password)
+            self._write_password(
+                wallet,
+                "wallet_pwd",
+                "wallet_pwd!",
+                request,
+                request.plaintext("password"),
+            )
         summary = f"set wallet password for {request.environment}"
         return summary, ""
 
@@ -412,7 +448,7 @@ class ConnectionEditor:
             return  # pragma: no cover, dead guard: every call site already checks truthiness first
         if request.encrypt:
             try:
-                key = crypto.resolve_key(request.key)
+                key = crypto.resolve_key(request.plaintext("key"))
                 stored = crypto.encrypt(password, key)
                 recorded = crypto.fingerprint(stored, key)
             except crypto.CryptoError as error:

@@ -1,16 +1,55 @@
 [build-system]
-requires = ["hatchling>=1.24"]
+# Upper-bounded on purpose. The backend is what turns this tree into the file a
+# user installs, so a major version arriving on its own would build a different
+# artifact from an unchanged tree, and nothing in the diff would say so.
+requires = ["hatchling>=1.24,<2"]
 build-backend = "hatchling.build"
 
 [project]
 name = "adt-ai"
-version = "0.9.5"
+# The version is NOT written here. `src/adt_ai/__init__.py` declares it and
+# Hatch reads it from there (see [tool.hatch.version] below). Two files
+# carrying the same number are two files that can disagree, and these two did
+# until a test was added to catch it; deriving it removes the state the test
+# was watching, and the public builder now stamps one file instead of two.
+dynamic = ["version"]
 description = "Modern Python rewrite of ADT focused on YAML-configured Oracle/APEX deployment tooling."
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.11"
+requires-python = ">=3.14"
+# The handle, not a mailbox: an address in packaging metadata is published to
+# PyPI, mirrored by every index that scrapes it, and cannot be withdrawn.
+authors = [{name = "Jan Kvetina"}]
+maintainers = [{name = "Jan Kvetina"}]
+# These double as the GitHub repository topics, so they obey the stricter of
+# the two rulesets: lowercase, digits and hyphens only, at most 20 entries.
+# `.github/repository-settings.yml` is what carries them to the live
+# repositories, and a contract test holds the two lists together.
+keywords = [
+    "apex",
+    "cli",
+    "database",
+    "deployment",
+    "devops",
+    "oracle",
+    "oracle-apex",
+    "plsql",
+    "sql",
+    "sqlcl",
+]
+# No `Typing :: Typed`, and no `py.typed` beside it. That pair is a promise to
+# a consumer's type checker that every public symbol is annotated and checked;
+# the typing gate covers Doctor, part of `shared` and new modules, which is
+# real and is not that promise.
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Database",
+    "Topic :: Software Development :: Build Tools",
 ]
 dependencies = [
     "chime>=0.7",
@@ -27,23 +66,32 @@ dependencies = [
     "ruamel.yaml>=0.18",
 ]
 
+[project.urls]
+# Every link names the PUBLIC repository, which is the tree a reader can open.
+# `Articles` is also what fills the GitHub repository homepage field, because
+# a repository whose homepage is its own URL tells a visitor nothing.
+Homepage = "https://github.com/jkvetina/ADT.ai"
+Documentation = "https://github.com/jkvetina/ADT.ai/blob/main/docs/README.md"
+Changelog = "https://github.com/jkvetina/ADT.ai/blob/main/CHANGELOG.md"
+Issues = "https://github.com/jkvetina/ADT.ai/issues"
+Articles = "https://www.oneoracledeveloper.com/search/label/project_adt"
+
 [project.scripts]
 adt = "adt_ai.cli:console_main"
 adtai = "adt_ai.cli:console_main"
+
+[tool.hatch.version]
+# The one place the released number lives. Everything else derives from it.
+path = "src/adt_ai/__init__.py"
 
 [tool.hatch.build.targets.wheel.force-include]
 ".gitignore" = "adt_ai/doctor/resources/.gitignore"
 "requirements.txt" = "adt_ai/doctor/resources/requirements.txt"
 "config/patch_template" = "adt_ai/doctor/resources/config/patch_template"
 
-[tool.pytest.ini_options]
-addopts = "-q --strict-markers"
-testpaths = ["tests"]
-pythonpath = ["."]
-
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -65,6 +113,19 @@ ignore = [
 # orphans the ignore and `ruff --fix` then deletes the whole re-export block.
 "src/adt_ai/cli/constants.py" = ["F401", "I001"]
 "src/adt_ai/cli/__init__.py"  = ["F401", "I001"]
+[tool.mypy]
+python_version = "3.14"
+strict = true
+warn_unused_ignores = true
+show_error_codes = true
+files = [
+    "src/adt_ai/doctor",
+    "src/adt_ai/shared/env_check.py",
+    "src/adt_ai/shared/file_list.py",
+    "src/adt_ai/shared/git_files.py",
+    "src/adt_ai/shared/subprocess_env.py",
+    "src/adt_ai/shared/text_files.py",
+]
 # Public build strips private history commands, leaving this generated
 # aggregator with imports that are intentionally not normalized by ruff.
 "src/adt_ai/cli/commands_history.py" = ["F401", "I001"]

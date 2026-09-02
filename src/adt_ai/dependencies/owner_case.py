@@ -11,7 +11,7 @@ complete copies of the same rows.
 That is not a cosmetic split. `patch/files.py` names every install target
 `schema.upper()`, so `patch -create`'s gate, its `Run:` hint and `#367`'s
 auto-refresh all speak the uppercase name, while `patch/staleness.py` folded the
-two `_meta` stamps onto one key and kept whichever the query returned last. On
+two refresh stamps onto one key and kept whichever the query returned last. On
 `IVORY_DEV`, 2026-08-20, that was the lowercase one, frozen two hours behind:
 the gate read a stamp its own remedy could not advance, so the command refused
 identically however many times it was run (ADT `#413`).
@@ -31,23 +31,18 @@ from collections.abc import Iterable
 from typing import Any
 
 from adt_ai.dependencies.queries import (
-    META_DB_OFFSET_PREFIX,
-    META_DELETE_QUERY,
-    META_KEY_PREFIX_QUERY,
-    META_LAST_REFRESH_PREFIX,
-    META_UPSERT_QUERY,
-    META_VALUE_QUERY,
+    REFRESH_DELETE_SCOPE,
+    REFRESH_RENAME_SCOPE,
+    REFRESH_SCHEMA_ROWS_QUERY,
     delete_owner_rows_query,
     distinct_owners_query,
     rename_owner_query,
 )
 from adt_ai.dependencies.schema import USER_TABLES
 
-# The `_meta` key shapes that carry a schema scope in their name. Both are
-# rewritten together, because a stamp and the clock it was read on describe one
-# refresh and must not end up naming two different scopes.
-_SCOPE_PREFIXES = (META_LAST_REFRESH_PREFIX, META_DB_OFFSET_PREFIX)
-
+# The `refreshes` row of a schema scope carries its stamp and the clock it was
+# read on together, so the two are dropped or renamed as one and can never end
+# up naming two different scopes.
 _SCHEMA_SCOPE = "schema"
 
 
@@ -99,7 +94,7 @@ def fold_owner_case(connection: Any) -> None:
 def _winner(spellings: set[str], stamps: dict[str, str], upper: str) -> str:
     """The spelling whose refresh is current, ties going to the canonical one.
 
-    Read off the `_meta` stamps rather than guessed from the case: the newest
+    Read off the `refreshes` stamps rather than guessed from the case: the newest
     refresh is the one that describes the schema, and on `IVORY_DEV` that
     happened to be the uppercase row while on another project it would not be.
     A scope with no stamp at all has never completed a refresh, so it sorts
@@ -119,31 +114,25 @@ def _mirror_owners(connection: Any) -> list[str]:
 def _schema_stamps(connection: Any) -> dict[str, str]:
     """``scope spelling -> last refresh``, for the schema scopes only.
 
-    App scopes share the `_meta` table and are numeric ids, so they carry no
-    case question and are never touched here.
+    App scopes share the `refreshes` table and are numeric ids, so they carry
+    no case question and are never touched here. A scope that recorded a clock
+    but never a stamp is present with an empty one, and sorts last.
     """
-    rows = connection.execute(
-        META_KEY_PREFIX_QUERY, (f"{META_LAST_REFRESH_PREFIX}%",)
-    ).fetchall()
-    stamps: dict[str, str] = {}
-    for row in rows:
-        _, _, remainder = str(row["key"]).partition(META_LAST_REFRESH_PREFIX)
-        scope_type, _, scope_name = remainder.partition(":")
-        if scope_type == _SCHEMA_SCOPE and scope_name:
-            stamps[scope_name] = str(row["value"])
-    return stamps
+    rows = connection.execute(REFRESH_SCHEMA_ROWS_QUERY).fetchall()
+    return {
+        str(row["scope_name"]): str(row["refreshed_at"] or "")
+        for row in rows
+        if row["scope_name"]
+    }
 
 
 def _drop(connection: Any, losers: set[str]) -> None:
-    """Remove the duplicate copy, rows and `_meta` keys together."""
+    """Remove the duplicate copy, mirror rows and refresh row together."""
     for scope in losers:
         with connection:
             for table in USER_TABLES:
                 connection.execute(delete_owner_rows_query(table), (scope,))
-            for prefix in _SCOPE_PREFIXES:
-                connection.execute(
-                    META_DELETE_QUERY, (f"{prefix}{_SCHEMA_SCOPE}:{scope}",)
-                )
+            connection.execute(REFRESH_DELETE_SCOPE, (_SCHEMA_SCOPE, scope))
 
 
 def _rename(connection: Any, winner: str, upper: str) -> None:
@@ -158,15 +147,7 @@ def _rename(connection: Any, winner: str, upper: str) -> None:
     with connection:
         for table in USER_TABLES:
             connection.execute(rename_owner_query(table), (upper, winner))
-        for prefix in _SCOPE_PREFIXES:
-            old_key = f"{prefix}{_SCHEMA_SCOPE}:{winner}"
-            row = connection.execute(META_VALUE_QUERY, (old_key,)).fetchone()
-            if row is None:
-                continue
-            connection.execute(
-                META_UPSERT_QUERY, (f"{prefix}{_SCHEMA_SCOPE}:{upper}", str(row["value"]))
-            )
-            connection.execute(META_DELETE_QUERY, (old_key,))
+        connection.execute(REFRESH_RENAME_SCOPE, (upper, _SCHEMA_SCOPE, winner))
 
 
 __all__ = ["fold_owner_case", "normalize_owner", "owner_params"]

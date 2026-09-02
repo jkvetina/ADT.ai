@@ -28,6 +28,12 @@ SQLite rather than a text file because the corpus is large: measured on a real
 20,000-commit corpus, a text cache costs a full parse (0.67 s and about 512 MB
 resident) before it can answer "the newest 40 commits", which is all `patch`
 ever needs, while the same question here is an indexed lookup.
+
+The file follows the store convention since ADT #642 (`docs/storage.md`): the
+version lives in `_meta`, the author date in `authored_at` as
+`YYYY-MM-DD HH:MM:SS+HH:MM`, git's own instant with the author's offset kept
+because it is the one stamp ADT reads off somebody else's clock, and the
+opener is the shared one. A version 1 file is lifted in place on open.
 """
 
 from __future__ import annotations
@@ -38,8 +44,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from adt_ai.shared import queries
+from adt_ai.shared.sqlite_store import Migration, open_store
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = "2"
+
+#: Version 1 to 2 (ADT #642): `meta` to `_meta`, `date` to `authored_at`, and
+#: the foreign key `commit_files` always kept by hand declared with a cascade.
+#: The step starts from ``None`` because a version 1 file keeps its row in
+#: `meta`, which to the shared opener is a file carrying no version at all.
+MIGRATIONS: tuple[Migration, ...] = (
+    Migration(None, "2", lambda connection: connection.executescript(queries.COMMIT_STORE_LIFT_1)),
+)
 
 
 @dataclass(frozen=True)
@@ -60,6 +75,8 @@ class StoredCommit:
     id: str = ""
     summary: str = ""
     author: str = ""
+    #: The author date. Stored as `authored_at`, `YYYY-MM-DD HH:MM:SS+HH:MM`;
+    #: git's ISO form with its `T` is accepted here and normalised on write.
     date: str = ""
     files: dict[str, str] = field(default_factory=dict)
     deleted: list[str] = field(default_factory=list)
@@ -69,6 +86,20 @@ class StoredCommit:
     @property
     def commit_hash(self) -> str:
         return self.id
+
+
+def authored_stamp(value: str) -> str:
+    """The author date as the store keeps it: git's instant, the `T` a space.
+
+    `git log --format=%aI` prints `2026-08-22T12:00:25+02:00`; the store holds
+    `2026-08-22 12:00:25+02:00`, the same instant on the same clock in the
+    `YYYY-MM-DD HH:MM:SS` shape every other store uses, with the offset kept
+    because the clock is the author's rather than this machine's. Every reader
+    parses with `datetime.fromisoformat`, which accepts both spellings.
+    """
+    if len(value) > 10 and value[10] == "T":
+        return f"{value[:10]} {value[11:]}"
+    return value
 
 
 class CommitStore:
@@ -81,24 +112,15 @@ class CommitStore:
 
     @classmethod
     def open(cls, db_path: str | Path) -> CommitStore:
-        if isinstance(db_path, str) and db_path == ":memory:":
-            connection = sqlite3.connect(":memory:")
-        else:
-            path = Path(db_path)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            connection = sqlite3.connect(str(path))
-        # Closed on failure since ADT #510: `sqlite3.connect` succeeds against any
-        # readable path and only the first statement discovers the bytes are not a
-        # database, so a raise here used to leave the connection open and
-        # unreferenced. `ApexStore` and `DependencyStore` carry the same guard for
-        # the same reason; the argument is written out at `ApexStore.open`.
-        try:
-            connection.executescript(queries.COMMIT_STORE_SCHEMA)
-            connection.execute(queries.META_VERSION_INSERT, (str(SCHEMA_VERSION),))
-            connection.commit()
-        except BaseException:
-            connection.close()
-            raise
+        # Close-on-failure (ADT #510) is the opener's. Plain tuples rather than
+        # `sqlite3.Row`: every read here indexes by position.
+        connection = open_store(
+            db_path,
+            schema      = queries.COMMIT_STORE_SCHEMA,
+            version     = SCHEMA_VERSION,
+            migrations  = MIGRATIONS,
+            row_factory = None,
+        )
         return cls(connection)
 
     def close(self) -> None:
@@ -281,7 +303,6 @@ class CommitStore:
         has, so they describe nothing. Any other use is a renumbering.
         """
         self.connection.execute(queries.COMMIT_DELETE_BRANCH, (branch,))
-        self.connection.execute(queries.COMMIT_FILES_DELETE_BRANCH, (branch,))
         self.connection.commit()
 
     def _all_numbers(self, branch: str) -> list[int]:
@@ -293,7 +314,10 @@ class CommitStore:
         self.connection.executemany(
             queries.COMMIT_INSERT,
             [
-                (branch, number, item.id, item.summary, item.author, item.date, item.patch)
+                (
+                    branch, number, item.id, item.summary, item.author,
+                    authored_stamp(item.date), item.patch,
+                )
                 for number, item in fresh
             ],
         )

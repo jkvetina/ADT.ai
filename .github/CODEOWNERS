@@ -1,0 +1,20 @@
+# Every path in this repository has one owner.
+#
+# The ruleset does not require code-owner review, so this file is routing
+# rather than a gate: it puts the owner on every pull request automatically,
+# which is what makes a review request findable later.
+#
+# A narrower rule below a broad one wins in CODEOWNERS, so the catch-all comes
+# first and the specific paths repeat the owner rather than replacing them.
+
+*                       @jkvetina
+
+# The surfaces a change reaches a user through, listed so a diff touching one
+# is visibly a different kind of change from a diff touching src.
+/.github/               @jkvetina
+/config/                @jkvetina
+/connections/           @jkvetina
+/docs/                  @jkvetina
+/skills/                @jkvetina
+/SECURITY.md            @jkvetina
+/pyproject.toml         @jkvetina

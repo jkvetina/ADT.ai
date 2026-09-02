@@ -21,7 +21,8 @@ offers no separate stdin, so a pseudo console necessarily hands the child all
 three handles at once. That is right for `sqlcl_session`, which drives
 statements into the console it opened, and wrong for a script run, where a
 failed CONNECT falls back to a username prompt and the only thing that ends it
-is EOF. So Windows takes a pipe, and `stream_on_pipe` says what that costs.
+is EOF. So Windows takes a pipe, and `stream_on_pipe` says what was measured
+on it.
 """
 
 from __future__ import annotations
@@ -36,6 +37,16 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from adt_ai.shared.sqlcl_errors import SqlclTimeoutError
+
+
+class SqlclStreamStateError(RuntimeError):
+    """A streaming transport did not create the reader its lifecycle requires."""
+
+
+def _require_reader(reader: threading.Thread | None) -> threading.Thread:
+    if reader is None:
+        raise SqlclStreamStateError("SQLcl reader thread was not started")
+    return reader
 
 
 def _timed_out(timeout_seconds: float | None, collected: Sequence[str]) -> SqlclTimeoutError:
@@ -164,16 +175,19 @@ def stream_on_pipe(
     read as a test-environment nuisance rather than as a shipped command with no
     transport on the platform.
 
-    **What this cannot promise, said here rather than left to be discovered.** A
-    pipe is not a terminal, so the JVM may block-buffer its stdout and deliver
-    the transcript in one block at exit instead of line by line. ADT #449
-    measured exactly that shape for an *interactive* SQLcl on Windows: ninety
-    seconds produced the JVM's own notice and nothing else. Whether a *script*
-    run, which ends on its own, buffers the same way is **not measured**, and
-    there is no Windows machine here to measure it on. The reader is fed every
-    line either way and the transcript is identical, so the failure mode is a
-    progress bar that fills late, never a wrong result. The module docstring
-    says why a pseudo console is not the alternative.
+    **A script run on this pipe is live, and that is measured.** A pipe is not
+    a terminal, so the JVM could have block-buffered its stdout and delivered
+    the transcript in one block at exit; ADT #449 measured exactly that shape
+    for an *interactive* SQLcl on Windows, ninety seconds and nothing but the
+    JVM's own notice. A script run does not buffer that way. Measured on
+    2026-09-01 on `windows-latest` (SQLcl 26.2.2.0, python 3.14.7) by
+    `tests/tools/windows_script_probe.py`: a script that prints a marker, waits
+    three seconds and prints another handed the reader the first marker 2.83s
+    after launch and the second at 5.94s, the wait sitting between them. The
+    same script on a POSIX pipe read 0.72s and 3.74s, so the buffering the
+    interactive session measured belongs to the held-open prompt, not to the
+    pipe. The module docstring says why a pseudo console is not the
+    alternative even so.
 
     Reading runs on its own thread because `select` does not serve pipes on
     Windows.
@@ -229,8 +243,7 @@ def stream_on_pipe(
         raise
     # The child is gone, so the pipe is at EOF and the pump ends on its own; the
     # bound is a backstop, never the normal path.
-    assert reader is not None
-    reader.join(timeout=5.0)
+    _require_reader(reader).join(timeout=5.0)
     if callback_errors:
         raise callback_errors[0]
     return "\n".join(collected), process.returncode

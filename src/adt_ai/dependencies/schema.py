@@ -12,8 +12,12 @@ connected schema).
 
 from __future__ import annotations
 
-# Bump when any table definition changes, open() auto-wipes and recreates on mismatch.
-SCHEMA_VERSION = "3"
+from adt_ai.shared.queries.sqlite_store import META_TABLE_DDL
+
+# Bump when any table definition changes. A file at version 3 is lifted in
+# place on open (ADT #642); anything older is wiped by a refresh and refused by
+# a query mode, the same split the fold-on-refresh already draws.
+SCHEMA_VERSION = "4"
 
 # Tables removed from the schema that must be dropped on every open() (no version bump needed).
 LEGACY_TABLES: tuple[str, ...] = ("ALL_USERS",)
@@ -133,31 +137,31 @@ _TABLE_DEFS: dict[str, tuple[tuple[tuple[str, str], ...], tuple[str, ...]]] = {
 }
 
 _INDEX_DEFS: dict[str, tuple[str, tuple[str, ...]]] = {
-    "idx_user_dependencies_referenced": (
+    "ix_user_dependencies_referenced": (
         "USER_DEPENDENCIES",
         ("REFERENCED_OWNER", "REFERENCED_TYPE", "REFERENCED_NAME"),
     ),
-    "idx_user_dependencies_referenced_node": (
+    "ix_user_dependencies_referenced_node": (
         "USER_DEPENDENCIES",
         ("REFERENCED_TYPE", "REFERENCED_NAME", "REFERENCED_OWNER"),
     ),
-    "idx_user_dependencies_source": ("USER_DEPENDENCIES", ("TYPE", "NAME")),
-    "idx_user_constraints_table": ("USER_CONSTRAINTS", ("TABLE_NAME", "OWNER")),
-    "idx_user_constraints_referenced": (
+    "ix_user_dependencies_source": ("USER_DEPENDENCIES", ("TYPE", "NAME")),
+    "ix_user_constraints_table": ("USER_CONSTRAINTS", ("TABLE_NAME", "OWNER")),
+    "ix_user_constraints_referenced": (
         "USER_CONSTRAINTS",
         ("R_OWNER", "R_CONSTRAINT_NAME"),
     ),
-    "idx_user_cons_columns_table": ("USER_CONS_COLUMNS", ("OWNER", "TABLE_NAME")),
-    "idx_user_objects_type_owner": ("USER_OBJECTS", ("OBJECT_TYPE", "OWNER")),
-    "idx_apex_used_db_objects_lookup": (
+    "ix_user_cons_columns_table": ("USER_CONS_COLUMNS", ("OWNER", "TABLE_NAME")),
+    "ix_user_objects_type_owner": ("USER_OBJECTS", ("OBJECT_TYPE", "OWNER")),
+    "ix_apex_used_db_objects_lookup": (
         "APEX_USED_DB_OBJECTS",
         ("USED_DB_OBJECT_OWNER", "USED_DB_OBJECT_NAME"),
     ),
-    "idx_apex_used_db_object_comp_props_name": (
+    "ix_apex_used_db_object_comp_props_name": (
         "APEX_USED_DB_OBJECT_COMP_PROPS",
         ("USED_DB_OBJECT_NAME", "APPLICATION_ID"),
     ),
-    "idx_apex_used_db_obj_dependencies_lookup": (
+    "ix_apex_used_db_obj_dependencies_lookup": (
         "APEX_USED_DB_OBJ_DEPENDENCIES",
         ("USED_DB_OBJECT_OWNER", "USED_DB_OBJECT_NAME"),
     ),
@@ -201,27 +205,38 @@ def _index_ddl(name: str, table: str, columns: tuple[str, ...]) -> str:
     return f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({quoted_columns});"
 
 
-_META_DDL = (
-    "CREATE TABLE IF NOT EXISTS _meta (\n"
-    '    "key" TEXT PRIMARY KEY,\n'
-    '    "value" TEXT NOT NULL\n'
-    ");"
-)
+# One row per refreshed scope, a schema or an application: when it was last
+# refreshed on this machine's clock, and the database's UTC offset read on that
+# refresh so a mirrored `LAST_DDL_TIME` can be read on the clock that produced
+# it (ADT #394). Until version 4 these were `_meta` rows under a
+# `last_refresh:<type>:<name>` key; a stamp is a column now, like every store's.
+REFRESHES_DDL = """
+CREATE TABLE IF NOT EXISTS refreshes (
+    scope_type    TEXT NOT NULL,
+    scope_name    TEXT NOT NULL,
+    refreshed_at  TEXT,
+    db_utc_offset TEXT,
+    PRIMARY KEY (scope_type, scope_name)
+);
+"""
+
+#: The index names version 3 used, dropped on the lift; the schema recreates
+#: each under its `ix_<table>_` name.
+LEGACY_INDEXES: tuple[str, ...] = tuple(f"idx_{name[3:]}" for name in _INDEX_DEFS)
 
 DROP_SCHEMA: str = "\n".join(
     [
         *(f"DROP TABLE IF EXISTS {name};" for name in reversed(list(_TABLE_DEFS))),
+        "DROP TABLE IF EXISTS refreshes;",
         "DROP TABLE IF EXISTS _meta;",
-        *(
-            f"DROP INDEX IF EXISTS {name};"
-            for name in _INDEX_DEFS
-        ),
+        *(f"DROP INDEX IF EXISTS {name};" for name in (*_INDEX_DEFS, *LEGACY_INDEXES)),
     ]
 )
 
 SCHEMA: str = "\n".join(
     [
-        _META_DDL,
+        META_TABLE_DDL,
+        REFRESHES_DDL,
         *(_ddl(table, defs, pk) for table, (defs, pk) in _TABLE_DEFS.items()),
         *(_index_ddl(name, table, columns) for name, (table, columns) in _INDEX_DEFS.items()),
     ]

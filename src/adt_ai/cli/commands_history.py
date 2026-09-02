@@ -10,18 +10,18 @@ from pathlib import Path
 from adt_ai.calendar.render import render_calendar_grid as _print_calendar_grid
 from adt_ai.cli.commands_history_reveal import _run_rebuild_reveal
 from adt_ai.cli.constants import (
-    _current_branch,
     CalendarError,
     CalendarRequest,
     CalendarRunner,
     ConfigLoader,
-    print_adt_header,
-    print_module_banner,
     RebuildRequest,
     RebuildRunner,
     SearchRepoError,
     SearchRepoRequest,
     SearchRepoRunner,
+    _current_branch,
+    print_adt_header,
+    print_module_banner,
 )
 from adt_ai.cli.context import (
     _config_search_paths,
@@ -36,8 +36,6 @@ from adt_ai.shared.commit_window import resolve_history_floor
 from adt_ai.shared.dates import resolve_since
 from adt_ai.shared.file_list import file_rows, nested_files, print_file_rows
 from adt_ai.shared.recent_state import is_bare_recent
-
-
 
 
 def _run_rebuild(args: argparse.Namespace) -> int:

@@ -6,8 +6,6 @@
 
 Scans are incremental by default, so a steady-state run costs seconds. It also lists and switches branches, and it never connects to Oracle.
 
-<br>
-
 ## Examples
 
 Update the store for the branch you are on:
@@ -38,8 +36,6 @@ adtai rebuild -reveal
 adtai rebuild -reveal PROJ-300
 ```
 
-<br>
-
 ## Output
 
 The header names the branch and how many commits the run will read, then one redrawn bar carries the scan:
@@ -50,7 +46,6 @@ APEX DEPLOYMENT TOOL - REBUILD
     BRANCH | main
    COMMITS | 8
 
-
   REBUILDING ...... 13%                                                0:00:00 
   REBUILDING ............ 25%                                          0:00:00 
   REBUILDING ................... 38%                                   0:00:00 
@@ -60,7 +55,6 @@ APEX DEPLOYMENT TOOL - REBUILD
   REBUILDING ............................................ 88%          0:00:00 
   REBUILDING ................................................... 100%  0:00:00 
 
-
 TIMER: 0s
 ```
 
@@ -68,19 +62,15 @@ TIMER: 0s
 - The bar advances per commit and the time on the right is what is left. There is no per-commit text.
 - A branch with no new commits leaves its store untouched.
 
-<br>
-
 ## One store per branch
 
-Stores go where `repo_commits_file` points, `./config/commits/#BRANCH#.db` by default. One file per branch is deliberate: a branch you no longer care about is one file you can delete, and deleting it costs nothing anywhere else.
+Stores go where `repo_commits_file` points, `./config/commits/#BRANCH#.db` by default. One file per branch is deliberate: a branch you no longer care about is one file you can delete, and deleting it costs nothing anywhere else. What a store holds is on [storage_commits.md](storage_commits.md).
 
 `#BRANCH#` becomes one readable filename. Letters, digits, `.`, `_`, `-` and `/` are accepted; `/` is flattened to `-`, so `feat/PROJ-300-currency` writes `feat-PROJ-300-currency.db`. Anything else is rejected rather than escaped. If two accepted names flatten to the same filename, the exact branch recorded inside the store prevents them from sharing it.
 
 Only the branch is rewritten: the separators in your own template are the folder layout you configured. The branch keeps its real name everywhere you read it, the `BRANCH |` header included.
 
 YAML commit history is decommissioned. A configured `repo_commits_file` that does not end in `.db`, or an old `.yaml` cache beside the supported store path, stops the command with remove-and-rebuild guidance. ADT.ai does not convert it: the old format cannot represent the complete file-status data the SQLite store requires.
-
-<br>
 
 ## Commit numbering
 
@@ -95,8 +85,6 @@ On a first build the oldest commit in the window takes its true position from th
 
 History rewritten under the branch is the one thing that drops numbers. When the stored tip is no longer an ancestor of the branch, after a rebase or a force-push, those numbers describe commits that no longer exist, so the branch is reset and rebuilt.
 
-<br>
-
 ## How far back a first build reaches
 
 `patch_history_bottom_days` in `config/config.yaml` (default `365`) decides how far a from-scratch build walks. The oldest commit inside that window becomes the bottom of the store and older ones are never read. On a large repository that is the difference between a usable first run and an unusable one, since the expensive half of a rebuild is one file scan per commit.
@@ -109,8 +97,6 @@ It is a floor rather than a mode:
 
 Set it to `0` to walk the whole history.
 
-<br>
-
 ## Incremental, bounded, or full
 
 With no window flag, `rebuild` reads the existing store, takes its highest-numbered commit as the resume point, and fetches only what came after it. Stored records are reused verbatim and never re-hashed.
@@ -120,8 +106,6 @@ With no window flag, `rebuild` reads the existing store, takes its highest-numbe
 `WHEN` is a `YYYY-MM-DD` date or an integer number of days back. It resolves against the committer date at local midnight, so a commit made on the boundary day is included.
 
 A branch whose store is missing, empty, or whose stored tip no longer exists is rebuilt in full. That fallback is per branch, so one stale branch in a `-branch` list does not force the others to re-scan.
-
-<br>
 
 ## Verifying a store
 
@@ -135,8 +119,6 @@ COMMIT STORES:
 ```
 
 `CONTIGUOUS` means floor to ceiling with nothing missing, which is the only shape allocation can produce, so `BROKEN` means something outside ADT.ai wrote the file. A store bounded by `patch_history_bottom_days` starts above `1` and is still contiguous: the range below it is reserved rather than missing. Exit code is `1` when any branch reports a problem.
-
-<br>
 
 ## Inspecting and switching branches
 
@@ -164,7 +146,6 @@ BRANCH SWITCHED:
 
   feat/PROJ-300-currency
 
-
 COMMITS:
 --------
 
@@ -175,8 +156,6 @@ COMMITS:
 - `-limit` caps this section rather than the branch list, since the rank resolves against the full filtered set, and `-my` keeps only your own commits.
 - Already being on the target branch runs no git operations at all, so work in progress is left exactly where it is. Otherwise `git checkout` creates a local tracking branch when none exists, non-conflicting work rides along, and a checkout git refuses is shown verbatim.
 - A rank outside the filtered range errors without switching, and `-switch` without `-reveal` is an error.
-
-<br>
 
 ## Arguments
 

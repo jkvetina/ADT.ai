@@ -15,9 +15,15 @@ non-streaming path below hands SQLcl an empty closed pipe, which keeps ADT
 #188's property (the child never inherits the caller's terminal, and a fallback
 username prompt hits EOF immediately) and drops the device.
 
-The measurement is his, on hardware ADT.ai has none of. What is verified here
-is the platform-neutral property that fails there: SQLcl's stdin is a pipe and
-is at EOF, pinned by ``tests/shared/test_sqlcl_script_windows.py``.
+The measurement was his first, and it was repeated on 2026-09-01 on the hosted
+``windows-latest`` runner (SQLcl 26.2.2.0) by
+``tests/tools/windows_script_probe.py``, dispatched through
+``windows-console-probe.yml``: the device gave the same trace and exit 0 with
+the script never run, the pipe through ``run_sqlcl_script`` ran it in 5.2s, and
+a connect nobody answered ended on EOF in 5.3s with ``ORA-12541`` instead of
+waiting at a username prompt. What the suite pins on any host is the
+platform-neutral property: SQLcl's stdin is a pipe and is at EOF,
+``tests/shared/test_sqlcl_script_windows.py``.
 
 The live-reader transports moved to ``shared.sqlcl_stream`` in the same card,
 when Windows gained a second one and this module went over the context-size
@@ -134,22 +140,37 @@ def _ran_without_a_session(output: str) -> bool:
 # transcript may quote stack-trace text: an exported package body, a spooled
 # log, a row whose value contains it. So a run is only a startup failure when
 # it carries a Java failure line AND produced nothing else at all.
+#
+# "Nothing else" has to know every line a dying JVM prints, and the first
+# version knew only the three shapes a hand-written trace had. The real one,
+# measured on `windows-latest` on 2026-09-01 (`tests/tools/windows_script_probe.py`,
+# pinned verbatim in `tests/shared/test_sqlcl_script_windows.py`), carries two
+# more: SQLcl logs the exception through `java.util.logging` before the trace,
+# one record opening with a timestamp and a level, and the JVM elides repeated
+# frames as `... 6 more`. Both read as ordinary output to the first version, so
+# the guard answered False to the exact transcript it was written for. The same
+# transcript exposed a third miss: `Caused by:` had its word boundary after the
+# colon, and a colon followed by a space is no boundary, so that alternative
+# had never matched anything.
 _JAVA_FAILURE = re.compile(
-    r"^\s*(?:Exception in thread|Caused by:|[a-z][\w.]*\.[A-Z]\w*(?:Exception|Error))\b"
+    r"^\s*(?:Exception in thread\b|Caused by:|[a-z][\w.]*\.[A-Z]\w*(?:Exception|Error)\b)"
 )
 _STACK_FRAME = re.compile(r"^\s*at\s+\S+\(")
+_FRAME_ELISION = re.compile(r"^\s*\.\.\. \d+ more\b")
+_LOG_RECORD = re.compile(
+    r"^\s*\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d(?:[.,]\d+)?\s+"
+    r"(?:SEVERE|WARNING|INFO|CONFIG|FINE|FINER|FINEST)\b"
+)
 # The JVM's own notice when JAVA_TOOL_OPTIONS is set, which ADT.ai sets itself.
 _JVM_NOTICE = re.compile(r"^\s*Picked up [A-Z_]+:")
+_TRACE_LINE = (_JAVA_FAILURE, _STACK_FRAME, _FRAME_ELISION, _LOG_RECORD, _JVM_NOTICE)
 
 
 def _died_before_the_script_ran(output: str) -> bool:
     lines = [line for line in output.splitlines() if line.strip()]
     if not lines or not any(_JAVA_FAILURE.match(line) for line in lines):
         return False
-    return all(
-        _JAVA_FAILURE.match(line) or _STACK_FRAME.match(line) or _JVM_NOTICE.match(line)
-        for line in lines
-    )
+    return all(any(shape.match(line) for shape in _TRACE_LINE) for line in lines)
 
 
 def _sqlcl_environment(

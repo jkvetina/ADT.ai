@@ -18,8 +18,9 @@ one. `recent.yaml` keeps those, and is deleted once it holds nothing.
 Two properties make it safe to open on any run:
 
 * **Opening creates, never destroys.** A schema mismatch is no reason to wipe a
-  cache the user cannot rebuild without a database, so `open` migrates forward
-  with `CREATE TABLE IF NOT EXISTS` and leaves unknown rows alone.
+  cache the user cannot rebuild without a database, so `open` lifts an older
+  file in place through the shared opener's migrations (ADT #642) and leaves
+  every row that still describes something alone.
 * **The legacy import runs once and is idempotent.** `migrate_apex_files` reads
   whatever of the four sources is on disk, writes it in, and deletes it. A
   half-finished conversion re-runs cleanly because every write is an upsert.
@@ -38,6 +39,7 @@ from typing import Any
 
 from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.queries import apex_store as queries
+from adt_ai.shared.sqlite_store import Migration, open_store
 from adt_ai.shared.yaml_io import load_yaml_mapping, store_yaml_mapping
 
 APEX_DB = "apex.db"
@@ -54,7 +56,13 @@ LEGACY_APEX_FILES: tuple[str, ...] = (
 #: The `recent.yaml` key whose watermarks belong here.
 RECENT_MODULE = "export_apex"
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
+
+#: Version 1 to 2 (ADT #642): `watermarks.app_id` becomes the INTEGER every
+#: other table keys by, and `_meta.value` becomes NOT NULL like every store's.
+MIGRATIONS: tuple[Migration, ...] = (
+    Migration("1", "2", lambda connection: connection.executescript(queries.APEX_STORE_LIFT_1)),
+)
 
 #: The application columns, in the order a row is written and read back. This
 #: tuple is the single source: recording one more fact about an application
@@ -75,17 +83,6 @@ APPLICATION_FIELDS: tuple[str, ...] = (
 def apex_store_path(root: Path | str) -> Path:
     """Where the store for ``root`` lives."""
     return internal_path(root, APEX_DB)
-
-
-def _connect(db_path: Path | str) -> sqlite3.Connection:
-    if isinstance(db_path, str) and db_path == ":memory:":
-        connection = sqlite3.connect(":memory:")
-    else:
-        path = Path(db_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(str(path))
-    connection.row_factory = sqlite3.Row
-    return connection
 
 
 def _app_key(app_id: Any) -> int | None:
@@ -112,7 +109,6 @@ class ApexStore:
 
     @classmethod
     def open(cls, db_path: Path | str) -> ApexStore:
-        connection = _connect(db_path)
         # Setup can raise, and until ADT #510 nothing closed the connection when
         # it did: `sqlite3.connect` succeeds against any readable path and only
         # the first statement discovers the bytes are not a database. The caller
@@ -120,15 +116,14 @@ class ApexStore:
         # by design so a corrupt cache never stops a command, so the failure was
         # handled, the run continued, and the connection stayed open until the
         # collector reached it and reported an unclosed database against whatever
-        # test was running by then. `CommitStore` and `DependencyStore` are the
-        # same shape and carry the same guard.
-        try:
-            connection.executescript(queries.APEX_STORE_SCHEMA)
-            connection.execute(queries.APEX_META_UPSERT, (SCHEMA_VERSION,))
-            connection.commit()
-        except BaseException:
-            connection.close()
-            raise
+        # test was running by then. The shared opener carries that guard for
+        # every store now.
+        connection = open_store(
+            db_path,
+            schema     = queries.APEX_STORE_SCHEMA,
+            version    = SCHEMA_VERSION,
+            migrations = MIGRATIONS,
+        )
         return cls(connection)
 
     @classmethod
@@ -245,22 +240,28 @@ class ApexStore:
 
     def watermark(self, environment: str, app_id: Any, action: str) -> str | None:
         """The last covering export of one app's one format, or None."""
+        key = _app_key(app_id)
+        if key is None:
+            return None
         row = self.connection.execute(
             queries.APEX_WATERMARK_QUERY,
-            (str(environment), str(app_id), str(action)),
+            (str(environment), key, str(action)),
         ).fetchone()
         return str(row["exported_at"]) if row is not None else None
 
     def set_watermark(self, environment: str, app_id: Any, action: str, stamp: str) -> None:
+        key = _app_key(app_id)
+        if key is None:
+            return
         with self.connection:
             self.connection.execute(
                 queries.APEX_WATERMARK_UPSERT,
-                (str(environment), str(app_id), str(action), str(stamp)),
+                (str(environment), key, str(action), str(stamp)),
             )
 
-    def watermarks(self) -> dict[str, dict[str, dict[str, str]]]:
-        """Every watermark, in the nested shape `recent.yaml` used."""
-        result: dict[str, dict[str, dict[str, str]]] = {}
+    def watermarks(self) -> dict[str, dict[int, dict[str, str]]]:
+        """Every watermark, in the nested shape `recent.yaml` used, keyed by app id."""
+        result: dict[str, dict[int, dict[str, str]]] = {}
         for row in self.connection.execute(queries.APEX_WATERMARKS_QUERY):
             environment = result.setdefault(row["environment"], {})
             environment.setdefault(row["app_id"], {})[row["format"]] = row["exported_at"]
@@ -371,6 +372,7 @@ __all__ = [
     "APEX_DB",
     "APPLICATION_FIELDS",
     "LEGACY_APEX_FILES",
+    "MIGRATIONS",
     "RECENT_MODULE",
     "SCHEMA_VERSION",
     "ApexStore",

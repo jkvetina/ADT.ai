@@ -6,8 +6,6 @@
 
 It also carries a set of read-only health reports (materialized views, synonyms, disabled objects, scheduler jobs) and one repair action that is not a recompile at all (`-trailing`). Each of those replaces the ordinary pass rather than adding to it.
 
-<br>
-
 ## Examples
 
 Recompile whatever is invalid in a schema:
@@ -45,8 +43,6 @@ adtai recompile -env DEV -disabled
 adtai recompile -env DEV -jobs
 ```
 
-<br>
-
 ## Output
 
 A run reads the overview, recompiles, retries failures in reverse order on a fresh connection, then re-checks. When anything is still invalid it prints three more sections and exits non-zero:
@@ -62,7 +58,6 @@ OBJECTS OVERVIEW:
   PACKAGE BODY       1                     1             1             1
   VIEW               1                                                  
 
-
 INVALID OBJECTS:
 ----------------
 
@@ -70,13 +65,11 @@ INVALID OBJECTS:
   ------------   -----------   ---------   ------
   PACKAGE BODY   APP_BILLING   ORA-00942        2
 
-
 COMPILE ERRORS:
 ---------------
 
   PACKAGE BODY.APP_BILLING
     - 5.46 PL/SQL: ORA-00942: table or view does not exist
-
 
 ROOT CAUSES:
 ------------
@@ -95,8 +88,6 @@ The section order is fixed, and the verdict reads last because it belongs under 
 - Zero renders blank, so only real repairs draw the eye.
 - **`COMPILE ERRORS:` is a list, not a table column.** A compiler message is prose, and the one column left over at 80 characters truncates the very identifier you need to grant.
 
-<br>
-
 ## Reading the compile errors
 
 Four rules shape the list:
@@ -107,8 +98,6 @@ Four rules shape the list:
 - **Dedupe is per object.** Two objects failing on the same grant both say so.
 
 A message too long for one line wraps under a hanging indent aligned to the message start, and is never cut. Each message is stripped on both sides with interior line breaks collapsed first, which is what makes the dedupe key stable.
-
-<br>
 
 ## Root causes, where to start
 
@@ -133,8 +122,6 @@ The ranking reads three sources, because no one of them is enough:
 
 There is no lock report. It read `gv$locked_object`, which needs a DBA grant no application schema holds, and Oracle offers no unprivileged substitute. Nothing is lost operationally: the connection bootstrap sets `DDL_LOCK_TIMEOUT = 10`, so a lock wait is bounded, and an object that stays locked surfaces as its own compile error.
 
-<br>
-
 ## Object types
 
 `-type` names an Oracle object type, and Oracle's own vocabulary is the contract. A type without a wildcard is an **exact** match, so a bare `PACKAGE` processes specifications only.
@@ -152,8 +139,6 @@ There is no lock report. It read `gv$locked_object`, which needs a DBA grant no 
 
 Words are rejoined only when they name a real type, which is what keeps two types side by side as two filters. This resolution applies to `-type` alone: `-name` is an identifier pattern, where `_` stays LIKE's single-character wildcard.
 
-<br>
-
 ## Force, and narrowing by drift
 
 Bare `-force` recompiles every matching object, not just the invalid ones. Combined with a compile modifier (`-native`, `-interpreted`, `-level`, `-scope`, `-warnings`) it instead recompiles only the objects whose **current** settings drift from the state you asked for, and then applies the full requested state rather than the mismatched setting alone:
@@ -164,8 +149,6 @@ adtai recompile -env DEV -force -scope ALL -level 2 -interpreted -warnings PERF+
 ```
 
 Only VALID PL/SQL objects are considered, since invalid ones are already recompiled by the ordinary pass, and non-PL/SQL types carry no settings to drift from, so a modifier-gated `-force` skips them entirely. A plain recompile with neither `-native` nor `-interpreted` leaves each object's code type untouched.
-
-<br>
 
 ## The report modes
 
@@ -185,13 +168,9 @@ An empty result still prints a header-only table, so the report is visibly prese
 
 **`-disabled`** is the one report spanning several object types, so `-type` picks which of `CONSTRAINT`, `INDEX` and `TRIGGER` to report. It lists disabled constraints, indexes whose status is not `VALID` or whose function-index status is not `ENABLED`, and disabled triggers.
 
-<br>
-
 ## Stripping trailing whitespace
 
 `-trailing` fixes the version-control noise the export creates: `export_db` strips trailing whitespace from every line it writes, so an untouched package still differs from the database's stored source on every export, and this repairs the *source* side once per schema. What it rewrites, the separate path a view takes, and what the sweep guarantees are on [recompile_trailing.md](recompile_trailing.md).
-
-<br>
 
 ## Arguments
 

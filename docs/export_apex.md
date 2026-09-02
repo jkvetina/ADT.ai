@@ -6,8 +6,6 @@
 
 `-reveal` answers "what workspaces and applications live in this environment?". The format flags decide what an export writes, and nothing is exported unless a format was named.
 
-<br>
-
 ## Examples
 
 See what is there before exporting anything:
@@ -41,8 +39,6 @@ adtai export_apex -recent 3
 adtai export_apex -recent 3 -my
 ```
 
-<br>
-
 ## Output
 
 `-reveal` prints the connection block, then the workspace inventory once, then the applications of every schema in scope:
@@ -56,14 +52,12 @@ CONNECTING TO SCHEMA SANDBOX, DEV:
               APEX | 26.1.0
           DATABASE | 23.26.1.0.0 | FREEPDB1
 
-
 WORKSPACES:
 -----------
 
   WORKSPACE   WORKSPACE ID   OWNERS   APPS   DEVELOPERS   ACTIVE
   ---------   ------------   ------   ----   ----------   ------
   SANDBOX            90100        1      1            0   Y
-
 
 APPLICATIONS PER LISTED OWNERS:
 -------------------------------
@@ -72,14 +66,12 @@ APPLICATIONS PER LISTED OWNERS:
   -------   ---------   ----
   SANDBOX   SANDBOX        1
 
-
 APEX APPLICATIONS: SANDBOX | SANDBOX
 ------------------
 
   APP ID   NAME                                       PAGES   UPDATED AT
   ------   ----------------------------------------   -----   ----------
      100   Order Tracker                                  4
-
 
 TIMER: 0s
 ```
@@ -98,7 +90,6 @@ APEX APPLICATIONS: SANDBOX | SANDBOX
   ------   ----------------------------------------   -----   ----------
      100   Order Tracker                                  4
 
-
 EXPORTING APP 100/ORDERS:
 -------------------------
 
@@ -116,8 +107,6 @@ EXPORTING APP 100/ORDERS:
 - A multi-schema export runs schema by schema, each with its own connection block and `TIMER`, banner printed once.
 - Filtered component exports print the affected pages and components line by line instead of the dotted bar.
 
-<br>
-
 ## Reveal, and how a schema is reached
 
 `-reveal` scans every schema configured in the environment unless `-schema` narrows it, keeping one APEX connection open rather than reconnecting per schema. Names match case-insensitively.
@@ -128,9 +117,9 @@ For a normal export by application id, with no `-schema` and no `-reveal`, ADT.a
 
 An application not yet recorded, a missing cache, or an explicit `-schema` or `-reveal` all fall back to the default schema and discover the owner live.
 
-When `-app` names an application whose owner is not among the requested schemas, that lookup runs once inside the last requested schema's segment, and the owner it finds becomes its own appended segment.
+What the cache holds, table by table, is on [storage_apex.md](storage_apex.md).
 
-<br>
+When `-app` names an application whose owner is not among the requested schemas, that lookup runs once inside the last requested schema's segment, and the owner it finds becomes its own appended segment.
 
 ## Formats are explicit
 
@@ -139,8 +128,6 @@ ADT.ai exports only the formats named on the command line. There are no configur
 `-page` and `-component` narrow the split, readable and embedded output and the matching page comment YAML. They select no format on their own, so name one. Filtered runs do not update the application cache.
 
 `-deep` beside `-page` also exports the components recorded for those pages in the dependency mirror, LOVs, lists and authorization schemes among them, and prints a `DB OBJECTS` section of the database objects those pages use.
-
-<br>
 
 ## The application checksum
 
@@ -159,15 +146,11 @@ The value is stored exactly as APEX returns it, algorithm prefix included. It ig
 
 It is not a format and there is no flag for it. APEX computes it over the whole application, so `-page`, `-component` and `-recent` never narrow it, and collecting it never advances a watermark. A static file genuinely named `checksum.txt` is left alone, since `-files` owns everything under the static-files folder.
 
-<br>
-
 ## Where files land
 
 `path_apex` in `config.yaml` is a path template, `'<schema>/apex/'` by default, and the schema token carries its own case, so `<SCHEMA>` writes `APP/apex/`. It resolves that token and nothing else, so any other token is refused before the export writes a folder named after it. `path_objects` is independent, and a project may spell the two differently.
 
 `apex_path_app` names the per-application folder under it and resolves `{$APP_ID}`, `{$APP_ALIAS}`, `{$APP_NAME}` and `{$APP_GROUP}`. Any other token is refused.
-
-<br>
 
 ## Recent changes, by author
 
@@ -177,13 +160,9 @@ Without an explicit format, a non-reveal `-recent` is report-only: it exports no
 
 `-by` filters by exact APEX developer username. `-my` compares your `git config user.name` and `user.email` against the workspace developers, which covers short initials-style logins as well as email-form authors. Either one leaves the application list complete and skips applications with no matching change in the detail sections below it. Developer-filtered exports do not update the application cache.
 
-<br>
-
 ## Schema-level formats on their own
 
 `-rest` and `-files_ws` write under a path carrying no application id, so both belong to the schema rather than to an application, and both run once per schema. That gives a run two console shapes depending on whether a per-application format was selected too, and both are on [export_apex_formats.md](export_apex_formats.md).
-
-<br>
 
 ## Arguments
 

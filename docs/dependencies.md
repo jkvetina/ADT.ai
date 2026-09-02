@@ -4,9 +4,7 @@
 
 `dependencies` answers "what uses this?" and "what would I break?" against a local mirror of the Oracle data dictionary. Reach for it before changing a table or a package, when you need the blast radius rather than a guess.
 
-The mirror is a single gitignored SQLite file at `config/internal/dependencies.db`, holding the raw dictionary tables stamped with an owner, so it is multi-schema, plus the APEX dictionary keyed by application id. Every query recomputes its answer from those raw mirrors.
-
-<br>
+The mirror is a single gitignored SQLite file at `config/internal/dependencies.db`, holding the raw dictionary tables stamped with an owner, so it is multi-schema, plus the APEX dictionary keyed by application id. Every query recomputes its answer from those raw mirrors. Its tables are on [storage_dependencies.md](storage_dependencies.md).
 
 ## Examples
 
@@ -41,8 +39,6 @@ adtai dependencies -age
 adtai dependencies -to "TABLE.ADT_ANNO_TICKET" -format yaml
 ```
 
-<br>
-
 ## Output
 
 A refresh prints one row per dictionary table, its name before the query starts and its counts after:
@@ -51,12 +47,10 @@ A refresh prints one row per dictionary table, its name before the query starts 
 APEX DEPLOYMENT TOOL - DEPENDENCIES
 -----------------------------------
 
-
 CONNECTING TO SCHEMA SANDBOX, DEV:
 ----------------------------------
               APEX | 26.1.0
           DATABASE | 23.26.1.0.0 | FREEPDB1
-
 
 REFRESHING SANDBOX SCHEMA:
 --------------------------
@@ -68,7 +62,6 @@ REFRESHING SANDBOX SCHEMA:
   USER_CONS_COLUMNS ............................................. 10 |      10
   USER_IDENTIFIERS .............................................. 20 |      20
   USER_STATEMENTS ................................................ 1 |       1
-
 
 TIMER: 3s
 ```
@@ -95,8 +88,6 @@ USED BY TABLE.ADT_ANNO_TICKET (2):
 - An empty result prints `(none)` rather than nothing. A missing mirror reports `No dependency database found` and exits `1`.
 - `yaml` and `md` output keeps the dotted `TYPE.NAME` node form.
 
-<br>
-
 ## Query or refresh, decided by one rule
 
 **Name a query and it queries; name none and it refreshes.** A bare `adtai dependencies` refreshes, and so does any run carrying no query flag, so `-schema APP`, `-app 100`, `-force` and `-recent` each describe a refresh on their own.
@@ -104,8 +95,6 @@ USED BY TABLE.ADT_ANNO_TICKET (2):
 Those last three steer the rebuild, so passing one beside a query is refused with `steers -refresh and cannot be combined with a query` and exit `2`.
 
 Refresh is the only mode that connects, and the only one that reads `-config-dir` and `-env`. Query modes are entirely offline. There is no separate cache-rebuild step: re-running the refresh is the update path.
-
-<br>
 
 ## The five query modes
 
@@ -127,8 +116,6 @@ Its columns are `TABLE NAME`, `COLUMN NAME`, `CONSTRAINT NAME` and `TYPE`, sorte
 
 `-age` reads the completion stamps every refresh writes, and prints `SCOPE TYPE`, `SCOPE` and a sortable `LAST REFRESH` timestamp, schemas first then applications. It is how an agent checks staleness per scope rather than guessing from a file's modification time.
 
-<br>
-
 ## Steering a refresh
 
 The two axes combine freely:
@@ -146,8 +133,6 @@ Object names or SQL wildcards after `-refresh` force a deep schema refresh for j
 
 The `-app` axis folds into its owning schema's segment when that schema is refreshed too, reading `REFRESHING <SCHEMA> SCHEMA AND APEX APP <id>/<alias>:`. Otherwise it becomes its own final segment, which is always the case for an app-only run.
 
-<br>
-
 ## Disambiguating a query by owner
 
 When the mirror tracks more than one owner, the same object name can exist in several schemas. `-schema` on a query mode pins it. Here the flag is offline, case-insensitive, and takes a repeatable space- or comma-separated list; omit it and every tracked owner matches.
@@ -161,8 +146,6 @@ Each mode matches it against the owner column it keys on:
 It narrows within the tracked set and never widens to untracked owners. An empty or whitespace value behaves as absent.
 
 **A schema is one scope however you spell it.** Oracle owners are uppercase, but ADT reads the name from your argument or a connection-file key, so `-schema app` and `-schema APP` refresh the same scope and write the same rows. A mirror written before that held both, two complete copies under two stamps. The next refresh folds any such pair away, keeping the newer stamp and dropping the other rather than merging, since the older copy can still carry objects the newer refresh saw dropped.
-
-<br>
 
 ## Column-level lineage from PL/Scope
 
@@ -178,8 +161,6 @@ On a first refresh this is the slowest thing the command does, so it crawls rath
 
 **The row prints only when something is being recompiled.** A warm schema recompiles nothing, and neither does any incremental refresh whose changed objects carry no PL/SQL, which is the common case.
 
-<br>
-
 ## APEX callers
 
 When the APEX mirror has been refreshed with `-app`, `-impact` also appends an `APEX CALLERS` section: which application, page or shared component, and which component property uses the impacted database object.
@@ -188,8 +169,6 @@ Where PL/Scope can trace an impacted column through a view and the component pro
 
 APEX refresh reads the release from the connection block before choosing its dictionary path. Releases before APEX 24.2 report that dependency scanning is unavailable and skip the app refresh. Supported releases run the APEX dependency scan silently, then drop the helper procedures it generates so scan internals never reach the console or an export.
 
-<br>
-
 ## The clock the mirror records
 
 Alongside each schema's refresh stamp, the mirror records that database's own UTC offset, read once per scope. `LAST_DDL_TIME` is a wall-clock reading taken on the database server, and `patch -create` compares it against repository file times taken here, so without the offset a database in another timezone shifts every one of those comparisons.
@@ -197,8 +176,6 @@ Alongside each schema's refresh stamp, the mirror records that database's own UT
 Nothing configures it. A mirror that predates it is refused by that gate rather than read on the wrong clock, which one refresh fixes.
 
 The refresh connection is an ordinary ADT.ai connection and runs the ordinary session setup, `DDL_LOCK_TIMEOUT`, the identifier block, then `STARTUP.sql`. That is not cosmetic here: refresh issues session `ALTER` statements and compiles of its own, so on a schema whose DDL trigger requires a client identifier, a sessionless connection would fail the whole command rather than degrade.
-
-<br>
 
 ## Arguments
 

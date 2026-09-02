@@ -117,12 +117,21 @@ class PackageCoverage:
 
     ``blocks_total`` already excludes ``not_feasible`` blocks, the exclusion
     happens in SQL, so every consumer of this record sees the same denominator.
+
+    ``type`` is the unit's coverage spelling (one of utPLSQL's five source
+    types), and it carries the class beyond the package bodies its name is
+    written for (card `#648`). It defaults to ``PACKAGE BODY`` because every
+    record on the rendered path is one, and it is part of the key rather than a
+    label: triggers occupy their own Oracle namespace, so ``AUDIT_ROW`` can be a
+    trigger and a procedure in one schema, and a lookup by name alone would
+    collapse the two into whichever row was read last.
     """
 
     name           : str
     lines          : int = 0
     blocks_total   : int = 0
     blocks_covered : int = 0
+    type           : str = "PACKAGE BODY"
 
     @property
     def measured(self) -> bool:
@@ -154,9 +163,19 @@ class CoverageReport:
 
     An empty report is the honest state for a run that measured nothing, and it
     renders as blank `COVERAGE` cells rather than as a missing column.
+
+    **``objects`` is the other four source types, and nothing renders it**
+    (card `#648`). utPLSQL instruments type bodies, procedures, functions and
+    triggers alongside package bodies, so the run measures them whether or not
+    anything asks; keeping them here rather than in ``packages`` is what makes
+    that free. Every consumer (each summary row, the module roll-up, the run
+    history) reads ``packages`` and treats its members as the packages the
+    run's suites test, so one trigger folded in there would move a printed
+    percentage with no test failing.
     """
 
     packages : tuple[PackageCoverage, ...] = field(default_factory=tuple)
+    objects  : tuple[PackageCoverage, ...] = field(default_factory=tuple)
 
     def for_package(self, name: str) -> PackageCoverage | None:
         """The figure for one package under test, or None when there is none.

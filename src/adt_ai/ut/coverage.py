@@ -24,6 +24,15 @@ from adt_ai.shared.db import QueryGateway
 from adt_ai.ut import queries
 from adt_ai.ut.inventory import CoverageReport, PackageCoverage, SuitePackage
 
+#: The one source type the console renders.
+#:
+#: utPLSQL instruments five and card `#648` collects all five, but every consumer
+#: of ``CoverageReport.packages`` (each summary row, the module roll-up, the run
+#: history) reads its members as the packages the run's suites test. So this
+#: constant is the seam: package bodies on the rendered side, the other four in
+#: ``CoverageReport.objects``, which nothing renders yet.
+PACKAGE_BODY = "PACKAGE BODY"
+
 
 @dataclass(frozen=True)
 class CoverageOutcome:
@@ -69,11 +78,24 @@ def build_coverage_report(
     unmeasured one. The derived name is resolved against the schema's own
     packages before anything is listed; see :func:`resolve_targets`.
     """
-    if not _targets(packages):
+    # **The guard is "did this run measure anything", not "did a suite pair".**
+    # It tested the target set until card `#648`, which was the same question
+    # while package bodies were the only thing collected: no target, no row, so
+    # two round trips bought nothing. The other four source types belong to no
+    # suite's target, so that test now suppresses exactly the data the widened
+    # read exists to gather. A schema whose suites all pair to nothing (the
+    # `ut` fixture is one) still runs code, still instruments its triggers, and
+    # would report none of it. This is the runner's own `measures` condition, so
+    # a run that started no coverage session still reads nothing back.
+    if not any(package.runnable for package in packages):
         return CoverageOutcome(CoverageReport(), packages)
 
+    # Keyed by type AND name since card `#648`, because the name alone stopped
+    # being unique the moment the read widened past package bodies: triggers have
+    # their own Oracle namespace, so `AUDIT_ROW` can be a trigger and a procedure
+    # in one schema and a name-keyed dictionary would keep whichever came last.
     measured = {
-        str(row.get("PACKAGE_NAME") or "").upper(): row
+        _key(row): row
         for row in gateway.fetch_all(
             queries.PACKAGE_COVERAGE_QUERY,
             {"coverage_run_id": coverage_run_id, "owner": owner},
@@ -93,27 +115,46 @@ def build_coverage_report(
             {"owner": owner, "ut_pattern": naming_pattern},
         )
     )
+    # **Package bodies only settle a suite's target.** The listing now carries the
+    # other four source types too, and a suite's `ut_match` name resolves against
+    # packages; letting a trigger into this set would let a suite pair to one.
     packages = resolve_targets(
         packages,
-        {str(row.get("OBJECT_NAME") or "").upper() for row in schema_rows},
+        {
+            str(row.get("OBJECT_NAME") or "").upper()
+            for row in schema_rows
+            if _type(row) == PACKAGE_BODY
+        },
     )
     targets = _targets(packages)
 
-    listed = []
+    listed  : list[PackageCoverage] = []
+    objects : list[PackageCoverage] = []
     for row in schema_rows:
         name = str(row.get("OBJECT_NAME") or "")
-        if name.upper() not in targets:
-            continue
-        found = measured.get(name.upper(), {})
-        listed.append(
+        object_type = _type(row)
+        # **The two tuples part here, and only here.** A package body the run's
+        # suites test is rendered; everything else is collected and rendered by
+        # nothing, so an untested package still drops out exactly as it did
+        # before card `#648` while a trigger never has to earn a target at all.
+        if object_type == PACKAGE_BODY:
+            if name.upper() not in targets:
+                continue
+            destination = listed
+        else:
+            destination = objects
+        found = measured.get((object_type, name.upper()), {})
+        destination.append(
             PackageCoverage(
                 name           = name,
                 lines          = int(row.get("LINES") or 0),
                 blocks_total   = int(found.get("BLOCKS_TOTAL") or 0),
                 blocks_covered = int(found.get("BLOCKS_COVERED") or 0),
+                type           = object_type,
             )
         )
-    return CoverageOutcome(CoverageReport(packages=tuple(listed)), packages)
+    report = CoverageReport(packages=tuple(listed), objects=tuple(objects))
+    return CoverageOutcome(report, packages)
 
 
 def resolve_targets(
@@ -161,6 +202,25 @@ def _resolve(target: str, known: set[str]) -> str:
             return ""
         candidate = head
     return ""
+
+
+def _type(row: dict) -> str:
+    """A row's source type, in the one spelling everything downstream uses.
+
+    Both queries map ``ALL_OBJECTS``' ``PACKAGE``/``TYPE`` onto ``PACKAGE BODY``
+    and ``TYPE BODY`` in SQL, so the dictionary listing and the coverage read
+    agree by construction and nothing here translates between two vocabularies.
+
+    The fallback is for a row that predates the column. Every fake-gateway
+    fixture written before card `#648` spells a package as ``OBJECT_NAME`` alone,
+    and a package body is what each of them means. A live row always carries it.
+    """
+    return str(row.get("OBJECT_TYPE") or PACKAGE_BODY)
+
+
+def _key(row: dict) -> tuple[str, str]:
+    """The ``(type, name)`` a measured row is filed under, name upper-cased."""
+    return _type(row), str(row.get("OBJECT_NAME") or "").upper()
 
 
 def _targets(packages: tuple[SuitePackage, ...]) -> set[str]:

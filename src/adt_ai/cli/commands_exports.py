@@ -37,8 +37,8 @@ from adt_ai.cli.export_apex_messages import (
     print_apex_owner_not_configured,
 )
 from adt_ai.cli.export_apex_owners import (
-    _apex_reveal_connection_schema,
     _resolve_apex_app_owners,
+    apex_lookup_schema,
     resolve_apex_owner_routes,
 )
 from adt_ai.cli.export_apex_reveal import print_reveal_screen
@@ -185,7 +185,7 @@ def _run_export_apex(
         connection_schema = schemas[0]
     elif args.reveal:
         schemas = connections.schema_names(environment)
-        connection_schema = _apex_reveal_connection_schema(connections, environment, schemas)
+        connection_schema = apex_lookup_schema(connections, environment, schemas)
     else:
         owner_routes = resolve_apex_owner_routes(
             root, connections, environment, sql_app_ids, kind="apex"

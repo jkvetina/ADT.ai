@@ -12,12 +12,19 @@ from functools import partial
 from importlib import resources
 from importlib.resources.abc import Traversable
 from pathlib import Path
+from typing import cast
 
 from adt_ai.doctor._base import (
     ADT_AI_GITHUB_LATEST_RELEASE_URL,
     ActionReporter,
+    CommandRunner,
     DoctorRequest,
     DoctorResult,
+    ExecutableResolver,
+    FileDownloader,
+    LatestVersionFetcher,
+    LineCallback,
+    OraclePageFetcher,
     SqlclRelease,
     _certificate_error,
     _is_certificate_error,
@@ -78,7 +85,7 @@ def _fetch_text(url: str) -> str:
     request = urllib.request.Request(url, headers={"User-Agent": "ADT.ai doctor"})
     try:
         with urllib.request.urlopen(request, timeout=_FETCH_TIMEOUT_SECONDS) as response:
-            return response.read().decode("utf-8", errors="replace")
+            return cast(bytes, response.read()).decode("utf-8", errors="replace")
     except urllib.error.URLError as error:
         if _is_certificate_error(error):
             raise _certificate_error(url, error) from error
@@ -99,8 +106,8 @@ def _download_file(url: str, target: Path) -> None:
 class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
     def __init__(
         self,
-        command_runner     : object = None,
-        executable_resolver: object = None,
+        command_runner     : CommandRunner | None = None,
+        executable_resolver: ExecutableResolver | None = None,
         env                : Mapping[str, str] | None = None,
         package_version    : str = "",
         oracledb_version   : str | None = None,
@@ -109,10 +116,10 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
         package_root       : Path | None = None,
         resource_root      : Traversable | None = None,
         python_executable  : str | None = None,
-        oracle_page_fetcher: object = None,
-        file_downloader    : object = None,
-        latest_version_fetcher: object = None,
-        line_callback      : object = None,
+        oracle_page_fetcher: OraclePageFetcher | None = None,
+        file_downloader    : FileDownloader | None = None,
+        latest_version_fetcher: LatestVersionFetcher | None = None,
+        line_callback      : LineCallback | None = None,
         action_reporter    : ActionReporter | None = None,
         version_cache_dir  : Path | None = None,
         version_cache_ttl  : float = 3600,

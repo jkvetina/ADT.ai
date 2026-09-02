@@ -1,0 +1,64 @@
+name: Bug report
+description: Something ADT.ai did that it should not have done
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report a security issue here. Use the private advisory form:
+        https://github.com/jkvetina/ADT.ai/security/advisories/new
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+      description: What the tool did, and what you expected instead.
+      placeholder: |
+        Running `adtai export_db -schema SANDBOX` wrote no files and exited 0.
+        I expected it to export the schema, or to say why it could not.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The exact command, with flags. Add `-debug` output when the failure is not obvious.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: ADT.ai version
+      description: The output of `adtai --version`.
+      placeholder: "0.9.5"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version and operating system
+      placeholder: "Python 3.14.0, macOS 15"
+    validations:
+      required: true
+
+  - type: input
+    id: oracle
+    attributes:
+      label: Oracle Database and APEX versions
+      description: Only when the failure involves either.
+      placeholder: "23ai Free, APEX 24.1"
+    validations:
+      required: false
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Console output
+      description: Redact schema names, hostnames and anything else you would not publish.
+      render: text
+    validations:
+      required: false

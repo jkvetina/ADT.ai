@@ -4,8 +4,6 @@
 
 What an exported file looks like, the folder tree it lands in, how to reorganize that tree into per-group subfolders, what happens when one object ends up in two places, and how to record what an environment actually holds. The command and its flags are on [export_db.md](export_db.md).
 
-<br>
-
 ## What the exported DDL looks like
 
 Normalization is where the export earns a readable comparison. Bodies are preserved; only the parts old ADT rewrote are rewritten:
@@ -52,8 +50,6 @@ When a PRIMARY KEY or UNIQUE constraint was added after table creation and tied 
 
 `export_db` folds that back inline, keeping the constraint name and columns and dropping the index name, and writes a `<table>.fix.sql` companion holding the recovery script. The companion is removed when the table no longer has such a constraint.
 
-<br>
-
 ## Where files land
 
 `path_objects` in `config.yaml` is the export path **template**, not a literal folder. It resolves exactly two placeholders:
@@ -81,8 +77,6 @@ object_types:
     VIEW  : {folder: views/, extension: .sql}
 ```
 
-<br>
-
 ## The schema token carries its own case
 
 Oracle stores identifiers uppercase, but ADT.ai learns a schema name from a connection key or a `-schema` argument, where `app_owner` is as likely as `APP_OWNER`, so somebody has to choose. The template chooses: `<schema>` writes `app_owner/` and `<SCHEMA>` writes `APP_OWNER/`.
@@ -92,8 +86,6 @@ That matters when migrating a project from old ADT, which left uppercase folders
 `path_apex` carries the same token and reads it the same way, and the two keys are independent, so a project can spell them differently. An `<object_type>` folder has no cased form, because its name is your own text from `object_types`; change the folder there.
 
 **Switching the case moves nothing that is already exported.** On Linux the next run writes a second tree beside the first; on macOS and Windows the case-only difference is invisible to the filesystem until version control reports a rename nobody made. `adtai doctor` reports the mismatch and prints the `git mv` for each folder.
-
-<br>
 
 ## A token nothing resolves is refused
 
@@ -112,8 +104,6 @@ Unresolved placeholder in config path_objects: {$INFO_SCHEMA}
 Any other angle-bracket token is refused the same way, and for the same reason: the substitution matches a spelling exactly, so `<Schema>`, `<OBJECT_TYPE>` and a plain typo would all reach the filesystem as a real directory named after the token. `path_apex` resolves only the schema token, so an `<object_type>` there is refused too.
 
 The run stops before writing anything, and the same rejection applies to every command that renders the template, so a guarded command cannot leave an unguarded one exporting into the placeholder folder. A folder an earlier run already built is left on disk untouched.
-
-<br>
 
 ## Object groups
 
@@ -168,8 +158,6 @@ Two object types can be configured onto one folder, and the shipped config does 
 
 Hand-arranged subfolders still work on every plain run: move exported files into a `<object_type>/<group>/` subfolder by hand and the folder name becomes the group. The next export learns the shared prefix of those files and routes new matching objects into the same subfolder.
 
-<br>
-
 ## Duplicate object files
 
 Moving files by hand can leave the same filename in two places under one `<object_type>/` subtree, typically a stale copy in the type folder root plus the live one in a group subfolder. `export_db` exports into whichever copy it finds first, so the other silently rots.
@@ -184,5 +172,3 @@ The export does **not** abort on this. It runs to completion and marks the affec
 Paths are shown relative to the export root with the leading `database/` folder dropped, so the row names the schema, the group subfolder and the file. Delete the copies you do not want and re-run; the marker disappears once one location is left.
 
 The scan is per schema subtree and case-insensitive, and `.fix.sql` sidecars never count as duplicates. The same object name exported from two schemas is not a collision, since each schema owns its own subtree, but a collision present in several schemas is marked in every one.
-
-<br>

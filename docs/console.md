@@ -6,8 +6,6 @@ Every ADT.ai command prints the same chrome, and a refusal is written to tell yo
 
 The eight flags every command shares are documented at the end of it, so a command page can list only the flags that are its own.
 
-<br>
-
 ## Help
 
 Bare `adtai` and `adtai --help` both print the module overview, A to Z, one row per module with a short description. Every module is invoked by its single canonical name.
@@ -24,8 +22,6 @@ Command help opens with the `APEX DEPLOYMENT TOOL - <CMD>` banner, then the usag
 - Option rows show the single-dash alias and hide the redundant `--` form. Both are still accepted by the parser.
 - Shared options are always listed last, in the order `-debug`, `-beep`, `-nobeep`, `-env`, `-root`, `-config-dir`, `-key`. They are documented under [Shared arguments](#shared-arguments), at the end of this page.
 - Sections wrap to a default 80-column terminal.
-
-<br>
 
 ## The shape of a run
 
@@ -44,8 +40,6 @@ CONNECTING TO SCHEMA SANDBOX, DEV:
 
 A machine-output mode keeps stdout pure data and sends the chrome and the timer to stderr.
 
-<br>
-
 ### Header shape
 
 Two kinds of header, told apart by their last character:
@@ -62,8 +56,6 @@ A header may carry a separate appended value, excluded from the underline on pur
 **A schema name renders uppercase in every header**, whatever casing it was spelled with, so a connection file keyed `app` and `-schema app` both print `CONNECTING TO SCHEMA APP, DEV:`. That is display only: the file's own casing still owns lookups and export paths.
 
 Table rows carry no trailing whitespace. Every cell is padded to its column width, so an unstripped row would run past its visible content and wrap on an 80-column terminal, printing a blank line under every row.
-
-<br>
 
 ### Listing database objects
 
@@ -87,8 +79,6 @@ It is one renderer, not a convention. Three sections call it: `EXPORTING <n> OBJ
 
 A listing built in one go sorts by type and then by name. One printed as the work happens keeps the order its source returned, and closes its last group when the caller knows there is no next object; the bytes are the same either way.
 
-<br>
-
 ### Failure screens
 
 A refusal names what to go and fix, so the header is chosen by what your next move is rather than by which layer raised the error:
@@ -98,14 +88,12 @@ A refusal names what to go and fix, so the header is chosen by what your next mo
 | `CONFIGURATION NOT FOUND:` | No connection or config file could be located, or the file names no such environment or schema. | Run from a project folder that has a connection file, or pass `-config-dir` or `-root`. |
 | `CONFIGURATION INVALID:` | A file was found and read and cannot be used as written: unparsable YAML, a document that is not a mapping, a value ADT cannot use, external auth naming no TNS alias. | None. The message names the key. |
 | `CREDENTIAL UNAVAILABLE:` | The connection is described and its secret could not be obtained: a vault command that failed or timed out, a missing or wrong key, two sources configured for one secret. | None. The message names the key. |
-| `DATABASE CONNECTION FAILED:` | A connect attempt was made and refused: TNS, wallet or credential errors from the driver, and SQLcl reporting no session. | Check the connection file and the wallet folder. |
+| `DATABASE CONNECTION FAILED:` | A connect attempt was made and refused: SQLcl reported no session, or Oracle returned a known connection ORA, DPY, DPI or TNS code. Ordinary application text that merely says connection, listener or wallet does not select this screen. | Check the connection file and the wallet folder. |
 | `DATABASE QUERY FAILED:` | A statement failed after a successful connect. The offending SQL prints above the error. | None. |
 
 Every one exits non-zero, prints the command banner above and the `TIMER` footer below, and ends with the `-debug` hint. `-debug` re-raises instead, for the traceback.
 
 The project-folder footer belongs to the first row alone. When every connection failure took that first screen, a hand-edited YAML typo, an unauthenticated vault CLI and a failed SQLcl connect all reported `CONFIGURATION NOT FOUND:` and advised running from a folder holding the file that had just been read.
-
-<br>
 
 ### Multi-schema runs
 
@@ -117,7 +105,6 @@ There is no grand-total timer after the last segment. That segment's own `TIMER`
 APEX DEPLOYMENT TOOL - EXPORT_DB
 --------------------------------
 
-
 CONNECTING TO SCHEMA APP, DEV:
 ------------------------------
               APEX | 26.1.0
@@ -125,9 +112,7 @@ CONNECTING TO SCHEMA APP, DEV:
 
 ...that schema's own output...
 
-
 TIMER: 12s
-
 
 CONNECTING TO SCHEMA CORE, DEV:
 -------------------------------
@@ -136,11 +121,8 @@ CONNECTING TO SCHEMA CORE, DEV:
 
 ...that schema's own output...
 
-
 TIMER: 8s
 ```
-
-<br>
 
 ## Completion sounds
 
@@ -153,8 +135,6 @@ A linked git worktree marks its root with a `.git` *file*, so any command launch
 - `-beep` forces a non-blocking sound from the shared `TIMER` footer on any executable path, argument errors and connection failures included.
 - `-beep THEME` overrides the theme for that run, case-insensitively. Bare `-beep` uses the configured theme, or the default one when project config omits or disables it.
 - `-nobeep` silences a run explicitly, and wins over both `chime_theme` and `-beep`.
-
-<br>
 
 ## Shared arguments
 
@@ -171,8 +151,6 @@ Eight flags mean the same thing wherever they are accepted, so they are document
 | `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |
 | `-nobeep`, `--nobeep` | No | off | Suppress completion sounds for this run; this wins over `chime_theme` and `-beep`. |
 
-<br>
-
 ### Which command takes which
 
 A flag a command does not take is a parser error, not a flag it ignores.
@@ -187,8 +165,6 @@ A flag a command does not take is a parser error, not a flag it ignores.
 | `-debug` | `connection`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `recompile`, `ut`, `validate` |
 | `-beep` | every command |
 | `-nobeep` | every command |
-
-<br>
 
 ### How the files are found
 

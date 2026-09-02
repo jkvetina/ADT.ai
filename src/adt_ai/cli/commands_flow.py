@@ -30,7 +30,7 @@ from adt_ai.cli.context import (
     _parse_apex_app_selection,
     _print_connection_block,
 )
-from adt_ai.cli.export_apex_owners import listed_applications
+from adt_ai.cli.export_apex_owners import apex_lookup_schema, listed_applications
 from adt_ai.cli.gateways import build_gateway
 from adt_ai.shared.internal_paths import internal_path
 
@@ -110,8 +110,7 @@ def _refresh_flow(
     connections = startup.connections
     environment = args.env or connections.default_environment
     configured_schemas = connections.schema_names(environment)
-    default_schemas = connections.default_schemas(environment, kind="apex")
-    lookup_schema = default_schemas[0] if default_schemas else configured_schemas[0]
+    lookup_schema = apex_lookup_schema(connections, environment, configured_schemas)
     connection_cache: dict[str, object] = {}
     gateway_cache: dict[str, QueryGateway] = {}
 

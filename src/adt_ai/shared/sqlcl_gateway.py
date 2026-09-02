@@ -60,6 +60,10 @@ _TIMESTAMP_FORMATS = (
     "%Y-%m-%d %H:%M:%S",
 )
 
+_JSON_START_MARKER = "<<<ADT-SQLCL-JSON-START>>>"
+_JSON_END_MARKER = "<<<ADT-SQLCL-JSON-END>>>"
+_JSON_PAYLOAD_START = re.compile(r'^\{"results"\s*:', re.MULTILINE)
+
 # VARCHAR2 reaches 32767 in PL/SQL, which is what a `VAR` declaration gets.
 _VARCHAR_SIZE = 32767
 
@@ -188,7 +192,9 @@ class SqlclGateway(OracleGateway):
                 prologue,
                 "set sqlformat json",
                 _binds(params),
+                f"prompt {_JSON_START_MARKER}",
                 _terminated(sql),
+                f"prompt {_JSON_END_MARKER}",
                 "set sqlformat default",
                 epilogue,
             )
@@ -299,15 +305,32 @@ def _rows(output: str, sql: str) -> list[dict[str, Any]]:
 
 
 def _json_payload(output: str) -> dict[str, Any] | None:
-    start = output.find('{"results"')
-    if start < 0:
+    framed = _between_markers(output, _JSON_START_MARKER, _JSON_END_MARKER)
+    if framed is None:
         return None
     decoder = json.JSONDecoder()
-    try:
-        payload, _ = decoder.raw_decode(output[start:])
-    except ValueError:
+    for match in _JSON_PAYLOAD_START.finditer(framed):
+        start = match.start()
+        try:
+            payload, end = decoder.raw_decode(framed[start:])
+        except ValueError:
+            continue
+        absolute_end = start + end
+        if absolute_end < len(framed) and framed[absolute_end] not in "\r\n":
+            continue
+        if isinstance(payload, dict) and isinstance(payload.get("results"), list):
+            return payload
+    return None
+
+
+def _between_markers(output: str, start_marker: str, end_marker: str) -> str | None:
+    start = re.search(rf"(?m)^{re.escape(start_marker)}\r?$", output)
+    if start is None:
         return None
-    return payload if isinstance(payload, dict) else None
+    end = output.find(end_marker, start.end())
+    if end < 0:
+        return None
+    return output[start.end() : end].lstrip("\r\n")
 
 
 def _coerce(value: Any, column_type: str) -> Any:

@@ -4,7 +4,7 @@ updated: 2026-08-24
 name: adt-setup
 version: 1.0.0
 tags: [oracle, apex, deployment, setup, doctor]
-description: "Install and verify ADT.ai: pip install, PATH and environment variables, Oracle Instant Client and SQLcl, connections and wallets, and the adtai doctor health check and update flow. Use when setting up or troubleshooting ADT.ai on a machine."
+description: "Install and verify ADT.ai: pip install adt-ai from PyPI or an editable checkout, PATH and environment variables, Oracle Instant Client and SQLcl, connections and wallets, and the adtai doctor health check and update flow. Use when setting up or troubleshooting ADT.ai on a machine."
 ---
 # ADT.ai Setup
 
@@ -14,19 +14,25 @@ The command is `adtai` (aliases: `adt`, `python -m adt_ai`).
 
 ## Install
 
-From the ADT.ai repo folder:
+From PyPI, which is how a user installs ADT.ai:
+
+```bash
+python3 -m pip install adt-ai
+```
+
+Windows uses `python` instead of `python3`:
+
+```powershell
+python -m pip install adt-ai
+```
+
+To work on ADT.ai itself, install the repo folder instead, so an edit takes effect without reinstalling:
 
 ```bash
 python3 -m pip install -e .
 ```
 
-This puts `adtai` and `adt` on `PATH`. Re-run after pulling changes only if dependencies changed, or use `adtai doctor -update` (below).
-
-Windows uses `python` instead of `python3`:
-
-```powershell
-python -m pip install -e .
-```
+Either route puts `adtai` and `adt` on `PATH`. Upgrade with `python3 -m pip install --upgrade adt-ai`, or use `adtai doctor -update` (below); an editable checkout needs a re-run only if dependencies changed.
 
 ## Prerequisites on PATH
 
@@ -149,7 +155,7 @@ It writes the project config template, repo ignore rules for generated artifacts
 
 ## Troubleshooting
 
-- `adtai: command not found` or `adt: command not found` → re-run `python3 -m pip install -e .`, then open a new shell; confirm the Python scripts dir is on `PATH`.
+- `adtai: command not found` or `adt: command not found` → re-run `python3 -m pip install adt-ai` (or `-e .` in an editable checkout), then open a new shell; confirm the Python scripts dir is on `PATH`.
 - Garbled or non-English SQLcl/Oracle messages → set `JAVA_TOOL_OPTIONS="-Duser.language=en"`.
 - `DPI-1047` or `libclntsh.dylib` missing → thick Oracle mode cannot locate Instant Client. Check `ORACLE_HOME` points at Instant Client, add it to `PATH`, open a new shell, and confirm with `adtai doctor` or `adtai doctor -offline`.
 - "Schema/environment not configured" → open the connection file named in the error and add the listed choice.
@@ -160,7 +166,7 @@ It writes the project config template, repo ignore rules for generated artifacts
 Verify a fresh install end to end:
 
 ```bash
-python3 -m pip install -e .
+python3 -m pip install adt-ai
 adtai doctor
 ```
 
