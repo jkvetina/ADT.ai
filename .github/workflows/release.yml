@@ -49,11 +49,19 @@ jobs:
       - name: Resolve the release tag and whether this run publishes
         id: resolve
         run: |
+          # The tag goes out as its NAME, never as `refs/tags/<name>`:
+          # `gh release view`/`upload` take a tag name and cannot find a ref,
+          # while `release_supply_chain.py` accepts either spelling. A tag push
+          # is the only trigger that ships a release and `github.ref` is a full
+          # ref there, so the unstripped value was the shape every real release
+          # ran on and the dispatch rehearsal, which passes a bare name, could
+          # never reach.
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
             echo "dry-run=${{ inputs.dry_run }}" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=${{ github.ref }}" >> "$GITHUB_OUTPUT"
+            ref="${{ github.ref }}"
+            echo "tag=${ref#refs/tags/}" >> "$GITHUB_OUTPUT"
             echo "dry-run=false" >> "$GITHUB_OUTPUT"
           fi
       # Build tooling is pinned; the runtime dependency floors in
