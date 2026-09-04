@@ -50,6 +50,28 @@ def _cached_gateway_factory(gateway_factory: GatewayFactory) -> GatewayFactory:
 
     return for_schema
 
+# What `file_empty_lines` means when a project does not set it: one blank line
+# closing every exported file, which is the shape a slash-terminated object has
+# always been written with, so an existing export does not move on the run that
+# first reads the key (`#687`).
+DEFAULT_EMPTY_LINES = 1
+
+def _configured_empty_lines(config: dict[str, Any]) -> int:
+    """How many blank lines close each file `export_db` writes.
+
+    Unreadable input takes the default rather than raising: this decides the
+    shape of a file, never whether the export can run, and a typo in one key is
+    not a reason to refuse an export the connection is otherwise ready for. A
+    negative count means the same thing as `0`, there being no such file.
+    """
+    configured = config.get("file_empty_lines")
+    if configured is None or isinstance(configured, bool):
+        return DEFAULT_EMPTY_LINES
+    try:
+        return max(0, int(str(configured).strip()))
+    except (TypeError, ValueError):
+        return DEFAULT_EMPTY_LINES
+
 def _configured_object_types(config: dict[str, Any]) -> list[str]:
     raw_types = config.get("object_types", {})
     if not isinstance(raw_types, dict):

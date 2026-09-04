@@ -26,7 +26,7 @@ def normalize_sequence(lines: list[str], context: NormalizationContext) -> list[
     line = line.replace(" MINVALUE", "\n    MINVALUE")
     line = re.sub(r"\s+;", ";", line)
     return [
-        f"-- DROP SEQUENCE {qualified(context.object_name.lower(), context)};",
+        f"-- DROP SEQUENCE {qualified(context.display_name, context)};",
         line,
         "/",
         "",

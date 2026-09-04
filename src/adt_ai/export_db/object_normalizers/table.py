@@ -20,7 +20,7 @@ from adt_ai.export_db.object_normalizers.table_suffix import _format_table_suffi
 
 def normalize_table(lines: list[str], context: NormalizationContext) -> list[str]:
     payload = "\n".join(_normalize_definition_line_only(lines, context))
-    table_name = qualified(context.object_name.lower(), context)
+    table_name = qualified(context.display_name, context)
     is_global_temporary = bool(
         re.search(r"CREATE\s+GLOBAL\s+TEMPORARY\s+TABLE\b", payload, flags=re.IGNORECASE)
     )
@@ -64,12 +64,17 @@ def normalize_table(lines: list[str], context: NormalizationContext) -> list[str
     return result
 
 
-def build_table_fix_sql(payload: str, object_name: str) -> str | None:
+def build_table_fix_sql(
+    payload: str,
+    object_name: str,
+    object_display_name: str | None = None,
+) -> str | None:
     normalized_payload = payload.replace("\t", "    ").strip()
     context = NormalizationContext(
-        object_type  = "TABLE",
-        object_name  = object_name,
-        object_owner = _extract_definition_owner(normalized_payload, "TABLE"),
+        object_type         = "TABLE",
+        object_name         = object_name,
+        object_owner        = _extract_definition_owner(normalized_payload, "TABLE"),
+        object_display_name = object_display_name,
     )
     open_index = normalized_payload.find("(")
     if open_index < 0:
@@ -90,7 +95,7 @@ def build_table_fix_sql(payload: str, object_name: str) -> str | None:
             fold.constraint_name.casefold(),
         ),
     )
-    table = object_name.lower()
+    table = context.display_name
     blocks = [
         "\n".join(
             [

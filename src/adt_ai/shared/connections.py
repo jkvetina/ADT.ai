@@ -121,7 +121,17 @@ class ConnectionResult:
         environment_name = environment or self.default_environment
         environment_data = self._environment(environment_name)
         default_key = "schema_apex" if kind == "apex" else "schema_db"
-        schema = environment_data.get("defaults", {}).get(default_key)
+        defaults = environment_data.get("defaults", {})
+        schema = defaults.get(default_key)
+        # An APEX application is parsed and owned BY a database schema, and on
+        # most projects it is the same one, so a file that names `schema_db` has
+        # already answered the APEX question too (`#685`). Reading it here rather
+        # than at each call site means one rule for `export_apex`, `patch`,
+        # `dependencies` and `flow` alike. There is no inverse: nothing stands in
+        # for `schema_db`, because `schema_apex` names the workspace's parsing
+        # schema only when a project deliberately splits the two.
+        if not schema and kind == "apex":
+            schema = defaults.get("schema_db")
         if not schema:
             raise ConnectionNotFoundError(
                 "\n".join(

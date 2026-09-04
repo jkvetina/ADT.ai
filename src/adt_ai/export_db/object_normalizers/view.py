@@ -9,6 +9,10 @@ from adt_ai.export_db.normalizers import (
     _trim_trailing_blank_lines,
     sql_spans,
 )
+from adt_ai.export_db.object_normalizers.view_columns import (
+    COLUMN_LIST_RE,
+    column_block,
+)
 
 
 def normalize_view(lines: list[str], context: NormalizationContext) -> list[str]:
@@ -22,21 +26,43 @@ def _normalize_view_lines(
     context: NormalizationContext,
 ) -> list[str]:
     if context.object_type == "VIEW" and len(lines) > 1:
-        lines[0] = _normalize_view_definition_line(lines[0])
+        header = _normalize_view_definition_line(lines[0], context)
+        # The select-list reflow reads and rewrites `lines[0]`, so it runs
+        # against the line carrying the trailing keyword and the kept block is
+        # spliced in front of the result rather than around it.
+        lines[0] = header[-1]
         lines[1] = lines[1].lstrip()
         lines = _expand_simple_view_select(lines)
+        lines = [*header[:-1], *lines]
     return lines
 
-def _normalize_view_definition_line(line: str) -> str:
+def _normalize_view_definition_line(
+    line: str,
+    context: NormalizationContext,
+) -> list[str]:
+    """The definition line, as one line or as a kept column list's block.
+
+    Returns a list whose LAST entry is always the line carrying the trailing
+    `AS` / `BEQUEATH`; everything before it is the `(` opener and the columns.
+    """
     line = re.sub(
         r"\s+DEFAULT\s+COLLATION\s+\S+",
         "",
         line,
         flags=re.IGNORECASE,
     )
-    line = re.sub(r"\s*\([^)]+\)\s*AS\b", " AS", line, count=1, flags=re.IGNORECASE)
-    line = re.sub(r"\s*\([^)]+\)\s*BEQUEATH\b", " BEQUEATH", line, count=1, flags=re.IGNORECASE)
-    return re.sub(r" {2,}", " ", line).rstrip()
+    match = COLUMN_LIST_RE.search(line)
+    if match is None:
+        return [re.sub(r" {2,}", " ", line).rstrip()]
+
+    head = _collapse(line[: match.start()])
+    tail = _collapse(line[match.end() :])
+    if not context.keep_view_column_names:
+        return [f"{head} {tail}".rstrip()]
+    return [f"{head} (", *column_block(match.group(1)), f") {tail}".rstrip()]
+
+def _collapse(payload: str) -> str:
+    return re.sub(r" {2,}", " ", payload).strip()
 
 def _expand_simple_view_select(lines: list[str]) -> list[str]:
     if len(lines) < 2:

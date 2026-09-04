@@ -95,6 +95,8 @@ AND object_name NOT LIKE 'SYS\\_%' ESCAPE '\\'
 AND object_name NOT LIKE 'ISEQ$$_%'
 AND object_name NOT LIKE 'ST%='
 AND object_name NOT LIKE 'BIN$%'
+AND object_name NOT LIKE 'MLOG$%'
+AND NOT (object_type = 'TABLE' AND object_name IN (SELECT mview_name FROM user_mviews))
 AND NOT REGEXP_LIKE(object_name, '^DEPSCAN\\$[[:digit:]]+#[[:digit:]]+$')
 ORDER BY object_type, object_name
 """.strip()
@@ -113,6 +115,8 @@ AND object_name NOT LIKE 'SYS\\_%' ESCAPE '\\'
 AND object_name NOT LIKE 'ISEQ$$_%'
 AND object_name NOT LIKE 'ST%='
 AND object_name NOT LIKE 'BIN$%'
+AND object_name NOT LIKE 'MLOG$%'
+AND NOT (object_type = 'TABLE' AND object_name IN (SELECT mview_name FROM user_mviews))
 AND NOT REGEXP_LIKE(object_name, '^DEPSCAN\\$[[:digit:]]+#[[:digit:]]+$')
 ORDER BY object_type, object_name
 """.strip()
@@ -152,6 +156,12 @@ AND (
 )
 AND t.index_name NOT LIKE 'BIN$%'
 AND t.index_name NOT LIKE 'SYS%$$'
+-- The index Oracle builds for a materialized view log or an mview container.
+-- `generated` is 'N' on both, because a user statement did create them, just
+-- not one naming an index, so the filter below never reaches them and the
+-- export wrote two files nothing in the repository can install.
+AND t.index_name NOT LIKE 'I\\_MLOG$%' ESCAPE '\\'
+AND t.index_name NOT LIKE 'I\\_SNAP$%' ESCAPE '\\'
 AND t.generated = 'N'
 AND t.constraint_index = 'NO'
 AND c.constraint_name IS NULL

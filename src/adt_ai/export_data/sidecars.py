@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -142,10 +144,67 @@ def _sidecar_payload(value: Any, column: DataColumn) -> str | bytes | None:
             return bytes(value)
         return str(value).encode("utf-8")
     if data_type == "JSON" and not isinstance(value, str):
-        return json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+        return json.dumps(_json_ready(value), ensure_ascii=False, indent=2) + "\n"
     if isinstance(value, bytes | bytearray | memoryview):
         return bytes(value).decode("utf-8")
     return str(value)
+
+
+def _json_ready(value: Any) -> Any:
+    """Oracle's JSON scalars, rendered as JSON ones or not at all (`#674`).
+
+    Oracle's JSON type stores more than JSON's own six types, and
+    python-oracledb hands each one back as the Python object it really is, so
+    `json.dumps` meets values it has no encoder for and raises. Every one of
+    these crashed a whole `export_data` run against a real APEX schema, one
+    after another, with no file written and no table named:
+
+    * a **number** arrives as `Decimal`, because ADT asks for `fetch_decimals`,
+      and 166 of the gallery schema's 384 tables carry a JSON or timestamp
+      column. An integer goes out as `int`, exact at any size. A fraction has to
+      become a `float`, the only unquoted number `json.dumps` writes, and that
+      is lossy past a double's digits, so it is **verified rather than
+      assumed**: a value that does not survive the round trip raises instead of
+      writing a number that is quietly not the one in the database. Same stance
+      as `_ExactNumber` in the runner, which keeps a NUMBER's digits in the CSV
+      rather than letting `str()` shorten them;
+    * **binary** arrives as `bytes` and is hex-encoded, the convention this
+      module's CSV half already uses for RAW so `HEXTORAW` reads it back;
+    * a **date, timestamp or interval** is written in ISO 8601, which is what
+      Oracle's own JSON reader accepts back.
+
+    Anything else raises and names its type. A silent `str()` fallback here
+    would turn an unknown scalar into a quoted string that reloads as different
+    data, which is the one outcome worse than the crash this replaces.
+    """
+    if isinstance(value, bool):
+        # Before the Decimal test: a bool is an int in Python and JSON has its
+        # own literal for it.
+        return value
+    if isinstance(value, Decimal):
+        if value == value.to_integral_value():
+            return int(value)
+        rendered = float(value)
+        if Decimal(repr(rendered)) != value:
+            raise ValueError(
+                f"JSON number {value!r} cannot be written without losing digits"
+            )
+        return rendered
+    if isinstance(value, bytes | bytearray | memoryview):
+        return bytes(value).hex().upper()
+    if isinstance(value, datetime | date | time):
+        return value.isoformat()
+    if isinstance(value, timedelta):
+        return str(value)
+    if isinstance(value, dict):
+        return {key: _json_ready(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_json_ready(item) for item in value]
+    if value is None or isinstance(value, str | int | float):
+        return value
+    raise ValueError(
+        f"a JSON column holds a {type(value).__name__} this export cannot render"
+    )
 
 
 def _read_lob_value(value: Any) -> Any:
