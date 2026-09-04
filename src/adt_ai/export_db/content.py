@@ -12,6 +12,23 @@ if TYPE_CHECKING:
     from adt_ai.export_db.runner import ExportDbRequest
 
 
+def close_with_empty_lines(content: str, empty_lines: int) -> str:
+    """End `content` with exactly `empty_lines` blank lines before end of file.
+
+    The one place the tail of an exported file is decided, so every object type
+    converges on the same shape whatever its normalizer left behind: a
+    slash-terminated object arrived here carrying one blank line, a TABLE none,
+    and an object that had `COMMENT ON` lines appended one again (`#687`).
+
+    Idempotent by construction, which is what lets a re-export of unchanged
+    content still read as `unchanged` on disk.
+    """
+    body = content.rstrip("\n")
+    if not body:
+        # A file with no body is not a file of newlines.
+        return ""
+    return body + "\n" * (empty_lines + 1)
+
 def _has_comments(object_type: str, config: dict[str, Any]) -> bool:
     return object_type.upper() in _configured_comment_types(
         config,
@@ -64,13 +81,21 @@ def _append_comments(
     comments: list[dict[str, Any]],
     include_columns: bool,
     ignored_columns: set[str] | None = None,
+    object_display_name: str | None = None,
 ) -> str:
+    # These lines are appended into the object's OWN file, so they follow that
+    # file's spelling exactly as the definition line does (`#679`). Recasing one
+    # and not the other is what leaves a half-recased file behind.
     ignored_columns = ignored_columns or set()
     object_lines = [
         line
         for comment in comments
         if not comment.get("COLUMN_NAME")
-        if (line := _render_comment(database_object, comment, include_columns, None))
+        if (
+            line := _render_comment(
+                database_object, comment, include_columns, None, object_display_name
+            )
+        )
     ]
     column_comments = [
         comment
@@ -78,11 +103,17 @@ def _append_comments(
         if comment.get("COLUMN_NAME")
         if str(comment.get("COLUMN_NAME")).upper() not in ignored_columns
     ]
-    column_width = _column_comment_width(database_object, column_comments)
+    column_width = _column_comment_width(
+        database_object, column_comments, object_display_name
+    )
     column_lines = [
         line
         for comment in column_comments
-        if (line := _render_comment(database_object, comment, include_columns, column_width))
+        if (
+            line := _render_comment(
+                database_object, comment, include_columns, column_width, object_display_name
+            )
+        )
     ]
     if not object_lines and not column_lines:
         return content
@@ -98,8 +129,11 @@ def _render_comment(
     comment: dict[str, Any],
     include_columns: bool,
     column_width: int | None,
+    object_display_name: str | None = None,
 ) -> str | None:
-    object_name = database_object.name.lower()
+    # Only the object-name half follows the file. A column name is not the
+    # file's name and keeps the lowercase the export has always written.
+    object_name = object_display_name or database_object.name.lower()
     column_name = comment.get("COLUMN_NAME")
     raw_text = comment.get("COMMENTS")
     text = "" if raw_text is None else str(raw_text)
@@ -123,9 +157,11 @@ def _escape_sql_text(value: str) -> str:
 def _column_comment_width(
     database_object: DatabaseObject,
     comments: list[dict[str, Any]],
+    object_display_name: str | None = None,
 ) -> int | None:
+    object_name = object_display_name or database_object.name.lower()
     column_names = [
-        f"{database_object.name.lower()}.{str(comment.get('COLUMN_NAME')).lower()}"
+        f"{object_name}.{str(comment.get('COLUMN_NAME')).lower()}"
         for comment in comments
         if comment.get("COLUMN_NAME")
     ]

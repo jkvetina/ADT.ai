@@ -5,11 +5,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from adt_ai.export_db.config import DEFAULT_EMPTY_LINES
+from adt_ai.export_db.content import close_with_empty_lines
 from adt_ai.export_db.groups import GroupRules, group_for, object_name_from_file, owns_file
 from adt_ai.export_db.inventory import DatabaseObject
 from adt_ai.shared import text_files
 from adt_ai.shared.config import DEFAULT_PATH_OBJECTS, reject_unresolved_placeholders
 from adt_ai.shared.git_files import file_payload_hash
+from adt_ai.shared.object_files import object_stem_for_type
 from adt_ai.shared.path_template import (
     object_type_token,
     render_path_template,
@@ -145,6 +148,33 @@ class ObjectFileResolver:
     def fix_path_for(self, database_object: DatabaseObject) -> Path:
         path = self.path_for(database_object)
         return path.with_name(f"{path.stem}.fix{path.suffix}")
+
+    def file_object_name(self, database_object: DatabaseObject) -> str:
+        """The object's name spelled the way its own FILE spells it.
+
+        `path_for` already honours a user's rename (`_existing_case_path`), so
+        this reads that answer back off the resolved path, and every generated
+        spelling of the name INSIDE that file follows it (`#679`). A file that
+        does not exist yet resolves to the lowercase default, which is why a
+        brand-new object still exports lowercase with no special case here.
+
+        Routed through `object_stem_for_type`, never `Path.stem`: the
+        `.spec.sql`/`.sql` pair sharing one folder means `Core_Util.spec.sql`
+        has the stem `Core_Util.spec`, and rendering THAT into the DDL would
+        rename the object. The shared reader strips the type's own extension.
+        """
+        object_type = database_object.object_type.upper()
+        # `path_for` is what rejects an unconfigured object type, so resolving
+        # the path FIRST leaves the layout lookup below unable to miss and this
+        # method with one way to fail rather than two.
+        path = self.path_for(database_object)
+        layout = self.object_types[object_type]
+        stem = object_stem_for_type(
+            path.name,
+            object_type,
+            {object_type: (layout.folder, layout.extension)},
+        )
+        return stem or database_object.name.lower()
 
     def missing_objects(
         self,
@@ -349,8 +379,26 @@ class ObjectFileResolver:
 
 
 class ObjectFileWriter:
-    def __init__(self, resolver: ObjectFileResolver) -> None:
+    """Writes an object's file, and owns the one decision about how it ends.
+
+    `empty_lines` is the `file_empty_lines` config key (`#687`). It is applied
+    HERE rather than in the content pipeline because three methods have to agree
+    on the same bytes (the write, the `-baseline` hash, and the
+    `differs_from_disk` comparison the `GRANT` overview row reads), and because
+    every file this class writes then closes the same way, object file, table
+    `.fix` sidecar and grants file alike.
+    """
+
+    def __init__(
+        self,
+        resolver: ObjectFileResolver,
+        empty_lines: int = DEFAULT_EMPTY_LINES,
+    ) -> None:
         self.resolver = resolver
+        self.empty_lines = empty_lines
+
+    def _closed(self, content: str) -> str:
+        return close_with_empty_lines(content, self.empty_lines)
 
     def write(self, requests: list[ObjectWriteRequest]) -> list[ObjectWritePlan]:
         return [self.write_one(request) for request in requests]
@@ -368,7 +416,7 @@ class ObjectFileWriter:
             path = under_root(self.resolver.root, path, role="database object path")
         except UnsafePathError as error:
             raise ObjectFileError(str(error)) from error
-        return not text_files.text_matches(path, request.content)
+        return not text_files.text_matches(path, self._closed(request.content))
 
     def write_one(self, request: ObjectWriteRequest) -> ObjectWritePlan:
         """Write the object's file, unless the file already holds these bytes.
@@ -386,7 +434,7 @@ class ObjectFileWriter:
             raise ObjectFileError(str(error)) from error
         existed = path.exists()
         path.parent.mkdir(parents=True, exist_ok=True)
-        written = text_files.write_text(path, request.content)
+        written = text_files.write_text(path, self._closed(request.content))
         action: Literal["create", "update", "unchanged"] = (
             ("update" if existed else "create") if written else "unchanged"
         )
@@ -417,7 +465,9 @@ class ObjectFileWriter:
             object       = request.object,
             path         = path,
             action       = "hashed",
-            content_hash = file_payload_hash(text_files.rendered_bytes(request.content)),
+            content_hash = file_payload_hash(
+                text_files.rendered_bytes(self._closed(request.content))
+            ),
         )
 
 

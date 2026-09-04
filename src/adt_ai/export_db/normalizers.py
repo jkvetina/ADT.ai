@@ -3,38 +3,16 @@ from __future__ import annotations
 import importlib.util
 import re
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 
 from adt_ai.export_db.normalizer_clauses import owner_qualifier_stripper
 
-
-@dataclass(frozen=True)
-class NormalizationContext:
-    object_type      : str
-    object_name      : str
-    object_owner     : str | None = None
-    add_if_not_exists: bool = True
-    keep_owner       : bool = False
-
-Normalizer = Callable[[list[str], NormalizationContext], list[str]]
-
-def qualified(name: str, context: NormalizationContext) -> str:
-    """`name` with the object's owner in front, when `keep_owner` is set.
-
-    Every normalizer that builds its own `CREATE` or `DROP` line rather than
-    editing the one the dictionary returned goes through this, because those
-    lines are assembled from `context.object_name` and would otherwise be the
-    only unqualified statements in an otherwise qualified repository.
-
-    The owner follows the case of `name`, so a lower-cased `CREATE` line and an
-    upper-cased `DROP` stay internally consistent.
-    """
-    if not (context.keep_owner and context.object_owner):
-        return name
-    owner = context.object_owner
-    return f"{owner.upper() if name.isupper() else owner.lower()}.{name}"
+# Moved to their own module when `#679` took this file past the 20 KB context
+# cap; re-exported so every object normalizer keeps importing them from here.
+from adt_ai.export_db.normalizer_context import NormalizationContext as NormalizationContext
+from adt_ai.export_db.normalizer_context import Normalizer as Normalizer
+from adt_ai.export_db.normalizer_context import qualified as qualified
 
 BODY_PRESERVING_OBJECT_TYPES = {
     "FUNCTION",
@@ -113,16 +91,20 @@ def normalize_ddl(
     registry: NormalizerRegistry | None = None,
     add_if_not_exists: bool = True,
     keep_owner: bool = False,
+    keep_view_column_names: bool = False,
+    object_display_name: str | None = None,
 ) -> str:
     registry = registry or NormalizerRegistry.builtin()
     normalized_payload = payload.replace("\t", "    ").strip()
     lines = normalized_payload.splitlines()
     context = NormalizationContext(
-        object_type       = object_type.upper(),
-        object_name       = object_name,
-        object_owner      = _extract_definition_owner(normalized_payload, object_type),
-        add_if_not_exists = add_if_not_exists,
-        keep_owner        = keep_owner,
+        object_type         = object_type.upper(),
+        object_name         = object_name,
+        object_owner        = _extract_definition_owner(normalized_payload, object_type),
+        add_if_not_exists   = add_if_not_exists,
+        keep_owner          = keep_owner,
+        keep_view_column_names = keep_view_column_names,
+        object_display_name = object_display_name,
     )
     normalizer = registry.get(object_type)
     if normalizer is not None and context.object_type in RAW_NORMALIZER_OBJECT_TYPES:
@@ -210,13 +192,12 @@ def _normalize_common(
         payload,
         flags=re.IGNORECASE,
     )
-    payload = re.sub(
-        r"(CREATE\s+OR\s+REPLACE(?:\s+FORCE)?\s+VIEW\s+\S+)\s+\([^)]+\)\s+AS",
-        r"\1 AS",
-        payload,
-        count=1,
-        flags=re.IGNORECASE,
-    )
+    # A third spelling of the view column-list strip used to sit here (`#680`).
+    # It could never fire: `VIEW` is a body-preserving type, so it returns above
+    # without reaching this branch, and no other type carries a `CREATE OR
+    # REPLACE FORCE VIEW` header for the pattern to match. Removing it leaves
+    # `object_normalizers/view_columns.py` as the one reader, which is what lets
+    # `keep_view_column_names` be honoured in one place rather than three.
     lines = [line.rstrip() for line in payload.rstrip().splitlines()]
     lines = _split_spec_from_body(lines, context)
     lines = _trim_trailing_blank_lines(lines)
@@ -256,7 +237,11 @@ def _normalize_definition_line(line: str, context: NormalizationContext) -> str:
     if not match:
         return line
 
-    name = _normalize_definition_name(match.group("name"), keep_owner=context.keep_owner)
+    name = _normalize_definition_name(
+        match.group("name"),
+        keep_owner   = context.keep_owner,
+        display_name = context.display_name,
+    )
     return f"{line[:match.start('name')]}{name}{line[match.end('name'):]}"
 
 def _extract_definition_owner(payload: str, object_type: str) -> str | None:
@@ -288,9 +273,22 @@ def _split_definition_name(name: str) -> tuple[str | None, str]:
         return None, name.strip()
     return match.group("owner"), match.group("object")
 
-def _normalize_definition_name(name: str, keep_owner: bool = False) -> str:
+def _normalize_definition_name(
+    name: str,
+    keep_owner: bool = False,
+    display_name: str | None = None,
+) -> str:
     owner, object_name = _split_definition_name(name)
     normalized = _normalize_definition_name_part(object_name)
+    # The OBJECT half follows the file; the owner never does. An owner is a
+    # schema, not this file's name, and `keep_owner` exports are qualified
+    # against the dictionary rather than against the working tree.
+    #
+    # The equality test is what keeps this a re-SPELLING and never a rename:
+    # a quoted mixed-case identifier comes back from the part normalizer with
+    # its quotes intact, matches nothing, and is left exactly as it was.
+    if display_name and normalized.casefold() == display_name.casefold():
+        normalized = display_name
     if keep_owner and owner is not None:
         return f"{_normalize_definition_name_part(owner)}.{normalized}"
     return normalized
@@ -401,7 +399,7 @@ def _replace_outside_sql_strings(
         for kind, start, end in sql_spans(payload)
     )
 
-def _drop_create_wrap(lines: list[str], drop_statement: str) -> list[str]:
+def _drop_create_wrap(lines: list[str], drop_statement: str, slash: bool = True) -> list[str]:
     """Prefix a CREATE block with the old-ADT EXEC_DDL drop-before-create guard.
 
     Objects that cannot be replaced in place (types, materialized views and
@@ -420,7 +418,7 @@ def _drop_create_wrap(lines: list[str], drop_statement: str) -> list[str]:
         "END;",
         "/",
         "--",
-        *_ensure_sql_terminator(lines),
+        *(_ensure_sql_terminator(lines) if slash else _ensure_statement_semicolon(lines) + [""]),
     ]
 
 def _ensure_sql_terminator(lines: list[str]) -> list[str]:
@@ -524,9 +522,13 @@ def _identifier_key(identifier: str) -> str:
     return identifier.strip().strip('"').upper()
 
 
-def build_table_fix_sql(payload: str, object_name: str) -> str | None:
+def build_table_fix_sql(
+    payload: str,
+    object_name: str,
+    object_display_name: str | None = None,
+) -> str | None:
     from adt_ai.export_db.object_normalizers.table import (
         build_table_fix_sql as _build_table_fix_sql,
     )
 
-    return _build_table_fix_sql(payload, object_name)
+    return _build_table_fix_sql(payload, object_name, object_display_name)

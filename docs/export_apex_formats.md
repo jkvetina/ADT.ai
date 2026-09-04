@@ -35,6 +35,8 @@ The sweep runs against what the export actually wrote rather than clearing the f
 
 Version handling reads the one APEX version the connection block already printed. `-apexlang` on an older instance is skipped and the run continues, so `-all` never fails on a pre-26.1 environment. The skip is announced only when you named the format yourself, and is silent under `-all`.
 
+**APEX 24.1 is the oldest release the export blocks compile on.** Its `APEX_EXPORT.GET_APPLICATION` takes 15 formal parameters; 24.2 added a 16th, `p_with_runtime_instances`. ADT.ai names none of the parameters it does not use, so the same block compiles on 24.1 and on every release after it, and an instance whose version could not be read is not guessed about. A parameter added to a future release is opted into deliberately, behind the version the connection block prints, rather than passed as a default nobody reads.
+
 ## APEXlang is a whole-app format
 
 `-apexlang` writes the folder tree beside `readable/` and `embedded_code/`: `application.apx`, `pages/`, `shared-components/`, `workspace-components/`, and the deployment and project metadata. Members land verbatim, since `.apx` is compiler input, so none of the SQL-export postprocessing applies.

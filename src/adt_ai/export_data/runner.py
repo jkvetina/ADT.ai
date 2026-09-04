@@ -12,6 +12,7 @@ from adt_ai.export_data import queries
 from adt_ai.export_data.groups import GroupRules, group_for, resolve_data_group_rules
 from adt_ai.export_data.inventory import DataColumn, DataDiscovery, DataTable
 from adt_ai.export_data.lob_update_scripts import include_update_scripts
+from adt_ai.export_data.merge_config import merge_config
 from adt_ai.export_data.sidecars import (  # noqa: F401  (re-exported for existing importers)
     SIDE_CAR_DATA_TYPES,
     _is_sidecar_column,
@@ -539,15 +540,11 @@ def _csv_select_batches(
     return columns, batches
 
 
-def _merge_config(config: dict[str, Any], table_name: str) -> dict[str, Any]:
-    config_merged: dict[str, Any] = {}
-    tables_global = config.get("tables_global", {})
-    if isinstance(tables_global, dict) and isinstance(tables_global.get("merge"), dict):
-        config_merged.update(tables_global["merge"])
-    table_config = _table_config(config, table_name)
-    if isinstance(table_config.get("merge"), dict):
-        config_merged.update(table_config["merge"])
-    return config_merged
+# One resolver with its own validation, lifted out of this module by `#684`
+# to keep it under the repository's context-size cap. Re-exported under the
+# old private name so no call site moved.
+_merge_config = merge_config
+
 
 
 def _table_config(config: dict[str, Any], table_name: str) -> dict[str, Any]:

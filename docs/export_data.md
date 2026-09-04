@@ -139,7 +139,7 @@ A per-table block replaces the global value for that table rather than adding to
 
 A `where` filter also stops the run from deleting sidecar files. A normal run removes the sidecars of rows that are no longer in the table, but under a filter it cannot tell a deleted row from one the filter simply did not select, so it leaves every existing sidecar in place.
 
-Which sections the generated MERGE carries is configured the same way, globally and per table:
+Which sections the generated MERGE carries is configured the same way, globally and per table. The global default is `tables_global.merge`; the per-table overrides live in their own top-level `merge_tables` map, keyed by table name:
 
 ```yaml
 tables_global:
@@ -147,13 +147,30 @@ tables_global:
     delete: false
     insert: true
     update: true
-tables:
+merge_tables:
   APP_SETTINGS:
-    merge:
-      delete: true
-      insert: false
-      update: false
+    delete: true
+    insert: false
+    update: false
+  AUDIT_LOG:
+    delete: true
 ```
+
+Each flag replaces the global one for that table, so `AUDIT_LOG` above deletes before merging and keeps the global INSERT and UPDATE. A table named in neither block generates what `export_data` has always generated: no DELETE, both halves of the MERGE.
+
+The three flags cover every mode a MERGE file can be in, the delete-and-insert reload and the insert-only append included:
+
+| `delete` | `insert` | `update` | The file does |
+| -------- | -------- | -------- | ------------- |
+| `false` | `true` | `true` | Insert new rows, update existing ones. The default |
+| `false` | `true` | `false` | Insert new rows only, never touch an existing one |
+| `false` | `false` | `true` | Update existing rows only, never add one |
+| `true` | `true` | `false` | Delete every row, then reload the file |
+| `true` | `true` | `true` | Delete every row, reload, and update anything the delete left |
+
+A section that is switched off is still written into the file, commented out with `--`, so the shape stays readable and a one-off run can switch it back on by hand. A `where` filter is commented out along with the DELETE it narrows.
+
+An unknown flag name, or a value that is neither `true` nor `false`, stops the run with `CONFIGURATION INVALID` rather than being read as a default. A `merge` block left under `tables:` from an earlier version stops the run the same way and names the table to move.
 
 The `export:` block in the connection file applies here too, so a pattern in `ignore:` keeps a table out of `export_data` and [`export_db`](export_db.md#permanently-excluding-objects) alike.
 

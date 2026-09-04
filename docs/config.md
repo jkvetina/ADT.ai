@@ -30,6 +30,20 @@ Wallets are searched in the ADT.ai `connections/wallets/` folder first, then in 
 
 A command naming an environment or schema that is not configured shows the loaded connection file to edit, then the environments or schemas that do exist, as a sorted indented list.
 
+An environment's `defaults:` block names the schema a command reaches when none was asked for. `schema_db` is the database one, and `schema_apex` the schema an APEX workspace parses through:
+
+```yaml
+DEV:
+  defaults:
+    schema_db: COMM_BASE
+  schemas:
+    COMM_BASE:
+      db:
+        user: COMM_BASE
+```
+
+**`schema_apex` is optional and falls back to `schema_db`**, because on most projects the APEX applications are owned by the database schema the rest of the export already connects as. Set it only where the two genuinely differ. `schema_db` has no such fallback: nothing else in the file names it.
+
 For how a stored password is protected and what to configure when storing one is unacceptable to a security review, see [connection_security.md](connection_security.md), which is written to be handed to a reviewer rather than to a developer.
 
 ## Developer identity
@@ -87,6 +101,40 @@ Turn it `true` where the deploying user is not the owner and installs into sever
 
 Flipping the key rewrites the definition line of every object on the next export, so it is a one-time whole-repository change rather than a per-object choice. Directories are the one object type that carried the owner before this key existed and now follow it like everything else.
 
+## Declared column lists on views
+
+Oracle lets a view or materialized view name its columns in the declaration, and `DBMS_METADATA` always emits that list whether or not it says anything the query below does not:
+
+```sql
+CREATE OR REPLACE FORCE VIEW workflow_events ("EVENT_CODE", "VERSION") AS
+  select "EVENT_CODE","VERSION" from xworkflow_events
+```
+
+The export **drops the list by default**, so the query is the one place each column is named:
+
+```yaml
+keep_view_column_names  : False
+```
+
+Under `true` the list is kept instead, laid out the same way the select list below it is, so one column per line, lowercased and unquoted where Oracle resolves the name identically either way:
+
+```sql
+CREATE OR REPLACE FORCE VIEW workflow_events (
+    event_code,
+    version
+) AS
+select
+    event_code,
+    version
+from xworkflow_events;
+```
+
+Leave it `false` where the declaration only repeats the query, which is the common case. Two places naming the same column is two places to keep in step, and Oracle takes the declaration's name when they disagree.
+
+Turn it `true` where the declaration is part of what the repository is expected to carry: a file reviewed against a hand-maintained original, or a view whose declared names deliberately differ from the expressions behind them.
+
+The key covers `VIEW` and `MATERIALIZED VIEW` together. It changes only the header, and the select list is reflowed the same way under either setting.
+
 ## Line endings
 
 Every generated text file, exported DDL, CSVs, merge scripts, patch files, logs and caches, is written with **LF line endings on every platform** by default, so one export produces identical bytes on macOS, Linux and Windows and never shows a whole-file line-ending change. Set `file_crlf` to write CRLF everywhere instead, typically to match a CRLF working tree:
@@ -100,6 +148,20 @@ The setting is a **normalization rather than an addition**. Whatever the databas
 That matters because Oracle returns stored source verbatim. An object ever compiled from a Windows client carries CRLF inside the dictionary, and such objects would otherwise keep it under `false` and grow a second carriage return under `true`.
 
 Two deliberate details. Raw LOB sidecar files are never translated, mirroring the stored value byte for byte whatever the key says. And flipping the key rewrites nothing that has not changed, because the exporter compares content ignoring line endings, so existing files adopt the new ending on their next real change.
+
+## How a file ends
+
+`file_empty_lines` decides how many blank lines close every file `export_db` writes, counted after the last line of content, which is the `/` terminator where the object type uses one:
+
+```yaml
+file_empty_lines        : 1
+```
+
+The default `1` is the shape a slash-terminated object has always been written with, so an export that has not otherwise changed does not move on the run that first reads the key. Set it to `0` to close files flush on their last line, or to a larger number to pad by that many.
+
+It applies to every object type alike. That is a change as well as a setting: before the key existed a table ended flush on its `);` while a package ended on a blank line after its `/`, and the two now agree.
+
+The count is part of the content the exporter compares, so a run that changes nothing else still reports `unchanged`, and changing the key rewrites every object file once.
 
 ## How a list of files reads
 

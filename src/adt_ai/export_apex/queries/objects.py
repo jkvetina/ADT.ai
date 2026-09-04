@@ -171,6 +171,19 @@ BEGIN
 END;
 """.strip()
 
+# The oldest release these blocks compile on is APEX 24.1, and its
+# `APEX_EXPORT.GET_APPLICATION` takes 15 formal parameters. 24.2 added a 16th,
+# `p_with_runtime_instances`, which the two blocks below used to pass as `NULL`
+# (the value that is already its default wherever it exists), so on 24.1 they
+# raised `PLS-00306: wrong number or types of arguments in call to
+# 'GET_APPLICATION'` and the export died before reading a row (`#686`).
+#
+# Not naming it is therefore the whole fix, and it needs no version switch: the
+# call is identical in effect on 24.2 and later, and it is also the right answer
+# on an instance whose version probe came back empty, where a switch would have
+# had to guess. `tests/export_apex/test_export_query_signature.py` pins the
+# parameter set to the 24.1 signature so a later addition cannot silently take
+# that floor away again.
 EXPORT_FULL_QUERY = """
 DECLARE
     l_files apex_t_export_files;
@@ -187,8 +200,7 @@ BEGIN
         p_with_no_subscriptions     => (:with_no_subscriptions = 'Y'),
         p_with_comments             => (:with_comments = 'Y'),
         p_with_acl_assignments      => (:with_acl_assignments = 'Y'),
-        p_with_audit_info           => :with_audit_info,
-        p_with_runtime_instances    => NULL
+        p_with_audit_info           => :with_audit_info
     );
     APEX_COLLECTION.CREATE_COLLECTION (
         p_collection_name       => 'ADT_APEX_EXPORT',
@@ -222,8 +234,7 @@ BEGIN
         p_with_no_subscriptions     => (:with_no_subscriptions = 'Y'),
         p_with_comments             => (:with_comments = 'Y'),
         p_with_acl_assignments      => (:with_acl_assignments = 'Y'),
-        p_with_audit_info           => :with_audit_info,
-        p_with_runtime_instances    => NULL
+        p_with_audit_info           => :with_audit_info
     );
     APEX_COLLECTION.CREATE_COLLECTION (
         p_collection_name       => 'ADT_APEX_EXPORT',

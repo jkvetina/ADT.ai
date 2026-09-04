@@ -9,6 +9,7 @@ from typing import Any
 from adt_ai.export_db.config import (
     _audit_config,
     _cached_gateway_factory,
+    _configured_empty_lines,
     _configured_object_types,
     _has_runtime_filter,
     _requested_object_type_matches,
@@ -93,7 +94,10 @@ class ExportDbRunner:
             config = _with_default_layout(request.config),
         )
         resolver.group_rules = self._resolve_group_rules(request, resolver)
-        writer = ObjectFileWriter(resolver)
+        writer = ObjectFileWriter(
+            resolver,
+            empty_lines = _configured_empty_lines(request.config),
+        )
         # Read by `_contents` under each schema's own overview table, written
         # here once that schema's objects are out. See the call site.
         grant_contents: list[tuple[DatabaseObject, str]] = []
@@ -305,6 +309,9 @@ class ExportDbRunner:
             reports_objects = reporter.reports_objects
             add_if_not_exists = is_enabled(request.config.get("add_if_not_exists", True))
             keep_owner = is_enabled(request.config.get("keep_owner", False))
+            keep_view_column_names = is_enabled(
+                request.config.get("keep_view_column_names", False)
+            )
             for index, database_object in enumerate(database_objects):
                 if reports_objects:
                     # A filename sitting in more than one place under the type
@@ -333,16 +340,24 @@ class ExportDbRunner:
                     reporter.finish_object(failed=failed)
                 if not failed:
                     timer.record(database_object.object_type)
+                # Whatever casing the object's file already carries, resolved
+                # HERE so it is part of the content itself: `-baseline` hashes
+                # this same string and must agree with what a real run writes
+                # (`#452`). Recasing after the write would leave the two modes
+                # measuring different bytes for the same object.
+                display_name = resolver.file_object_name(database_object)
                 content = normalize_ddl(
                     raw_ddl,
-                    object_type       = database_object.object_type,
-                    object_name       = database_object.name,
-                    registry          = self.normalizer_registry,
-                    add_if_not_exists = add_if_not_exists,
-                    keep_owner        = keep_owner,
+                    object_type         = database_object.object_type,
+                    object_name         = database_object.name,
+                    registry            = self.normalizer_registry,
+                    add_if_not_exists   = add_if_not_exists,
+                    keep_owner          = keep_owner,
+                    keep_view_column_names = keep_view_column_names,
+                    object_display_name = display_name,
                 )
                 fix_content = (
-                    build_table_fix_sql(raw_ddl, database_object.name)
+                    build_table_fix_sql(raw_ddl, database_object.name, display_name)
                     if database_object.object_type == "TABLE"
                     else None
                 )
@@ -363,6 +378,7 @@ class ExportDbRunner:
                         request.config,
                     ),
                     ignored_columns = _ignored_comment_columns(request.config),
+                    object_display_name = display_name,
                 )
                 yield database_object, content, fix_content
                 next_object = (
