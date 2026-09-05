@@ -59,7 +59,7 @@ email                   : you@example.com   # your commit email, read by every -
 ```
 
 - **`db_schema` is the database identity.** Every new connection runs `DBMS_SESSION.SET_IDENTIFIER` with it **before** `STARTUP.sql`, so sessions are attributable through `V$SESSION.CLIENT_IDENTIFIER` and audit trails with no hand-written startup block. `export_db -my` narrows the export to the objects it has changed, which works because a project DDL trigger reading that identifier is what writes the `changed_by` the filter matches on.
-- **`email` and `apex_account` are the commit identity.** Every `-my` and `-by` filtering git history reads `email`: [`search_repo`](search_repo.md), [`rebuild`](rebuild.md) and [`calendar`](calendar.md). [`export_apex -my`](export_apex.md) reads both, matching APEX workspace developers on the login as well as on the address.
+- **`email` and `apex_account` are the commit identity.** Every `-my` and `-by` filtering git history reads `email`: [`patch`](patch.md), [`search_repo`](search_repo.md), [`rebuild`](rebuild.md) and [`calendar`](calendar.md). [`export_apex -my`](export_apex.md) reads both, matching APEX workspace developers on the login as well as on the address.
 
 **Git is the fallback, never a second source of truth.** State `email` here and every command uses it. State nothing and each half falls back independently to `git config user.email` and `user.name`, so a checkout with no identity file behaves as it always has, and a file naming only an account keeps the git address rather than losing it.
 
@@ -165,7 +165,7 @@ The count is part of the content the exporter compares, so a run that changes no
 
 ## How a list of files reads
 
-Every section that lists files, on `export_db` and `search_repo` alike, opens on the folder its rows share and gives every directory below it a row of its own, each two spaces further in:
+Every section that lists files, on `patch`, `export_db` and `search_repo` alike, opens on the folder its rows share and gives every directory below it a row of its own, each two spaces further in:
 
 ```text
 PROCESSED FILES: SANDBOX

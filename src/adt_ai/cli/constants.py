@@ -50,6 +50,20 @@ from adt_ai.flow.runner import (
 )
 from adt_ai.flow.store import ApexFlowStore
 
+# `adt_ai.patch.hashes` is NOT re-exported here (ADT #447): its readers are the
+# cli modules hash mode owns, and they import it directly.
+from adt_ai.patch.runner import (
+    COMMIT_HASH_LENGTH,
+    PatchError,
+    PatchRequest,
+    PatchRunner,
+    PatchWorkspace,
+    folder_commit_entries,
+    folder_preview_rows,
+    outstanding_records,
+    preview_rows,
+    preview_rows_from,
+)
 from adt_ai.rebuild.runner import (
     REVEAL_DEFAULT_LIMIT,
     BranchInfo,
@@ -95,6 +109,7 @@ PUBLIC_MODULES = (
     ("export_apex", "export APEX applications", ()),
     ("export_data", "export table data", ()),
     ("export_db", "export database objects", ()),
+    ("patch", "build and preview deployment patches", ()),
     ("rebuild", "rebuild the git commit cache", ()),
     ("recompile", "recompile invalid database objects", ()),
     ("search_repo", "search cached Git commit history", ()),
@@ -156,6 +171,16 @@ REMOVED_COMPATIBILITY_FLAGS = {
     # fetch is the run asking for the newest version of a file. `-head` does it
     # now, so the entry is what makes the old name fail loudly instead of being
     # read as an abbreviation of `-force` on some future Python.
+    "patch": (
+        "-commits", "--commits", "-full", "--full",
+        "-fullapp", "--fullapp",
+        "-refresh", "--refresh", "-ref", "--ref",
+        "-rebuild", "--rebuild",
+        "-window", "--window", "-files", "--files",
+        "-contents", "--contents", "-deldiff", "--deldiff",
+        "-rollout", "--rollout", "-locked", "--locked",
+        "-fetch", "--fetch",
+    ),
     # ADT #345, the same withdrawal on the other command the audit caught.
     # `calendar -list` selected a day-row format the task-centric report had
     # already replaced, so it filled `CalendarRequest.list_mode` and changed
@@ -245,6 +270,7 @@ __all__ = [
     "ApexOwnerResolutionError",
     "ApexWorkspace",
     "BranchInfo",
+    "COMMIT_HASH_LENGTH",
     "CalendarError",
     "CalendarRequest",
     "CalendarRunner",
@@ -285,6 +311,10 @@ __all__ = [
     "PLSCOPE_SESSION_STATEMENT",
     "PUBLIC_COMMANDS",
     "PUBLIC_MODULES",
+    "PatchError",
+    "PatchRequest",
+    "PatchRunner",
+    "PatchWorkspace",
     "Path",
     "QueryGateway",
     "REMOVED_COMPATIBILITY_FLAGS",
@@ -313,7 +343,12 @@ __all__ = [
     "dataclass",
     "date",
     "datetime",
+    "folder_commit_entries",
+    "folder_preview_rows",
     "format_action_line",
+    "outstanding_records",
+    "preview_rows",
+    "preview_rows_from",
     "print_adt_header",
     "print_adt_table",
     "print_module_banner",

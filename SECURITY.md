@@ -6,7 +6,7 @@ ADT.ai connects to Oracle databases, reads credentials and wallets from disk, an
 
 | Version | Supported |
 | --- | --- |
-| 0.9.x | Yes |
+| 1.0.x | Yes |
 | Older | No |
 
 One release line is supported: the latest published one. Fixes land in a new release rather than as a patch to an older tag, because there is no separate maintenance branch to put one on.
@@ -46,6 +46,22 @@ Out of scope:
 - vulnerabilities in Oracle Database, APEX or SQLcl themselves; report those to Oracle,
 - misconfiguration of a database, a wallet or a network that ADT.ai merely connects through,
 - findings that require an attacker to already control the machine running the tool.
+
+## What is scanned, and how often
+
+Three specialist scanners run against `src` and `tests` on a daily schedule, out of `.github/workflows/ci-matrix.yml`:
+
+| Scanner | What it looks at |
+| --- | --- |
+| Bandit | Python source, for the patterns a security review would grep for |
+| Semgrep | The `p/python`, `p/security-audit` and `p/secrets` rule packs |
+| pip-audit | Published advisories against the dependencies in `requirements.txt` |
+
+They run daily rather than per pull request on purpose. Two of the three answer a question a code change does not move: pip-audit compares an unchanged dependency set against an advisory database that updates every day, and Semgrep fetches its rule packs over the network. A gate that only fires when somebody edits a file would never find a vulnerability published against code nobody touched.
+
+Every finding either gets fixed or gets a row in `tests/contracts/security_finding_allowlist.txt` saying why it is accepted. The gate fails on a finding with no row, and it fails just as hard on a row the scan has stopped producing, so an accepted finding cannot quietly outlive the code it was written about.
+
+Two things this does not yet cover, and they are tracked rather than hidden: GitHub code scanning is not enabled on the private development repository, and secret scanning is off there. Semgrep's `p/secrets` pack is what stands in for the second one today.
 
 ## Hardening notes for operators
 

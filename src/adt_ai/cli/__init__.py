@@ -1,3 +1,31 @@
+#
+# This package is part of the ADT.ai project under MIT licence.
+# https://github.com/jkvetina/ADT.ai
+#
+# Copyright (c) Jan Kvetina, 2026
+#
+#                                                      (R)
+#                      ---                  ---
+#                    #@@@@@@              &@@@@@@
+#                    @@@@@@@@     .@      @@@@@@@@
+#          -----      @@@@@@    @@@@@@,   @@@@@@@      -----
+#       &@@@@@@@@@@@    @@@   &@@@@@@@@@.  @@@@   .@@@@@@@@@@@#
+#           @@@@@@@@@@@   @  @@@@@@@@@@@@@  @   @@@@@@@@@@@
+#             \@@@@@@@@@@   @@@@@@@@@@@@@@@   @@@@@@@@@@
+#               @@@@@@@@@   @@@@@@@@@@@@@@@  &@@@@@@@@
+#                 @@@@@@@(  @@@@@@@@@@@@@@@  @@@@@@@@
+#                  @@@@@@(  @@@@@@@@@@@@@@,  @@@@@@@
+#                  .@@@@@,   @@@@@@@@@@@@@   @@@@@@
+#                   @@@@@@  *@@@@@@@@@@@@@   @@@@@@
+#                   @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@.
+#                    @@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+#                    @@@@@@@@@@@@@@@@@@@@@@@@@@@@
+#                     .@@@@@@@@@@@@@@@@@@@@@@@@@
+#                       .@@@@@@@@@@@@@@@@@@@@@
+#                            jankvetina.cz
+#                               -------
+#
+
 from __future__ import annotations
 
 from types import ModuleType
@@ -11,6 +39,7 @@ try:
     from adt_ai.cli import commands_exports as _commands_exports
     from adt_ai.cli import commands_flow as _commands_flow
     from adt_ai.cli import commands_history as _commands_history
+    from adt_ai.cli import commands_patch as _commands_patch
     from adt_ai.cli import commands_recompile as _commands_recompile
     from adt_ai.cli import commands_validate as _commands_validate
     from adt_ai.cli import constants as _constants
@@ -40,6 +69,7 @@ else:
         _context,
         _commands_history,
         _commands_recompile,
+        _commands_patch,
         _commands_dependencies,
         _commands_flow,
         _commands_export_data,
@@ -53,6 +83,7 @@ else:
         "CalendarRunner",
         "DoctorRunner",
         "DROPBOX_PATH_RE",
+        "PatchRunner",
         "RecompileRunner",
         "SearchRepoRunner",
         "ValidateRunner",

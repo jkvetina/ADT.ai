@@ -2,7 +2,7 @@
 
 ![Scan once. Everyone else just reads.](images/rebuild.png)
 
-`rebuild` keeps the local commit store up to date, one database per branch of commit metadata that [`search_repo`](search_repo.md) and [`calendar`](calendar.md) read instead of scanning git live. Run it when the store should catch up with new commits.
+`rebuild` keeps the local commit store up to date, one database per branch of commit metadata that [`patch`](patch.md), [`search_repo`](search_repo.md) and [`calendar`](calendar.md) read instead of scanning git live. Run it when the store should catch up with new commits.
 
 Scans are incremental by default, so a steady-state run costs seconds. It also lists and switches branches, and it never connects to Oracle.
 

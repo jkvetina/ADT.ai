@@ -22,7 +22,7 @@ Invoke with `/adt-setup`. Full implementation in [SKILL.md](SKILL.md). Setup ref
 
 ## Related skills
 
-- [`adt`](../adt/), day-to-day ADT.ai command usage (export, discovery).
+- [`adt`](../adt/), day-to-day ADT.ai command usage (export, discovery, patch).
 
 ## Released
 

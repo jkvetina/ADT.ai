@@ -14,6 +14,7 @@ from adt_ai.cli.commands_export_data import _run_export_data
 from adt_ai.cli.commands_exports import _run_export_apex, _run_export_db
 from adt_ai.cli.commands_flow import _flow_argument_error, _run_flow
 from adt_ai.cli.commands_history import _run_calendar, _run_rebuild, _run_search_repo
+from adt_ai.cli.commands_patch import _run_patch
 from adt_ai.cli.commands_recompile import _run_discovery, _run_doctor, _run_recompile
 from adt_ai.cli.commands_ut import _run_ut3
 from adt_ai.cli.commands_validate import _run_validate
@@ -307,6 +308,8 @@ def _run_command(
             exit_code = _run_export_data(args, gateway_factory=gateway_factory)
         elif args.command == "export_apex":
             exit_code = _run_export_apex(args, gateway_factory=gateway_factory)
+        elif args.command == "patch":
+            exit_code = _run_patch(args, gateway_factory=gateway_factory)
         elif args.command == "rebuild":
             exit_code = _run_rebuild(args)
         elif args.command == "search_repo":

@@ -25,8 +25,8 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from adt_ai.dependencies import plscope, queries, refresh
+from adt_ai.dependencies.component_scan import run_component_scan
 from adt_ai.dependencies.store import DependencyStore
-from adt_ai.export_apex import queries as export_apex_queries
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.progress import (
@@ -281,9 +281,13 @@ class DependencyIndexRunner:
                 # scan resolves, minutes on an app with many pages.
                 progress.begin("SCANNING COMPONENTS")
                 try:
-                    gateway.execute(export_apex_queries.EXPORT_START_QUERY, {"app_id": app})
-                    gateway.execute(queries.APEX_SCAN_STATEMENT, {"app_id": app})
-                    gateway.execute(queries.DEPSCAN_CLEANUP_STATEMENT)
+                    # One boundary for the whole helper lifecycle (`#699`): the
+                    # scan installs `DEPSCAN$` procedures and the cleanup that
+                    # removes them now runs in a `finally`, so a scan that
+                    # raises here leaves none of them on the schema. PL/Scope is
+                    # not passed as a session statement, because
+                    # `ensure_plscope` above already prepared this connection.
+                    run_component_scan(gateway, app)
                 except Exception:
                     progress.fail("SCANNING COMPONENTS")
                     raise

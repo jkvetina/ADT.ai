@@ -115,7 +115,7 @@ Targets are collected in this order, and `-input` and `-app` can be combined:
 
 - The compiler validates against metadata from the APEX version that exported the application, so a result is only as meaningful as the SQLcl build running it. An old SQLcl against a 26.1 export is not a trustworthy pass.
 - One SQLcl session per folder. Batching several calls into one session is measurably cheaper, since JVM startup dominates the few seconds a run costs, but a batch is a single blocking call and could not stream a per-folder row, so the per-folder call wins.
-- Importing the tree back is `patch -deploy -app`, which stages exactly this tree and lands it on a sandbox id first, on patch_import.md. The loop from export to promotion is on apex_round_trip.md.
+- Importing the tree back is `patch -deploy -app`, which stages exactly this tree and lands it on a sandbox id first, on [patch_import.md](patch_import.md). The loop from export to promotion is on apex_round_trip.md.
 
 ## Arguments
 

@@ -81,8 +81,41 @@ def _run_command(
     return (completed.stdout or completed.stderr).strip()
 
 
+def _request(url: str) -> urllib.request.Request:
+    """The one place doctor builds a network request, and the scheme gate (`#705`).
+
+    `urlopen` honours every scheme urllib knows -- `file://` and `ftp://`
+    included -- so a helper that hands it an unchecked string reads a local file
+    as readily as it fetches a page. Only one value reaching here is dynamic:
+    `_download_file`'s caller passes `release.download_url`, scraped out of
+    Oracle's SQLcl HTML rather than written down anywhere.
+
+    `version_fetch._latest_sqlcl_release` already pins that link to https on
+    `SQLCL_DOWNLOAD_HOST`, so this is not a hole being closed so much as the
+    same guarantee stated where the request is built. That matters for the
+    caller nobody has written yet: a second `_download_file` user would inherit
+    the check here, where it cannot inherit one that lives in another module's
+    scraper. `_fetch_text`'s callers all pass https module constants, and get it
+    for free.
+
+    Oracle publishes no checksum for the SQLcl archive by any route -- not on
+    the download page, and not as a sidecar beside the zip -- so the scheme and
+    the host together, plus the launcher validation the upgrade already does
+    before promoting, are the whole of what the download can be held to.
+
+    The error names the URL, because a refusal means Oracle's page changed shape
+    and the link it grew is the only useful thing to print.
+    """
+    scheme = urllib.parse.urlsplit(url).scheme.lower()
+    if scheme != "https":
+        raise ValueError(
+            f"refusing to fetch a URL that is not https (scheme {scheme or 'missing'!r}): {url}"
+        )
+    return urllib.request.Request(url, headers={"User-Agent": "ADT.ai doctor"})
+
+
 def _fetch_text(url: str) -> str:
-    request = urllib.request.Request(url, headers={"User-Agent": "ADT.ai doctor"})
+    request = _request(url)
     try:
         with urllib.request.urlopen(request, timeout=_FETCH_TIMEOUT_SECONDS) as response:
             return cast(bytes, response.read()).decode("utf-8", errors="replace")
@@ -93,7 +126,7 @@ def _fetch_text(url: str) -> str:
 
 
 def _download_file(url: str, target: Path) -> None:
-    request = urllib.request.Request(url, headers={"User-Agent": "ADT.ai doctor"})
+    request = _request(url)
     try:
         with urllib.request.urlopen(request, timeout=_DOWNLOAD_TIMEOUT_SECONDS) as response:
             target.write_bytes(response.read())

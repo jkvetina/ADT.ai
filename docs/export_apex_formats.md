@@ -45,7 +45,7 @@ The folder is swept on every export, so a component deleted in App Builder leave
 
 **Static files are deliberately left out.** An APEXlang export carries the application's static files as binary payloads, and ADT.ai skips those members so the repository never holds two copies, `-files` being the single static-file channel. The metadata that references them is still exported.
 
-That makes `apexlang/` a source and editing surface rather than a directly importable artifact. It does not have to be one: [`validate`](validate.md) and `patch -deploy -app` both assemble the complete application on demand by hardlinking the metadata and the `files/` export into one staging tree. Run `-files` alongside `-apexlang`, or `-all`, so the payloads exist to stage.
+That makes `apexlang/` a source and editing surface rather than a directly importable artifact. It does not have to be one: [`validate`](validate.md) and [`patch -deploy -app`](patch_import.md) both assemble the complete application on demand by hardlinking the metadata and the `files/` export into one staging tree. Run `-files` alongside `-apexlang`, or `-all`, so the payloads exist to stage.
 
 The loop from export to promotion is on apex_round_trip.md.
 

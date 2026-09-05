@@ -14,6 +14,7 @@ from adt_ai.cli.parser_admin import add_admin_parsers
 from adt_ai.cli.parser_database import add_database_parsers
 from adt_ai.cli.parser_exports import add_export_parsers
 from adt_ai.cli.parser_history import add_history_parsers
+from adt_ai.cli.parser_patch import add_patch_parser
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,6 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     add_history_parsers(subparsers)
     add_export_parsers(subparsers)
+    add_patch_parser(subparsers)
     add_admin_parsers(subparsers)
     add_database_parsers(subparsers)
 

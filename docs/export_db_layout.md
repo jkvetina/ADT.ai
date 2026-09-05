@@ -172,3 +172,45 @@ The export does **not** abort on this. It runs to completion and marks the affec
 Paths are shown relative to the export root with the leading `database/` folder dropped, so the row names the schema, the group subfolder and the file. Delete the copies you do not want and re-run; the marker disappears once one location is left.
 
 The scan is per schema subtree and case-insensitive, and `.fix.sql` sidecars never count as duplicates. The same object name exported from two schemas is not a collision, since each schema owns its own subtree, but a collision present in several schemas is marked in every one.
+
+## Measuring what an environment holds
+
+`patch -hash` builds a patch from what your repository no longer agrees with a **baseline** about, and until this flag every baseline was a belief: `patch -baseline` records your own working tree and calls it the target.
+
+`-baseline` on `export_db` is the other half. It connects, discovers every object the project's filters resolve, renders each one exactly as an export renders it, and then **hashes** it at the path it would have been written to:
+
+```bash
+adtai export_db -env DEV -baseline
+```
+
+```text
+WRITING BASELINE:
+-----------------
+  - patch_hashes/baseline.DEV.log
+
+   STATUS      FILES
+   ---------   -----
+   UNCHANGED     398
+   MODIFIED        9
+   NEW             4
+   REMOVED         1
+   TOTAL         412
+```
+
+The file it writes is the one [patch_hash.md](patch_hash.md) already reads, so nothing about building a patch changes. What changes is what the patch means: instead of everything you altered on DEV, it becomes what this target is actually missing or holding differently.
+
+## What the measured baseline will not do
+
+- **It is full by construction.** `-recent`, `-name`, `-type`, `-by`, `-my` and `-delete` are refused, naming the flag, exit `2`. A narrowed run would write a partial baseline that reads on disk exactly like a complete one.
+- **It writes nothing and deletes nothing**: no object files, no `.fix` sidecars, no `auto_delete` sweep. It never reports deleted objects either, because a file the target lacks is a difference for a hash patch to decide about.
+- **It advances no stored state.** Neither the `-recent` watermark nor the job signatures move, because both record what an export *wrote*.
+
+It records one `file | commit | hash` line per object, and a `measured` token on the header. That token is the difference between a reading and a belief: `snapshot` means the working tree was assumed, `deployed` means a deploy advanced it, `measured` means somebody asked the database.
+
+The commit column is a **reverse lookup**: the newest scanned commit whose recorded content hash equals the measured one, so a line reads as "the target is at commit 312 for this file". A blank there is the interesting line, meaning the target holds content matching no commit in your scanned window, which is drift.
+
+A run replaces every database-path entry for the schemas it exported and leaves everything else alone. Merging instead of replacing would keep a stale entry for an object the target no longer holds; replacing the whole file would wipe the APEX entries this command never sees.
+
+APEX is that gap, and measuring it needs the same flag on `export_apex`, which does not exist yet.
+
+**The sharp edge.** Against a measured baseline, `DELETED` means the target holds an object your repository does not, and a hash patch generates a DROP helper for it. A hotfix applied straight to the target, or an object another developer owns, is a DROP in your next hash patch. Read the `CHANGED FILES:` table before building.

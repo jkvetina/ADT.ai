@@ -126,6 +126,16 @@ def add_export_parsers(subparsers: SubParsers) -> None:
         help   = "limit to objects changed by you, the database user in "
                  "config/IDENTITY.yaml",
     )
+    export_db.add_argument(
+        "--baseline",
+        "-baseline",
+        nargs   = "?",
+        const   = "",
+        default = None,
+        metavar = "FILE",
+        help    = "record what this environment holds as a patch baseline, "
+                  "hashing every object instead of writing it; optional FILE",
+    )
     add_connection_key_argument(export_db)
 
     export_data = subparsers.add_parser(

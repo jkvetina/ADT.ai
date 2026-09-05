@@ -295,6 +295,19 @@ FROM apex_used_db_object_comp_props
 WHERE application_id = :app_id
 """.strip()
 
+# What settles a zero above (ADT #701). A scan that analyzed nothing is either an
+# application with nothing to analyze or a verification that did not happen, and
+# the count alone cannot tell those apart, so the second reading is the default
+# and this is the read that can overturn it. `apex_application_pages` is written
+# by the import rather than by the scan, so a zero here is evidence from outside
+# the thing being questioned: an application holding no page holds no component,
+# and zero analyzed fragments is then the whole of its scope.
+APEX_APPLICATION_PAGE_COUNT_QUERY = """
+SELECT COUNT(*) AS pages
+FROM apex_application_pages
+WHERE application_id = :app_id
+""".strip()
+
 # Columns are inferred from the APEX dictionary and verified live before commit.
 APEX_USED_DB_OBJECTS_QUERY = """
 SELECT workspace, application_id,
