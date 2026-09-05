@@ -151,8 +151,19 @@ def file_payload_hash(payload: bytes | str, encoding: str = "utf-8") -> str:
     plain SHA-1 of the bytes and carries the same win/mac defect. The empty
     sentinel is unchanged, and now also answers for a whitespace-only file,
     because trimming empties it.
+
+    **`usedforsecurity=False` is the annotation, not a change of behavior**
+    (`#704`). SHA-1 here is git's own blob algorithm, picked so `changed_files`
+    can compare a blob against `patch.hashes.hash_working_tree`'s file, and a
+    stronger hash would name a different object and invalidate every stored
+    baseline. Unflagged, the call is the loudest finding either scanner returns
+    against `src` -- bandit `B324` at HIGH/HIGH, semgrep
+    `insecure-hash-algorithm-sha1` -- and both read it as a signature nobody
+    looked at. The flag is what says somebody did; it moves no digest.
     """
-    value = hashlib.sha1(_canonical_payload(payload, encoding)).hexdigest()
+    value = hashlib.sha1(
+        _canonical_payload(payload, encoding), usedforsecurity=False
+    ).hexdigest()
     return "" if value == "da39a3ee5e6b4b0d3255bfef95601890afd80709" else value
 
 

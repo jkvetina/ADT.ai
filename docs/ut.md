@@ -193,6 +193,10 @@ The vanished-suite case is still caught, by the zero-test rule rather than by na
 
 The zero-test row is the important one: **a zero-test run is a failure, not an empty pass.** An empty green run is exactly what a vanished suite looks like from the outside. `ut` reads those counters out of utPLSQL's **JUnit reporter** XML rather than pattern-matching a summary line, because they are the only in-database signal that a run failed.
 
+That XML comes from whatever schema was tested, so **a report declaring a DTD is refused rather than parsed**. It lands in the "output that could not be parsed" row above: one `ERROR` per test in the suite, carrying the document.
+
+Entity expansion, external-entity retrieval and the quadratic blowup all begin in a doctype's subset, and utPLSQL's reporter never emits one, so nothing a real run produces meets the rule.
+
 ## Requirements
 
 - **utPLSQL v3 installed**, with the connected schema holding `EXECUTE` on `ut` and `ut_runner` plus the `ut_*` types and the matching synonyms. This is utPLSQL's standard `ut_user` grant set.

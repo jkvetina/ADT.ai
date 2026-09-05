@@ -9,6 +9,7 @@ nothing but the folder path.
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 from pathlib import Path
@@ -25,6 +26,25 @@ DEPLOY_LOG_RE = re.compile(r"^\d{8}-\d{6}_.+_(SUCCESS|ERROR)\.log$", re.IGNORECA
 # a patch that had already landed (`#658`). Underscores and digits count as word
 # characters here because the names that caused it are Oracle identifiers.
 LEGACY_MARKER_RE = re.compile(r"(?<![A-Z0-9_])(SUCCESS|ERROR)(?![A-Z0-9_])")
+
+DEPLOY_RECEIPT = "deployment.json"
+
+
+def read_deploy_receipt(path: Path) -> dict[str, str]:
+    """A complete-run receipt, with absent/corrupt/unknown formats failing closed."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return {}
+    if (
+        not isinstance(value, dict)
+        or value.get("version") != 1
+        or value.get("status") not in ("INCOMPLETE", "SUCCESS", "ERROR")
+        or not isinstance(value.get("target"), str)
+        or not isinstance(value.get("fingerprint"), str)
+    ):
+        return {}
+    return {key: value[key] for key in ("target", "fingerprint", "status")}
 
 
 def deploy_log_records(path: Path) -> list[tuple[int, str, str, str]]:
@@ -69,18 +89,21 @@ def deploy_log_records(path: Path) -> list[tuple[int, str, str, str]]:
 
 
 def target_status(path: Path) -> dict[str, str]:
-    """Per-target deploy status: for each target, its NEWEST log wins.
+    """Whole-run outcome where available, otherwise the legacy newest log.
 
-    This read is load-bearing beyond any report, ``deploy_patch`` skips a
-    target already sitting at ``SUCCESS`` unless ``-force``. It used to AND every
-    log the folder had ever collected, so one early failure pinned the target at
-    ``ERROR`` permanently: a successful re-deploy never cleared it, and the skip
-    guard kept re-deploying a patch that had already landed (ADT #268). The
-    docstring claimed newest-wins the whole time; only the code disagreed.
+    Individual log history remains readable, but is never proof that the current
+    artifact and required verification completed. The runner separately matches
+    the successful receipt against its current payload fingerprint.
     """
     status: dict[str, str] = {}
     for _stamped, _when, target, outcome in deploy_log_records(path):
         status[target] = outcome
+    for receipt_path in sorted(path.glob(f"logs_*/{DEPLOY_RECEIPT}")):
+        receipt = read_deploy_receipt(receipt_path)
+        if receipt:
+            status[receipt["target"]] = receipt["status"]
+        elif receipt_path.parent.name.startswith("logs_"):
+            status[receipt_path.parent.name.removeprefix("logs_").upper()] = "INCOMPLETE"
     return status
 
 

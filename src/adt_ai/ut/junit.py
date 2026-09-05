@@ -10,11 +10,16 @@ The recurring theme is that **the report is utPLSQL's, not a contract**. What it
 calls a test is a description as often as a name, and the order it emits cases in
 is whatever order it walked the tree. Both are translated back into the schema's
 own vocabulary here so nothing downstream has to know the reporter exists.
+
+Not a contract in the safety sense either: the document arrives from whatever
+schema ``ut.run`` was pointed at, which is routinely one ADT.ai does not own, so
+``_declares_a_dtd`` refuses a document carrying a DTD (``#706``).
 """
 
 from __future__ import annotations
 
 from xml.etree import ElementTree
+from xml.parsers import expat
 
 from adt_ai.ut.inventory import (
     RESULT_ERRORED,
@@ -35,8 +40,74 @@ def row_line(row: dict[str, object]) -> str:
     return ""
 
 
+class _ForbiddenDoctype(Exception):
+    """A DTD was declared. Raised out of an expat handler, caught in `parse_junit`."""
+
+
+class _PrologEnded(Exception):
+    """The root element started, so there was no doctype. Control flow, not an error."""
+
+
+def _declares_a_dtd(document: str) -> bool:
+    """Whether `document`'s prolog declares a DTD (`#706`).
+
+    Python's own documentation says the stdlib XML parser is not hardened
+    against a hostile document, and this one arrives from whatever schema
+    `ut.run` was pointed at rather than from a repository ADT.ai owns -- narrow,
+    because it takes a schema that can already run PL/SQL, and not nothing,
+    because that is not always the same party.
+
+    **Every attack behind that warning needs an entity declaration, and an
+    entity declaration needs a DTD.** Unbounded expansion (billion laughs), the
+    quadratic blowup, and retrieval of an external entity all begin in the
+    doctype's subset, so refusing the doctype closes the class rather than one
+    instance of it. The refusal lands on the DECLARATION, before the subset is
+    read, which is what also covers an external subset -- its entities live in a
+    file the parser would have to fetch in order to see them.
+
+    **Expat rather than a text scan**, because "does this document declare a
+    doctype" is a lexical question and `<!DOCTYPE` inside a comment or a CDATA
+    section is not one. Expat's own lexer answers it, and the pass stops at the
+    root element's start tag, so it reads the prolog and nothing else.
+
+    `defusedxml` reaches the same handler through `ElementTree.XMLParser`, which
+    is why this does not: CPython's C accelerator exposes no expat handle on
+    that object (measured on 3.14 -- `XMLParser` has no `parser` attribute), so
+    the documented route is unavailable here whether or not the dependency is
+    taken. A new runtime dependency is a supply-chain decision in any case, and
+    this needs none.
+
+    An unparsable document answers `False` and is left to `ElementTree` below,
+    so the real `ParseError` still comes from the one place that used to raise
+    it rather than from two.
+    """
+    parser = expat.ParserCreate()
+
+    def _doctype(name: str, system_id: object, public_id: object, has_subset: bool) -> None:
+        raise _ForbiddenDoctype(name)
+
+    def _root(name: str, attributes: object) -> None:
+        raise _PrologEnded
+
+    parser.StartDoctypeDeclHandler = _doctype
+    parser.StartElementHandler = _root
+    try:
+        parser.Parse(document, True)
+    except _ForbiddenDoctype:
+        return True
+    except (_PrologEnded, expat.ExpatError):
+        pass
+    return False
+
+
 def parse_junit(package: SuitePackage, document: str) -> tuple[TestOutcome, ...]:
     if not document:
+        return ()
+    # A refused document is answered exactly like an unparsable one, which sends
+    # `_run_suite` to `unreported`: one ERROR per discovered test, carrying the
+    # document as the message. A report that cannot be trusted is not a pass,
+    # and the operator gets to see what arrived.
+    if _declares_a_dtd(document):
         return ()
     try:
         root = ElementTree.fromstring(document)

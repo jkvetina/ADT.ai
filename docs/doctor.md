@@ -157,7 +157,7 @@ It creates no cache folders, no APEX credential folders, no connection YAML and 
 
 `config/IDENTITY.yaml` is prefilled from the project folder's own `git config user.name`/`user.email` where it has one, and ships with a commented `db_schema` placeholder either way, the database half has no git equivalent to read. See [Developer identity](config.md#developer-identity).
 
-The patch templates are scaffolded because `patch -create` reads them from the **project** root, so a folder that only ships with ADT.ai is a folder nobody has. All six source files land verbatim; see patch templates for the slots and what each file does.
+The patch templates are scaffolded because `patch -create` reads them from the **project** root, so a folder that only ships with ADT.ai is a folder nobody has. All six source files land verbatim; see [patch templates](patch_install.md#templates-and-the-project-sql-around-the-objects) for the slots and what each file does.
 
 **Read `db_end/` before your first deploy.** Those three refresh every materialized view, gather schema statistics, and run every enabled daily job with a 60-second wait, and the APEX pair carries `<APEX_WORKSPACE>`, `<APEX_APP_ID>` and `<APEX_VERSION>` placeholders you fill in once. Delete what your deploy should not do.
 
@@ -166,6 +166,10 @@ Patch *scripts* are not scaffolded: `patch_scripts/` is per patch code and gener
 `adtai update`, `adtai upgrade` and `adtai init` are not commands. Each prints the generic error banner and points at the `doctor` flag that does the job.
 
 Before replacing SQLcl, `doctor` downloads, extracts, validates, and makes the new launcher executable in a staging directory beside the live install. Promotion is a same-filesystem rename. If that final swap fails, both the live install and any pre-existing backup are restored; a corrupt or incomplete archive never moves the live install at all.
+
+The download link is **scraped out of Oracle's SQLcl page rather than written down**, so it is checked twice before anything is fetched: it must be `https` on `download.oracle.com`, and every request `doctor` builds refuses any scheme but `https`. A refusal names the URL it refused.
+
+Oracle publishes no checksum for that archive by any route, so integrity rests on the transport and on the launcher validation above.
 
 ## Arguments
 

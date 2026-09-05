@@ -101,6 +101,14 @@ COMMAND_SUMMARIES = {
         "You can take a whole schema or only what has moved recently, and what comes out "
         "is written to be read by a person, not just replayed by a tool.",
     ),
+    "patch": (
+        "Packages finished work into something you can deploy to another environment.",
+        "Use it to turn a set of changes into a release that is reviewable before it "
+        "runs and repeatable after it does, instead of running scripts by hand and "
+        "trusting that the order was right and nothing was forgotten.",
+        "It works out what to include from the changes you actually made, deploys as a "
+        "separate deliberate step, and leaves behind the record of what was released.",
+    ),
     "rebuild": (
         "Refreshes ADT.ai's picture of your repository's history.",
         "Use it after new commits or a change of branch, so that everything built on "

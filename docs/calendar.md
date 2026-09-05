@@ -59,7 +59,7 @@ PROJ-204 (1)       |                    | PROJ-204 (1)       | PROJ-300 (1)     
 
 Before it reads anything, `calendar` tops the commit store up for exactly the branches it needs: the default branch, plus every branch whose name carries the configured `jira_prefix`. With no prefix set, that is every branch.
 
-The top-up runs `rebuild` in update mode, so a steady-state run reads only the handful of commits since last time. The store lives where `repo_commits_file` points in `config/config.yaml`, one file per branch, and it is the same store [`rebuild`](rebuild.md) and [`search_repo`](search_repo.md) use.
+The top-up runs `rebuild` in update mode, so a steady-state run reads only the handful of commits since last time. The store lives where `repo_commits_file` points in `config/config.yaml`, one file per branch, and it is the same store [`rebuild`](rebuild.md), [`search_repo`](search_repo.md) and [`patch`](patch.md) use.
 
 ## Scoping to one project
 

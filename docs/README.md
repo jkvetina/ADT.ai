@@ -1,6 +1,6 @@
 # ADT.ai Documentation
 
-This is the public documentation index for ADT.ai `0.9.8`.
+This is the public documentation index for ADT.ai `1.0.0`.
 
 ## Commands
 
@@ -23,6 +23,17 @@ This is the public documentation index for ADT.ai `0.9.8`.
 | [export_data](export_data.md) | Export table data as CSV plus generated MERGE SQL. |
 | [flow](flow.md) | Map APEX page navigation into a queryable flow store. |
 | [Local stores / flow](storage_flow.md) | The navigation store: applications, pages, link sources and edges. |
+| [patch](patch.md) | Build and deploy release patches from committed repo changes. |
+| [patch / what goes in](patch_install.md) | Which files a patch picks up, their order, the two gates, and the project SQL around them. |
+| [patch / which version ships](patch_content.md) | Committed, newest, local and live source choices for the selected files. |
+| [patch / templates and scripts](patch_templates.md) | The session defaults, the template slots, the per-patch scripts, and the generated helpers. |
+| [patch / deploying](patch_deploy.md) | The build and deploy reports, the grant and view checks, and where the logs land. |
+| [patch / verification](patch_verify.md) | Checking the deployed application's SQL and reading the verification result. |
+| [patch / application targets](patch_app.md) | Selecting applications and resolving their sandbox targets. |
+| [patch / application imports](patch_import.md) | Importing APEXlang applications from their source folders. |
+| [patch / dropping sandbox applications](patch_drop.md) | Ownership checks, explicit targets and receipts for sandbox removal. |
+| [patch / archiving](patch_archive.md) | What `-archive` takes, how a pattern selects folders, and where the zips are filed. |
+| [patch / hash mode](patch_hash.md) | Building from what the repository no longer agrees with the target about. |
 | [rebuild](rebuild.md) | Refresh the Git commit cache. |
 | [Local stores / commits](storage_commits.md) | The per-branch commit store: its tables, indexes and diagram. |
 | [recompile](recompile.md) | Recompile invalid database objects. |

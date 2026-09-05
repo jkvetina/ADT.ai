@@ -1,5 +1,7 @@
 # Why ADT.ai (what it answers, and why it is safe to try)
 
+![Nothing installed. Withdraw it and nothing is left.](images/why.png)
+
 You already answer these questions by hand: what is running in UAT, what breaks if this table changes, which pages link into that one, and whether the deployment folder someone ordered from memory is complete. ADT.ai answers them from the command line, from files a repository can hold, and most of the time without touching the database.
 
 This page is the case for adopting it, one command group at a time. Each section says what you do by hand today, what the command does instead, and where the honest limit is. Every command has its own reference page, all of them listed in the [command index](README.md).
@@ -94,6 +96,19 @@ adtai flow -app 100 -to 50
 adtai rebuild
 adtai search_repo -type VIEW -name MONTHLY_REPORT_V
 adtai calendar
+```
+
+## Deliver: from committed changes to a deployable release
+
+**By hand today:** a folder of scripts somebody ordered from memory, run against UAT with a prayer.
+
+[`patch`](patch.md) reads your git history, collects the files a set of commits touched, orders them by object type so a table lands before the view that reads it, and writes install scripts you can read and hand over.
+
+Building and deploying are two separate runs, so what deploys is what was reviewed, and every deploy leaves a log beside the folder it came from.
+
+```bash
+adtai patch -target UAT -name 12 -create
+adtai patch -target UAT -name 12 -deploy
 ```
 
 ## Set up: one command to check the machine, one to scaffold the project

@@ -111,6 +111,31 @@ FILTER_DESTS = {
 # below is per COMMAND and is the only sanctioned way to disagree with the
 # dest sets above.
 COMMAND_SECTION_OVERRIDES = {
+    "patch": {
+        # `-target` and `-name` are the two things a `patch` run acts ON, so they
+        # render beside the verbs that act on them. `#494` had lifted the pair
+        # out of FILTERS into MODIFIERS; Jan moved them again on 2026-08-30 (ADT
+        # #598), to ACTIONS, at the end.
+        #
+        # `-name` shipped under FILTERS in the first place because the dest is
+        # shared with four commands where it really does narrow a list. On
+        # `patch` it selects nothing: `#465` made it the single spelling of the
+        # NOUN, with `-create`/`-deploy` as verbs acting on it, which is exactly
+        # the relation `-target` has to a deploy. Sequence inside a section is
+        # parser declaration order, so the pair renders `-target` then `-name`
+        # off `parser_patch.py`'s own order rather than off this dict's.
+        "target": "actions",
+        "name": "actions",
+        # `-app` came out of FILTERS the other way on the same day. The dest is
+        # a genuine selector on `export_apex` and `dependencies`, where it picks
+        # applications; on `patch` `#592` made the value the id the tree LANDS
+        # on, so the flag tunes how the patch is built rather than narrowing what
+        # reaches it. It is declared last in `parser_patch.py`'s modifier run,
+        # which is what renders it at the end of the section.
+        "app": "modifiers",
+        "hash": "hash",
+        "baseline": "hash",
+    },
 }
 
 # `HASH MODE` is one command's grouping living in a global order, which works

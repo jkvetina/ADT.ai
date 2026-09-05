@@ -129,6 +129,8 @@ ADT.ai exports only the formats named on the command line. There are no configur
 
 `-deep` beside `-page` also exports the components recorded for those pages in the dependency mirror, LOVs, lists and authorization schemes among them, and prints a `DB OBJECTS` section of the database objects those pages use.
 
+**The whole-application format you export in is the one `patch -app` ships.** Two formats carry a whole application, and the files in the repository are what `patch` reads to tell them apart: `-apexlang` writes the `apexlang/` tree, which `patch -deploy -app` imports from the folder it lives in, and `-full` writes the single `f<id>.sql` a patch links as a script. An application exported as an APEXlang tree therefore needs no `f<id>.sql` at all, since `patch` never links one, never imports one, and never refuses a build for the want of one. Keeping a stale one beside a tree is the confusing case rather than the safe one: a patch retargeting the tree to a sandbox id refuses to install a full export that would land on the source application instead. The mode table is on [patch_app.md](patch_app.md).
+
 ## The application checksum
 
 Every export records the application's checksum in `config/internal/apex.db`, beside the owner, alias and page count already cached there:

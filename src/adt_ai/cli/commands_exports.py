@@ -31,6 +31,12 @@ from adt_ai.cli.export_apex_owners import (
     apex_lookup_schema,
     resolve_apex_owner_routes,
 )
+from adt_ai.cli.export_db_baseline import (
+    measured_hashes,
+    narrowing_flags,
+    refusal,
+    write_measured_baseline,
+)
 from adt_ai.cli.gateways import build_gateway, cached_schema_gateway_factory
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.export_db.config import AuthorFilterError, resolve_author_filter
@@ -42,6 +48,19 @@ from adt_ai.shared.object_types import normalize_object_type_patterns
 def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | None = None) -> int:
     handler_started_at = time.monotonic()
     print_module_banner("EXPORT_DB")
+    measuring = args.baseline is not None
+    if measuring:
+        refused = narrowing_flags(args)
+        if refused:
+            # Refused BY NAME and decided from the arguments alone, before any
+            # config or connection is read, so the refusal cannot fail for a
+            # second reason. A narrowed run would record a PARTIAL baseline that
+            # reads on disk exactly like a complete one, and `patch -hash` would
+            # then treat every object it never looked at as absent from the
+            # target (`#452`).
+            print(refusal(refused), file=sys.stderr)
+            print(file=sys.stderr)
+            return 2
     startup = _load_startup_context(args)
     root = startup.root
     config = startup.config
@@ -104,12 +123,13 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
         return 2
 
     runner = ExportDbRunner(cached_gateway_factory)
+    measured: dict[str, str] = {}
 
     def run_one(schema: str) -> int:
         _print_connection_block(
             cached_gateway_factory(schema), schema_connections[schema], debug=args.debug
         )
-        runner.run(
+        plans = runner.run(
             ExportDbRequest(
                 root          = root,
                 schemas       = [schema],
@@ -128,12 +148,18 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
                 changed_by    = changed_by,
                 my_changes    = my_changes,
                 authors       = authors,
-                baseline      = False,
+                baseline      = measuring,
             )
         )
+        if measuring:
+            measured.update(measured_hashes(plans, root))
         return 0
 
     exit_code = run_schema_sections(schemas, run_one, first_started_at=handler_started_at)
+    if measuring and exit_code == 0:
+        write_measured_baseline(
+            root, config, environment, schemas, measured, override=args.baseline
+        )
     return exit_code
 
 

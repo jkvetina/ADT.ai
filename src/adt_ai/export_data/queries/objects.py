@@ -72,10 +72,17 @@ LEFT JOIN user_tab_identity_cols i
     ON i.table_name         = t.table_name
     AND i.column_name       = t.column_name
 WHERE t.table_name          = UPPER(:table_name)
-    AND t.column_id         > 0     -- ignore hidden columns, whose column_id is NULL
+    AND t.column_id         > 0
     AND t.virtual_column    = 'NO'  -- a virtual column HAS a column_id, so the line
                                     -- above never excluded one; its value is derived,
                                     -- and naming it in DML raises ORA-54013
+    AND t.hidden_column     = 'NO'  -- ADT #695: an object column's attributes get
+                                    -- their own SYS_NC00021$ rows, and they SHARE the
+                                    -- object's column_id rather than carrying none, so
+                                    -- the test above never excluded them either. They
+                                    -- duplicate the column they belong to, DML cannot
+                                    -- name them, and one of a geometry's is itself an
+                                    -- object that exported as a memory address
 GROUP BY
     t.column_name,
     t.data_type,
@@ -90,7 +97,21 @@ def data_query(
     columns: list[str],
     where_filter: str,
     order_by: str,
+    column_types: Mapping[str, str] | None = None,
 ) -> str:
+    """`column_types` names the columns Oracle has to render for us (`#695`).
+
+    A spatial column arrives over the wire as a driver object with no text form,
+    and Python cannot make one: the coordinates, the SRID and the element
+    structure are all inside a type only the database understands. So the
+    conversion is asked of the database instead, in the SELECT itself, and what
+    comes back is text like `SRID=4326;POINT (-73.87261 40.77725)`.
+
+    Reaching `SDO_SRID` means naming an attribute of an object column, and
+    Oracle requires a table alias for that, so the FROM grows one -- but only
+    for a table that actually has such a column, so every other query is the
+    plain shape it always was.
+    """
     safe_identifier(table_name, role="table name")
     safe_identifiers(columns, role="column name")
     safe_identifiers(
@@ -101,7 +122,46 @@ def data_query(
         ],
         role="order by column",
     )
-    return f"SELECT {', '.join(columns)}\nFROM {table_name}{where_filter}\nORDER BY {order_by}"
+    types = {
+        str(name).upper(): str(data_type).strip().upper()
+        for name, data_type in (column_types or {}).items()
+    }
+    spatial = {column for column in columns if types.get(column.upper()) in SPATIAL_TYPES}
+    if not spatial:
+        return f"SELECT {', '.join(columns)}\nFROM {table_name}{where_filter}\nORDER BY {order_by}"
+    selected = ", ".join(
+        _wkt_projection(column) if column in spatial else column
+        for column in columns
+    )
+    return (
+        f"SELECT {selected}\n"
+        f"FROM {table_name} {SOURCE_ALIAS}{where_filter}\n"
+        f"ORDER BY {order_by}"
+    )
+
+
+#: Every Oracle type this export renders through WKT rather than reading raw.
+#: `user_tab_cols` spells it unqualified; the owner-qualified form is what the
+#: driver puts in a `DbObject` repr, so both are accepted.
+SPATIAL_TYPES = frozenset({"SDO_GEOMETRY", "MDSYS.SDO_GEOMETRY"})
+#: The alias the spatial projection needs to reach an object attribute. Long
+#: enough that it cannot be mistaken for one of the table's own columns.
+SOURCE_ALIAS = "adt_src"
+
+
+def _wkt_projection(column: str) -> str:
+    """One SELECT item: the column's geometry as SRID-prefixed WKT, or NULL.
+
+    The CASE is load-bearing. `SDO_UTIL.TO_WKTGEOMETRY(NULL)` is NULL, but the
+    concatenation around it is not, so without the guard an empty geometry would
+    export as the string `SRID=NULL;` and reload as a geometry that is not there.
+    """
+    reference = f"{SOURCE_ALIAS}.{column}"
+    return (
+        f"CASE WHEN {reference} IS NULL THEN NULL ELSE "
+        f"'SRID=' || NVL(TO_CHAR({reference}.SDO_SRID), 'NULL') || ';' || "
+        f"SDO_UTIL.TO_WKTGEOMETRY({reference}) END AS {column}"
+    )
 
 
 def update_assignments(columns: list[str], skip_update: str) -> str:
@@ -208,6 +268,14 @@ _NUMBER_TYPES = frozenset({
     "SMALLINT",
 })
 _NUMBER_TEXT = re.compile(r"^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$")
+#: How a spatial cell carries its coordinate system, written by `_wkt_projection`
+#: and read back by `_spatial_literal`. WKT alone has no room for an SRID, and a
+#: geometry reloaded into the wrong one is silently in the wrong place on Earth.
+_SRID_PREFIX = re.compile(r"^SRID=(\d+|NULL);", re.IGNORECASE)
+#: An Oracle SQL text literal stops at 4000 bytes (32767 under EXTENDED, which
+#: not every database is), and a polygon's WKT runs well past that. WKT is ASCII,
+#: so a character is a byte and this bound needs no encoding allowance.
+_WKT_CHUNK = 3000
 #: The mask both sides of the export agree on. `row_value` writes a datetime with
 #: `str()`, which is this shape, so the literal and the mask cannot drift.
 _DATE_MASK = "YYYY-MM-DD HH24:MI:SS"
@@ -235,6 +303,8 @@ def sql_value(value: Any, data_type: str = "") -> str:
 
 
 def _typed_literal(text: str, data_type: str) -> str:
+    if data_type in SPATIAL_TYPES:
+        return _spatial_literal(text)
     if data_type in _RAW_TYPES and _is_hex(text):
         return f"HEXTORAW('{text}')"
     if data_type in _NUMBER_TYPES and _NUMBER_TEXT.match(text):
@@ -262,6 +332,33 @@ def _temporal_literal(text: str, data_type: str) -> str:
     if offset is None:
         return f"TO_TIMESTAMP('{stamp}', '{_DATE_MASK}.FF6')"
     return f"TO_TIMESTAMP_TZ('{stamp} {_utc_offset(offset)}', '{_DATE_MASK}.FF6 TZH:TZM')"
+
+
+def _spatial_literal(text: str) -> str:
+    """The geometry constructor that reads one exported spatial cell back (`#695`).
+
+    The cell is `SRID=<n|NULL>;<wkt>`, and Oracle's own two-argument constructor
+    takes exactly those halves. A cell with no prefix is read as bare WKT with no
+    coordinate system, which is what a hand-written row carries and what
+    `SDO_UTIL.FROM_WKTGEOMETRY` would have produced anyway.
+
+    A quoted string is never the answer here: it cannot be assigned to an
+    SDO_GEOMETRY column at all, so a fallback to one would put a MERGE on disk
+    that no database will run.
+    """
+    match = _SRID_PREFIX.match(text)
+    if match:
+        return f"SDO_GEOMETRY({_wkt_literal(text[match.end():])}, {match.group(1).upper()})"
+    return f"SDO_GEOMETRY({_wkt_literal(text)}, NULL)"
+
+
+def _wkt_literal(wkt: str) -> str:
+    if len(wkt) <= _WKT_CHUNK:
+        return _quoted(wkt)
+    return " || ".join(
+        f"TO_CLOB({_quoted(wkt[index:index + _WKT_CHUNK])})"
+        for index in range(0, len(wkt), _WKT_CHUNK)
+    )
 
 
 def _parsed_moment(text: str) -> datetime | None:

@@ -214,6 +214,7 @@ EXPORTING 6 OBJECTS:
 | `-groups`, `--groups` | No | off | Move action: reorganize already-exported files into `<object_type>/<group>/` subfolders. Never connects or exports, and moves nothing until `-force`. See [export_db_layout.md](export_db_layout.md). |
 | `-force [GROUP]`, `--force [GROUP]` | No | off | With `-groups`, apply the listed moves. `-force GROUP` lands every prefix named in one uppercased folder instead of one per prefix, so it needs named prefixes. Without `-groups` it is an error, exit `2`. |
 | `-delete`, `--delete` | No | off | Delete existing object files before export, excluding `DATA`. |
+| `-baseline [FILE]`, `--baseline [FILE]` | No | off | Record what this environment holds as a patch baseline: every object is rendered as an export renders it, then hashed at the path it would have been written to. Nothing is written or deleted. Refused beside a narrowing flag. See [export_db_layout.md](export_db_layout.md). |
 | `-silent`, `--silent` | No | off | Suppress per-object names and progress callbacks, keeping the banner, connection block, overview, export header and timer. |
 | `-compact`, `--compact` | No | off | Replace the per-object rows with one dotted progress bar per schema, labelled with the plural of the type being pulled. `-silent` outranks it. |
 

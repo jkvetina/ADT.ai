@@ -91,11 +91,21 @@ adtai export_data -silent -name APP_LOOKUP%
 
 ## export_db: export database objects
 
-Read [docs/export_db.md](../../docs/export_db.md) and [docs/export_db_layout.md](../../docs/export_db_layout.md). Use `-silent` for agent-driven exports unless per-object progress is useful. Combine `-schema`, `-type`, `-name`, and `-recent` to keep the write set intentional. `-delete` removes existing object files before export.
+Read [docs/export_db.md](../../docs/export_db.md) and [docs/export_db_layout.md](../../docs/export_db_layout.md). Use `-silent` for agent-driven exports unless per-object progress is useful. Combine `-schema`, `-type`, `-name`, and `-recent` to keep the write set intentional. `-delete` removes existing object files before export; `-baseline` measures an environment instead of exporting it.
 
 ```bash
 adtai export_db -silent -recent 7
 adtai export_db -silent -type PACKAGE% -name APP_%
+```
+
+## patch: build and deploy patches from commits
+
+Read [docs/patch.md](../../docs/patch.md), then only the linked patch topic needed for content, install order, deployment, hashes, archiving, or sandbox removal. A bare filtered run previews. `-create` rewrites a patch folder, `-deploy` changes the target database/APEX application, `-archive` moves and removes patch folders, and `-drop` removes sandbox APEX applications whose recorded creator is the `apex_account` in `config/IDENTITY.yaml`, or which record no creator at all (no APEX import writes that column); somebody else's needs `-force`. A successful or failed `-drop` also writes one dictionary-verified receipt per application at `<path_apex>/logs_<ENV>/<timestamp>_apex_drop_<application-id>_<DELETED|FAILED>.log`; the folder comes from `-target` and the filename id comes from `-drop`. APEXlang files remain selected but are never snapshotted; deploy imports the application's live `apexlang/` folder. `-deploy -app <sandbox-id>` also stamps that sandbox's `last_updated_by`/`last_updated_on` with the same `apex_account` and the current moment, so the clone shows its author in the Builder; a bare `-app` stamps nothing, and no import can write `created_by` in any format. A target already deployed is skipped only when its `logs_<ENV>/deployment.json` receipt matches the same executable inputs and target, so a partial script failure, a SQLcl error or a failed APEX verification leaves that target incomplete and it deploys again on the next run; a patch deployed before 1.0 carries no receipt and runs once more. A post-deploy APEX verification that could not complete fails the deploy instead of passing as skipped. Never guess `-target`, `-name`, commit selectors, content mode, or application id. Preview the exact selection before creation or deployment.
+
+```bash
+adtai patch -target UAT -name TASK-123
+adtai patch -target UAT -name TASK-123 -create
+adtai patch -target UAT -name TASK-123 -deploy
 ```
 
 ## rebuild: refresh the commit store

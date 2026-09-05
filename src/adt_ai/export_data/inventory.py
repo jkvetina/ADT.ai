@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -91,13 +92,18 @@ class DataDiscovery:
         columns: list[str],
         where_filter: str,
         order_by: str,
+        column_types: Mapping[str, str] | None = None,
     ) -> list[dict[str, Any]]:
         # `exact_numbers` (`#670`): the export writes the digits it read into a
         # CSV, so a NUMBER(p,s) arriving as the driver's default float loses
         # precision no later step can recover. Only the row fetch asks for it;
         # the dictionary queries above want ordinary ints.
+        #
+        # `column_types` (`#695`): a spatial column has no text form outside the
+        # database, so the SELECT asks Oracle to render it rather than the driver
+        # to hand it over.
         return self.gateway.fetch_all(
-            self.data_query(table_name, columns, where_filter, order_by),
+            self.data_query(table_name, columns, where_filter, order_by, column_types),
             exact_numbers = True,
         )
 
@@ -107,8 +113,9 @@ class DataDiscovery:
         columns: list[str],
         where_filter: str,
         order_by: str,
+        column_types: Mapping[str, str] | None = None,
     ) -> str:
-        return queries.data_query(table_name, columns, where_filter, order_by)
+        return queries.data_query(table_name, columns, where_filter, order_by, column_types)
 
 
 def _row_value(row: dict[str, Any], key: str) -> str:

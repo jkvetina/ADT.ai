@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# No repository-wide token, same rule as the release workflow. Each job asks for
+# exactly what it needs, so a job added later starts with nothing rather than
+# inheriting write access to the repository.
+permissions: {}
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -16,6 +21,8 @@ jobs:
     # rebuild a different artifact.
     name: build wheel + sdist (py3.14)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -45,6 +52,8 @@ jobs:
     name: installed artifact (${{ matrix.os }}, py3.14)
     needs: artifact-build
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -72,6 +81,8 @@ jobs:
     # collapse.
     name: ruff
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0

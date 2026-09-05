@@ -73,7 +73,7 @@ EXPORTING 6 OBJECTS:
                      |
 ```
 
-It is one renderer, not a convention. Three sections call it: `EXPORTING <n> OBJECTS:` and `DELETED OBJECTS:` in `export_db`, and `UPDATED <n> OBJECTS:` in `recompile`. A second hand-rolled version of the row fails the suite.
+It is one renderer, not a convention. Six sections call it: `EXPORTING <n> OBJECTS:` and `DELETED OBJECTS:` in `export_db`, `UPDATED <n> OBJECTS:` in `recompile`, and `DELETED OBJECTS:`, `WARNING - OBJECTS CHANGED:` plus `INVALID OBJECTS:` in `patch`. A second hand-rolled version of the row fails the suite.
 
 **The unit is the object, never the file that holds it.** A file moved between folders is the same object, so a listing keyed on paths reports a move as a deletion.
 
@@ -160,11 +160,11 @@ A flag a command does not take is a parser error, not a flag it ignores.
 | Argument | Commands that take it |
 | -------- | --------------------- |
 | `-root` | every command |
-| `-config-dir` | `connection`, `dependencies`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `recompile`, `ut`, `validate` |
+| `-config-dir` | `connection`, `dependencies`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `patch`, `recompile`, `ut`, `validate` |
 | `-env` | `connection`, `dependencies`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `recompile`, `ut` |
 | `-schema` | `connection`, `dependencies`, `discovery`, `export_apex`, `export_data`, `export_db`, `recompile`, `ut` |
-| `-key` | `connection`, `dependencies`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `recompile`, `ut` |
-| `-debug` | `connection`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `recompile`, `ut`, `validate` |
+| `-key` | `connection`, `dependencies`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `patch`, `recompile`, `ut` |
+| `-debug` | `connection`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `patch`, `recompile`, `ut`, `validate` |
 | `-beep` | every command |
 | `-nobeep` | every command |
 

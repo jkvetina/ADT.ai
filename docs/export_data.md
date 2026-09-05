@@ -89,8 +89,55 @@ Each value is written so that reading it back does not depend on the session it 
 | DATE | `YYYY-MM-DD HH24:MI:SS` | `TO_DATE(...)` with that format |
 | TIMESTAMP | ISO text with fractional seconds | `TO_TIMESTAMP(...)` with `FF6` |
 | TIMESTAMP WITH TIME ZONE | ISO text with the offset | `TO_TIMESTAMP_TZ(...)` with `TZH:TZM` |
+| SDO_GEOMETRY | `SRID=<srid>;<WKT>` | `SDO_GEOMETRY('<WKT>', <srid>)` |
 
 Dates and timestamps carry their own format model, so a MERGE script runs the same whatever `NLS_DATE_FORMAT` the target session has. Numbers are fetched as exact decimals, so a `NUMBER(16,2)` or an integer above 2^53 keeps the value it had in the source table.
+
+A column type that is not in this table and has no plain text form stops the export and names the column, rather than writing something that reloads as different data. That is what a user-defined object column or a collection does: leave it out with `ignored_columns` if the rest of the table is worth exporting.
+
+## Cells a spreadsheet would run
+
+A cell whose first character is `=`, `+`, `-` or `@` is a formula to Excel, Numbers and LibreOffice. Text cells are written with a leading apostrophe, which those programs read as "the rest of this cell is text" and hide on display:
+
+```text
+"ID";"NOTE";"PHONE"
+1;"'=cmd|'/C calc'!A0";"'+420123456789"
+```
+
+Quoting is not what protects you here, and it never was. Every text cell has always been wrapped in `"`, and a spreadsheet unquotes the field before it looks at the first character.
+
+The MERGE beside the CSV takes the apostrophe back off, so the value that reaches the target database is the one the source table held.
+
+A value that already starts with an apostrophe in front of one of those four characters gets a second one. Without that, a stored `'=x` and a stored `=x` would write the same cell and neither could be replayed.
+
+Only text columns go through this. A NUMBER is written unquoted and a spreadsheet reads `-5` as the number it is, while a date, timestamp or interval renders from a typed value rather than from anything somebody typed into your application.
+
+A CSV exported before the guard existed still replays correctly. The apostrophe is stripped only when one of the four characters follows it, so a bare `=x` cell in an older file is read as `=x`.
+
+## Spatial columns
+
+A geometry never reaches the exporter as a value. Oracle hands it over as an object, so the conversion is asked of the database in the SELECT itself: `SDO_UTIL.TO_WKTGEOMETRY` renders the shape, and the column's `SDO_SRID` is written in front of it.
+
+```text
+"ID";"GEOMETRY"
+12355;"SRID=4326;POINT (-73.87261 40.77725)"
+```
+
+The SRID travels with the shape because WKT has no room for one, and a geometry reloaded into the wrong coordinate system is silently somewhere else on Earth. A geometry stored without an SRID exports as `SRID=NULL;` and is rebuilt without one; an empty geometry column stays empty in both files.
+
+The MERGE reads that cell back through Oracle's own two-argument constructor, so nothing about the round trip depends on ADT.ai:
+
+```sql
+SDO_GEOMETRY('POINT (-73.87261 40.77725)', 4326) AS GEOMETRY
+```
+
+What survives the round trip is what WKT can express: points, lines, polygons and their multi and collection forms, in two or three dimensions.
+
+A geometry WKT cannot describe, such as a circular arc, a compound element or a measured LRS shape, is refused by `SDO_UTIL.TO_WKTGEOMETRY` itself. The export stops on that error rather than writing a shape that is not the one stored.
+
+Length is not a limit. WKT past the 4000 bytes an Oracle text literal holds is written into the MERGE as concatenated `TO_CLOB` chunks.
+
+The system columns Oracle creates behind an object column, the `SYS_NC00021$` entries holding a geometry's own attributes, are not exported. They duplicate the column they belong to and no DML can name them.
 
 ## Large column types become sidecars
 
