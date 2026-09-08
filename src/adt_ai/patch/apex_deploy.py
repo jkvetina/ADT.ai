@@ -47,12 +47,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from adt_ai.patch import settings
+from adt_ai.patch.apex_backup import ApexBackup, backup_line
 from adt_ai.patch.apex_import import (
     ApexTarget,
     build_import_script,
     derive_sandbox_alias,
     recover_task_number,
 )
+from adt_ai.patch.apex_lock import BuildStatusLock, build_status_line, lock_target
 from adt_ai.patch.apex_signature import (
     ApexSignatures,
     collect_signatures,
@@ -72,6 +75,15 @@ FILES_DIR = "files"
 
 EXPORT_COMMAND = "adtai export_apex -apexlang -app"
 
+# What the deploy table calls the import (ADT #735). It was `apex_import_<id>`,
+# spelled like the install scripts around it, and nothing in the patch folder
+# answers to that name: the import is a SQLcl command the run issues, not a file
+# it reads. Jan, 2026-09-07: *"clearly mark in console that apex_import_1000 is
+# not the actual file, but a sqlcl command. Lets try '> BUILDING APP'"*. The
+# leading `>` is the mark. The log keeps the old stem (`log_stem` below), a
+# filename is where a `>` does not belong.
+BUILDING_APP_ROW = "> BUILDING APP"
+
 
 @dataclass(frozen=True)
 class ApexImportItem:
@@ -89,10 +101,21 @@ class ApexImportItem:
 
     @property
     def file(self) -> str:
-        """What the deploy table and the log file name this step.
+        """What the deploy table calls this step: `> BUILDING APP`.
 
-        Not a `.sql` name: nothing here is an install script, and a reader
-        opening the patch folder looking for one would not find it.
+        Not a `.sql` name and not a name at all: nothing here is an install
+        script, and a reader opening the patch folder looking for one would not
+        find it, which is what the row said before `#735` and what it now says
+        out loud.
+        """
+        return BUILDING_APP_ROW
+
+    @property
+    def log_stem(self) -> str:
+        """The stem of this step's deploy log, `apex_import_<target id>`.
+
+        The one place the import still carries a filename, and it carries the id
+        the tree landed on because a folder of logs is read by name.
         """
         return f"apex_import_{self.target_id}"
 
@@ -164,6 +187,7 @@ def prepare_apex_imports(
     gateway_factory : Any,
     *,
     force           : bool = False,
+    locks           : dict[int, BuildStatusLock] | None = None,
 ) -> tuple[list[ApexImportItem], list[str]]:
     """Resolve, stage and read every application this deploy imports.
 
@@ -174,6 +198,12 @@ def prepare_apex_imports(
 
     Raises ``PatchError`` for each of the three refusals, all of them before a
     single byte is written.
+
+    ``locks`` is where the build-status lock records what it took (ADT #726),
+    filled as each application is locked rather than returned, because this
+    function RAISES on drift and a lock taken before that refusal still has to
+    be released. A caller that passes nothing takes no locks at all, which is
+    what every test of the three refusals wants.
     """
     from adt_ai.patch.runner import PatchError
 
@@ -191,7 +221,7 @@ def prepare_apex_imports(
         raise PatchError(refusal)
 
     items: list[ApexImportItem] = []
-    aliases, owners = _application_facts(root, app_ids)
+    aliases, owners, workspaces = _application_facts(root, app_ids)
     targets, notes = resolve_targets(
         root, config, app_ids=[str(app_id) for app_id in sorted(app_ids)]
     )
@@ -200,17 +230,40 @@ def prepare_apex_imports(
         if app_id is None:
             raise PatchError("resolved APEX import target has no application id")
         landing = target_id if target_id is not None else app_id
+        # **Before the signature is read, which is the whole of the point**
+        # (ADT #726). The window this closes runs from that read to the import,
+        # so a lock taken after it would leave the race exactly where it was.
+        # Only an import landing on the application's own id: a retargeted task
+        # sandbox is a throwaway nobody is editing, and locking it would strand
+        # a prototype on RUN_ONLY (Jan, 2026-09-07).
+        # `off` records nothing at all rather than an entry saying it did
+        # nothing: it has to leave the deploy exactly as it was before ADT #726,
+        # and an import log growing a row is not exactly as it was.
+        mode = settings.deploy_build_status(config)
+        if locks is not None and landing == app_id and mode != settings.BUILD_STATUS_OFF:
+            locks[app_id] = lock_target(
+                gateway_factory(owners.get(app_id, "")),
+                app_id,
+                workspace = workspaces.get(app_id, ""),
+                mode      = mode,
+            )
         staged = stage_apexlang(
             resolved.path,
             resolved.path.parent / FILES_DIR,
             staging_root_for(root, resolved.path),
         )
+        # ADT #745: a held lock has already read the target, one statement
+        # before it wrote the status that moves that reading. `None` where no
+        # lock went on, so an unlocked deploy reads the target here exactly as
+        # it did before ADT #726.
+        held = locks.get(app_id) if locks is not None else None
         signatures = collect_signatures(
             gateway_factory(owners.get(app_id, "")),
             root,
             app_id    = app_id,
             target_id = landing,
             tree_root = staged.path,
+            on_target = held.signature if held is not None and held.locked else None,
         )
         if signatures.refused and not force:
             raise PatchError(drift_message(signatures))
@@ -241,17 +294,33 @@ def run_apex_imports(
     force           : bool = False,
     reporter        : Any = None,
     account         : str = "",
+    backups         : dict[int, ApexBackup] | None = None,
+    locks           : dict[int, BuildStatusLock] | None = None,
 ) -> list[DeploymentResult]:
     """Import each staged tree, one row per application.
 
     Nothing here raises: a deploy that got half way is a result to read, not an
     exception that swallows the table, which is the rule the install-script loop
-    beside it already follows.
+    beside it already follows. That loop calls this once per application since
+    ADT #735, between the application's `init` and `end` scripts, so ``items``
+    is ordinarily one long; the list stays because the tail call for an
+    application no script opened still passes several.
 
     ``account`` is the developer a retargeted import is stamped as, resolved at
     the CLI edge and handed down the way ``apex_version`` already is rather than
     read again here (ADT #682). `apex_import.build_import_script` owns what that
     stamp does and which imports get one.
+
+    ``backups`` is what `apex_backup.back_up_targets` kept of each target before
+    this loop was reached (ADT #727), read for one line: the log's `BACKUP` row,
+    which is where a reader goes when the scan afterwards says the import broke
+    the application. ``None`` is a run with `deploy_revert_on_scan_failure` off,
+    and the row is then absent rather than written empty.
+
+    ``locks`` is read the same way and for the same kind of line (ADT #726): the
+    `BUILD STATUS` row, saying whether the application was held shut over the
+    window this import closes. The lock's own timeline is a separate report,
+    because its last two moments happen after this log is written.
     """
     results: list[DeploymentResult] = []
     for offset, item in enumerate(items, start=1):
@@ -271,11 +340,21 @@ def run_apex_imports(
         report = parse_import_output(output)
         status = "SUCCESS" if not execution_failed and not report.failed else "ERROR"
         log_path = log_writer(
-            item.file,
+            item.log_stem,
             status,
             "\n".join([
                 *signature_lines(item.signatures, forced=force),
                 _source_line(item, root),
+                *(
+                    [backup_line(backups.get(item.target_id), root)]
+                    if backups is not None
+                    else []
+                ),
+                *(
+                    [build_status_line(locks[item.app_id])]
+                    if locks is not None and item.app_id in locks
+                    else []
+                ),
                 "",
                 output,
             ]),
@@ -345,16 +424,26 @@ def _full_export_refusal(
     return "\n".join(lines)
 
 
-def _application_facts(root: Path, app_ids: list[int]) -> tuple[dict[int, str], dict[int, str]]:
-    """Alias and owner per application, in one store session rather than two."""
+def _application_facts(
+    root: Path, app_ids: list[int]
+) -> tuple[dict[int, str], dict[int, str], dict[int, str]]:
+    """Alias, owner and workspace per application, in one store session.
+
+    The workspace joined the pair when ADT #726 needed it: the build-status
+    setter refuses without a workspace context, and this store read is already
+    open, so asking for a third field costs nothing where a second `ApexStore`
+    session would have cost a file open per deploy.
+    """
     aliases: dict[int, str] = {}
     owners: dict[int, str] = {}
+    workspaces: dict[int, str] = {}
     with ApexStore.load(root) as store:
         for app_id in app_ids:
             entry = store.application(app_id) or {}
             aliases[app_id] = str(entry.get("app_alias") or "")
             owners[app_id] = str(entry.get("owner") or "")
-    return aliases, owners
+            workspaces[app_id] = str(entry.get("workspace") or "")
+    return aliases, owners, workspaces
 
 
 def _task_number(app_id: int, target_id: int) -> int:

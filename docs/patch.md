@@ -6,6 +6,8 @@
 
 Nothing is deployed by building a patch. What you get is a folder you can read, review and hand to whoever holds the keys to the target.
 
+<br>
+
 ## Examples
 
 Preview the recent commits and the patch folders that exist:
@@ -45,6 +47,8 @@ Regenerate the schema install scripts from the exported files alone:
 adtai patch -install
 ```
 
+<br>
+
 ## Output
 
 A bare run tops up the commit store, lists what is still outstanding, and lists the folders on disk:
@@ -81,6 +85,8 @@ TIMER: 0s
 - `RECENT PATCH FOLDERS:` lists the folders newest first, so the patch you just made is the top row. Its `STATUS` cell is the newest deploy log for that folder, as `<OUTCOME>/<TARGET>`.
 - Both tables are narrowed, which is what `RECENT` names: the folder listing is capped at `patch_show_patches`, and `-by`, `-my` and `-recent` cut both, so `adtai patch -my` means your commits and your patches.
 
+<br>
+
 ## Naming a patch
 
 `-name` takes an **id**, a **patch code**, or a **full folder name**, and all three work in every mode. The code you pass becomes the folder name, under a `yymmdd-seq-` prefix the run mints.
@@ -90,6 +96,8 @@ TIMER: 0s
 - A well-formed folder name that exists nowhere is refused: that is a typo, not a new code.
 
 Selection for an action is **whole-value**: the folder name, the patch code, or the id. A value that only occurs inside a folder name selects nothing and the run stops, naming what it saw, and a value matching two folders stops the same way rather than choosing. A code matching no folder prints the folder listing and exits `2`.
+
+<br>
 
 ## The commits a patch carries
 
@@ -106,9 +114,11 @@ RELEVANT COMMITS FOR "%report%":
 
 - A term carrying no `%` is searched as `%term%`. Escape a literal wildcard with a backslash.
 - **`-search` is a discovery run, so `-create` beside it lists the commits instead of building.** Finding the right commits is what the flag is for, and a build chosen by nothing is a build over every commit the search matched. Add `-commit`, `-ignore` or `-force` once you know which ones you want and the same command builds. Nothing is written in the meantime, so an existing patch folder, its `patch_scripts/` and its snapshots survive the search untouched. A `-create` with no `-search` is unaffected.
-- `-commit` and `-ignore` take a number, a hash prefix, or a range (`12`, `12+`, `12-40`). A commit you name is an instruction and is never filtered out.
+- `-commit` and `-ignore` take a number, a hash prefix, or a range (`12`, `12+`, `12-40`). An all-digit ref shorter than seven characters is a number, never a hash prefix, so `-ignore 1` cannot also drop a commit whose hash opens on `1`. A commit you name is an instruction and is never filtered out.
 - `patch_commit_pattern` in `config.yaml` keeps commits whose subject does not match that shape out of every patch. An explicit `-search` or `-commit` overrides it.
 - The commits come from the per-branch store `rebuild` maintains, at `repo_commits_file`. There is one store, shared with `search_repo` and `calendar`, and `patch` tops it up rather than keeping a copy. Use `adtai rebuild` to rebuild one from scratch.
+
+<br>
 
 ## Building and deploying are two runs
 
@@ -137,17 +147,23 @@ PATCH FILES:
 
 What the two runs write, and every section they print, is on [patch_deploy.md](patch_deploy.md). What goes into the folder in the first place is on [patch_install.md](patch_install.md).
 
+<br>
+
 ## Which version of a file ships
 
 `-create` snapshots the **committed** version of each file: the blob at that file's newest commit inside the patch window, so an uncommitted working-tree edit cannot leak into a deployment. Three mutually exclusive flags override it, `-local`, `-head` and `-nosnap`.
 
 All four modes, what each one costs, and which two refs `-head` reads are on [patch_content.md](patch_content.md).
 
+<br>
+
 ## Shipping an APEX application whole
 
 `-app` ships an application whole instead of as the components that changed, and the application's own exported files pick the mode: an `apexlang/` tree ships as the tree, anything else as its `f<id>.sql`. Its optional value is where the tree lands rather than which applications ship, so `-app <id>` is a sandbox import.
 
 Both modes, the stale export refusal and the retarget rules are on [patch_app.md](patch_app.md). The import's staging, signatures and refusals are on [patch_import.md](patch_import.md), and the loop around it on apex_round_trip.md.
+
+<br>
 
 ## What a deleted object generates, and what a moved one does not
 
@@ -172,15 +188,21 @@ The last one is what `export_db -groups` does: it arranges a type folder's files
 
 A generated `DROP` is written per run and never carried into a re-created folder, which is on [patch_install.md](patch_install.md).
 
+<br>
+
 ## After a patch has landed
 
 `-archive` zips the patch folders you name into `patch_archive/<YYYY-MM>/` and removes them from `patch/`; named nothing, it only lists. `-drop` removes the sandbox APEX applications a `-deploy -app <id>` run created, so a workspace does not fill with dead copies.
 
 Each application gets a receipt at `<path_apex>/logs_<ENV>/<timestamp>_apex_drop_<application-id>_<DELETED|FAILED>.log`: `-target` supplies `<ENV>`, while the value passed to `-drop` is the application id. They are on [patch_archive.md](patch_archive.md) and [patch_drop.md](patch_drop.md).
 
+<br>
+
 ## Building from hashes instead of commits
 
 `-hash` builds the patch from what the working tree no longer agrees with the target about, which reaches work no commit window covers. `-baseline` records the state you believe the environment is at. Both are on [patch_hash.md](patch_hash.md).
+
+<br>
 
 ## Arguments
 

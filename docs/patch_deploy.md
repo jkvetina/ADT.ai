@@ -4,6 +4,8 @@
 
 What a build prints, what a deploy prints, where the logs land, and how to read the two checks that run after the last script. The command and its flags are on [patch.md](patch.md).
 
+<br>
+
 ## Deploy never builds
 
 `-deploy` ships the patch exactly as it stands on disk. It never creates a folder, never rewrites the selected one and never re-orders its files, so what gets deployed is what was reviewed:
@@ -19,88 +21,13 @@ The one thing `-deploy` adds to the script is the session defaults. Before the s
 
 What a deploy does write, besides its logs, is the baseline, and only for a patch built with `-hash`. Full rules on [patch_hash.md](patch_hash.md).
 
+<br>
+
 ## Object signatures and locks
 
-You build a patch carrying ten objects and deploy it twenty minutes later. In between, a colleague compiles `APP_LEDGER` into the same DEV schema. Your patch ships the body it snapshotted at build time, so deploying it quietly reverts their work.
+A patch lists what it will overwrite and asks the target about each one before writing a line, so a colleague's work cannot be buried by a build that predates it. CORE_LOCKS where it is installed, `last_ddl_time` where it is not, and `updated_on` for the REST modules and workspace files `user_objects` never held. Full rules on [patch_signatures.md](patch_signatures.md).
 
-So a patch lists the objects it will overwrite and asks the target about them before writing anything. Two blocks land in the install script, one at the top and one at the bottom:
-
-```text
-PROMPT -- OBJECT LOCKS
-...
-PROMPT -- OBJECT UNLOCK
-```
-
-Nothing sits above the individual `CREATE OR REPLACE` lines, deliberately. Oracle does not roll DDL back, so a guard refusing on the tenth object leaves nine already overwritten. Checking up front means a patch either runs or does not.
-
-Both blocks are plain SQL, a single `BEGIN`-`END` each, carrying the object list inside their own cursor. You do not need ADT to get the protection, so a patch you hand to a DBA is guarded the same way.
-
-### Which objects are guarded
-
-The ones the database keeps a source for and a patch overwrites in place: `FUNCTION`, `PACKAGE`, `PACKAGE BODY`, `PROCEDURE`, `TRIGGER`, `TYPE`, `TYPE BODY` and `VIEW`.
-
-A table is not one of them. A patch ships an ALTER helper for it ([patch_install.md](patch_install.md)) rather than overwriting it, and there is no source to compare. Same for sequences, synonyms and grants.
-
-### CORE_LOCKS, when you have it
-
-[CORE_LOCKS](https://github.com/jkvetina/CORE_LOCKS) hooks every DDL in a schema, keeps a hash of every object's source, and refuses a compile when somebody else holds a live lock.
-
-Where it is installed, the patch calls `core_lock.create_lock` for each object on its list. That takes the lock and runs the source comparison, so the patch does no hashing of its own. A colleague holding one stops the deploy before it writes:
-
-```text
-ORA-20990: LOCK_TIME_ERROR: OBJECT_LOCKED_BY `NOVAK` [10231]
-```
-
-An object whose source moved since the last lock is the other refusal, `LOCK_HASH_ERROR`. While your patch holds the locks, a colleague's compile is the one refused, which is the whole point on a shared DEV. The locks are released at the end rather than left to expire, so nobody waits out a deploy that already finished.
-
-That release only happens when the deploy reaches its own end. `create_lock` commits each row as it takes it, so a script that fails later exits before the unlock block runs, under the default `WHENEVER SQLERROR EXIT ROLLBACK`.
-
-Those locks stay held until they expire on their own, twenty minutes by default (`g_lock_length` in CORE_LOCKS). The unlock releases only locks this deploy's own user holds, so a colleague who took one mid-run keeps it.
-
-### Without CORE_LOCKS
-
-A target that does not have it still gets the cheap half. The same block reads `user_objects.last_ddl_time` for each listed object and refuses when it is newer than the moment the patch was built:
-
-```text
-ORA-20901: OBJECT_CHANGED: PACKAGE BODY APP_LEDGER was compiled after this
-patch was built, deploying it would overwrite work this patch never saw.
-```
-
-It costs one dictionary read and needs no grant, and it is approximate on purpose. A recompile moves `last_ddl_time` without changing a line, so this branch also refuses a second run of a patch that already deployed. Re-export and rebuild, or turn it off for that run.
-
-Every reference to `core_lock` is dynamic, so a schema without it compiles the script unchanged.
-
-#### The two clocks it compares
-
-Those two timestamps are written by two different machines. The moment a patch was built is a git commit's own instant, carrying the author's offset; `last_ddl_time` is a wall-clock reading taken on the database server, an Oracle `DATE` with no zone on it at all.
-
-Where the two sit in different zones, comparing the digits of one against the digits of the other is simply wrong. A build committed at 10:00 `+02:00` names 08:00 UTC, and an object compiled at 08:30 UTC is newer than it however the clock faces read.
-
-So the comparison happens in UTC, and each side is converted by whoever knows its own zone. The patch carries the build moment as a UTC instant. The block resolves the server's reading on the server:
-
-```sql
-SYS_EXTRACT_UTC(FROM_TZ(CAST(o.last_ddl_time AS TIMESTAMP),
-    TO_CHAR(SYSTIMESTAMP, 'TZH:TZM'))) AS changed_utc
-```
-
-`SYSTIMESTAMP` rather than `SESSIONTIMEZONE`, because the session's zone is whatever machine happens to be running the deploy and says nothing about the server the DDL time came off. It is read when the patch runs rather than when it was built, so a patch built in August and deployed in November is compared against November's offset.
-
-One residue is worth knowing about. That offset is the one in force at deploy time, so an object compiled on the far side of a daylight saving change resolves up to an hour out.
-
-Reading the exact offset for an older instant needs the server's zone *region*, and no SQL exposes the region `SYSDATE` reads (`DBTIMEZONE` is the value the database was created with, not the clock the server keeps). A server on UTC, which most containers and cloud instances are, has no such window.
-
-### Turning it off
-
-Two keys in `config.yaml`, both on by default:
-
-```yaml
-patch_signatures        : True
-patch_core_locks        : True
-```
-
-Separate, because the halves are: `patch_core_locks` owns the lock and the hash check that comes with it, `patch_signatures` owns the `last_ddl_time` fallback for a target with no CORE_LOCKS. Both off and no block is written at all.
-
-This is not `-hash` mode, which picks which files a patch carries by comparing your working tree against a recorded baseline ([patch_hash.md](patch_hash.md)) and never asks the database. This rides whatever patch you built.
+<br>
 
 ## The processing report
 
@@ -164,6 +91,8 @@ PATCH FILES:
   - patch/260822-1-12/SANDBOX.sql
 ```
 
+<br>
+
 ## Grants
 
 A grant script travels in a patch when a selected commit changed it, and not otherwise.
@@ -177,6 +106,8 @@ Earlier versions pulled a grant script in for every schema the patch touched, wh
 Re-running unchanged grants was harmless. Not being able to tell from the patch what was in it was not.
 
 A project upgrading from an older version can delete `patch_grants` from its `config.yaml`. Nothing reads it, and leaving it in place changes nothing.
+
+<br>
 
 ## The deploy report
 
@@ -198,18 +129,21 @@ CONNECTING TO SCHEMA SANDBOX, DEV:
 DEPLOYING PATCH: 260822-1-12
 ----------------
 
-  FILE          SCHEMA    FILES   TIMER   STATUS
-  -----------   -------   -----   -----   -----------
-  SANDBOX.sql   SANDBOX     2/2      4s   SUCCESS
+  FILE          SCHEMA    BLOCKS   TIMER   STATUS
+  -----------   -------   ------   -----   -----------
+  SANDBOX.sql   SANDBOX      2/2      4s   SUCCESS
 ```
 
-- **The table is written as the deploy runs, not after it.** The header and the column rule print before the first script; `FILE` and `SCHEMA` appear when that script starts, and `FILES`, `TIMER` and `STATUS` complete the line when it finishes.
-- **On a terminal the open row is repainted** rather than left half-written. It opens on `0/n` and `IN PROGRESS`, because the total is read off the install script before SQLcl is launched, and the timer ticks once a second.
-- **`FILES` counts files finished**, so it reaches `n/n` only when the script returns. The count comes from the `PROMPT -- FILE:` markers SQLcl echoes, and a marker echoes just before its file runs.
+- **Schema scripts run first**, then each application's `<SCHEMA>.<APP>.init.sql`, the import, `.end.sql` ([patch_import.md](patch_import.md)).
+- **The table is written as the deploy runs, not after it.** The header and the rule print before the first script; `FILE` and `SCHEMA` appear when that script starts, `BLOCKS`, `TIMER` and `STATUS` when it finishes.
+- **On a terminal the open row is repainted** rather than left half-written. It opens on `0/n` and `IN PROGRESS`, the total being read off the install script before SQLcl launches, and the timer ticks once a second.
+- **`BLOCKS` counts linked blocks finished**, so it reaches `n/n` only when the script returns. The count comes from the `PROMPT -- FILE:` markers SQLcl echoes, and a marker echoes just before its block runs.
 - **A redirected run, a pipe and a CI job** print one finished line per script with no repaints, and carry the exact bytes the batch render writes.
-- **A script the run never started** is reported `NOT RUN` rather than left out of the table. `FILES` is blank when the run reported no progress at all, and `TIMER` is blank for any script that never ran, because `0s` would claim a measurement nobody took.
+- **A script the run never started** is reported `NOT RUN` rather than left out of the table. `BLOCKS` is blank when the run reported no progress at all, and `TIMER` is blank for any script that never ran, because `0s` would claim a measurement nobody took.
 
-On Windows the same command works and the row fills as the deploy runs, exactly as it does elsewhere: the transport is a pipe rather than a pseudo console, and SQLcl hands its lines over as it prints them. The deploy log is identical.
+On Windows the row fills as the deploy runs too: the transport is a pipe rather than a pseudo console, and SQLcl hands its lines over as it prints them; the log is identical.
+
+<br>
 
 ## When a deploy fails
 
@@ -248,9 +182,13 @@ DEPLOYMENT ERROR: APP.sql
 
 The tail carries the last object that did compile, which is what locates the failure. Whitespace-only lines are dropped, since a cancelled prompt leaves several right where the diagnosis belongs.
 
+<br>
+
 ## Importing the APEXlang tree
 
-`-app` on a `-deploy` run also lands the application's committed `apexlang/` tree in the Builder, through SQLcl's `apex import`, as one more row in the table above. Where the tree lands, how it is staged, the signatures read before anything is written and what is refused are on [patch_import.md](patch_import.md); the loop around it, export to promotion, is on apex_round_trip.md.
+`-app` on a `-deploy` run also lands the application's committed `apexlang/` tree in the Builder, through SQLcl's `apex import`; its row reads `> BUILDING APP`, a command rather than a file. Where it lands, how it is staged, what is read first and what is refused are on [patch_import.md](patch_import.md); the loop around it, export to promotion, is on apex_round_trip.md.
+
+<br>
 
 ## Where the logs go
 
@@ -261,6 +199,8 @@ Each installer stamps its transcript with its outcome. The name is `patch_deploy
 **The folder is part of the patch.** Both `-create` and `-deploy` ensure it exists: SQLcl cannot spool into a missing directory, and git does not track empty ones.
 
 The latest-log display still shows the newest script outcome. Skipping requires a separate completed-run receipt, `deployment.json`, for the same payload, target and verification policy. A partial failure, interrupted execution or failed scan cannot complete that receipt. A missing, corrupt or outdated receipt runs again; `-force` also reruns a completed deployment.
+
+<br>
 
 ## View column mismatches
 
@@ -284,11 +224,15 @@ The recompile is one `ALTER ... COMPILE` per object and a compile that fails rai
 
 The list does not change the deploy's exit code. The read is schema-wide rather than patch-scoped, so an object that has been invalid since long before this patch would otherwise fail every deploy against that schema.
 
+<br>
+
 ## Verifying the applications the deploy landed
 
 An install script reporting `SUCCESS` says the import worked, not that the application still runs. So a deploy that lands an APEX application finishes by asking it whether its own SQL still compiles, and a finding fails the run.
 
 What the scan reads, where its log goes, and what a clean answer does not prove are on [patch_verify.md](patch_verify.md).
+
+<br>
 
 ## After the deploy
 

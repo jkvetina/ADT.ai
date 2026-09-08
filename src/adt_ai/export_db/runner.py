@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.export_db.config import (
+    ObjectTypeFilterError,
     _audit_config,
     _cached_gateway_factory,
     _configured_empty_lines,
@@ -15,6 +16,8 @@ from adt_ai.export_db.config import (
     _requested_object_type_matches,
     _split_patterns,
     _with_default_layout,
+    unexportable_object_types,
+    unexportable_object_types_message,
 )
 from adt_ai.export_db.content import (
     _append_comments,
@@ -247,7 +250,7 @@ class ExportDbRunner:
                     grants        = grants,
                 )
             if grants:
-                # **The four privilege reads run HERE, under the overview table
+                # **The five privilege reads run HERE, under the overview table
                 # the call above left open** (`#437`), rather than after the
                 # object loop where `#382` put them. Why that is the right place
                 # for both the reads and the row is in `grants.grant_artifacts`.
@@ -260,6 +263,22 @@ class ExportDbRunner:
                 # schema's row would otherwise count the first one's files too.
                 reporter.overview_grants(grants_changed, len(schema_grants))
             reporter.diff_tables_dropped(dropped_diff_tables)
+            # The wildcard route into `#739`. `-type %` matches every exported
+            # type, so nothing about it can be refused from the config alone,
+            # and on a 26ai schema discovery still comes back holding a domain,
+            # whose DDL pull dies inside DBMS_METADATA. Raised HERE, once the
+            # overview section has closed and before the export section opens:
+            # the table above is what was found, and a refusal one call earlier
+            # would land under an `OBJECTS OVERVIEW:` header whose table is
+            # still waiting on the grants reads to render (`#442`).
+            unexportable = unexportable_object_types(
+                (database_object.object_type for database_object in database_objects),
+                request.config,
+            )
+            if unexportable:
+                raise ObjectTypeFilterError(
+                    unexportable_object_types_message(unexportable)
+                )
             if not _has_runtime_filter(request) and not request.baseline:
                 # A measured run reports no deletions and makes none: a file the
                 # target lacks is a difference for `patch -hash` to decide about.
@@ -355,6 +374,7 @@ class ExportDbRunner:
                     keep_owner          = keep_owner,
                     keep_view_column_names = keep_view_column_names,
                     object_display_name = display_name,
+                    table_retention     = discovery.table_retention(database_object),
                 )
                 fix_content = (
                     build_table_fix_sql(raw_ddl, database_object.name, display_name)
@@ -441,6 +461,7 @@ __all__ = [
     "ObjectDiscovery",
     "ObjectFileResolver",
     "ObjectFileWriter",
+    "ObjectTypeFilterError",
     "ObjectWritePlan",
     "ObjectWriteRequest",
     "Path",
@@ -490,5 +511,7 @@ __all__ = [
     "resolve_group_rules",
     "row_value",
     "stored_watermark",
+    "unexportable_object_types",
+    "unexportable_object_types_message",
     "widest_object_type",
 ]

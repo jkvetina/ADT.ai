@@ -2,6 +2,8 @@
 
 `ut` records every run in `config/internal/ut.db`: one row per run per schema, and one row per package the run measured, so `-verbose` can say what moved since the last run that differed. The last twenty runs per schema are kept, and a root that cannot be written skips the history and runs normally.
 
+<br>
+
 ## Diagram
 
 ```mermaid
@@ -25,9 +27,13 @@ erDiagram
 
 The foreign key is declared with a cascade and switched on by the opener, so pruning a run takes its package rows with it.
 
+<br>
+
 ## Tables
 
 Nullable is No where the column is declared NOT NULL or belongs to the primary key.
+
+<br>
 
 ### runs
 
@@ -37,6 +43,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | schema_name | TEXT    | No       |     | The schema, upper case, so two spellings read one history.                                                                                                                             |
 | recorded_at | TEXT    | No       |     | When the run was recorded: UTC, `YYYY-MM-DD HH:MM:SS`, this machine's clock.                                                                                                           |
 | variant     | TEXT    | Yes      |     | What the run selected: `%` for every suite, otherwise the `-name` selection as the timers key it. NULL on a row written before the column existed, and such a row is never a baseline. |
+
+<br>
 
 ### package_coverage
 
@@ -49,6 +57,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | blocks_covered | INTEGER DEFAULT 0 | No       |                    | Blocks the run executed.                                                                                                                    |
 | percent        | REAL              | Yes      |                    | Covered over total; NULL when the collector saw no blocks, so a package scoring nothing and a package measured as nothing never look alike. |
 
+<br>
+
 ## Indexes
 
 | Index          | Table | Columns             | Unique |
@@ -56,6 +66,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | ix_runs_schema | runs  | schema_name, run_id | No     |
 
 One index, for the one question the store answers: this schema's runs, newest first.
+
+<br>
 
 ## Version and lifetime
 

@@ -15,7 +15,7 @@ from typing import Any
 
 from adt_ai.export_apex.files import ApexFileResolver
 from adt_ai.export_apex.inventory import ApexApplication
-from adt_ai.shared.apex_paths import APEXLANG_DIR
+from adt_ai.shared.apex_paths import APEXLANG_DIR, apexlang_folders, apexlang_search_root
 from adt_ai.shared.apex_store import ApexStore
 
 APPS_METADATA = "config/internal/apex.db"
@@ -67,7 +67,7 @@ def resolve_targets(
         if discovered:
             targets.extend(discovered)
         else:
-            where = _label(_discovery_root(root, config), root)
+            where = _label(apexlang_search_root(root, config), root)
             notes.append(
                 f"No {APEXLANG_DIR}/ folder found under {where} "
                 f"- run `adtai export_apex -apexlang` first."
@@ -121,44 +121,11 @@ def _application(entry: Mapping[str, Any], raw_id: str) -> ApexApplication:
     )
 
 
-def _discovery_root(root: Path, config: Mapping[str, Any]) -> Path:
-    """The folder a bare run walks.
-
-    ``path_apex`` may carry a ``<schema>`` token, which only resolves once a
-    schema is bound, and a bare run has none. Walking from the static prefix
-    before that token covers every schema at once without guessing which ones
-    exist on disk.
-    """
-    configured = str(config.get("path_apex") or "apex/")
-    prefix = configured.split("<")[0].strip("/")
-    candidate = root / prefix if prefix else root
-    return candidate if candidate.is_dir() else root
-
-
 def _discover(root: Path, config: Mapping[str, Any]) -> list[ValidateTarget]:
-    base = _discovery_root(root, config)
-    folders = sorted(
-        path
-        for path in base.rglob(APEXLANG_DIR)
-        if path.is_dir() and not _under_dot_folder(path, base)
-    )
     return [
-        ValidateTarget(folder, _label(folder, root), stageable=True) for folder in folders
+        ValidateTarget(folder, _label(folder, root), stageable=True)
+        for folder in apexlang_folders(root, config)
     ]
-
-
-def _under_dot_folder(path: Path, base: Path) -> bool:
-    """Skip hidden folders *below the base* only.
-
-    The base itself routinely sits under a dot folder, every ADT.ai task
-    worktree lives in ``.worktrees/``, so judging the absolute path's parts
-    would discover nothing there.
-    """
-    try:
-        relative = path.relative_to(base)
-    except ValueError:
-        return False
-    return any(part.startswith(".") for part in relative.parts)
 
 
 def _label(path: Path, root: Path) -> str:

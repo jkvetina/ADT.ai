@@ -6,6 +6,8 @@
 
 It reads the commit store [`rebuild`](rebuild.md) maintains, so run `rebuild` first. It never connects to Oracle.
 
+<br>
+
 ## Examples
 
 List the newest commits in the branch store:
@@ -51,6 +53,8 @@ Restore the historical version of a file beside the current one:
 adtai search_repo -file monthly_report_v -commit 7 -restore
 ```
 
+<br>
+
 ## Output
 
 One block per commit, newest first: the store's own commit number and the subject, then the author, the commit timestamp and the short hash. A file selector adds the changed-file rows under each commit:
@@ -85,11 +89,15 @@ TIMER: 0s
 - `-file`, `-type` and `-name` turn the file rows on by themselves, capped at 20 per commit. `-files N` sets another cap and `-files 0` turns them off.
 - A search that matches nothing prints `No commits found.` and exits `0`.
 
+<br>
+
 ## How filters combine
 
 Terms inside one flag are AND-matched, and different flags are AND-matched with each other, so `-commit 5+ -hash 565fcf1a` keeps only the commit that satisfies both. The exceptions are `-commit` and `-hash`, whose own multiple values are OR-matched.
 
 `-commit` takes a number, a hash, or a range: `7` is that commit, `5+` is that one and everything newer, `2-6` is the inclusive span. A range needs digits on both sides, so a hash prefix is never misread as one.
+
+<br>
 
 ## Finding an object rather than a file
 
@@ -99,13 +107,21 @@ Terms inside one flag are AND-matched, and different flags are AND-matched with 
 - `-name` is the object name, read through the file's own configured extension, so `packages/core.spec.sql` is `CORE` rather than `CORE.SPEC`.
 - Both are matched as SQL LIKE patterns, case-insensitively, the way `export_db -type` and `-name` are matched. The pattern is anchored, so `-type PACKAGE` is the spec alone and `-type "PACKAGE%"` is the spec and the body; a partial name is written `-name "SHOP%"` rather than as a bare fragment.
 
+<br>
+
 ## Restoring an old version
 
 `-restore` writes each matching historical version beside the original, with the commit number inserted before the extension, so `-file monthly_report_v -commit 7 -restore` writes `monthly_report_v.7.sql`. Restore is the one mode that reads live git, and only to fetch the payloads of versions already selected from the store.
 
 `-stage` writes to the original path instead and runs `git add` on it. When a restore with `-stage` matches more than one version of one file, the newest match wins in the working tree, so name a specific `-commit` or `-hash` when staging.
 
-A file with uncommitted local changes is never overwritten this way: `-stage` refuses it and lists it under `COULD NOT RESTORE:` instead, so the edit is never silently lost.
+Every destination is overwritten without asking, in both spellings. A copy is named by its commit, so recovering overlapping ranges one after another rewrites the same `monthly_report_v.7.sql` with the same bytes, and the second run never stops on the file the first one left.
+
+`-stage` overwrites the working-tree path even when it carries uncommitted changes. Putting an old version back while you are mid-work is what the flag is for, so the local edit is gone; commit or stash anything you want to keep before you stage a restore.
+
+`COULD NOT RESTORE:` therefore reports one thing: a version git could not resolve, which is what a stale commit store looks like after history was rewritten. Run `adtai rebuild` and try again.
+
+<br>
 
 ## Arguments
 
@@ -125,7 +141,7 @@ A file with uncommitted local changes is never overwritten this way: `-stage` re
 | `-recent [DAYS]`, `--recent [DAYS]` | No | none | Keep commits newer than today minus DAYS. DAYS may be a fraction of a day, `1/24` for the past hour. A whole-day window compares dates, so `-recent 1` keeps a commit made at 23:00 yesterday; a shorter one compares the commit's own timestamp. Bare `-recent` means one day. |
 | `-since`, `--since` | No | none | Oldest commit date, `YYYY-MM-DD`, or a number of days back. |
 | `-until`, `--until` | No | none | Newest commit date, `YYYY-MM-DD`, or a number of days back. |
-| `-restore`, `--restore` | No | off | Write the matched historical versions beside the originals. |
-| `-stage`, `--stage` | No | off | With `-restore`, write to the original paths and `git add` them. |
+| `-restore`, `--restore` | No | off | Write the matched historical versions beside the originals, as `<name>.<commit>.<ext>`. An existing copy of that commit is overwritten. |
+| `-stage`, `--stage` | No | off | With `-restore`, write to the original paths and `git add` them, overwriting uncommitted local changes there. |
 
 Shared options (-root, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

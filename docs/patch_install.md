@@ -4,6 +4,8 @@
 
 Which committed files a patch picks up, the order they run in, the two checks that stand in front of a build, and the project SQL a generated install script injects around them. The command itself is on [patch.md](patch.md).
 
+<br>
+
 ## Which files become a patch
 
 A committed file enters a patch when it sits under the project's **object layout**, the folders `path_objects` describes, or under its **APEX export layout**, the folders `path_apex` describes. Everything else in the commit is ignored.
@@ -21,6 +23,8 @@ If a patch comes out empty, read the install script's `-- COMMITS:` header again
 
 Rebuilding the same patch folder replaces its generated artifact set. A schema or application excluded by the new selection leaves no old generated installer behind. Generated snapshots are refreshed with those installers; unrelated authored files and deployment history remain. A previously deployed folder still requires `-force` to rebuild.
 
+<br>
+
 ## APEX files that never enter a patch
 
 `apex_files_ignore` lists them. Each shipped pattern either recreates the application from scratch, deletes it, or is an installer APEX writes for a full import, so shipping one inside a patch is at best a no-op and at worst drops the application the patch was meant to change:
@@ -35,6 +39,8 @@ install_component.sql
 
 Patterns match on the path tail, written relative to an application's own folder, and `*` is a wildcard. The two environment scripts are ignored here and re-added by `apex_files_copy`: they are not a change worth patching, and they are needed in the snapshot folder regardless. A database file is never checked against these patterns.
 
+<br>
+
 ## Ordering
 
 Files are grouped by `patch_map`, which fixes the coarse order (sequences, tables, types, synonyms, objects, triggers, and so on). Within each group the order comes from `config/internal/dependencies.db`, and that graph has two halves because Oracle stores them apart:
@@ -43,6 +49,8 @@ Files are grouped by `patch_map`, which fixes the coarse order (sequences, table
 - `USER_CONSTRAINTS`, the table half. Oracle records no table-to-table rows in `USER_DEPENDENCIES`, so foreign keys are reconstructed from enabled `R` constraints. A table with a foreign key is emitted after the table it references.
 - File name is the tie-break, so the output is stable, and a dependency cycle degrades to name order for the objects inside it.
 
+<br>
+
 ## REST modules
 
 Files written by `export_apex -rest` are patchable objects like any other. They map to the `REST` object type, resolved from `path_apex` plus `apex_path_rest`, and to the `rest` group.
@@ -50,6 +58,8 @@ Files written by `export_apex -rest` are patchable objects like any other. They 
 `patch_map` places that group **last**: an ORDS module depends on nothing else in the patch and nothing else depends on it. Inside the group the name tie-break puts `__enable_schema.sql` ahead of the modules it enables.
 
 They take the database route rather than the APEX application route, because what they contain is schema-level PL/SQL the schema owner runs directly. Recognition needs the `REST` entry in `object_types`.
+
+<br>
 
 ## The graph gate
 
@@ -80,6 +90,8 @@ Four things follow, and they are deliberate:
 - **Read-only previews are never gated**, because they order nothing. A layout matching no exported objects reports what it searched and exits `0`.
 
 Staleness is measured against the mirror's own refresh stamps, the rows [dependencies](dependencies.md) prints with `-age`, versus the newest mtime among the object files that would be ordered. A schema the mirror has never refreshed reads `refreshed never`.
+
+<br>
 
 ## The export check
 
@@ -112,6 +124,8 @@ WARNING - NO DATABASE CLOCK:
 
 `adtai dependencies -refresh -schema <SCHEMA>` clears it permanently.
 
+<br>
+
 ## The install script
 
 `-install` regenerates the database install script from the objects already exported into the repository. It reads the working tree rather than commits, so it needs no patch name and no database connection:
@@ -131,6 +145,8 @@ The `@"./…"` links inside each script are relative to that folder, so the scri
 
 The console reports one segment per schema: an `OBJECTS OVERVIEW: <SCHEMA>` table counting files per object type, then an `INSTALL SCRIPT: <SCHEMA>` header with the generated path. A schema root holding no objects is skipped entirely.
 
+<br>
+
 ## Generated DROP scripts are per run
 
 A patch window that deletes an object's file ships a guarded `DROP` for it under `patch_scripts/objects_after/`, and which deletions earn one is on [patch.md](patch.md).
@@ -138,6 +154,8 @@ A patch window that deletes an object's file ships a guarded `DROP` for it under
 **A generated `DROP` is written per run, so a re-create never inherits one.** Re-creating a patch code on a later day mints a new folder and carries the previous one's scripts into it, which is what stops a re-create shipping a patch with no scripts at all. A generated helper is excluded from that carry-forward: it is derived from the patch window, so a copy of one answers an earlier window, and the run that still earns it writes it again.
 
 Without the exclusion the rule holds for the first build and is undone by the second, which is what a project whose folder predates it would have seen. Your own one-offs are unaffected: the exclusion reads the generator's `drop.<object_type>.<name>.sql` spelling against your configured `object_types`, so a script you named `drop_old_rows.sql` is an ordinary patch script.
+
+<br>
 
 ## Templates and the project SQL around the objects
 

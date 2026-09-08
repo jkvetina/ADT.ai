@@ -7,7 +7,7 @@ views and keyed on the schema itself.
 
 `#360` added an `EXPORTING GRANTS FOR <SCHEMA>:` section here and `#372` removed
 it as furniture nobody asked for. The split outlives it because the budget is
-its real reason: folded back, `runner.py` measures 20.4 KB. These four reads run
+its real reason: folded back, `runner.py` measures 20.4 KB. These five reads run
 under the export's own header, like the object pulls above them.
 """
 
@@ -68,7 +68,7 @@ def grant_artifacts(
 ) -> tuple[list[tuple[DatabaseObject, str]], bool]:
     """This schema's GRANT artifacts, and whether any of them actually moved.
 
-    The four reads and the comparison are one step because the console asks one
+    The five reads and the comparison are one step because the console asks one
     question. `#382` put a `GRANT` row in the overview to say the type was
     coming, and put it there with the rest of the table, so it was a claim about
     what the config selects rather than about anything the export would do: a
@@ -139,7 +139,11 @@ def grant_contents(
         yield DatabaseObject(schema, GRANT_OBJECT_TYPE, f"received/{owner.upper()}"), content
     yield (
         DatabaseObject(schema, GRANT_OBJECT_TYPE, f"{schema.upper()}_schema"),
-        _render_user_privileges(discovery.user_privileges(schema), schema=schema),
+        _render_user_privileges(
+            discovery.user_privileges(schema),
+            schema            = schema,
+            schema_privileges = discovery.schema_privileges(schema),
+        ),
     )
     yield (
         DatabaseObject(schema, GRANT_OBJECT_TYPE, f"{schema.upper()}_directories"),

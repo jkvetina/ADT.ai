@@ -6,6 +6,8 @@
 
 utPLSQL does not raise when a test fails, so a caller that only watches for an exception sees a clean run. The exit code is what this command is for. Which packages a run selects, and the configuration behind that, are on [ut_discovery.md](ut_discovery.md); coverage, the gate and the delta report are on [ut_coverage.md](ut_coverage.md).
 
+<br>
+
 ## Examples
 
 Run every suite in the schema:
@@ -45,6 +47,8 @@ Fail the run when a tested package is under a coverage threshold:
 ```bash
 adtai ut -gate 90
 ```
+
+<br>
 
 ## Output
 
@@ -110,6 +114,8 @@ A run reaches the database in four stretches, and each one waits under a heading
 
 So the bar closes when the last suite returns, which means its closing time is the suites' own rather than the whole run's. The `TIMER` footer is what reports the run.
 
+<br>
+
 ## The verbose run
 
 `-verbose` prints the suites roll-up, then replaces the bar with a per-test section, one block per suite, opened by the package name as that suite starts and completed by its rows as it finishes.
@@ -148,6 +154,8 @@ TEST RESULTS:
 - **The cap never touches the counts.** The summaries report every failure and error, so the two disagreeing is the signal that there is more detail than the screen. Set `ut_limit_errors: 0` to print every stanza.
 - **`-silent` does not silence it.** It prints on exactly the same condition as without the flag: at least one test failed or errored. The flag makes a passing run quiet, not a failing run unreadable.
 
+<br>
+
 ## The compact run
 
 `-compact` replaces both summary tables with one row: how big the run was, what it cost, how much of the code it reached, and whether it is green. It is the same fixture run the `## Output` block above shows, reported in five cells instead of a table.
@@ -168,6 +176,8 @@ RESULTS:
 - **`RESULTS:` leads the coverage read** like the heading it replaces, so it is on screen before the profiler round trips rather than after them.
 - **It composes with the modes rather than outranking them**, because they own different halves of the screen: `-silent -compact` is command chrome and one row, `-verbose -compact` keeps the per-test listing above it. The one thing `-compact` does take from `-verbose` is `COVERAGE CHANGED SINCE LAST RUN:`, which is per-package detail inside the region the row replaces.
 
+<br>
+
 ## What counts as a test suite
 
 A package is run when **both** are true:
@@ -180,6 +190,8 @@ The two facts come from two places and `ut` reads both, because neither is suffi
 A matched package satisfying only the first half is **ignored**: no row in either summary, no stanza under `ERRORS & FAILURES:`, and no effect on the exit code. A section headed errors and failures is a list of tests that ran badly, and a package that never ran is not one of them.
 
 The vanished-suite case is still caught, by the zero-test rule rather than by name: a run that executed no test is a failure, so a schema whose only test package stopped compiling exits non-zero anyway.
+
+<br>
 
 ## The exit code is the deliverable
 
@@ -197,6 +209,8 @@ That XML comes from whatever schema was tested, so **a report declaring a DTD is
 
 Entity expansion, external-entity retrieval and the quadratic blowup all begin in a doctype's subset, and utPLSQL's reporter never emits one, so nothing a real run produces meets the rule.
 
+<br>
+
 ## Requirements
 
 - **utPLSQL v3 installed**, with the connected schema holding `EXECUTE` on `ut` and `ut_runner` plus the `ut_*` types and the matching synonyms. This is utPLSQL's standard `ut_user` grant set.
@@ -204,6 +218,8 @@ Entity expansion, external-entity retrieval and the quadratic blowup all begin i
 - The ordinary query path, never the read-only one: running a test writes to utPLSQL's own output buffer, and a read-only session makes the reporter's data producer fail to start rather than report anything.
 - One `ut.run` call per suite rather than one per test, so the fixtures run once each. A **skipped** test (`%disabled`) neither passes nor fails: its row reads `SKIP` and it lands in no verdict column, so a suite quietly disabled wholesale shows up as a package with test rows and no counts rather than as green.
 - **A suite that cannot run at all is one red suite, not a lost run.** A dropped connection, an ORA on the reporter's side or a `%beforeall` that blows up produces an `ERROR` row per test in that suite, carrying the cause, and the run carries on to the next one. Every suite that had already finished keeps its results and its timing, and the exit code is non-zero.
+
+<br>
 
 ## Arguments
 

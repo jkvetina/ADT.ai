@@ -4,6 +4,8 @@ A patch folder holds a copy of every file it installs, and one path can offer fo
 
 Nothing here changes WHICH files a patch carries. The file list comes from your commit selection, every time; these flags only choose the body each of those files ships with.
 
+<br>
+
 ## Examples
 
 The default, the committed body of every selected file:
@@ -30,6 +32,8 @@ Ship no copies at all, and link the repository files where they live:
 adtai patch -target DEV -name 12 -create -nosnap
 ```
 
+<br>
+
 ## The four modes
 
 The three flags are mutually exclusive, and passing two exits `2`. The default has no flag of its own, so there is no spelling of it that parses and changes nothing.
@@ -41,6 +45,8 @@ The three flags are mutually exclusive, and passing two exits `2`. The default h
 | `-head` | the newest committed version, from the branch or the remote; no newer-commit warning |
 | `-nosnap` | nothing; the install script links the repo file where it lives |
 
+<br>
+
 ## Why the default is the committed body
 
 A patch you can rebuild tomorrow and get byte-for-byte is what makes a review worth anything, and a working tree is not reproducible: it holds edits no commit records and nobody else can see.
@@ -48,6 +54,8 @@ A patch you can rebuild tomorrow and get byte-for-byte is what makes a review wo
 So `-create` reads the git blob at each file's **authoritative commit**, the newest commit in the patch window that touched that path. A file with no commit behind it at all, an `apex_files_copy` entry pulled in from disk, falls back to the working tree and is reported under `UNCOMMITTED FILES` rather than shipped in silence.
 
 A selected committed file still ships when it has been deleted locally without committing. Deletion in the selected history is authoritative too: an uncommitted local restoration does not make the default mode ship that file again. Snapshots, installer links, reports and object guards use the same source decision.
+
+<br>
 
 ## What the head mode reads
 
@@ -59,6 +67,8 @@ That is the flag for the case where somebody else fixed an object you are alread
 
 Every fallback is silent, and each one is what `-head` did before it read the remote. No origin, neither remote name resolving, or a remote that never carried the file: all read the local `HEAD`. `-head` also suppresses the `^` newer-commit warning, there being nothing newer left to warn about.
 
+<br>
+
 ## What no snapshot costs
 
 `-nosnap` writes no copies. The install script's `@` lines point out of the patch folder at the repository file (`@"./../../database/..."`), which costs two things worth knowing before you reach for it.
@@ -67,9 +77,19 @@ The folder stops being self-contained, so a later edit to the repository changes
 
 An APEX static file is the one exception and is written in every mode. It has no runnable form in the repository, what deploys being a generated `wwv_flow_imp` wrapper, so there is nothing for a link to point at.
 
+<br>
+
 ## An APEXlang file is always deployed where it lives
 
-An `.apx` file is the mirror image of that exception: it is skipped in every mode, including the default. `patch -deploy -app` imports the application by pointing `apex import` at the application's own `apexlang/` folder, so a copy under `snapshots/` would be one nothing ever opens, and on a large application it is the whole cost of changing one page.
+An `.apx` file is the mirror image of that exception: it is snapshotted like any other changed file, and it is the one kind the install script never links. `patch -deploy -app` imports the application by pointing `apex import` at its own `apexlang/` folder, so the copy is a record rather than an install step.
+
+Only the files the patch's own commits touched are copied, never the rest of the tree, which on a large application is the whole cost of changing one page.
+
+Its static files go the same way, which makes them the exception to the exception above. `-apexlang` writes the tree without the payloads, and the deploy stages the sibling `files/` export back into `shared-components/static-files/` before `apex import` reads the folder, so each file arrives with the application.
+
+A wrapper generated for one of them would therefore install it twice, and an APEXlang application's payloads are left out of the patch entirely. An application exported as `f<id>.sql` has no tree to stage them out of and keeps its wrappers.
+
+Nothing from the legacy `.sql` import path is written beside them. `application/set_environment.sql` and `application/end_environment.sql` are the begin/end scaffolding that path runs, so an `apex_files_copy` entry naming either is skipped for an application shipping a tree, and the install script inlines neither.
 
 The file stays in the patch's file list, so the install script and the processing report still name it. What the script carries in place of an `@` line is the folder the application deploys from:
 
@@ -81,6 +101,8 @@ PROMPT --;
 ```
 
 The import's own deploy log repeats it as a `DEPLOYED FROM` row beside the three signature rows, which is where to look when you need to know which bytes landed. The `.sql` component exports beside the tree are unaffected and link as they always have.
+
+<br>
 
 ## Hash mode picks for you
 

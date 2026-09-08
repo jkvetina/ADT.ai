@@ -41,6 +41,7 @@ from adt_ai.export_apex.rest import (
     rest_timeout_seconds,
 )
 from adt_ai.shared import text_files
+from adt_ai.shared.apex_paths import REST_SCHEMA_DEFINITION
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.row_values import row_value
 from adt_ai.shared.yaml_io import store_yaml_mapping
@@ -294,7 +295,7 @@ class ApexCollectionWriterMixin:
     ) -> None:
         root = resolver.apex_root()
         root.mkdir(parents=True, exist_ok=True)
-        resolver.rest_export("__enable_schema").parent.mkdir(parents=True, exist_ok=True)
+        resolver.rest_export(REST_SCHEMA_DEFINITION).parent.mkdir(parents=True, exist_ok=True)
         output = gateway.sqlcl_request(
             "SET LINESIZE 200;\nrest export;",
             root,
@@ -335,7 +336,7 @@ class ApexCollectionWriterMixin:
             target.parent.mkdir(parents=True, exist_ok=True)
             text_files.write_text(target, _plsql_block(module))
         if modules:
-            target = resolver.rest_export("__enable_schema")
+            target = resolver.rest_export(REST_SCHEMA_DEFINITION)
             target.parent.mkdir(parents=True, exist_ok=True)
             text_files.write_text(
                 target, _schema_block(_schema_definition(preamble, trailer))

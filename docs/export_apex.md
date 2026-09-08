@@ -6,6 +6,8 @@
 
 `-reveal` answers "what workspaces and applications live in this environment?". The format flags decide what an export writes, and nothing is exported unless a format was named.
 
+<br>
+
 ## Examples
 
 See what is there before exporting anything:
@@ -38,6 +40,8 @@ Report what changed recently, by anyone or by you:
 adtai export_apex -recent 3
 adtai export_apex -recent 3 -my
 ```
+
+<br>
 
 ## Output
 
@@ -107,6 +111,8 @@ EXPORTING APP 100/ORDERS:
 - A multi-schema export runs schema by schema, each with its own connection block and `TIMER`, banner printed once.
 - Filtered component exports print the affected pages and components line by line instead of the dotted bar.
 
+<br>
+
 ## Reveal, and how a schema is reached
 
 `-reveal` scans every schema configured in the environment unless `-schema` narrows it, keeping one APEX connection open rather than reconnecting per schema. Names match case-insensitively.
@@ -121,6 +127,8 @@ What the cache holds, table by table, is on [storage_apex.md](storage_apex.md).
 
 When `-app` names an application whose owner is not among the requested schemas, that lookup runs once inside the last requested schema's segment, and the owner it finds becomes its own appended segment.
 
+<br>
+
 ## Formats are explicit
 
 ADT.ai exports only the formats named on the command line. There are no configured format defaults and no suppressor flags: `-all` is how you ask for everything. What each flag writes, how the APEX version decides what is skipped, and why APEXlang carries no static payloads are on [export_apex_formats.md](export_apex_formats.md).
@@ -130,6 +138,8 @@ ADT.ai exports only the formats named on the command line. There are no configur
 `-deep` beside `-page` also exports the components recorded for those pages in the dependency mirror, LOVs, lists and authorization schemes among them, and prints a `DB OBJECTS` section of the database objects those pages use.
 
 **The whole-application format you export in is the one `patch -app` ships.** Two formats carry a whole application, and the files in the repository are what `patch` reads to tell them apart: `-apexlang` writes the `apexlang/` tree, which `patch -deploy -app` imports from the folder it lives in, and `-full` writes the single `f<id>.sql` a patch links as a script. An application exported as an APEXlang tree therefore needs no `f<id>.sql` at all, since `patch` never links one, never imports one, and never refuses a build for the want of one. Keeping a stale one beside a tree is the confusing case rather than the safe one: a patch retargeting the tree to a sandbox id refuses to install a full export that would land on the source application instead. The mode table is on [patch_app.md](patch_app.md).
+
+<br>
 
 ## The application checksum
 
@@ -148,6 +158,30 @@ The value is stored exactly as APEX returns it, algorithm prefix included. It ig
 
 It is not a format and there is no flag for it. APEX computes it over the whole application, so `-page`, `-component` and `-recent` never narrow it, and collecting it never advances a watermark. A static file genuinely named `checksum.txt` is left alone, since `-files` owns everything under the static-files folder.
 
+<br>
+
+## The merge base and the export mirror
+
+The checksum says whether the target moved. It cannot say what to do about it, and until this existed the only answer a refused deploy could give was "export again and reconcile by hand". That is compare-and-swap: a three-way merge needs base, ours and theirs, and ADT recorded the base's identity without recording the base.
+
+**`-apexlang` now records the commit its tree was exported at, beside the checksum.** No flag, and nothing else to run: an export from a checkout at `9f2c1ab` stores `9f2c1ab` as the base of the tree it just wrote. A project outside version control records nothing and exports exactly as before.
+
+**`-mirror db/<ENV>` commits every export onto one ref, so the base is shared.** It needs `-apexlang`, because no other format writes an application as files git can three-way merge:
+
+```bash
+adtai export_apex -app 100 -apexlang -files -mirror db/dev
+```
+
+The exported tree is committed onto `refs/heads/db/dev` at its own repository path, so a mirror commit and a branch commit touch the same files and merge as text. A full `refs/...` spelling is taken as given.
+
+Nothing else moves: not HEAD, not the branch, not the index, not the working tree, and an export that changed nothing adds no commit. Two exporters racing for the ref end with one of them recording no base rather than one overwriting the other.
+
+What it buys is on the deploy side. When `patch -deploy -app` refuses because the target moved, the refusal names `BASE` and `CURRENT` and ends in the `git rebase` that clears it, because the state now live on the target is a commit on that ref ([patch_import.md](patch_import.md)). Two branches that touched different pages then merge, with no re-export at all.
+
+A base with no mirror, or a mirror that could not be written, degrades to the re-export instruction rather than naming a rebase onto a base the tree never descended from.
+
+<br>
+
 ## Where files land
 
 `path_apex` in `config.yaml` is a path template, `'<schema>/apex/'` by default, and the schema token carries its own case, so `<SCHEMA>` writes `APP/apex/`. It resolves that token and nothing else, so any other token is refused before the export writes a folder named after it. `path_objects` is independent, and a project may spell the two differently.
@@ -160,6 +194,8 @@ A run of them becomes one underscore, and a leading or trailing dot or space bec
 
 When a token resolves to nothing at all for an application, the export stops and names that application instead of writing a folder with a level missing.
 
+<br>
+
 ## Recent changes, by author
 
 `-recent DAYS` prints the components changed in that window. DAYS may be a fraction of a day, `1/24` for the past hour. A whole-day window runs from midnight, so `-recent 1` means changed today, while a shorter one measures back from now. Bare `-recent` uses the application's stored watermark instead, keyed per environment, application and format.
@@ -168,9 +204,13 @@ Without an explicit format, a non-reveal `-recent` is report-only: it exports no
 
 `-by` filters by exact APEX developer username. `-my` compares your `git config user.name` and `user.email` against the workspace developers, which covers short initials-style logins as well as email-form authors. Either one leaves the application list complete and skips applications with no matching change in the detail sections below it. Developer-filtered exports do not update the application cache.
 
+<br>
+
 ## Schema-level formats on their own
 
 `-rest` and `-files_ws` write under a path carrying no application id, so both belong to the schema rather than to an application, and both run once per schema. That gives a run two console shapes depending on whether a per-application format was selected too, and both are on [export_apex_formats.md](export_apex_formats.md).
+
+<br>
 
 ## Arguments
 
@@ -199,5 +239,6 @@ Without an explicit format, a non-reveal `-recent` is report-only: it exports no
 | `-files`, `--files` | No | off | Export the static application files. |
 | `-files_ws`, `--files_ws`, `--files-ws` | No | off | Export the static workspace files. **Schema-level**, exactly like `-rest`. |
 | `-compact`, `--compact` | No | off | Replace the per-application blocks and their rows with one time-weighted progress bar per schema segment, keeping the `APEX APPLICATIONS:` overview above it. |
+| `-mirror REF`, `--mirror REF` | No | off | Commit each `-apexlang` export onto REF (for example `db/dev`) as a shared merge base, so a refused deploy ends in `git rebase REF` instead of a re-export. Requires `-apexlang`, refused without it. A bare name lands under `refs/heads/`; a full `refs/...` spelling is taken as given. HEAD, the branch, the index and the working tree are untouched, and an export that changed nothing adds no commit. |
 
 Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

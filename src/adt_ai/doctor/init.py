@@ -23,6 +23,15 @@ from adt_ai.shared.git_files import git_config_value
 # root `.gitignore` above is copied rather than templated.
 PATCH_TEMPLATE_DIR = Path("config/patch_template")
 
+# The project's `.gitattributes`, authored as its own resource rather than
+# copied off the repo root the way `.gitignore` is (ADT #733). ADT.ai's own root
+# file is a merge driver for its CHANGELOG and says nothing about line endings,
+# so copying it would hand a project a rule about a file it may not have and
+# none of the pins. The pins are what turn `file_crlf: False`'s "identical bytes
+# on every platform" into a property of the repository rather than a property of
+# whatever `core.autocrlf` each machine happens to carry.
+GITATTRIBUTES_TEMPLATE = Path("config/gitattributes_template")
+
 
 def _yaml_scalar(value: str) -> str:
     """`value` as a one-line YAML scalar, quoted only when the value needs it.
@@ -110,10 +119,14 @@ class DoctorInitMixin(DoctorHost):
         source_gitignore = _resource(self.resource_root, Path(".gitignore")).read_text(
             encoding="utf-8"
         )
+        source_gitattributes = _resource(self.resource_root, GITATTRIBUTES_TEMPLATE).read_text(
+            encoding="utf-8"
+        )
 
         scaffold: list[tuple[Path, str]] = [
             (Path("config/config.yaml"), PROJECT_CONFIG_TEMPLATE),
             (Path("config/IDENTITY.yaml"), _identity_template(root)),
+            (Path(".gitattributes"), source_gitattributes),
             (Path(".gitignore"), source_gitignore),
             (Path("connections/.gitkeep"), ""),
             (Path("connections/wallets/.gitkeep"), ""),

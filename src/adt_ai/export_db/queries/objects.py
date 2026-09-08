@@ -98,6 +98,18 @@ AND object_name NOT LIKE 'BIN$%'
 AND object_name NOT LIKE 'MLOG$%'
 AND NOT (object_type = 'TABLE' AND object_name IN (SELECT mview_name FROM user_mviews))
 AND NOT REGEXP_LIKE(object_name, '^DEPSCAN\\$[[:digit:]]+#[[:digit:]]+$')
+AND NOT (
+    object_type = 'SYNONYM'
+    AND object_name != UPPER(object_name)
+    AND EXISTS (
+        SELECT 1
+        FROM   user_synonyms s
+        WHERE  s.synonym_name = object_name
+        AND    s.table_name = UPPER(object_name)
+        AND    UPPER(s.table_owner) = UPPER(:schema)
+        AND    s.db_link IS NULL
+    )
+)
 ORDER BY object_type, object_name
 """.strip()
 
@@ -118,6 +130,18 @@ AND object_name NOT LIKE 'BIN$%'
 AND object_name NOT LIKE 'MLOG$%'
 AND NOT (object_type = 'TABLE' AND object_name IN (SELECT mview_name FROM user_mviews))
 AND NOT REGEXP_LIKE(object_name, '^DEPSCAN\\$[[:digit:]]+#[[:digit:]]+$')
+AND NOT (
+    object_type = 'SYNONYM'
+    AND object_name != UPPER(object_name)
+    AND EXISTS (
+        SELECT 1
+        FROM   user_synonyms s
+        WHERE  s.synonym_name = object_name
+        AND    s.table_name = UPPER(object_name)
+        AND    UPPER(s.table_owner) = UPPER(:schema)
+        AND    s.db_link IS NULL
+    )
+)
 ORDER BY object_type, object_name
 """.strip()
 
@@ -342,6 +366,17 @@ FROM user_sys_privs
 ORDER BY privilege_kind, name
 """.strip()
 
+# 23ai schema privileges: one grant covering every object of one schema, present
+# and future (`GRANT SELECT ANY TABLE ON SCHEMA hr TO scott`). Its own read rather
+# than a third branch of USER_PRIVILEGES_QUERY because `user_schema_privs` arrived
+# in 23ai and ADT supports older databases, where a union would fail the whole
+# privilege read instead of returning the two kinds that do exist (`#740`).
+SCHEMA_PRIVILEGES_QUERY = """
+SELECT privilege, schema, admin_option
+FROM   user_schema_privs
+ORDER  BY schema, privilege
+""".strip()
+
 DIRECTORIES_QUERY = """
 SELECT directory_name, directory_path
 FROM all_directories
@@ -419,4 +454,32 @@ FROM (
 )
 WHERE (:schema IS NOT NULL)
 ORDER BY object_name, sort_order
+""".strip()
+
+# The retention clauses of an immutable or blockchain table (`#736`). They are
+# NOT read from the DDL: `DBMS_METADATA` only emits them when
+# `SEGMENT_ATTRIBUTES` is on, and ADT deliberately turns that off (see
+# `DBMS_METADATA_SETUP_QUERY`) so tablespaces and PCTFREE stay out of the repo.
+# Reading them here keeps that setting and still exports the clause the table is
+# defined by. Both views are 21c; on an older database the query fails to parse
+# and the caller treats that as "this database has no such tables".
+TABLE_RETENTION_QUERY = """
+SELECT table_name,
+       row_retention,
+       row_retention_locked,
+       table_inactivity_retention,
+       CAST(NULL AS VARCHAR2(128)) AS hash_algorithm,
+       table_version
+FROM   user_immutable_tables
+WHERE  (:schema IS NOT NULL)
+UNION ALL
+SELECT table_name,
+       row_retention,
+       row_retention_locked,
+       table_inactivity_retention,
+       hash_algorithm,
+       table_version
+FROM   user_blockchain_tables
+WHERE  (:schema IS NOT NULL)
+ORDER  BY table_name
 """.strip()

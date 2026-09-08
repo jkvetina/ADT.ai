@@ -210,7 +210,7 @@ class ConsoleExportDbReporter(ExportDbReporter):
             print_adt_table(rows)
             return
         # **Nothing below the section header prints yet** (`#442`). Whether the
-        # table owes a `GRANT` row is a question only the four privilege reads
+        # table owes a `GRANT` row is a question only the five privilege reads
         # can answer, and until they have, neither is whether it owes anything
         # at all: a schema where no object moved still prints a row when a
         # privilege did. Jan, 2026-08-21: *"Drop both empty tables if you can.
@@ -226,7 +226,7 @@ class ConsoleExportDbReporter(ExportDbReporter):
     def overview_grants(self, changed: bool, count: int) -> None:
         """Render the overview table, now that the `GRANT` row is settled.
 
-        ``changed`` is what the four reads came back with: at least one artifact
+        ``changed`` is what the five reads came back with: at least one artifact
         this export writes differs from the file on disk. A row on a run that
         rewrites the same bytes claims work nobody did, which is the console
         rule `#437` was filed on, *"A row must not claim work it might not

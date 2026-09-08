@@ -2,6 +2,8 @@
 
 What `-archive` takes, what it prints, how a pattern selects folders, and where the zips are filed once a patch has shipped. Building and deploying a patch are on [patch.md](patch.md) and [patch_deploy.md](patch_deploy.md).
 
+<br>
+
 ## What a run takes
 
 `-archive` zips delivered patch folders into `patch_archive/`, removes them from `patch/`, and takes ticket numbers, LIKE patterns, or both.
@@ -34,11 +36,15 @@ The receipt says which folders this run took, in the same `FOLDER | STATUS` colu
 
 `ALL PATCH FOLDERS:` under it is what is LEFT on disk, so the next pattern has something to aim at. It carries no `patch_show_patches` cap and no `-by`/`-my`/`-recent` filter, which is why it is not the narrowed `RECENT PATCH FOLDERS:` a bare run prints.
 
+<br>
+
 ## Selecting folders
 
 A pattern is compared against three spellings of each folder: its name, its patch code, and its name with the day written as a four-digit year. So `202608%` selects a month even though a folder writes its day as `yymmdd`, and `-archive %` asks for every folder at once.
 
 Refs matching nothing archive nothing, at exit `0`, and the listing then holds the whole inventory.
+
+<br>
 
 ## Where the zips are filed
 

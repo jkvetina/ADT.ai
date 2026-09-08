@@ -10,21 +10,15 @@ from adt_ai.patch import settings as _settings
 from adt_ai.patch import signatures as _signatures
 from adt_ai.patch.content import (
     CONTENT_MODE_COMMITTED,
-    CONTENT_MODE_LOCAL,
     CONTENT_MODE_NOSNAP,
-    file_text,
+)
+from adt_ai.patch.create_apex import (
+    _apex_patch_payload,
+    _apexlang_patch_payloads,
+    _is_apexlang_application,
 )
 from adt_ai.patch.files import (
-    _apex_page_id,
-    _install_file_link,
-    _is_apex_end_environment,
-    _is_apex_page,
-    _is_apex_set_environment,
     _patch_map,
-    _snapshot_link,
-)
-from adt_ai.patch.full_app import (
-    is_full_app as _is_full_app,
 )
 from adt_ai.patch.helpers import (  # noqa: F401  (re-exported for existing importers)
     _drop_helper_sql,
@@ -37,20 +31,9 @@ from adt_ai.patch.helpers import (  # noqa: F401  (re-exported for existing impo
     _write_generated_patch_scripts,
     _write_table_diff_helpers,
 )
-from adt_ai.patch.layout import (
-    apex_app_id as _apex_app_id,
-)
-from adt_ai.patch.layout import (
-    apex_app_root as _apex_app_root,
-)
+from adt_ai.patch.install_links import _file_link_rows, _object_link
 from adt_ai.patch.layout import (
     database_object_type as _database_object_type,
-)
-from adt_ai.patch.layout import (
-    is_apex_static_file as _is_apex_static_file,
-)
-from adt_ai.patch.layout import (
-    is_apexlang_path as _is_apexlang_path,
 )
 from adt_ai.patch.selection import (  # noqa: F401  (re-exported for existing importers)
     _apex_copy_files,
@@ -109,40 +92,62 @@ def _write_patch_files(
     signatures = _signatures.collect_signatures(
         root, files, config, present_files=present_files,
     )
+    # The schema-level half, on the same walk and for the same reason: an ORDS
+    # module and a workspace static file belong to no application, so neither the
+    # object guard nor `#592`'s application checksum covers them (ADT #724).
+    workspace = _signatures.collect_workspace_signatures(
+        root, files, config, present_files=present_files,
+    )
     for group in sorted({_patch_group(path, config, owners) for path in files}):
         group_files = [path for path in files if _patch_group(path, config, owners) == group]
-        sql_path = folder / _settings.group_script_name(group, config)
-        payload = (
-            _apex_patch_payload(
-                root,
-                folder,
-                group_files,
-                records,
-                config,
-                patch_code=patch_code,
-                full_app_ids=full_app_ids,
-                target_env=target_env,
-                schema=group,
-                content_mode=content_mode,
-                present_files=present_files,
-            )
-            if all(_is_apex_application_path(path, config) for path in group_files)
-            else _database_patch_payload(
-                root,
-                folder,
-                group_files,
-                records,
-                config,
-                patch_code=patch_code,
-                target_env=target_env,
-                schema=group,
-                content_mode=content_mode,
-                signatures=signatures,
-                present_files=present_files,
-            )
-        )
-        text_files.write_text(sql_path, payload)
-        sql_files[group] = sql_path
+        if all(_is_apex_application_path(path, config) for path in group_files):
+            # An APEXlang application is two scripts around the import that
+            # `patch -deploy -app` issues (ADT #735), `init` before it and `end`
+            # after it; any other application is one script that installs itself.
+            if _is_apexlang_application(group_files, config):
+                payloads = _apexlang_patch_payloads(
+                    root, folder, group_files, records, config,
+                    patch_code    = patch_code,
+                    full_app_ids  = full_app_ids,
+                    target_env    = target_env,
+                    schema        = group,
+                    content_mode  = content_mode,
+                    present_files = present_files,
+                )
+            else:
+                payloads = {
+                    group: _apex_patch_payload(
+                        root, folder, group_files, records, config,
+                        patch_code    = patch_code,
+                        full_app_ids  = full_app_ids,
+                        target_env    = target_env,
+                        schema        = group,
+                        content_mode  = content_mode,
+                        workspace     = workspace,
+                        present_files = present_files,
+                    )
+                }
+        else:
+            payloads = {
+                group: _database_patch_payload(
+                    root,
+                    folder,
+                    group_files,
+                    records,
+                    config,
+                    patch_code=patch_code,
+                    target_env=target_env,
+                    schema=group,
+                    content_mode=content_mode,
+                    signatures=signatures,
+                    workspace=workspace,
+                    present_files=present_files,
+                )
+            }
+        for script_group, payload in payloads.items():
+            sql_path = folder / _settings.group_script_name(script_group, config)
+            text_files.write_text(sql_path, payload)
+            sql_files[script_group] = sql_path
     return sql_files
 
 def _database_patch_payload(
@@ -157,9 +162,11 @@ def _database_patch_payload(
     schema: str,
     content_mode: str = CONTENT_MODE_COMMITTED,
     signatures: list[_signatures.PatchObject] | None = None,
+    workspace: list[_signatures.WorkspaceArtifact] | None = None,
     present_files: Mapping[str, bool],
 ) -> str:
     signatures = signatures or []
+    workspace = workspace or []
     payload = [
         "PROMPT --;",
         f"PROMPT -- PATCH {patch_code}",
@@ -179,8 +186,14 @@ def _database_patch_payload(
     # at the start, unlock at the end) way more."* It is also the only placement
     # that cannot half-apply a patch: DDL does not roll back, so a guard that
     # refuses on object 10 of 10 leaves nine already overwritten.
-    guarded = [item for item in signatures if item.file in set(files)]
+    carried = set(files)
+    guarded = [item for item in signatures if item.file in carried]
     payload.extend(_signatures.lock_payload(guarded, config, records=records))
+    payload.extend(
+        _signatures.workspace_lock_payload(
+            [item for item in workspace if item.file in carried], config, records=records
+        )
+    )
     deleted_cache: dict[tuple[str, ...], set[tuple[str, str, str]]] = {}
     for group in _payload_groups(files, config):
         group_files = [path for path in files if _database_patch_group(path, config) == group]
@@ -232,171 +245,6 @@ def _database_patch_payload(
         payload.append(queries.SPOOL_OFF_DIRECTIVE)
     payload.append("")
     return "\n".join(payload)
-
-def _apex_patch_payload(
-    root: Path,
-    folder: Path,
-    files: list[str],
-    records: list[CommitRecord],
-    config: dict[str, Any],
-    *,
-    patch_code: str,
-    full_app_ids: list[int] | None,
-    target_env: str | None,
-    schema: str,
-    content_mode: str = CONTENT_MODE_COMMITTED,
-    present_files: Mapping[str, bool],
-) -> str:
-    app_id = _apex_app_id(files[0], config) or 0
-    payload = [
-        "PROMPT --;",
-        f"PROMPT -- PATCH {patch_code}",
-        f"PROMPT -- SCHEMA {schema}",
-        f"PROMPT -- APP ID {app_id}",
-        "PROMPT --;",
-    ]
-    payload.extend(_change_summary_comment(
-        root, files, records, config, present_files=present_files,
-    ))
-    payload.extend(_settings.session_directives(config))
-    payload.extend(_settings.rollback_directives(config))
-    if config.get("patch_spooling", True):
-        payload.append(_spool_start(config, target_env, schema))
-    payload.extend(_apex_environment_payload(root, app_id))
-    payload.extend(_template_payload(root, folder, config, "apex_init", patch_code, target_env))
-    if _is_full_app(app_id, full_app_ids):
-        for path in files:
-            if present_files[path]:
-                link = _object_link(root, folder, path, config, mode=content_mode)
-                payload.extend(_file_link_rows(path, link))
-    else:
-        environment_mode = (
-            CONTENT_MODE_LOCAL if content_mode == CONTENT_MODE_NOSNAP else content_mode
-        )
-        set_env = next((path for path in files if _is_apex_set_environment(path)), None)
-        end_env = next((path for path in files if _is_apex_end_environment(path)), None)
-        if set_env:
-            text = file_text(root, set_env, mode=environment_mode, records=records) or ""
-            payload.extend(text.splitlines())
-            payload.extend(queries.APEX_MODE_REPLACE_BLOCK.splitlines())
-        component_files = [
-            path
-            for path in files
-            if not _is_apex_set_environment(path)
-            and not _is_apex_end_environment(path)
-            and not _is_apex_page(path)
-            and not _is_apexlang_path(path, config)
-            and present_files[path]
-        ]
-        page_files = [
-            path for path in files
-            if _is_apex_page(path)
-            and present_files[path]
-        ]
-        payload.extend(_apexlang_source_payload(files, config))
-        for path in component_files:
-            payload.extend(
-                _file_link_rows(path, _object_link(root, folder, path, config, mode=content_mode))
-            )
-        deleted_pages = [
-            page_id
-            for path in files
-            if _is_apex_page(path) and path not in page_files
-            and (page_id := _apex_page_id(path))
-        ]
-        if deleted_pages:
-            payload.extend(_apex_deleted_pages_payload(deleted_pages))
-        if page_files:
-            payload.extend(["PROMPT --;", "PROMPT -- APEX PAGES", "PROMPT --;"])
-            for path in page_files:
-                link = _object_link(root, folder, path, config, mode=content_mode)
-                payload.extend(_file_link_rows(path, link))
-        if end_env:
-            text = file_text(root, end_env, mode=environment_mode, records=records) or ""
-            payload.extend(text.splitlines())
-    # Same as the database payload: one commit list, in the `--` header (ADT #263).
-    payload.extend(_template_payload(root, folder, config, "apex_end", patch_code, target_env))
-    payload.extend(_apex_build_status_payload(config, app_id, target_env))
-    payload.extend(["", "PROMPT --;", "PROMPT -- SUCCESS", "PROMPT --;"])
-    if config.get("patch_spooling", True):
-        payload.append(queries.SPOOL_OFF_DIRECTIVE)
-    payload.append("")
-    return "\n".join(payload)
-
-def _apexlang_source_payload(files: list[str], config: dict[str, Any]) -> list[str]:
-    """The rows naming the folder an APEXlang application is imported FROM.
-
-    An `.apx` file has no SQL install route, so the patch links none of them and
-    `patch -deploy -app` imports the tree out of the application's own folder in
-    the repository. The deploy log has to say so, or a reader counting `@` lines
-    against the patch's file list concludes the patch shipped nothing at all.
-    Jan, 2026-08-30: *"We should print a note then in the log that app was
-    deployed from THAT folder."*
-
-    One row per application folder rather than per file, because the import is
-    per application: a page and a shared-components file in one tree are one
-    import, and a row each would read as two.
-    """
-    folders = sorted({
-        "/".join((*app_root, APEXLANG_DIR))
-        for path in files
-        if _is_apexlang_path(path, config)
-        and (app_root := _apex_app_root(path, config)) is not None
-    })
-    if not folders:
-        return []
-    return [
-        "PROMPT --;",
-        *(f"PROMPT -- APEXLANG SOURCE: {folder}" for folder in folders),
-        "PROMPT -- imported from that folder by patch -deploy -app, not from this patch",
-        "PROMPT --;",
-    ]
-
-def _file_link_rows(path: str, link: str) -> list[str]:
-    """Label one file link in the install script, no invented counter.
-
-    SQLcl echoes each `PROMPT`, so the last marker in a deploy's output is the file
-    the run stopped on (ADT #254). A generated `n/m` count used to be baked into
-    this same comment and re-parsed from the runtime transcript, but each install
-    script counted only its own object-file loop and never the `patch_scripts`
-    also linked into it, so the count drifted from reality (ADT #321, Jan: "you
-    cant be counting the files based on this counter anyway"). This label is
-    read-only prose: `deploy_progress.py` calculates the real total from the `@`
-    link this row's second entry is, never from this text, because a label can
-    survive a hand-edit that comments out only the `@` line beneath it (Jan:
-    "I can have `-- FILE: ...` / `--@file` and the file is listed, counted, but
-    not executed").
-    """
-    return [f"PROMPT -- FILE: {path}", link]
-
-def _apex_deleted_pages_payload(page_ids: list[int]) -> list[str]:
-    payload = ["PROMPT --;", "PROMPT -- APEX REMOVE PAGES", "PROMPT --;", "BEGIN"]
-    for page_id in sorted(page_ids):
-        payload.append(queries.APEX_REMOVE_PAGE_STATEMENT.format(page_id=page_id))
-    payload.extend(["END;", "/", "--"])
-    return payload
-
-def _object_link(
-    root: Path,
-    folder: Path,
-    path: str,
-    config: dict[str, Any],
-    *,
-    mode: str,
-) -> str:
-    """The `@` line for one object file, pointing where its content actually is.
-
-    Every mode but ``-nosnap`` links the copy under `snapshots/`. ``-nosnap`` links
-    the repo file itself, using the same relative-path derivation `#288` gave
-    templates and per-patch scripts, computed from where the patch folder sits
-    rather than assuming a depth, because `patch_root` is configurable.
-
-    An APEX static file is never linked in place: what deploys is the generated
-    `wwv_flow_imp` wrapper, not the binary, so it keeps its snapshot in all modes.
-    """
-    if mode == CONTENT_MODE_NOSNAP and not _is_apex_static_file(path, config):
-        return _install_file_link(Path(os.path.relpath(root / path, folder)).as_posix(), config)
-    return _install_file_link(_snapshot_link(path, config), config)
 
 def _payload_groups(files: list[str], config: dict[str, Any]) -> list[str]:
     """Every group the install script may open a section for, in `patch_map` order.

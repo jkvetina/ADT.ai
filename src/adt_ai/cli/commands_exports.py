@@ -39,7 +39,13 @@ from adt_ai.cli.export_db_baseline import (
 )
 from adt_ai.cli.gateways import build_gateway, cached_schema_gateway_factory
 from adt_ai.cli.schema_sections import run_schema_sections
-from adt_ai.export_db.config import AuthorFilterError, resolve_author_filter
+from adt_ai.export_db.config import (
+    AuthorFilterError,
+    ObjectTypeFilterError,
+    resolve_author_filter,
+    unexportable_object_types_message,
+    unexported_requested_types,
+)
 from adt_ai.export_db.groups import resolve_group_inputs
 from adt_ai.shared import identity
 from adt_ai.shared.object_types import normalize_object_type_patterns
@@ -100,6 +106,15 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
     object_types = (
         normalize_object_type_patterns(flattened_types) if flattened_types else flattened_types
     )
+    # A type the config gives no destination used to reach discovery, the
+    # overview and then a stack trace, either the file resolver having nowhere to
+    # put it or DBMS_METADATA refusing the type outright (`#739`). Refused here
+    # because the config alone settles it, so the run never opens a connection
+    # for a filter nothing could satisfy.
+    unexported = unexported_requested_types(object_types, config)
+    if unexported:
+        print(unexportable_object_types_message(unexported), file=sys.stderr)
+        return 2
     object_names = _flatten_arg_groups(args.name)
     if args.debug:
         _print_startup_debug(startup)
@@ -155,7 +170,14 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
             measured.update(measured_hashes(plans, root))
         return 0
 
-    exit_code = run_schema_sections(schemas, run_one, first_started_at=handler_started_at)
+    try:
+        exit_code = run_schema_sections(schemas, run_one, first_started_at=handler_started_at)
+    except ObjectTypeFilterError as error:
+        # The wildcard route the check above cannot see, raised by the runner
+        # once discovery said what is actually in the schema. Same refusal, same
+        # exit code, and the shared teardown still prints the TIMER footer.
+        print(str(error), file=sys.stderr)
+        return 2
     if measuring and exit_code == 0:
         write_measured_baseline(
             root, config, environment, schemas, measured, override=args.baseline
@@ -241,6 +263,11 @@ def _run_export_apex(
         _print_startup_debug(startup)
     if not args.reveal and not any(actions.values()) and not recent_report_only:
         _print_missing_apex_format_guidance()
+        return 2
+    # Checked here rather than in the parser because `-all` selects `apexlang`
+    # without naming it, and only `_apex_actions` knows that (`#725`).
+    if args.mirror and not actions.get("apexlang"):
+        print("export_apex: -mirror requires -apexlang", file=sys.stderr)
         return 2
 
     def default_gateway_factory(schema: str) -> QueryGateway:

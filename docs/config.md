@@ -6,6 +6,8 @@ ADT.ai is configured by files in your project rather than by flags you retype. T
 
 The shipped `config/config.yaml` comments every key it carries, so that file is the reference. What follows is the part a comment cannot explain.
 
+<br>
+
 ## Config, connections and wallets
 
 Config defaults load from the shipped ADT.ai `config/` folder first, then the project's own config overlays them, so a project always wins over a global default. The project's config is `<root>/config/` and then `<root>/`, unless `-config-dir` is given, which replaces both with the folders it names rather than adding to them. `STARTUP.sql` resolves the same way.
@@ -46,6 +48,8 @@ DEV:
 
 For how a stored password is protected and what to configure when storing one is unacceptable to a security review, see [connection_security.md](connection_security.md), which is written to be handed to a reviewer rather than to a developer.
 
+<br>
+
 ## Developer identity
 
 `config/IDENTITY.yaml` answers "who am I", for the database and for git alike. It is optional, gitignored, and never committed. The first copy found on the search path wins, so a project's own file overrides one sitting in the ADT.ai install root.
@@ -65,6 +69,8 @@ email                   : you@example.com   # your commit email, read by every -
 
 That fallback is the reason to set `email` at all. It is worth stating whenever your git author differs from the identity your work should be attributed to, which is the ordinary case on a machine account, a shared runner, or a laptop carrying a corporate address.
 
+<br>
+
 ## Connect and query timeouts
 
 Two independent knobs live in project `config.yaml`, both plain numbers of seconds:
@@ -83,6 +89,8 @@ The one exception is `rest_timeout_seconds`, which bounds `export_apex -rest`, w
 
 A missing, non-numeric or non-positive value falls back to the default rather than removing the bound.
 
+<br>
+
 ## Naming the owning schema
 
 Generated SQL is **schema-neutral by default**: a package body exports as `CREATE OR REPLACE PACKAGE BODY a_blacklist_j`, never `comm_base.a_blacklist_j`. The file lands in whichever schema the deploying session connects as, which is what lets one repository install into DEV, TEST and PROD without the files knowing which is which.
@@ -100,6 +108,8 @@ Pick it by how the deployment targets a schema. Leave it `false` where the conne
 Turn it `true` where the deploying user is not the owner and installs into several schemas in one session, so each statement carries its own target and nothing depends on session state.
 
 Flipping the key rewrites the definition line of every object on the next export, so it is a one-time whole-repository change rather than a per-object choice. Directories are the one object type that carried the owner before this key existed and now follow it like everything else.
+
+<br>
 
 ## Declared column lists on views
 
@@ -135,6 +145,8 @@ Turn it `true` where the declaration is part of what the repository is expected 
 
 The key covers `VIEW` and `MATERIALIZED VIEW` together. It changes only the header, and the select list is reflowed the same way under either setting.
 
+<br>
+
 ## Line endings
 
 Every generated text file, exported DDL, CSVs, merge scripts, patch files, logs and caches, is written with **LF line endings on every platform** by default, so one export produces identical bytes on macOS, Linux and Windows and never shows a whole-file line-ending change. Set `file_crlf` to write CRLF everywhere instead, typically to match a CRLF working tree:
@@ -149,6 +161,12 @@ That matters because Oracle returns stored source verbatim. An object ever compi
 
 Two deliberate details. Raw LOB sidecar files are never translated, mirroring the stored value byte for byte whatever the key says. And flipping the key rewrites nothing that has not changed, because the exporter compares content ignoring line endings, so existing files adopt the new ending on their next real change.
 
+**Git can still undo it on the way out**, since a checkout running `core.autocrlf=true` converts what the exporter wrote, and that setting is per machine rather than per repository.
+
+So [`doctor -init`](doctor.md#scaffolding-a-project) scaffolds a `.gitattributes` pinning `*.sql`, `*.apx`, `*.json`, `*.yaml`, `*.csv` and `*.md` to `text eol=lf`, leaving the `files/` payloads untranslated. Flipping this key to `True` means swapping `eol=lf` for `eol=crlf` there as well.
+
+<br>
+
 ## How a file ends
 
 `file_empty_lines` decides how many blank lines close every file `export_db` writes, counted after the last line of content, which is the `/` terminator where the object type uses one:
@@ -162,6 +180,8 @@ The default `1` is the shape a slash-terminated object has always been written w
 It applies to every object type alike. That is a change as well as a setting: before the key existed a table ended flush on its `);` while a package ended on a blank line after its `/`, and the two now agree.
 
 The count is part of the content the exporter compares, so a run that changes nothing else still reports `unchanged`, and changing the key rewrites every object file once.
+
+<br>
 
 ## How a list of files reads
 
@@ -193,6 +213,8 @@ Set the key to `False` for the flat one-path-per-row list:
 nested_files            : True
 ```
 
+<br>
+
 ## Session startup script
 
 An optional `config/STARTUP.sql` runs once on every new database connection, on the Python driver and in SQLcl alike. The repository ships only the committed `config/STARTUP.sample.sql`; copy it to `config/STARTUP.sql`, which is gitignored, so personal session setup never dirties the repository.
@@ -217,6 +239,8 @@ END;
 
 Statements run fail-fast: any error aborts the connection and reports the offending line. Resolution is nearest-wins, so a project copy overrides the repository-level one, the file may be absent entirely, and a comment-only file counts as empty.
 
+<br>
+
 ## Naming the parts of a patch
 
 A group of keys decides what a patch is called and how it is laid out. None of them changes what a patch contains. The full list is commented in the shipped config; two of them deserve a warning rather than a row.
@@ -230,6 +254,8 @@ Nothing is renamed or migrated, and the old folders are simply no longer listed 
 One rule covers the rest of the file: **every default ships the value ADT.ai used before the key existed**, so a project that sets nothing gets exactly what it got before.
 
 That cuts both ways while you are testing a change, since a default matching the old hardcode is precisely what hides a key nothing reads. Prove a key by setting it to something else and watching the output move.
+
+<br>
 
 ## Environment variables
 

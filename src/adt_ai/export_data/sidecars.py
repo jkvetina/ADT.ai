@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import unicodedata
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -261,7 +262,18 @@ def _raw_key_digest(raw: str) -> str:
 
 
 def _sidecar_name_part(value: Any) -> str:
-    text = "" if value is None else str(value).strip()
+    """One key column rendered as a filename component.
+
+    Composed first (`#744`). An accented letter reaches the export in either of
+    two spellings (`ň` as one character, or `n` plus a combining caron), and only
+    the composed one is `isalnum()`. Without this the decomposed spelling lost
+    its accent to the `_` fold and then to `.strip("._")`, so one database
+    produced `Plzen.body.txt` on a machine that hands back decomposed text and
+    `Plzeň.body.txt` on one that does not, and the accentless name collided with
+    the row that really is spelled `Plzen`. Composing is the same "one export,
+    identical on every platform" promise the case fold above already makes.
+    """
+    text = "" if value is None else unicodedata.normalize("NFC", str(value)).strip()
     if not text:
         return "null"
     safe = "".join(

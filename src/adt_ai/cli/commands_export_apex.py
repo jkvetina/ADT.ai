@@ -289,6 +289,7 @@ def _export_one_schema(run: ApexRun, schema: str, versions: dict[str, str]) -> N
             # gates read it rather than asking the DB again.
             apex_version=versions.get("APEX"),
             compact=args.compact,
+            mirror_ref=args.mirror,
         )
     )
 

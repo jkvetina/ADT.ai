@@ -6,6 +6,8 @@
 
 Installation and environment setup are in [SETUP.md](../SETUP.md); this page owns what the command does.
 
+<br>
+
 ## Examples
 
 Check the local setup from any folder:
@@ -34,6 +36,8 @@ adtai doctor -sqlcl
 adtai doctor -init
 adtai doctor -init -root ./new-project
 ```
+
+<br>
 
 ## Output
 
@@ -72,13 +76,15 @@ TIMER: 1s
 - The `ENVIRONMENT:` rows are what the process actually holds, so a run under an AI tool shows the values ADT.ai filled in for itself from your startup file. How that works is on [config.md](config.md#environment-variables).
 - Status words append after a dot leader, capped at 78 characters.
 
+<br>
+
 ## What the statuses mean
 
 | Status | Meaning |
 | ------ | ------- |
 | `UPDATE` | A newer version was found online. |
 | `WARN` | Read-only `doctor` still runs, but optional setup is missing, uncertain or contradictory: Java, SQLcl, Instant Client, `ADT_ENV`, the encryption-key source or `JAVA_TOOL_OPTIONS`. |
-| `FAIL` | A required prerequisite is missing or broken, Git or the `oracledb` module for instance. The run exits non-zero. |
+| `FAIL` | A required prerequisite is missing or broken, Git or the `oracledb` module for instance, or a SQLcl too old for this project's APEXlang exports. The run exits non-zero. |
 
 Plain `doctor` is read-only. It never runs `git pull`, never installs anything, never fetches or replaces SQLcl, and never stashes your work. By default it does check online for newer ADT.ai, Java, SQLcl, `oracledb` and Instant Client, which `-offline` turns off.
 
@@ -86,17 +92,24 @@ For ADT.ai itself, an editable or git install is compared against its own config
 
 A normal wheel installed inside another repository's `.venv` is still a package install. `doctor` does not mistake that enclosing repository for an editable ADT.ai checkout, and therefore cannot pull, stash, or switch the wrong project.
 
+<br>
+
 ## Actions
 
 `ACTIONS:` closes the run and lists only upgrades an online check actually found:
 
 - `-update` appears when ADT.ai, `oracledb` or SQLcl is behind. `oracledb` counts because the full update reinstalls `requirements.txt`.
-- `-sqlcl` appears only when SQLcl itself is behind.
+- `-sqlcl` appears only when SQLcl itself is behind, or when it is below the APEXlang floor below.
 - A schema folder rename appears when the exported tree disagrees with the case your layout would write.
+- The APEXlang SQLcl floor appears when this project exports APEXlang and your SQLcl is too old to do it correctly.
 
-When none applies the whole section is omitted, header included: an up-to-date machine is offered nothing. `-offline` checks nothing online, so no status is backed by a real check and the section is likewise absent. Under `-update` and `-sqlcl` it always prints, because there it reports the actions that ran.
+When none applies the whole section is omitted, header included: an up-to-date machine is offered nothing. Under `-update` and `-sqlcl` it always prints, because there it reports the actions that ran.
+
+`-offline` checks nothing online, so the two staleness offers cannot appear there. The last two read your repository rather than the network, and are reported whether or not you are offline.
 
 The offer is always for the latest release. A specific version is something you ask for, never something `doctor` proposes.
+
+<br>
 
 ### Schema folder case
 
@@ -111,6 +124,30 @@ ACTIONS:
 ```
 
 `doctor` never performs it. A repository-wide move is yours to review and commit, and on macOS or Windows a case-only difference is invisible to the filesystem, so `git mv` is what actually records it. Nothing is reported when the tree already agrees, when the layout pins no schema level, or when the project has no config yet.
+
+<br>
+
+### APEXlang SQLcl floor
+
+APEXlang exports need **SQLcl 26.2.2 or newer**. Below that, two defects fail quietly: files the export means to overwrite keep their previous content, and static files come back damaged. The export reports success either way, so the first honest signal is a deployed application behaving like an older one.
+
+`doctor` therefore reports it as a failure of the setup, not as an offer you may decline: the `SQLcl` row reads `FAIL` and the run exits non-zero.
+
+```text
+CURRENT VERSIONS:
+  SQLcl                | 26.2.1.0 ....................................... FAIL
+
+ACTIONS:
+  APEXlang exports need SQLcl 26.2.2 or newer, this is 26.2.1.0.
+  26.2.2 fixed the overwrite default and the static-file corruption.
+  Run `adtai doctor -sqlcl` to upgrade SQLcl only.
+```
+
+Only a project that already holds `apexlang/` exports under its configured `path_apex` is held to the floor. A database-only project has no reason to care which SQLcl it has, and `doctor` still diagnoses a machine that has no project at all.
+
+The verdict compares your installed version against a fixed number, so `-offline` reports it exactly as a plain run does.
+
+<br>
 
 ## Landing a specific version
 
@@ -131,6 +168,8 @@ A version with no release **fails and stays put**. The `ADT.ai` row reads `FAILE
 
 So a downgrade can never quietly install something newer than what it reached for. A value that is not a version at all is refused before any git command runs.
 
+<br>
+
 ### Going back below the release that added this
 
 A downgrade installs the older release in full, its own `doctor` included. Land on a release published before this flag existed and you are running a `doctor` that has never heard of it.
@@ -147,15 +186,25 @@ python3 -m pip install -e .
 
 Between two releases that both carry the flag, `-update <version>` and bare `-update` move the checkout in either direction on their own.
 
+<br>
+
 ## Scaffolding a project
 
 ![Blank folder in. Project out.](images/doctor_init.png)
 
-`-init` writes the project override config and `config/IDENTITY.yaml`, copies ADT.ai's current root `.gitignore` and the `config/patch_template/` scaffold verbatim, and writes the `connections/.gitkeep` and `connections/wallets/.gitkeep` placeholders. Those source files are bundled in the wheel as package resources, so the same scaffold is available from a normal install with no source checkout beside it.
+`-init` writes the project override config and `config/IDENTITY.yaml`, copies ADT.ai's current root `.gitignore` and the `config/patch_template/` scaffold verbatim, writes a `.gitattributes`, and writes the `connections/.gitkeep` and `connections/wallets/.gitkeep` placeholders.
+
+Those source files are bundled in the wheel as package resources, so the same scaffold is available from a normal install with no source checkout beside it.
 
 It creates no cache folders, no APEX credential folders, no connection YAML and no wallet contents. Existing generated files are skipped, and `-force` overwrites them.
 
 `config/IDENTITY.yaml` is prefilled from the project folder's own `git config user.name`/`user.email` where it has one, and ships with a commented `db_schema` placeholder either way, the database half has no git equivalent to read. See [Developer identity](config.md#developer-identity).
+
+`.gitattributes` is the one scaffolded file ADT.ai does not copy off its own root: that one is a merge driver for its `CHANGELOG.md` and says nothing about line endings.
+
+What a project gets instead are the pins that make [LF everywhere](config.md#line-endings) a property of the repository rather than of each machine's `core.autocrlf`. `*.sql`, `*.apx`, `*.json`, `*.yaml`, `*.csv` and `*.md` are pinned `text eol=lf`, and anything under a `files/` folder is left untranslated, those being APEX static payloads mirrored byte for byte.
+
+A project that sets `file_crlf: True` swaps `eol=lf` for `eol=crlf` there, so the two keep saying the same thing.
 
 The patch templates are scaffolded because `patch -create` reads them from the **project** root, so a folder that only ships with ADT.ai is a folder nobody has. All six source files land verbatim; see [patch templates](patch_install.md#templates-and-the-project-sql-around-the-objects) for the slots and what each file does.
 
@@ -171,6 +220,8 @@ The download link is **scraped out of Oracle's SQLcl page rather than written do
 
 Oracle publishes no checksum for that archive by any route, so integrity rests on the transport and on the launcher validation above.
 
+<br>
+
 ## Arguments
 
 | Argument | Repeatable | Default | Description |
@@ -178,7 +229,7 @@ Oracle publishes no checksum for that archive by any route, so integrity rests o
 | `-offline` | No | off | Skip the online update checks and show local versions only. |
 | `-update [VERSION]` | No | off | Run the full ADT.ai, Python requirements and SQLcl update. A version lands ADT.ai on that release, up or down, instead of the latest. Cannot be combined with `-sqlcl`. |
 | `-sqlcl` | No | off | Upgrade SQLcl only, reading Oracle's own download page for the current release and replacing the resolved install folder. Runs immediately, and cannot be combined with `-update`. |
-| `-init` | No | off | Scaffold the project config, `config/IDENTITY.yaml`, the root `.gitignore`, `config/patch_template/`, and the connection and wallet placeholders. |
+| `-init` | No | off | Scaffold the project config, `config/IDENTITY.yaml`, the root `.gitignore` and `.gitattributes`, `config/patch_template/`, and the connection and wallet placeholders. |
 | `-force`, `--force` | No | off | With `-init`, overwrite generated template files that already exist. |
 
 Shared options (-root, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

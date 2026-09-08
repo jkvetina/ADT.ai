@@ -163,11 +163,21 @@ def _argv(command: Any, *, context: str) -> list[str]:
 def _capture(command: Any, *, context: str, timeout_seconds: float) -> str:
     argv = _argv(command, context=context)
     program = shlex.quote(argv[0])
+    # Bytes, and the decode happens here (ADT #743). Every other child in the
+    # tree decodes UTF-8 with `errors="replace"`, and this is the one place that
+    # posture is wrong: a replacement character in a PASSWORD is a credential
+    # silently changed, and the user meets it as a login failure with nothing
+    # pointing at the encoding. `errors="strict"` inside `subprocess.run` is not
+    # the alternative either -- on Windows that raises on `communicate()`'s
+    # reader thread, which hands back `stdout=None` beside `returncode == 0`.
+    # Reading bytes and decoding below is what turns a mis-encoded secret into a
+    # sentence naming the command that produced it. Until then the decode used
+    # the console codepage, so a non-ASCII password was already read wrongly on
+    # Windows rather than refused.
     try:
         completed = subprocess.run(
             argv,
             capture_output = True,
-            text           = True,
             stdin          = subprocess.DEVNULL,
             timeout        = timeout_seconds,
             check          = False,
@@ -190,9 +200,16 @@ def _capture(command: Any, *, context: str, timeout_seconds: float) -> str:
             f"{program}"
         )
 
+    try:
+        decoded = completed.stdout.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise SecretCommandError(
+            f"{context}: command did not return UTF-8 text: {program}"
+        ) from error
+
     # One line ending, and only one. A password may legitimately end in a space,
     # so a blanket strip would quietly change the credential.
-    value = completed.stdout.removesuffix("\n").removesuffix("\r")
+    value = decoded.removesuffix("\n").removesuffix("\r")
     if not value:
         raise SecretCommandError(f"{context}: command produced no output: {program}")
     return value

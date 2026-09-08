@@ -35,6 +35,18 @@ already able to give; the rule and the arithmetic now live in exactly one place
 Only what the database stores a source for and a patch OVERWRITES. Jan: *"objects
 which are supported, tables for example are not"*. A TABLE reaches a target
 through a generated `tables_after/` ALTER rather than a replace.
+
+## And the two kinds that are not objects at all
+
+`-rest` and `-files_ws` export artifacts belonging to a SCHEMA rather than to an
+application, which left them unguarded from both ends (ADT #724): the object
+block walks `user_objects`, where an ORDS module and a workspace static file
+never appear, and `#592`'s checksum gate walks an application, which neither
+belongs to. They get the same drift comparison over their own dictionaries,
+keyed on `updated_on`, and nothing else: there is no lock half, because
+CORE_LOCKS hashes source out of `user_objects` and has nothing to say about
+either. An APPLICATION static file is deliberately left out, its application's
+checksum covering it already.
 """
 
 from __future__ import annotations
@@ -45,6 +57,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from adt_ai.patch.layout import apex_head_for
 from adt_ai.patch.object_identity import _object_identity
 from adt_ai.patch.queries.signatures import (
     CLOCK_COLUMN,
@@ -54,8 +67,12 @@ from adt_ai.patch.queries.signatures import (
     LOCK_BRANCH,
     OBJECT_ROW,
     UNLOCK_BLOCK,
+    WORKSPACE_GUARDS,
+    WORKSPACE_LOCK_BLOCK,
+    WORKSPACE_ROW,
 )
 from adt_ai.patch.sql_literal import escape_literal
+from adt_ai.shared.apex_paths import REST_SCHEMA_DEFINITION
 from adt_ai.shared.commit_discovery import CommitRecord
 
 # The types the dictionary stores a source for AND a patch overwrites in place.
@@ -225,6 +242,137 @@ def lock_payload(
         guard   = "\n            --\n".join(branches),
     )
     return ["", *block.splitlines()]
+
+
+@dataclass(frozen=True)
+class WorkspaceArtifact:
+    """One schema-level export artifact the patch overwrites (ADT #724).
+
+    ``kind`` is the export action that wrote it (`rest`, `files_ws`), which is
+    also the key into `WORKSPACE_GUARDS`: the dictionary to ask and the column to
+    ask about follow from what wrote the file, not from where it landed.
+
+    ``name`` is what the TARGET calls the row, which is the module name for a
+    REST export and the file name for a workspace file. It is never upper-cased,
+    unlike `PatchObject`: `user_ords_modules.name` and `wwv_flow_files.filename`
+    both store whatever was typed, so folding the case would guard nothing.
+    """
+
+    kind: str
+    name: str
+    file: str
+
+
+def _workspace_identity(path: str, config: dict[str, Any]) -> tuple[str, str] | None:
+    """``(kind, name)`` for a schema-level artifact, or None for anything else.
+
+    Inverts the two writers in `export_apex/files.py`: `rest_export` writes
+    `<apex head>/<apex_path_rest>/<module>.sql` and `workspace_file` writes
+    `<apex head>/<apex_workspace_dir>/<apex_path_files>/<name>`. Both remainders
+    are read whole rather than by base name, because both names carry separators:
+    the REST fixture publishes `adt_fixture/status`, which lands two folders deep
+    and whose base name alone names no module at all.
+
+    An APPLICATION static file falls through, its remainder starting at the
+    application's own folder rather than at the workspace's.
+    """
+    head = apex_head_for(path, config)
+    if head is None:
+        return None
+    parts = Path(path).parts[len(head):]
+    rest_root = _folder_parts(config.get("apex_path_rest"), "workspace/rest/")
+    if _under(parts, rest_root):
+        name = "/".join(parts[len(rest_root):])
+        if not name.endswith(".sql"):
+            return None
+        name = name[: -len(".sql")]
+        return ("rest", name) if name and name != REST_SCHEMA_DEFINITION else None
+    files_root = (
+        *_folder_parts(config.get("apex_workspace_dir"), "workspace/"),
+        *_folder_parts(config.get("apex_path_files"), "files/"),
+    )
+    if _under(parts, files_root):
+        name = "/".join(parts[len(files_root):])
+        return ("files_ws", name) if name else None
+    return None
+
+
+def _folder_parts(configured: Any, default: str) -> tuple[str, ...]:
+    return Path(str(configured or default).strip("/")).parts
+
+
+def _under(parts: tuple[str, ...], root: tuple[str, ...]) -> bool:
+    return len(parts) > len(root) and parts[: len(root)] == root
+
+
+def collect_workspace_signatures(
+    root: Path,
+    files: list[str],
+    config: dict[str, Any],
+    *,
+    present_files: Mapping[str, bool] | None = None,
+) -> list[WorkspaceArtifact]:
+    """One row per schema-level artifact the patch overwrites, read out of paths.
+
+    The same walk `collect_signatures` makes over database objects, and the same
+    presence rule: a file the patch carries out of git is guarded even when the
+    working tree no longer holds it, and a deletion is guarded by nobody.
+    """
+    artifacts: list[WorkspaceArtifact] = []
+    for relative in sorted(files):
+        identity = _workspace_identity(relative, config)
+        if identity is None:
+            continue
+        present = (
+            present_files[relative] if present_files is not None
+            else (root / relative).is_file()
+        )
+        if not present:
+            continue
+        artifacts.append(
+            WorkspaceArtifact(kind=identity[0], name=identity[1], file=relative)
+        )
+    return artifacts
+
+
+def workspace_lock_payload(
+    artifacts: list[WorkspaceArtifact],
+    config: dict[str, Any],
+    *,
+    records: list[CommitRecord] | None = None,
+) -> list[str]:
+    """One block per artifact kind the patch carries, beside the object guard.
+
+    A block per kind rather than one over both: the two dictionaries share no
+    column, so a single cursor would have to union two selects that agree on
+    nothing but the shape of the answer.
+
+    `patch_signatures` owns it, the same key that owns the object guard's drift
+    branch, because it IS that comparison over a different table.
+    `patch_core_locks` is not read at all and moves nothing here.
+    """
+    if not artifacts or not config.get("patch_signatures", True):
+        return []
+    stamp = built_at(records or [])
+    lines: list[str] = []
+    for kind, guard in WORKSPACE_GUARDS.items():
+        named = [item for item in artifacts if item.kind == kind]
+        if not named:
+            continue
+        block = WORKSPACE_LOCK_BLOCK.format(
+            **guard,
+            rows     = artifact_rows(named),
+            built_at = stamp,
+        )
+        lines.extend(["", *block.splitlines()])
+    return lines
+
+
+def artifact_rows(artifacts: list[WorkspaceArtifact]) -> str:
+    """The quoted names of the cursor's own IN list, escaped like every other."""
+    return ",\n".join(
+        WORKSPACE_ROW.format(name=escape_literal(item.name)) for item in artifacts
+    )
 
 
 def unlock_payload(

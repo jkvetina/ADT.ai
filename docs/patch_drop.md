@@ -2,11 +2,15 @@
 
 What `-drop` takes, the rail that decides an id is droppable, and what the run prints. Landing a tree on a sandbox id in the first place is on [patch_import.md](patch_import.md).
 
+<br>
+
 ## Why the step exists
 
 `patch -deploy -app <id>` lands an application's APEXlang tree on a derived sandbox id: application `100` on task `123` imports as `100123`, beside the real one rather than over it. Nothing overwrites anything, which is what makes the sandbox safe to test against and also what leaves it standing once the work is done.
 
 So the round trip owes a drop step. Task `124` lands on `100124` beside task `123`'s `100123`, and without a way to remove them the workspace fills with dead copies of the application they were copied from.
+
+<br>
 
 ## What a run takes
 
@@ -28,11 +32,19 @@ APEX APPLICATIONS:
   APPLICATION   ALIAS        SOURCE   STATUS
   -----------   ----------   ------   -----------
        100123   ORDERS_123      100   DELETED
+
+  LOG: sandbox/apex/logs_DEV/20260901-120000_apex_drop_100123_DELETED.log
 ```
 
 `SOURCE` is the application the sandbox was derived from, which is what the rail below checked before anything was removed.
 
+`LOG:` names the receipt that drop wrote, one line per application, relative to the project root so it can be pasted straight into `git add`.
+
+It sits under the table rather than in a column of its own, because a path in a cell destroys the layout at 80 columns. The id in each filename says which row it belongs to.
+
 **The rows appear as the run works, not once it has finished.** Each application is on screen with its id, alias and source before the call that removes it, and its `STATUS` completes that same line when the drop answers, so a run naming ten ids shows you which one it is on rather than a header over an empty section. On a terminal the open row reads `IN PROGRESS` until the drop returns, which is why `STATUS` reserves eleven characters on every run; a redirected run and a CI log print exactly one finished line per application, unchanged.
+
+<br>
 
 ## Where the receipt goes
 
@@ -45,6 +57,10 @@ Every application named in a drop run writes its own durable receipt below the r
 For `adtai patch -target DEV -drop 100123`, a default-layout example is `sandbox/apex/logs_DEV/20260901-120000_apex_drop_100123_DELETED.log`. `DEV` comes from `-target`; `100123` is the application id passed to `-drop`, not an environment name.
 
 The log records the environment, source application, target application, alias, recorded creator, dictionary-verified outcome, and SQLcl transcript, plus an `OVERRIDDEN` row when `-force` dropped a sandbox that was not yours. A run naming two applications writes two logs. `FAILED` means the target still existed in `apex_applications` after SQLcl returned.
+
+**The run names every receipt it wrote**, on a `LOG:` line under the table, so committing the evidence needs no guess at the timestamp in the filename. A `FAILED` row is named exactly as a `DELETED` one is: a drop the dictionary refused is the case whose transcript most wants reading. The only row that names nothing is one whose drop raised before the log was written, and that run ends on an error screen rather than quietly.
+
+<br>
 
 ## The rail, and why `-force` never widens it
 
@@ -64,6 +80,8 @@ The source has to sit in the same workspace as the target. An APEX alias is uniq
 **`-force` never reaches the rail.** Everywhere else on `patch` that flag overrides a refusal, and here the rail is the whole safety property: a destructive drop a flag can widen has no rail at all. What the flag overrides is the ownership check below.
 
 Every id named in one run is checked before the first one is removed, so a run naming one sandbox and one production id removes neither.
+
+<br>
 
 ## The ownership check, and what `-force` overrides
 
@@ -87,6 +105,8 @@ adtai patch -target DEV -drop 100124 -force
 **A sandbox recording no creator drops without `-force`.** Measured on APEX 26.1: an APEXlang `apex import`, which is what `patch -deploy -app` runs through SQLcl, leaves `created_by` empty, a session user set beforehand does not change that, and APEX exposes no `p_created_by` at all on its flow-level import API. So an application imported from an export taken without audit columns can never carry the value this check reads, and the check lets it through rather than making the destructive override the routine way to remove an ordinary sandbox.
 
 Nobody is stepped over by removing what nobody is recorded as having made, and the rail above has already proved the target is a derived sandbox, which is the safety property. A sandbox that does record a creator is still compared, so somebody else's still needs the flag. The check reads what APEX wrote and invents nothing.
+
+<br>
 
 ## How the application is removed
 

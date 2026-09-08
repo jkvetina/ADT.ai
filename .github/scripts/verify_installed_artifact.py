@@ -25,6 +25,7 @@ PATCH_TEMPLATE_FILES = (
     "config/patch_template/db_init/00_init.sql",
 )
 SCAFFOLD_FILES = (
+    ".gitattributes",
     ".gitignore",
     "config/IDENTITY.yaml",
     "config/config.yaml",
@@ -33,6 +34,9 @@ SCAFFOLD_FILES = (
     "connections/wallets/.gitkeep",
 )
 RESOURCE_ROOT = "adt_ai/doctor/resources/"
+# Scaffolded name -> the resource the wheel carries it as. The `.gitattributes`
+# is authored rather than copied off the repo root, so its two names differ.
+RENAMED_RESOURCES = {".gitattributes": "config/gitattributes_template"}
 
 
 class ArtifactPair(NamedTuple):
@@ -87,6 +91,8 @@ def _source_path(wheel_path: str) -> str | None:
         return ".gitignore"
     if wheel_path == f"{RESOURCE_ROOT}requirements.txt":
         return "requirements.txt"
+    if wheel_path == f"{RESOURCE_ROOT}config/gitattributes_template":
+        return "config/gitattributes_template"
     patch_prefix = f"{RESOURCE_ROOT}config/patch_template/"
     if wheel_path.startswith(patch_prefix):
         return wheel_path.removeprefix(RESOURCE_ROOT)
@@ -205,8 +211,8 @@ def verify_scaffold(project: Path) -> None:
 
 def _verify_scaffold_payloads(project: Path, wheel: Path) -> None:
     wheel_files = _wheel_files(wheel)
-    for relative in PATCH_TEMPLATE_FILES:
-        packaged = wheel_files[f"{RESOURCE_ROOT}{relative}"]
+    for relative in (*PATCH_TEMPLATE_FILES, *RENAMED_RESOURCES):
+        packaged = wheel_files[f"{RESOURCE_ROOT}{RENAMED_RESOURCES.get(relative, relative)}"]
         scaffolded = (project / relative).read_bytes()
         if scaffolded != packaged:
             raise ValueError(f"scaffolded resource differs from installed wheel: {relative}")

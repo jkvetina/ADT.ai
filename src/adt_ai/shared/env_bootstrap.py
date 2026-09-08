@@ -321,6 +321,12 @@ def _run_login_shell(command: Sequence[str]) -> str:
         check          = True,
         capture_output = True,
         text           = True,
+        # `export -p` prints values a user typed, so a non-ASCII path or
+        # password is ordinary here. `_read_from_shell` swallows every
+        # exception this raises, so a locale decode failure did not surface as
+        # an error, it silently emptied the environment (ADT #743).
+        encoding       = "utf-8",
+        errors         = "replace",
         timeout        = SHELL_TIMEOUT_SECONDS,
     )
     return completed.stdout

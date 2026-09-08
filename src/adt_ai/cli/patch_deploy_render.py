@@ -37,11 +37,11 @@ from adt_ai.cli.patch_deploy_layout import (
     DEPLOY_COLUMNS,
     DEPLOY_NUMERIC,
     DEPLOY_STATUSES,
+    _blocks_cell,
     _deployment_layout,
     _deployment_min_widths,
     _deployment_row_values,
     _deployment_rows,
-    _files_cell,
     _timer_cell,
 )
 from adt_ai.cli.patch_deploy_reporter import ConsoleDeployReporter
@@ -232,7 +232,7 @@ def _print_still_invalid_objects(still_invalid: Sequence[tuple[str, str, str]]) 
     print()
 
 
-def _print_deployment_errors(results: Sequence[DeploymentResult]) -> None:
+def _print_deployment_errors(results: Sequence[DeploymentResult], root: Path) -> None:
     """One stanza per failed script: what SQLcl refused, and where the rest is.
 
     ADT #272. Before this, an ERROR row was the whole report, the transcript was
@@ -242,6 +242,13 @@ def _print_deployment_errors(results: Sequence[DeploymentResult]) -> None:
     A stanza, never a seventh column: the text is the answer here, and free-text
     prose in a table cell destroys the layout at 80 columns (SOP §Console output
     contract). `-continue` can fail several scripts, so every ERROR row gets one.
+
+    **The log is named from the project root, like every other log this command
+    prints** (ADT #722). It used `_display`, which only trims a Dropbox prefix
+    and leaves a path relative to nothing, while `_print_apex_scans` two stanzas
+    below already used `_project_relative`. One run therefore printed the same
+    kind of artifact two different ways, and the reader could not paste either
+    (Jan, 2026-09-08).
     """
     for result in results:
         if getattr(result, "status", "") != "ERROR":
@@ -258,9 +265,13 @@ def _print_deployment_errors(results: Sequence[DeploymentResult]) -> None:
         log_path = getattr(result, "log_path", None)
         if log_path is not None:
             print()
-            print(f"  LOG: {_display(log_path)}")
+            print(f"  LOG: {_project_relative(Path(log_path), root)}")
 
-def _print_apex_scans(reports: Sequence[Any], root: Path) -> None:
+def _print_apex_scans(
+    reports: Sequence[Any],
+    root: Path,
+    reverts: Sequence[Any] = (),
+) -> None:
     """`VERIFYING APPLICATIONS:`, what the post-deploy scan found (`#676`).
 
     Unlike every other section in this file, a clean result still prints its row.
@@ -273,6 +284,13 @@ def _print_apex_scans(reports: Sequence[Any], root: Path) -> None:
     so they are stanza lines rather than a table column, the same call
     `_print_deployment_errors` makes for the same reason: an `ORA-` message in a
     cell destroys the layout at 80 columns.
+
+    ``reverts`` is what `deploy_revert_on_scan_failure` did about a failing row
+    (`#727`), printed under the row that called for it rather than in a section
+    of its own: reusing a section is how the console is not grown (`#372`), and
+    the undo of a finding belongs to the finding. It is also what stops the
+    revert report joining the list of artifacts ADT writes and never names --
+    the failure the `patch -drop` receipt was measured losing eleven times.
     """
     if not reports:
         return
@@ -298,7 +316,32 @@ def _print_apex_scans(reports: Sequence[Any], root: Path) -> None:
             print(f"    {finding.line()}")
         if report.log_path:
             print(f"    LOG: {_project_relative(Path(report.log_path), root)}")
+        revert = _revert_for(reverts, report.app_id)
+        if revert is not None:
+            _print_apex_revert(revert, root)
     print()
+
+
+def _revert_for(reverts: Sequence[Any], app_id: int) -> Any | None:
+    return next((revert for revert in reverts if revert.app_id == app_id), None)
+
+
+def _print_apex_revert(revert: Any, root: Path) -> None:
+    """What putting one application back achieved, under the scan that asked.
+
+    The path is on the row rather than on a second `LOG:` line: two of those
+    under one application read as one artifact written twice, and the outcome
+    word is what a reader is looking for anyway. The reason follows underneath
+    when there is one, exactly as the scan's own reason sits under its row.
+    """
+    where = (
+        _project_relative(Path(revert.log_path), root)
+        if revert.log_path
+        else "(no report written)"
+    )
+    print(f"    REVERT {revert.outcome} | {where}")
+    if revert.reason:
+        print(f"      {revert.reason}")
 
 
 def _print_apex_notes(notes: Sequence[str]) -> None:
@@ -339,9 +382,9 @@ __all__ = [
     "_deployment_layout",
     "_deployment_min_widths",
     "_deployment_row_values",
+    "_blocks_cell",
     "_deployment_rows",
     "_display",
-    "_files_cell",
     "_print_deployment_errors",
     "_print_still_invalid_objects",
     "_print_view_mismatches",

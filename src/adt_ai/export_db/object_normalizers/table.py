@@ -17,16 +17,53 @@ from adt_ai.export_db.object_normalizers.table_items import (
 )
 from adt_ai.export_db.object_normalizers.table_suffix import _format_table_suffix
 
+#: The words between CREATE and TABLE that change what the table IS. Dropping one
+#: does not produce a different-looking table, it produces a different table:
+#: replaying a file that lost IMMUTABLE creates a mutable one. ADT #736.
+_TABLE_KIND = re.compile(
+    r"CREATE\s+(?P<kind>GLOBAL\s+TEMPORARY|IMMUTABLE|BLOCKCHAIN|JSON\s+COLLECTION)\s+TABLE\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _create_header(payload: str, context: NormalizationContext) -> str:
+    match = _TABLE_KIND.search(payload)
+    kind = re.sub(r"\s+", " ", match.group("kind")).upper() if match else ""
+    if kind == "GLOBAL TEMPORARY":
+        # A global temporary table has never carried IF NOT EXISTS here; leave it.
+        return "CREATE GLOBAL TEMPORARY TABLE"
+    header = f"CREATE {kind} TABLE" if kind else "CREATE TABLE"
+    if context.add_if_not_exists:
+        return f"{header} IF NOT EXISTS"
+    return header
+
+
+def _terminate_column_less_table(payload: str, context: NormalizationContext) -> list[str]:
+    """A table whose DDL carries no column list, like a JSON collection table.
+
+    Until ADT #737 the normalizer bailed here and the caller returned the RAW
+    DDL lines: schema-qualified, quoted, and with no terminator, so the `--`
+    written below it commented out nothing and the following `COMMENT ON TABLE`
+    was parsed as part of the CREATE. The file could not run at all.
+
+    The name is already normalized by the caller's definition-line pass, so this
+    only has to add the two things that pass cannot: the IF NOT EXISTS the rest
+    of the export uses, and the terminator.
+    """
+    text = payload.strip().rstrip(";")
+    if context.add_if_not_exists and not re.search(
+        r"\bIF\s+NOT\s+EXISTS\b", text, flags=re.IGNORECASE
+    ):
+        text = re.sub(r"\bTABLE\b", "TABLE IF NOT EXISTS", text, count=1, flags=re.IGNORECASE)
+    return [f"{text};"]
+
 
 def normalize_table(lines: list[str], context: NormalizationContext) -> list[str]:
     payload = "\n".join(_normalize_definition_line_only(lines, context))
     table_name = qualified(context.display_name, context)
-    is_global_temporary = bool(
-        re.search(r"CREATE\s+GLOBAL\s+TEMPORARY\s+TABLE\b", payload, flags=re.IGNORECASE)
-    )
     open_index = payload.find("(")
     if open_index < 0:
-        return lines
+        return _terminate_column_less_table(payload, context)
 
     close_index = _matching_parenthesis_index(payload, open_index)
     if close_index is None:
@@ -38,12 +75,7 @@ def normalize_table(lines: list[str], context: NormalizationContext) -> list[str
     folds, suffix = _collect_index_backed_constraints(suffix, context)
     formatted_items = _formatted_table_items_reordered(items, folds, context)
 
-    if is_global_temporary:
-        create_header = "CREATE GLOBAL TEMPORARY TABLE"
-    elif context.add_if_not_exists:
-        create_header = "CREATE TABLE IF NOT EXISTS"
-    else:
-        create_header = "CREATE TABLE"
+    create_header = _create_header(payload, context)
     result = [f"{create_header} {table_name} ("]
     for index, item_lines in enumerate(formatted_items):
         is_last = index == len(formatted_items) - 1

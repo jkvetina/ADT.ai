@@ -193,8 +193,12 @@ def _format_table_column(item: str) -> list[str]:
     return [f"    {name:<30}  {data_type}".rstrip()]
 
 def _split_column_data_type_and_extras(body: str) -> tuple[str, str]:
+    # ANNOTATIONS joined this list at ADT #736. Without it a 26ai column's
+    # annotation was read as part of the data type, which the caller uppercases,
+    # so `ANNOTATIONS("DISPLAY" 'Identifier')` exported as `'IDENTIFIER'`. An
+    # annotation value is a string literal, and its case is the user's data.
     match = re.search(
-        r"\s+(?=(?:DEFAULT|GENERATED|CONSTRAINT|NOT\s+NULL|NULL\b|PRIMARY\s+KEY|UNIQUE\b|REFERENCES\b|CHECK\b))",
+        r"\s+(?=(?:DEFAULT|GENERATED|CONSTRAINT|NOT\s+NULL|NULL\b|PRIMARY\s+KEY|UNIQUE\b|REFERENCES\b|CHECK\b|ANNOTATIONS\b))",
         body,
         flags=re.IGNORECASE,
     )

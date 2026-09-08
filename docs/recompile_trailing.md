@@ -2,6 +2,8 @@
 
 What `-trailing` rewrites and why, which object types it covers, the separate path a view takes, and what the sweep guarantees while it runs. The command and its flags are on [recompile.md](recompile.md).
 
+<br>
+
 ## What it fixes
 
 `-trailing` fixes the version-control noise the export creates. `export_db` strips trailing whitespace from every line it writes, so an untouched 10k-line package still differs from the database's stored source on every export. `-trailing` repairs the *source* side once per schema.
@@ -19,6 +21,8 @@ UPDATED 2 OBJECTS:
 
 The safety is structural rather than a prompt: an object with nothing to strip is never touched, and stripping trailing whitespace cannot change what the code does.
 
+<br>
+
 ## Which objects, and the view exception
 
 Scope is `PACKAGE`, `PACKAGE BODY`, `PROCEDURE`, `FUNCTION`, `TRIGGER` and `VIEW`. Types and type bodies are deliberately out.
@@ -33,6 +37,8 @@ Two classes of view are skipped rather than rebuilt, since neither property surv
 - **Editioning views**, which are not maintained through a plain `CREATE OR REPLACE VIEW`.
 
 A view whose column list is not a plain unquoted identifier is reported as a failed object rather than guessed at.
+
+<br>
 
 ## What the sweep guarantees
 

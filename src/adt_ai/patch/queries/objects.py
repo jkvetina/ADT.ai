@@ -23,6 +23,95 @@ FROM   TABLE(APEX_EXPORT.GET_APPLICATION(
            p_type           => 'CHECKSUM-SH256'))
 """.strip()
 
+# The build status `-app` reads off a live application before it locks one (ADT
+# #726). `APEX_APPLICATIONS` rather than `APEX_APPLICATION_ADMIN.GET_BUILD_STATUS`,
+# and the choice is the version floor: the view is as old as APEX and the deploy
+# lock has to work on every release ADT deploys to, not only on the one it was
+# measured against. It answers the DISPLAY text (`Run Only`, `Run and Develop`),
+# which is why `apex_lock` carries the map back to the API value the setter takes.
+#
+# No rows is a target holding no application, which is what a fresh sandbox id
+# looks like; unlike `APEX_CHECKSUM_QUERY` above this one answers empty rather
+# than raising, because it reads a view rather than a pipelined export.
+APEX_BUILD_STATUS_QUERY = """
+SELECT build_status
+FROM   apex_applications
+WHERE  application_id = :app_id
+""".strip()
+
+# What the deploy lock sets, on both edges (ADT #726). `APEX_UTIL` rather than
+# `APEX_APPLICATION_ADMIN` for the same version-floor reason the read above gives,
+# and it is the very call `APEX_BUILD_STATUS_BLOCK` already emits into a generated
+# install script, so the deploy sets build status through one API rather than two.
+#
+# `SET_WORKSPACE` first because the setter refuses without it: called as the
+# parsing schema with no workspace context it raises `ORA-20001: Package variable
+# g_security_group_id must be set` (measured on APEX 26.1.0, SANDBOX, 2026-09-06).
+# The generated script gets its context from `APEX_ENVIRONMENT_BLOCK` running
+# ahead of it; this one runs on its own connection and carries its own.
+#
+# `DETACH` first because the post-deploy scan leaves an APEX RUNTIME session on
+# the connection the deploy already opened, and an admin API called inside one is
+# refused: `run_component_scan` issues `EXPORT_START_QUERY`, which ends in
+# `APEX_SESSION.CREATE_SESSION`, and every `SET_APP_BUILD_STATUS` after it answers
+# `ORA-20987: APEX - An API call has been prohibited` out of `WWV_FLOW_IMP`.
+# Measured on APEX 26.1.0, SANDBOX, 2026-09-07: the deploy's own lock succeeded
+# before the scan and its release failed after it, the same call on the same
+# connection, and a session created by hand reproduces it in three statements.
+#
+# `DETACH` is safe where there is no session -- measured in the same run -- so it
+# is unconditional rather than gated on a state read that would be a second round
+# trip and could answer stale. Its own handler because that is the one error worth
+# swallowing here: a detach that fails has changed nothing, and letting it through
+# would report a lock the deploy could still perfectly well release as FAILED.
+APEX_SET_BUILD_STATUS_BLOCK = """
+BEGIN
+    BEGIN
+        APEX_SESSION.DETACH;
+    EXCEPTION WHEN OTHERS THEN
+        NULL;
+    END;
+    APEX_UTIL.SET_WORKSPACE (
+        p_workspace => '{workspace}'
+    );
+    APEX_UTIL.SET_APP_BUILD_STATUS (
+        p_application_id    => {app_id},
+        p_build_status      => '{build_status}'
+    );
+    COMMIT;
+END;
+""".strip()
+
+# The application `-app` keeps before it overwrites one (ADT #727). The same
+# pipelined read as `APEX_CHECKSUM_QUERY` above and for the same reason: the
+# collection round trip in `export_apex/queries` exists to serve a whole export
+# run, and a backup wants one application's members once, with no collection to
+# create, no COMMIT and no second query.
+#
+# `APEXLANG` rather than `APPLICATION_SOURCE`, because the deploy overwrites the
+# target with an APEXlang import and the revert is that same import of that same
+# shape. A format the importer already accepts needs no second install path, and
+# the backup is then the exact artifact `apex import -input` reads.
+#
+# Both payload columns come back in one pass. An APEXlang member is either text
+# (`contents`, the `.apx` source and the `.json` metadata) or bytes
+# (`contents_blob`, the `shared-components/static-files/` payloads), and asking
+# for them separately would export the whole application twice to split them.
+# `export_apex` drops the BLOB half so `-files` stays the repository's single
+# static-file channel; a backup is not a repository and keeps them, because an
+# application restored without its static files is not the application that was
+# there before the import.
+APEX_BACKUP_QUERY = """
+SELECT
+    t.name,
+    t.contents,
+    t.contents_blob
+FROM   TABLE(APEX_EXPORT.GET_APPLICATION(
+           p_application_id => :app_id,
+           p_split          => TRUE,
+           p_type           => 'APEXLANG')) t
+""".strip()
+
 # What `-drop` reads before it removes anything (ADT #592). Two facts per
 # application, and both halves of the rail rest on them: the alias, because a
 # derived sandbox carries `<SOURCE_ALIAS>_<task>` and nothing else proves an id

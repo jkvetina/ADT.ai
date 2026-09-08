@@ -6,6 +6,8 @@ A connection file can hold cleartext, encrypted text, a vault command, or no pas
 
 [connection.md](connection.md) covers the command that writes these values, and [connection_security.md](connection_security.md) states the same ground for a security reviewer rather than a developer.
 
+<br>
+
 ## The stored format
 
 An encrypted value looks like this, and the three parts are a format version, a salt, and the ciphertext:
@@ -28,6 +30,8 @@ The salt lives inside the value rather than beside it, which keeps the encrypted
 
 The version prefix is also what makes the next change painless: a value written by a newer ADT.ai than the one you are running says so by name instead of failing as a corrupt password.
 
+<br>
+
 ### The key fingerprint
 
 `pwd_key:` records which key the value is under. It is a 12-character digest, not the key and not the password, and it exists because a wrong key and a corrupted value otherwise report the same error, so the commonest mistake of all used to read as a damaged connection file:
@@ -41,6 +45,8 @@ ADT_KEY to the key this value was encrypted with.
 The digest comes from that value's salted key material, not the key alone. Testing a guess against it therefore costs the same 600000 iterations as testing the ciphertext. The fingerprint does not weaken the encrypted value, but the whole connection file still stays out of Git.
 
 It also means two secrets encrypted with one key have different fingerprints, which is the property that lets a rekey be verified secret by secret rather than trusted in bulk.
+
+<br>
 
 ## The secret can come from your own vault
 
@@ -65,11 +71,15 @@ pwd_cmd: vault kv get -field=password secret/oracle/dev/app
 pwd_cmd: pass show oracle/dev/app
 ```
 
+<br>
+
 ### What this buys, and what it does not
 
 What you get is custody. Your vault holds the secret, rotates it, revokes it, and records who asked for it, and revoking it there revokes it everywhere. A password copied into a file, even an encrypted one, is a copy you now have to track.
 
 What you do not get is secrecy from the tool. The value still reaches the Oracle driver as plaintext, and anyone allowed to run `adtai` can run the vault command themselves, so this hides nothing from a person or an agent already on that machine. Anybody telling you otherwise is selling something. The interesting property is the first one.
+
+<br>
 
 ### The rules, all four of them
 
@@ -104,6 +114,8 @@ DEV.APP pwd: command failed with exit status 1: op
 Run the provider command directly in a trusted terminal when its own detailed diagnostic is needed. ADT.ai also removes `ADT_KEY` and `ADT_KEY_CMD` from the environment of the provider process; provider-owned variables such as `VAULT_TOKEN` are left intact.
 
 One trailing newline is dropped from the output, since every CLI above adds one. Nothing else is trimmed, so a password ending in a space survives.
+
+<br>
 
 ## Or no password in the process at all
 
@@ -151,6 +163,8 @@ Two commands do notice, since they need two statements to land in one session, `
 
 Run those two with the switch off, or from macOS or Linux.
 
+<br>
+
 ## Or no password passed at all
 
 `sqlcl_only` keeps the password out of ADT.ai's process by moving it to SQLcl. External authentication goes one step further: nothing passes a password anywhere, because the Oracle client library reads it out of a Secure External Password Store itself.
@@ -189,6 +203,8 @@ Being exact about what it is: SEPS is still password authentication, and the dat
 
 It lives in the wallet, the client library reads it, and it never exists as a value inside ADT.ai, which is the one claim on this page that survives an agent reading the tool's memory.
 
+<br>
+
 ## A loaded or pending credential is masked
 
 Once loaded, schema and wallet passwords use a wrapper that renders as `***`, so neither can reach stdout, a log, a generated script or an error by accident. The same wrapper covers those passwords, the write key and both rekey keys while `adtai connection` prepares an edit.
@@ -202,6 +218,8 @@ A contract test pins that list, so another unwrap fails the test suite rather th
 Two limits, stated rather than implied. This does not hide a credential from an agent allowed to run `adtai` at all, because such an agent can open its own database session without ever reading a password.
 
 ADT.ai masks credentials by default, contracts the deliberate plaintext exits, scrubs SQLcl output and removes its encryption keys from child environments. This is not isolation from software running as the same user, and masking is not encryption at rest; `-encrypt` provides the latter.
+
+<br>
 
 ## Changing the encryption key
 

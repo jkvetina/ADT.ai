@@ -2,6 +2,8 @@
 
 ADT.ai keeps what it learns about a project between runs in SQLite files under `config/`, one file per subject, with three YAML files beside them. This page is the map: what each file holds, who writes and reads it, when deleting it is safe, and the conventions every store is measured against. Each store has its own page.
 
+<br>
+
 ## The stores
 
 Every file is generated, gitignored, and rebuilt from git or from the database. None of them holds anything a human edits.
@@ -13,6 +15,8 @@ Every file is generated, gitignored, and rebuilt from git or from the database. 
 | [dependencies](storage_dependencies.md), [APEX half](storage_dependencies_apex.md) | `config/internal/dependencies.db` | [dependencies](dependencies.md) | [dependencies](dependencies.md), [recompile](recompile.md), [patch](patch.md) | Any refresh; a file older than the opener can lift is wiped by a refresh.            |
 | [flow](storage_flow.md)                                                            | `config/internal/flow.db`         | [flow](flow.md)                 | [flow](flow.md)                                                               | `flow -refresh` per application; the store is a cache of the live dictionary.        |
 | [ut](storage_ut.md)                                                                | `config/internal/ut.db`           | [ut](ut.md)                     | [ut](ut.md)                                                                   | Delete the file; the history restarts, and the last twenty runs per schema are kept. |
+
+<br>
 
 ## The YAML siblings
 
@@ -26,6 +30,8 @@ Three facts are small enough to stay in YAML, a handful of lines a human can rea
 
 The generated folders keep their documented places beside these files: `config/commits/` holds the commit stores, and `config/discovery/`, `config/flow/` and `config/temp/` hold command output. None of them moves under `config/internal/`.
 
+<br>
+
 ## How to read a store page
 
 Each store page opens on a Mermaid diagram of its tables, then one column table per SQLite table, then its indexes. A relationship line in the diagram means rows refer to each other, whether or not the store declares the foreign key; the Key cell says which it is.
@@ -38,6 +44,8 @@ Each store page opens on a Mermaid diagram of its tables, then one column table 
 | Unique   | Whether the index refuses a second row with the same values.                            |
 
 A contract test builds every store in memory from the shipped DDL and compares it with these pages, so a schema change that skips its page fails the suite.
+
+<br>
 
 ## Conventions
 
@@ -53,9 +61,13 @@ The stores were written at different times, and until version bumps across all f
 | Links   | A child table declares its foreign key with `ON DELETE CASCADE`, and the opener turns foreign keys on.                                                                                                                                                                                             |
 | Opener  | One shared opener creates the folder, sets the row factory, enables foreign keys, lifts the version and closes on failure. No store carries a private copy or calls SQLite itself.                                                                                                                 |
 
+<br>
+
 ## What an older file goes through
 
 Every store lifts what it can in place. The commit store, the APEX cache and the run history keep every row; the dictionary mirror keeps every row of a version 3 file and wipes anything older on a refresh; the navigation store is a cache and drops its pre-version tables for the next refresh to refill. Each page says which.
+
+<br>
 
 ## Standing differences
 

@@ -18,6 +18,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from adt_ai.patch import stages
 from adt_ai.patch.content import (
     CONTENT_MODE_HEAD,
     CONTENT_MODE_LOCAL,
@@ -59,7 +60,14 @@ def build_reports(
     written = set(generated.paths)
     deleted_cache: dict[tuple[str, ...], set[tuple[str, str, str]]] = {}
     reports: list[SchemaReport] = []
-    for group in sorted(sql_files):
+    # One report per application, however many scripts carry it: an APEXlang
+    # application writes an `init` and an `end` half (ADT #735) and both halves
+    # fold back under the `<SCHEMA>.<APP_ID>` group the files were grouped by.
+    scripts_by_group: dict[str, list[Path]] = {}
+    for script_group in sorted(sql_files):
+        group, _stage = stages.split_stage(script_group)
+        scripts_by_group.setdefault(group, []).append(sql_files[script_group])
+    for group, scripts in scripts_by_group.items():
         schema, app_id = _split_group(group)
         group_files = [path for path in files if _patch_group(path, config) == group]
         rows = [
@@ -75,7 +83,8 @@ def build_reports(
             )
             for path in group_files
         ]
-        rows.extend(_injected_rows(sql_files[group], records, window, mode=mode))
+        for script in scripts:
+            rows.extend(_injected_rows(script, records, window, mode=mode))
         reports.append(
             SchemaReport(
                 schema      = schema,

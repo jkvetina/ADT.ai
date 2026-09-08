@@ -148,13 +148,19 @@ _COMMIT_RANGE_RE = re.compile(r"^(?P<start>\d+)-(?P<stop>\d+)$")
 _COMMIT_FROM_RE = re.compile(r"^(?P<start>\d+)\+$")
 
 
+# Git abbreviates a hash to seven characters, so a digit-only ref shorter than
+# that is a commit number and one at least that long may be a hash (ADT #735).
+_HASH_PREFIX_DIGITS = 7
+
+
 def commit_ref_matches(number: int, commit_hash: str, ref: str) -> bool:
     """Does one `-commit` / `-ignore` argument select this commit?
 
     Three spellings, all old ADT's (`util.ranged_str`, util.py:755-767, resolved
     by `get_search_full`, patch.py:1073-1082):
 
-    * `12`     , that commit number, or a hash prefix
+    * `12`     , that commit number
+    * `1d8b63` , a hash prefix: any ref with a letter in it, or seven-plus digits
     * `12+`    , commit 12 and everything newer
     * `12-40`  , the inclusive span
 
@@ -162,6 +168,13 @@ def commit_ref_matches(number: int, commit_hash: str, ref: str) -> bool:
     concept at two call sites, and `search_repo` already understood `N+` while
     `patch` understood neither, so `docs/patch.md`'s documented "commit numbers
     or ranges" selected nothing at all, silently (ADT #309, was #15).
+
+    A short all-digit ref is a NUMBER and nothing else (ADT #735). It used to
+    be a hash prefix as well, so `-ignore 1 2` also dropped whichever commit's
+    hash happened to open on `1` or `2`: one run in eight lost the very commit
+    the same command named with `-commit 3`, and the story built on it failed
+    on the hash git dealt it. Seven digits is git's own abbreviation length, so
+    from there a digit-only ref is read as a hash prefix again.
     """
     value = str(ref).strip().lower()
     if not value:
@@ -172,6 +185,8 @@ def commit_ref_matches(number: int, commit_hash: str, ref: str) -> bool:
     onward = _COMMIT_FROM_RE.match(value)
     if onward:
         return number >= int(onward.group("start"))
+    if value.isdigit() and len(value) < _HASH_PREFIX_DIGITS:
+        return value == str(number)
     return value == str(number) or commit_hash.lower().startswith(value)
 
 

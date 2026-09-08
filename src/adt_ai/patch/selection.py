@@ -17,12 +17,19 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.patch import settings as _settings
+from adt_ai.patch import stages
 from adt_ai.patch.files import (
     _apex_page_id,
     _is_apex_end_environment,
     _is_apex_page,
     _is_apex_set_environment,
     _patch_map,
+)
+from adt_ai.patch.full_app import (
+    apexlang_app_ids as _apexlang_app_ids,
+)
+from adt_ai.patch.full_app import (
+    carried_by_apexlang_import as _carried_by_apexlang_import,
 )
 from adt_ai.patch.full_app import (
     is_full_app as _is_full_app,
@@ -44,6 +51,9 @@ from adt_ai.patch.layout import (
 )
 from adt_ai.patch.layout import (
     is_apex_path as _is_apex_path,
+)
+from adt_ai.patch.layout import (
+    is_apexlang_path as _is_apexlang_path,
 )
 from adt_ai.patch.layout import (
     is_database_path as _is_database_path,
@@ -118,6 +128,15 @@ def _patch_files(
     # the whole filter was skipped, so the patch listed every component of the
     # application it had just been asked to ship whole.
     files = {path for path in files if _ships_in_patch(path, config, full_app_ids)}
+    # The static-file payloads of an APEXlang application (ADT #722). Read off
+    # the records rather than off `full_app_ids`, which `resolve_full_app_ids`
+    # has already stripped these ids OUT of: the reason they are absent there is
+    # the reason they are needed here.
+    apexlang = _apexlang_app_ids(records, config)
+    files = {
+        path for path in files
+        if not _carried_by_apexlang_import(path, config, apexlang)
+    }
     # No grant script is injected here. GRANT is an ordinary `object_types` entry
     # (`grants/`, in `patch_map`), so a committed grant change arrives through
     # `_wanted` above like every other object file. Until ADT #501 a grant script
@@ -279,8 +298,16 @@ def install_script_name(
     ``owners`` travels with it for the same reason (ADT #602): the group name an
     APEX file carries is the application's own schema, so a caller re-deriving
     the grouping without it would answer a different name than the build wrote.
+
+    An APEXlang application answers its `end` half (ADT #735): the build writes
+    the application as `<SCHEMA>.<APP>.init.sql` + `<SCHEMA>.<APP>.end.sql`
+    around the SQLcl import, and the application counts as deployed only once
+    the half AFTER the import has finished.
     """
-    return _settings.group_script_name(_patch_group(path, config, owners), config)
+    group = _patch_group(path, config, owners)
+    if _is_apexlang_path(path, config):
+        group = stages.staged_group(group, stages.APP_SCRIPT_END)
+    return _settings.group_script_name(group, config)
 
 def _apex_copy_files(
     root: Path,
@@ -292,10 +319,28 @@ def _apex_copy_files(
     # Keyed by the application's own folder, not by its id: the folder name is
     # whatever `apex_path_app` rendered (`122_DIGITAL-APPROVAL`), so an id
     # cannot be spelled back into a path (ADT #429).
+    # An application whose patch content is an APEXlang tree never takes them
+    # (ADT #731). `apex_files_copy` names the begin/end scaffolding a LEGACY
+    # `.sql` application import runs; an APEXlang application is imported from
+    # the folder the `PROMPT -- APEXLANG SOURCE:` row names, so neither file is
+    # ever read and shipping them tells the reader a SQL export is being
+    # installed. The `_is_full_app` test beside it could not cover this: ADT #606
+    # rules an APEXlang application out of `full_app_ids` by construction, so the
+    # exclusion never fired for exactly the applications that needed it, and the
+    # two files ended up the ONLY snapshots in the folder. Jan, 2026-09-07: *"If
+    # you are doing apexlang, these files are irrelevant ... THEY are ONLY for
+    # the LEGACY .sql imports."*
+    apexlang_roots = {
+        root_parts
+        for path in files
+        if _is_apexlang_path(path, config)
+        and (root_parts := _apex_app_root(path, config)) is not None
+    }
     app_roots = {
         root_parts
         for path in files
         if (root_parts := _apex_app_root(path, config)) is not None
+        and root_parts not in apexlang_roots
         and (app_id := _apex_app_id(path, config)) is not None
         and not _is_full_app(app_id, full_app_ids)
     }

@@ -7,6 +7,11 @@ later pass without erasing the row the export listing already wrote.
 
 Version 2 (ADT #642) keys `watermarks` by an INTEGER `app_id` like every other
 table, and gives `_meta` the NOT NULL `value` every store's version table has.
+
+Version 3 (ADT #725) records what an APEXlang export was BASED ON beside the
+checksum that identifies it: `base_commit`, the commit the repository sat at, and
+`mirror_ref`, the ref `-mirror` shares that commit on. A checksum says whether
+the target moved; these two say what to rebase onto when it did.
 """
 
 from __future__ import annotations
@@ -34,7 +39,9 @@ CREATE TABLE IF NOT EXISTS applications (
     app_name     TEXT,
     pages        INTEGER,
     updated_at   TEXT,
-    checksum     TEXT
+    checksum     TEXT,
+    base_commit  TEXT,
+    mirror_ref   TEXT
 );
 CREATE TABLE IF NOT EXISTS developers (
     workspace TEXT NOT NULL,
@@ -69,6 +76,17 @@ DROP TABLE _meta_v1;
 COMMIT;
 """
 
+# Version 2 to 3, two added columns. `ALTER TABLE ... ADD COLUMN` rather than a
+# rename-and-copy: nothing about the existing rows changes, so a rebuild would
+# only be a longer way to keep them, and the schema script above cannot add a
+# column to a table that already exists.
+APEX_STORE_LIFT_2 = """
+BEGIN;
+ALTER TABLE applications ADD COLUMN base_commit TEXT;
+ALTER TABLE applications ADD COLUMN mirror_ref TEXT;
+COMMIT;
+"""
+
 APEX_APPLICATIONS_QUERY = "SELECT * FROM applications ORDER BY app_id"
 
 APEX_APPLICATION_QUERY = "SELECT * FROM applications WHERE app_id = ?"
@@ -90,6 +108,16 @@ def apex_application_upsert(fields: tuple[str, ...]) -> str:
 APEX_CHECKSUM_UPSERT = (
     "INSERT INTO applications (app_id, checksum) VALUES (?, ?) "
     "ON CONFLICT(app_id) DO UPDATE SET checksum = excluded.checksum"
+)
+
+# Written verbatim rather than through the COALESCE upsert above, because both
+# values describe THIS export: a re-export from a checkout outside version
+# control has no base, and leaving the previous one standing would hand the
+# deploy a commit the tree on disk no longer descends from.
+APEX_MERGE_BASE_UPSERT = (
+    "INSERT INTO applications (app_id, base_commit, mirror_ref) VALUES (?, ?, ?) "
+    "ON CONFLICT(app_id) DO UPDATE SET "
+    "base_commit = excluded.base_commit, mirror_ref = excluded.mirror_ref"
 )
 
 APEX_DEVELOPERS_QUERY = (
@@ -129,7 +157,9 @@ __all__ = [
     "APEX_CHECKSUM_UPSERT",
     "APEX_DEVELOPERS_QUERY",
     "APEX_DEVELOPER_UPSERT",
+    "APEX_MERGE_BASE_UPSERT",
     "APEX_STORE_LIFT_1",
+    "APEX_STORE_LIFT_2",
     "APEX_STORE_SCHEMA",
     "APEX_TIMERS_QUERY",
     "APEX_TIMER_UPSERT",

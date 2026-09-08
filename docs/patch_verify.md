@@ -1,6 +1,8 @@
 # Verifying a Deployed Application (deploy_verify_scan)
 
-What a deploy asks an APEX application once it has landed it, where the answer is written, and what a clean answer does not prove. The deploy itself is on [patch_deploy.md](patch_deploy.md); landing an APEXlang tree is on [patch_import.md](patch_import.md).
+What a deploy asks an APEX application once it has landed it, where the answer is written, what a clean answer does not prove, and how a failing answer is undone. The deploy itself is on [patch_deploy.md](patch_deploy.md); landing an APEXlang tree is on [patch_import.md](patch_import.md).
+
+<br>
 
 ## Why the step exists
 
@@ -12,6 +14,8 @@ The case this was built for: a patch imported 44 pages, every row in the table s
 
 So a deploy that lands an APEX application finishes by putting a question to it.
 
+<br>
+
 ## What the scan reads
 
 `APEX_APP_OBJECT_DEPENDENCY.SCAN` compiles every stored SQL and PL/SQL fragment an application holds: region sources, LOVs, processes, validations, computations, dynamic-action bodies, server-side conditions and column expressions. It records, per fragment, both the objects it resolved and the error it hit when it could not compile.
@@ -21,6 +25,8 @@ The second half is the one nothing in ADT had read. A fragment that fails to par
 Both deploy flavours are covered by one pass. The scan uses the application actually deployed: a retargeted APEXlang import checks its target id. An application touched by both an install script and an import is scanned once.
 
 An application whose own deploy row errored is not scanned at all. The deploy has already failed on its own terms, and scanning a half-installed application reports the half.
+
+<br>
 
 ## What a run prints
 
@@ -40,6 +46,8 @@ A finding is a stanza line rather than a table column, the same call `DEPLOYMENT
 
 **A clean scan still prints its row.** The point of the section is that `SUCCESS` in the table above is no longer the last word, so the run has to show the question was asked. A section that appeared only on failure would read exactly like the behaviour it replaced.
 
+<br>
+
 ## Where the log goes
 
 One file per application, beside that target's deploy logs:
@@ -52,6 +60,8 @@ The timestamp format is `today_deploy`, shared with the deploy logs so the scan 
 
 **It is deliberately not a script `.log`.** Scan reports describe verification separately from installation. The completed-run receipt includes the required scan result, so a successful install followed by failed verification stays incomplete and is retried. A successful script log alone cannot make the next deployment skip its scan.
 
+<br>
+
 ## What a green scan does not prove
 
 It compiles fragments. It does not render a page.
@@ -60,6 +70,8 @@ An error in the query APEX generates *around* a fragment at run time, the classi
 
 A green scan is a necessary condition, never a sufficient one.
 
+<br>
+
 ## Turning it off
 
 ```yaml
@@ -67,6 +79,8 @@ deploy_verify_scan      : True
 ```
 
 `False` skips the scan entirely: no scan, no log, no effect on the status.
+
+<br>
 
 ## What each outcome means
 
@@ -88,6 +102,8 @@ Every failing outcome reaches the deploy status and the process exit code, exact
 
 **One case this makes noisy on purpose.** A patch shipping an APEX file for an application the target does not hold names that application on its result row, so the scan is asked about it and the instance answers `ORA-20001: g_security_group_id must be set`. That is now `FAILED` rather than silence, and it is worth reading: you deployed components for an application that is not there. Turn the key off for a patch that is deliberately removing them.
 
+<br>
+
 ## What the scan does to the schema
 
 It sets the workspace security context and the session PL/Scope flag on the connection the deploy already opened, and opens none of its own.
@@ -99,3 +115,132 @@ Measured on APEX 26.1, a bare scan with no cleanup behind it left no `DEPSCAN` o
 The same boundary is what `dependencies -refresh` runs its APEX axis through, so the two callers cannot drift on when the helpers get cleaned up.
 
 It never recompiles the schema it is verifying. `dependencies -refresh` does that through `ensure_plscope`, which is right for an index refresh the user asked for and wrong for a check running at the end of a deploy.
+
+<br>
+
+## Undoing a failed import (deploy_revert_on_scan_failure)
+
+A failing scan used to end the run with the broken application still installed. The import is a whole-app replacement, the scan runs after it, and nothing in between kept what it replaced: the reader was told the target was broken and handed no way back.
+
+```yaml
+deploy_revert_on_scan_failure : True
+```
+
+On by default, and only ever on a `patch -deploy -app` run. It has no opinion about install scripts: the tree-level backup is what `-app` buys, and a per-app script is the patch's own SQL running against the target.
+
+**The revert is another import, so the backup is an export in the import's own format.** `apex import -input <tree>` is an id-based replacement, which is what makes it reversible: run it a second time against the tree the target held before, and the target is what it was.
+
+So, immediately before the import writes, the live target is exported into the deploy's own log folder:
+
+```text
+patch/260907-1-CARGO/logs_DEV/20260907-194318_apex_backup_1000/
+```
+
+The timestamp is `today_deploy` again, so the backup, the import that overwrote it and the scan that judged the import all sort together. The import log names it on a `BACKUP` row beside the signature rows, whether or not the run ever needs it.
+
+The backup keeps the static-file payloads that `export_apex -apexlang` deliberately drops. That export drops them so `-files` stays the repository's one static-file channel and the repo never holds two copies; a backup is not a repository, and an application restored without its stylesheets is not the application that was there.
+
+<br>
+
+## What a revert prints
+
+Under the scan row that called for it, never in a section of its own:
+
+```text
+VERIFYING APPLICATIONS:
+-----------------------
+  APP 1000 | ERROR | 3 error(s) in 1116 fragments
+    PAGE 1 | Column | sourcing | Column Name | PL/SQL: ORA-00904: "SOURCING": invalid identifier
+    LOG: patch/260907-1-CARGO/logs_DEV/20260907-194318_apex_scan_1000.txt
+    REVERT RESTORED | patch/260907-1-CARGO/logs_DEV/20260907-194318_apex_revert_1000.txt
+```
+
+**The deploy stays failed.** Reverting undoes the write; it does not make the patch correct, so the run still ends `ERROR` and still exits non-zero.
+
+| Outcome | What it means |
+| --- | --- |
+| `RESTORED` | The backup imported back and the target exports the application it held before the deploy |
+| `FAILED` | The import refused, the connection did, or the application afterwards is not the one from before |
+| `SKIPPED` | There was nothing to put back |
+
+**`Import successful` is not the proof.** The backup tree is hashed as it is written, the application is exported again after the revert import and hashed the same way, and the two have to agree. A revert that ran and left the target somewhere else is `FAILED`, and the report names both hashes.
+
+**The proof is a content hash rather than APEX's `CHECKSUM-SH256`, and that is measured rather than preferred.** An import bumps `APEX_APPLICATIONS.FILES_VERSION`, APEX's cache token for `#APP_FILES#` URLs, and the checksum moves with it. Measured on APEX 26.1.0: an application reverted from its own backup exported byte-identical to that backup and still read a different checksum, and re-importing the same bytes answered a different value again. The checksum is stable to read and unstable across an import, so comparing it would have reported every revert as `FAILED`. The hash is `apex_signature`'s, the same one the deploy's own `DEPLOYING` row carries.
+
+<br>
+
+## Holding the application shut (deploy_build_status)
+
+The signature is read off the target, then the tree is imported over it. A developer who saves in the App Builder between those two moments has their change imported over with no trace: the gate checked, and it checked a state that no longer existed when the write happened.
+
+```yaml
+deploy_build_status     : restore
+```
+
+The deploy reads the signature and sets the application to `RUN_ONLY` as one step, before it stages a thing, and puts back the status it found afterwards.
+
+**The read comes one statement before the write, because setting build status changes the application's export checksum.** Measured on APEX 26.1.0: `Run and Develop` and `Run Only` hash differently. Reading the target after the lock would compare a value the deploy itself had just written, and refuse every deploy the gate exists to protect.
+
+| Value | What the deploy does |
+| --- | --- |
+| `restore` | Locks for the deploy, then puts back the status the application carried (default) |
+| `run_only` | Locks and leaves it locked, for a target nobody develops on |
+| `off` | Leaves build status alone, and writes no timeline |
+
+**Build status is the lock because APEX offers no other.** The Builder's own application lock has no public API (`WWV_FLOW_LOCK.LOCK_APPLICATION` and its siblings carry no grant to any user), and an import deletes the lock row anyway (bug 39557252, reproduced on APEX 26.1.0). A lock the deploy itself drops cannot guard the deploy. Build status needs no version floor either: it goes through `APEX_UTIL.SET_APP_BUILD_STATUS`, the same call `patch_apex_build_status` already emits into a generated install script.
+
+**It closes the door, not the room.** Measured on APEX 26.1.0: a Page Designer session that is already open saves successfully under `RUN_ONLY`, and the save lands. What `RUN_ONLY` refuses is Builder ENTRY, and reloading the page answers `Application not available for edit`. So the lock stops a new editing session starting mid-deploy and does not evict one already running. It narrows the window; the signature gate remains the guard.
+
+**A task sandbox is never locked.** An import retargeted onto another id (`-app 1000123`) lands on a throwaway nobody is editing, so it is left alone whatever this key says, and locking it would strand a prototype on `RUN_ONLY`.
+
+**Where `patch_apex_build_status` names a status for the target environment, that key wins.** It is a project's deliberate statement about how an application is left on an environment, and a lock restoring over it would silently unlock PROD.
+
+<br>
+
+## What the lock writes
+
+A `BUILD STATUS` row on the import log, beside the signature rows:
+
+```text
+--   BUILD STATUS     | RUN_ONLY (was Run and Develop)
+```
+
+And its own timeline report, because the last two moments happen after that log is written:
+
+```text
+patch/260907-1-CARGO/logs_DEV/20260907-194318_apex_build_status_1000.txt
+```
+
+```text
+--   APPLICATION      | 1000
+--   MODE             | restore
+--   STATUS           | HELD
+--   BEFORE DEPLOY    | Run Only
+--   LOCKED           | RUN_ONLY
+--   AFTER IMPORT     | Run and Develop
+--   FINAL            | Run Only
+```
+
+**`AFTER IMPORT` is APEX's own doing, not ADT's.** An APEXlang import resets build status every time, and `apex_application_install.set_build_status`, which does pin the classic `f<id>.sql` path, is ignored by SQLcl's APEXlang importer, so there is nothing to pin with. The deploy therefore re-applies the final status after the scan instead of trying to carry the lock through the import.
+
+**A lock that could not be taken never fails the deploy.** The signature gate is the guard and this is the courtesy in front of it, so a status that could not be read or set is reported as `FAILED` on the row and in the timeline, and the run continues.
+
+**An id holding no application is `SKIPPED`, not a failure.** A fresh sandbox id is the ordinary case: there was nothing to export, and removing the application this run created would be a drop, which is [patch_drop.md](patch_drop.md)'s job and its ownership rail.
+
+<br>
+
+## Where the revert report goes
+
+One file per reverted application, beside the scan that asked for it, and `.txt` for the same reason:
+
+```text
+patch/260907-1-CARGO/logs_DEV/20260907-194318_apex_revert_1000.txt
+```
+
+It carries the application, the outcome, the backup folder, the content hash before the deploy and the one after the revert, so the claim that the target came back is readable without the console. Its header says which value those are, so no reader compares them to the `SH256:` rows in the import log beside it.
+
+<br>
+
+## Turning the revert off
+
+`False` takes no backup at all and leaves a failed import installed, which is what every release before this one did. It also does nothing on its own when `deploy_verify_scan` is `False`, because there is then no verdict for it to act on.

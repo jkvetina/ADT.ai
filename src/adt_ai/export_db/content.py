@@ -336,19 +336,56 @@ def _render_grants_received(
         rendered[owner] = "\n".join(lines).lstrip() + "\n\n"
     return rendered
 
-def _render_user_privileges(rows: list[dict[str, Any]], schema: str) -> str:
+def _with_admin_option(row: dict[str, Any]) -> str:
+    """`` WITH ADMIN OPTION`` when the grant carries it, else nothing (`#740`).
+
+    All three privilege kinds this file writes have an `ADMIN_OPTION` column and
+    none of them rendered it, so a user who could pass a grant on exported as one
+    who could not and the file replayed a weaker user than the database holds.
+    One helper for all three: whether a grant is transferable is a property of
+    the grant, never of its kind.
+    """
+    return " WITH ADMIN OPTION" if str(row.get("ADMIN_OPTION") or "").upper() == "YES" else ""
+
+def _render_schema_privileges(rows: list[dict[str, Any]], schema: str) -> list[str]:
+    """One `GRANT <privilege> ON SCHEMA <owner> TO <schema>;` per 23ai row (`#740`).
+
+    A schema privilege covers every object of one schema, present and future, so
+    it is the only line in this file naming a second schema, and a repo replaying
+    without it rebuilds a user that cannot read what the original could.
+    """
+    return sorted(
+        f"GRANT {str(row.get('PRIVILEGE') or ''):<33} "
+        f"ON SCHEMA {str(row.get('SCHEMA') or '').lower()} "
+        f"TO {schema.lower()}{_with_admin_option(row)};"
+        for row in rows
+    )
+
+def _render_user_privileges(
+    rows: list[dict[str, Any]],
+    schema: str,
+    schema_privileges: list[dict[str, Any]] | None = None,
+) -> str:
     roles = sorted(
-        str(row.get("NAME") or "")
+        (str(row.get("NAME") or ""), _with_admin_option(row))
         for row in rows
         if row.get("PRIVILEGE_KIND") == "ROLE"
     )
     privileges = sorted(
-        str(row.get("NAME") or "") for row in rows if row.get("PRIVILEGE_KIND") == "SYSTEM"
+        (str(row.get("NAME") or ""), _with_admin_option(row))
+        for row in rows
+        if row.get("PRIVILEGE_KIND") == "SYSTEM"
     )
-    lines = [f"GRANT {role:<21} TO {schema.lower()};" for role in roles]
+    lines = [f"GRANT {role:<21} TO {schema.lower()}{admin};" for role, admin in roles]
     if privileges:
         lines.append("--")
-        lines.extend(f"GRANT {privilege:<33} TO {schema.lower()};" for privilege in privileges)
+        lines.extend(
+            f"GRANT {privilege:<33} TO {schema.lower()}{admin};"
+            for privilege, admin in privileges
+        )
+    if schema_lines := _render_schema_privileges(schema_privileges or [], schema):
+        lines.append("--")
+        lines.extend(schema_lines)
     return "\n".join(lines).lstrip("-\n") + ("\n\n" if lines else "")
 
 def _render_directories(

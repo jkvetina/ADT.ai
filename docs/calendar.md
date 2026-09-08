@@ -4,6 +4,8 @@
 
 `calendar` shows who committed what, when, as a month grid of tickets and commit counts. Reach for it when you need to account for a month of work, your own or a colleague's, without scrolling a git log. It reads the commit store `rebuild` maintains rather than walking every branch live, and it never connects to Oracle.
 
+<br>
+
 ## Examples
 
 Show the current month for yourself:
@@ -25,6 +27,8 @@ Look at somebody else, or narrow to one branch:
 adtai calendar -by bob@example.com
 adtai calendar -branch feat/PROJ-300-currency
 ```
+
+<br>
 
 ## Output
 
@@ -55,11 +59,15 @@ PROJ-204 (1)       |                    | PROJ-204 (1)       | PROJ-300 (1)     
 - Every week that touches the month prints, active or not, so the grid keeps the shape of a wall calendar. Only a week lying entirely outside the month is dropped.
 - A cell shows the ticket id, a `PR#<n>` marker for a pull request, or a branch-derived label when neither is available.
 
+<br>
+
 ## Topping up the store
 
 Before it reads anything, `calendar` tops the commit store up for exactly the branches it needs: the default branch, plus every branch whose name carries the configured `jira_prefix`. With no prefix set, that is every branch.
 
 The top-up runs `rebuild` in update mode, so a steady-state run reads only the handful of commits since last time. The store lives where `repo_commits_file` points in `config/config.yaml`, one file per branch, and it is the same store [`rebuild`](rebuild.md), [`search_repo`](search_repo.md) and [`patch`](patch.md) use.
+
+<br>
 
 ## Scoping to one project
 
@@ -71,9 +79,13 @@ Set `jira_prefix` in `config/config.yaml` (for example `jira_prefix: 'PROJ'`) to
 
 Leave `jira_prefix` empty to count every commit you authored across all branches, in which case every branch is cached rather than only the prefixed ones.
 
+<br>
+
 ## Choosing the author
 
 The default author is your own `git config user.email`, and activity is sourced from the stored commits you wrote. `-by` replaces that with an email substring, and it is repeatable, so several people can share one grid.
+
+<br>
 
 ## Arguments
 
