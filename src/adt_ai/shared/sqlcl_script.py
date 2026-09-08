@@ -343,6 +343,16 @@ def run_sqlcl_script(
             # bytes are available. ``NUL`` cannot answer that and the whole run
             # died there on Windows. See the module docstring for the
             # measurement.
+            #
+            # ``encoding``/``errors`` name what the other two transports already
+            # do by hand: `sqlcl_stream` decodes both the pty and the pipe with
+            # ``.decode("utf-8", "replace")``. Unnamed here, this one asked the
+            # locale instead, so the SAME script produced a different transcript
+            # depending on which transport carried it, and every marker parser
+            # reading that transcript inherited the difference. On a Czech
+            # Windows console the difference was a `UnicodeDecodeError` raised on
+            # ``communicate()``'s reader thread, which returns ``stdout=None``
+            # beside ``returncode == 0`` rather than failing (ADT #743).
             try:
                 completed = subprocess.run(
                     command,
@@ -350,6 +360,8 @@ def run_sqlcl_script(
                     check          = False,
                     capture_output = True,
                     text           = True,
+                    encoding       = "utf-8",
+                    errors         = "replace",
                     input          = "",
                     env            = environment,
                     timeout        = timeout_seconds,

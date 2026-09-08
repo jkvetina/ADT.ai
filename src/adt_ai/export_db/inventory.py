@@ -34,11 +34,14 @@ class ObjectDiscovery:
     GRANTS_MADE_QUERY      = queries.GRANTS_MADE_QUERY
     GRANTS_RECEIVED_QUERY  = queries.GRANTS_RECEIVED_QUERY
     USER_PRIVILEGES_QUERY  = queries.USER_PRIVILEGES_QUERY
+    SCHEMA_PRIVILEGES_QUERY = queries.SCHEMA_PRIVILEGES_QUERY
     DIRECTORIES_QUERY      = queries.DIRECTORIES_QUERY
     COMMENTS_QUERY         = queries.COMMENTS_QUERY
+    TABLE_RETENTION_QUERY  = queries.TABLE_RETENTION_QUERY
 
     def __init__(self, gateway: QueryGateway) -> None:
         self.gateway = gateway
+        self._retention_by_schema: dict[str, dict[str, str]] = {}
         self._comments_by_schema: dict[str, dict[tuple[str, str], list[dict[str, Any]]]] = {}
         self._comment_cache_keys: dict[str, tuple[str, str, str, str]] = {}
         # Per-schema {job name: fresh signature} for the jobs this run selected,
@@ -229,6 +232,19 @@ class ObjectDiscovery:
     def user_privileges(self, schema: str) -> list[dict[str, Any]]:
         return self.gateway.fetch_all(self.USER_PRIVILEGES_QUERY)
 
+    def schema_privileges(self, schema: str) -> list[dict[str, Any]]:
+        """The 23ai schema-wide privileges this user holds (`#740`).
+
+        Empty on any database whose dictionary has no `user_schema_privs`: the
+        view is 23ai, ADT supports older ones, and a privilege that cannot exist
+        needs no row. Swallowed for the same reason `table_retention` swallows,
+        it is an answer rather than an error.
+        """
+        try:
+            return self.gateway.fetch_all(self.SCHEMA_PRIVILEGES_QUERY)
+        except Exception:
+            return []
+
     def directories(self, schema: str) -> list[dict[str, Any]]:
         return self.gateway.fetch_all(self.DIRECTORIES_QUERY)
 
@@ -310,6 +326,32 @@ class ObjectDiscovery:
             [],
         )
 
+    def table_retention(self, database_object: DatabaseObject) -> str:
+        """The rendered retention clauses of one immutable or blockchain table.
+
+        Empty for every other object, and empty on any database whose dictionary
+        has no such views -- they are 21c, ADT supports older ones, and a table
+        that cannot exist needs no clause. That is why the failure is swallowed
+        rather than reported: it is an answer, not an error.
+        """
+        if database_object.object_type.upper() != "TABLE":
+            return ""
+        schema = database_object.schema
+        if schema not in self._retention_by_schema:
+            try:
+                rows = self.gateway.fetch_all(
+                    self.TABLE_RETENTION_QUERY,
+                    {"schema": schema},
+                )
+            except Exception:
+                rows = []
+            self._retention_by_schema[schema] = {
+                str(row.get("TABLE_NAME") or row.get("table_name") or "").upper(): clause
+                for row in rows
+                if (clause := _render_retention(row))
+            }
+        return self._retention_by_schema[schema].get(database_object.name.upper(), "")
+
     def ddl(self, database_object: DatabaseObject) -> str:
         query, params = _ddl_query(database_object)
         rows = self.gateway.fetch_all(
@@ -330,6 +372,52 @@ class ObjectDiscovery:
                 "job_name": database_object.name,
             },
         )
+
+
+def _retention_value(row: dict[str, Any], column: str) -> Any:
+    return row.get(column.upper(), row.get(column.lower()))
+
+
+def _render_retention(row: dict[str, Any]) -> str:
+    """Spell the dictionary's four retention columns the way Oracle spells them.
+
+    Measured against `DBMS_METADATA.GET_DDL` with `SEGMENT_ATTRIBUTES` on, on
+    Oracle AI Database 23.26.3.0.0, so the exported file is byte-for-byte the
+    clause the database itself would write:
+
+        NO DROP UNTIL 0 DAYS IDLE NO DELETE UNTIL 16 DAYS AFTER INSERT LOCKED
+        VERSION "V1"
+
+    A NULL `ROW_RETENTION` is an unlimited one, which Oracle writes as a bare
+    `NO DELETE`; `LOCKED` reflects `ROW_RETENTION_LOCKED` and means the
+    retention can never be shortened, so losing it would export a weaker table.
+
+    A blockchain table spells its version as part of the hashing clause --
+    `HASHING USING "SHA2_512" VERSION "V1"` -- and rejects the bare `VERSION`
+    an immutable table takes, with `ORA-02000: missing HASHING keyword`. The
+    `HASH_ALGORITHM` column exists only on the blockchain view, so its presence
+    is what tells the two apart here.
+    """
+    parts: list[str] = []
+    inactivity = _retention_value(row, "table_inactivity_retention")
+    if inactivity is not None:
+        parts.append(f"NO DROP UNTIL {int(inactivity)} DAYS IDLE")
+    retention = _retention_value(row, "row_retention")
+    delete = (
+        "NO DELETE"
+        if retention is None
+        else f"NO DELETE UNTIL {int(retention)} DAYS AFTER INSERT"
+    )
+    if str(_retention_value(row, "row_retention_locked") or "").upper() == "YES":
+        delete += " LOCKED"
+    parts.append(delete)
+    algorithm = str(_retention_value(row, "hash_algorithm") or "").strip()
+    if algorithm:
+        parts.append(f'HASHING USING "{algorithm}"')
+    version = str(_retention_value(row, "table_version") or "").strip()
+    if version:
+        parts.append(f'VERSION "{version}"')
+    return " ".join(parts)
 
 
 def _comment_object_type(row: dict[str, Any]) -> str:

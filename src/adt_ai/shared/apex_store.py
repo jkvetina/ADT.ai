@@ -56,12 +56,14 @@ LEGACY_APEX_FILES: tuple[str, ...] = (
 #: The `recent.yaml` key whose watermarks belong here.
 RECENT_MODULE = "export_apex"
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 
 #: Version 1 to 2 (ADT #642): `watermarks.app_id` becomes the INTEGER every
 #: other table keys by, and `_meta.value` becomes NOT NULL like every store's.
+#: Version 2 to 3 (ADT #725): `applications` gains the export's merge base.
 MIGRATIONS: tuple[Migration, ...] = (
     Migration("1", "2", lambda connection: connection.executescript(queries.APEX_STORE_LIFT_1)),
+    Migration("2", "3", lambda connection: connection.executescript(queries.APEX_STORE_LIFT_2)),
 )
 
 #: The application columns, in the order a row is written and read back. This
@@ -77,6 +79,8 @@ APPLICATION_FIELDS: tuple[str, ...] = (
     "pages",
     "updated_at",
     "checksum",
+    "base_commit",
+    "mirror_ref",
 )
 
 
@@ -186,6 +190,23 @@ class ApexStore:
             return
         with self.connection:
             self.connection.execute(queries.APEX_CHECKSUM_UPSERT, (key, checksum))
+
+    def store_merge_base(self, app_id: Any, base_commit: str, mirror_ref: str = "") -> None:
+        """Record what this export was based on: a commit, and the ref sharing it.
+
+        Both values are written as given, blanks included, because both describe
+        the export that just ran. The checksum beside them says whether the
+        target moved; these say what to rebase onto when it did, so a stale
+        commit left standing after a re-export outside git would be worse than
+        no commit at all (ADT #725).
+        """
+        key = _app_key(app_id)
+        if key is None:
+            return
+        with self.connection:
+            self.connection.execute(
+                queries.APEX_MERGE_BASE_UPSERT, (key, str(base_commit or ""), str(mirror_ref or ""))
+            )
 
     # -- developers --------------------------------------------------------
 

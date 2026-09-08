@@ -32,9 +32,6 @@ from adt_ai.patch.layout import (
 from adt_ai.patch.layout import (
     is_apex_static_file as _is_apex_static_file,
 )
-from adt_ai.patch.layout import (
-    is_apexlang_path,
-)
 from adt_ai.shared import text_files
 from adt_ai.shared.commit_discovery import CommitRecord
 from adt_ai.shared.mime import guess_mime_type
@@ -63,22 +60,20 @@ def _write_snapshots(
     (what deploys is the `wwv_flow_imp` wrapper generated below), so it is written
     in every mode.
 
-    An APEXlang file is the mirror image and skipped in every mode (ADT #602):
-    the application is imported from its own folder, so a copy here would be one
-    nothing opens.
+    An APEXlang file is written like any other file the patch CHANGED, and stays
+    the one kind the install script never links (ADT #602 owns the link, #731 the
+    copy). The application is imported from its own folder, so the snapshot is a
+    record of what this patch changed rather than an install step, which is the
+    distinction the blanket skip here lost: Jan asked for the tree to stay where
+    it lives AND for the changed objects to be copied, 2026-08-30: *"We should
+    copy just the objects which changed and deploy the app from its true
+    location ... Redusce churn, still have visibility in patches."* The selection
+    holds only what the patch's own commits touched, so "just the objects which
+    changed" is exactly this list, never the 10 000 files of a whole tree.
     """
     if records is None:
         records = []
     for path in files:
-        # An APEXlang file deploys from where it LIVES, in every mode (ADT #602).
-        # `apex import` reads the application's own folder, so a copy under
-        # `snapshots/` is one nothing ever opens, and on a 10 000 file
-        # application that copy is the entire cost of changing one page. Jan,
-        # 2026-08-30: *"I dont want to copy all 10000 files into snapshot
-        # folder ... deploy the app from its true location (like we would run
-        # -nosnap mode, but just for this app)."*
-        if is_apexlang_path(path, config):
-            continue
         static = _is_apex_static_file(path, config)
         if content_mode == CONTENT_MODE_NOSNAP and not static:
             continue

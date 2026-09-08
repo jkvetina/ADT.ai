@@ -53,6 +53,62 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+# What `patch -deploy` writes beside an APEX application, split out when ADT #726
+# pushed this module past the 24 KB context guard and re-exported here so no
+# caller learns a new name: `settings.apex_scan_log_name`, `settings.verify_deploy_scan`
+# and the rest still resolve. The names live there; only the home moved. Spelled
+# out with `as`, which is what makes it an EXPLICIT re-export: `import *` is
+# invisible to mypy, and a plain `import X` under `--no-implicit-reexport` leaves
+# every call site reading as `does not explicitly export attribute`.
+from adt_ai.patch.deploy_settings import (
+    APEX_BACKUP_FOLDER as APEX_BACKUP_FOLDER,
+)
+from adt_ai.patch.deploy_settings import (
+    APEX_BUILD_STATUS_LOG_FILE as APEX_BUILD_STATUS_LOG_FILE,
+)
+from adt_ai.patch.deploy_settings import (
+    APEX_REVERT_LOG_FILE as APEX_REVERT_LOG_FILE,
+)
+from adt_ai.patch.deploy_settings import (
+    APEX_SCAN_LOG_FILE as APEX_SCAN_LOG_FILE,
+)
+from adt_ai.patch.deploy_settings import (
+    BUILD_STATUS_MODES as BUILD_STATUS_MODES,
+)
+from adt_ai.patch.deploy_settings import (
+    BUILD_STATUS_OFF as BUILD_STATUS_OFF,
+)
+from adt_ai.patch.deploy_settings import (
+    BUILD_STATUS_RESTORE as BUILD_STATUS_RESTORE,
+)
+from adt_ai.patch.deploy_settings import (
+    BUILD_STATUS_RUN_ONLY as BUILD_STATUS_RUN_ONLY,
+)
+from adt_ai.patch.deploy_settings import (
+    apex_backup_folder_name as apex_backup_folder_name,
+)
+from adt_ai.patch.deploy_settings import (
+    apex_build_status_log_name as apex_build_status_log_name,
+)
+from adt_ai.patch.deploy_settings import (
+    apex_deploy_artifact as apex_deploy_artifact,
+)
+from adt_ai.patch.deploy_settings import (
+    apex_revert_log_name as apex_revert_log_name,
+)
+from adt_ai.patch.deploy_settings import (
+    apex_scan_log_name as apex_scan_log_name,
+)
+from adt_ai.patch.deploy_settings import (
+    deploy_build_status as deploy_build_status,
+)
+from adt_ai.patch.deploy_settings import (
+    revert_on_scan_failure as revert_on_scan_failure,
+)
+from adt_ai.patch.deploy_settings import (
+    verify_deploy_scan as verify_deploy_scan,
+)
+
 #: Every key this module reads, with the value ADT.ai ships. A project setting
 #: none of them gets exactly what it got before these keys existed. Kept as one
 #: map so `config.yaml`, the docs and the tests have a single thing to agree with.
@@ -83,16 +139,11 @@ DEFAULTS: dict[str, Any] = {
     "patch_session_directives": ["SET DEFINE OFF", "SET TIMING OFF", "SET SQLBLANKLINES ON"],
     "patch_spool_line": 'SPOOL "./{$FOLDER}/{$SCHEMA}.log" APPEND;',
     "deploy_verify_scan": True,
+    "deploy_revert_on_scan_failure": True,
+    "deploy_build_status": "restore",
     "today_deploy": "%Y%m%d-%H%M%S",
     "today_patch": "%y%m%d",
 }
-
-#: The scan log's name, deliberately NOT a config key and deliberately not
-#: `.log`. `shared/deploy_status.DEPLOY_LOG_RE` reads every
-#: `<stamp>_<stem>_<SUCCESS|ERROR>.log` for the latest script outcome. A scan
-#: report is separate from that display; whole-run completion also requires
-#: the verification result recorded in the target's deployment receipt.
-APEX_SCAN_LOG_FILE = "{$TIMESTAMP}_apex_scan_{$APP}.txt"
 
 
 def _text(config: dict[str, Any], key: str) -> str:
@@ -109,6 +160,14 @@ def _text(config: dict[str, Any], key: str) -> str:
 def _flag(config: dict[str, Any], key: str) -> bool:
     value = config.get(key)
     return bool(DEFAULTS[key]) if value is None else bool(value)
+
+
+#: The two readers above, under public names, for `deploy_settings.py` (ADT
+#: #726). That module was split off this one and still resolves keys the way
+#: every other reader here does, so it borrows these rather than carrying a
+#: second copy of "blank counts as unset" that could drift.
+text_value = _text
+flag_value = _flag
 
 
 # --- folders -----------------------------------------------------------------
@@ -427,37 +486,6 @@ def deploy_log_name(
     ):
         name = name.replace(f"{{${token}}}", value).replace(f"#{token}#", value)
     return name
-
-
-def apex_scan_log_name(config: dict[str, Any], *, moment: datetime, app_id: int) -> str:
-    """One application's post-deploy scan log, beside that deploy's own logs.
-
-    Shares `today_deploy` with `deploy_log_name` so the scan and the deploy it
-    verifies sort together in the folder; the rest of the name is fixed, see
-    `APEX_SCAN_LOG_FILE` for why it is not configurable and not `.log`.
-    """
-    stamp = moment.strftime(_text(config, "today_deploy"))
-    name = APEX_SCAN_LOG_FILE
-    for token, value in (("TIMESTAMP", stamp), ("APP", str(app_id))):
-        name = name.replace(f"{{${token}}}", value).replace(f"#{token}#", value)
-    return name
-
-
-def verify_deploy_scan(config: dict[str, Any]) -> bool:
-    """`deploy_verify_scan`: ask the application whether its own SQL still parses.
-
-    On by default. After a deploy lands an APEX application -- as a per-app
-    install script or as an APEXlang import -- ADT runs the APEX dependency scan
-    against it and reads back every component property the scan could not
-    compile. Findings are written to a log beside the deploy's own and mark the
-    deploy ERROR, because an application that imported cleanly and cannot run a
-    region query has not been deployed, it has been installed.
-
-    False skips the scan entirely: no scan, no log, no effect on the status. For
-    a target where the extra minute per application is not wanted, or an APEX
-    older than 24.2, where the dictionary cannot answer.
-    """
-    return _flag(config, "deploy_verify_scan")
 
 
 def archive_format(config: dict[str, Any]) -> str:

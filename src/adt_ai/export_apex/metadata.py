@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.export_apex.inventory import ApexApplication
+from adt_ai.export_apex.merge_base import head_commit, mirror_export, mirror_message
 from adt_ai.shared.apex_store import ApexStore
 from adt_ai.shared.row_values import row_value
 
@@ -46,6 +47,47 @@ def _store_application_checksum(root: Path, app_id: int, checksum: str) -> None:
         return
     with ApexStore.load(root) as store:
         store.store_checksum(app_id, checksum)
+
+def _store_application_merge_base(
+    root: Path, app_id: int, base_commit: str, mirror_ref: str
+) -> None:
+    """Record what the APEXlang tree just written descends from (ADT #725).
+
+    Written even when both values are empty, unlike the checksum above it. The
+    checksum is a fact about the APPLICATION and stays true until the next
+    export; the merge base is a fact about the TREE, so a re-export that can name
+    no commit has to clear the one before it rather than leave a deploy pointing
+    its rebase line at a base this tree no longer descends from.
+    """
+    with ApexStore.load(root) as store:
+        store.store_merge_base(app_id, base_commit, mirror_ref)
+
+def _record_application_merge_base(
+    root        : Path,
+    app_id      : int,
+    tree_root   : Path,
+    mirror_ref  : str,
+    environment : str,
+) -> None:
+    """Resolve the base of the tree just written and record it (ADT #725).
+
+    Two sources, in order. `-mirror` commits the tree onto a ref the team shares
+    and the base is that commit; without it the base is the repository's own
+    HEAD, which is a commit only this checkout has but still worth naming.
+
+    **A mirror that could not be written falls back to HEAD and records no ref.**
+    Recording the ref anyway would make a refused deploy print a `git rebase`
+    onto a ref that does not carry this export, which is worse than the
+    re-export line it replaced.
+    """
+    if mirror_ref:
+        mirrored = mirror_export(
+            root, mirror_ref, tree_root, message=mirror_message(app_id, environment)
+        )
+        if mirrored:
+            _store_application_merge_base(root, app_id, mirrored, mirror_ref)
+            return
+    _store_application_merge_base(root, app_id, head_commit(root), "")
 
 def _store_workspace_developers(root: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:

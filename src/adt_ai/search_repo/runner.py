@@ -16,7 +16,7 @@ from adt_ai.shared.commit_cache import (
 )
 from adt_ai.shared.commit_discovery import commit_ref_matches
 from adt_ai.shared.dates import within_recent_window
-from adt_ai.shared.git_files import git_status_porcelain, run_git, run_git_bytes
+from adt_ai.shared.git_files import run_git, run_git_bytes
 from adt_ai.shared.identity import resolve_commit_email
 from adt_ai.shared.sql_like import matches_sql_like
 
@@ -215,15 +215,6 @@ class SearchRepoRunner:
             for file_path in record.files:
                 if request.stage and file_path in staged_paths:
                     continue
-                if request.stage and git_status_porcelain(root, file_path):
-                    # `-stage` writes straight onto this working-tree path and
-                    # `git add`s the result, so an uncommitted local edit here
-                    # would be overwritten and staged with no trace. Refuse it,
-                    # the same way a stale cache entry is refused below, rather
-                    # than silently discard the edit (ADT #670).
-                    failed.append(file_path)
-                    staged_paths.add(file_path)
-                    continue
                 try:
                     payload = run_git_bytes(root, ["show", f"{record.id}:{file_path}"])
                 except subprocess.CalledProcessError:
@@ -239,6 +230,17 @@ class SearchRepoRunner:
                 # holds the requested bytes leaves its mtime alone (`#593`). It
                 # is still a restore either way: what the row reports is that
                 # the path now carries that commit's content.
+                #
+                # Every destination is overwritten unconditionally, and both
+                # spellings mean it (ADT #732). A numbered copy is unique by
+                # commit number, so recovering overlapping ranges in a row lands
+                # the same `<file>.<commit>.sql` twice and the second run must
+                # not stop on the first run's copy. `-stage` used to refuse a
+                # target carrying uncommitted changes (ADT #670) and list it
+                # under `COULD NOT RESTORE:`; putting an old version back while
+                # mid-work is the normal case for the flag, so it overwrites the
+                # edit the same way an export overwrites WIP. `COULD NOT
+                # RESTORE:` now reports only what git could not resolve.
                 text_files.write_bytes(target, payload)
                 restored.append(target)
                 if request.stage:

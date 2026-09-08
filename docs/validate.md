@@ -6,6 +6,8 @@
 
 **The command never connects.** The compiler ships inside SQLcl and answers on a bare `sql -S /nolog` session, so `validate` takes no `-env`, no `-schema` and no credentials, and it works in CI and from any checkout. The only requirement is a SQLcl new enough to carry the compiler, 26.1 or later.
 
+<br>
+
 ## Examples
 
 Validate every exported application in the project:
@@ -33,6 +35,8 @@ Use it as a gate straight after an export:
 ```bash
 adtai export_apex -app 100 -apexlang -files && adtai validate -app 100
 ```
+
+<br>
 
 ## Output
 
@@ -62,6 +66,8 @@ TIMER: 20s
 - A folder that also produced warnings prints a `WARNINGS IN <folder>:` section above its errors, in the same shape.
 - `-silent` drops the per-folder rows and keeps the banner, the message sections and the timer.
 
+<br>
+
 ## The exit code is the deliverable
 
 `validate` is a gate. Exit `0` means every requested folder validated clean, and everything else is non-zero, so CI and agents can branch on it directly. Non-zero covers more than compiler errors on purpose: a run that checked nothing is not a pass.
@@ -80,6 +86,8 @@ TIMER: 20s
 
 **Warnings do not fail the run.** The compiler's own verdict is still success, but they are never hidden. This matters most for `FILE_IGNORED`, which means the compiler did not check that file at all, and a bare `OK` there would be a pass over work that never happened.
 
+<br>
+
 ## Static files are staged in, not duplicated
 
 An `-apexlang` export deliberately omits the `shared-components/static-files/` payloads, so the repository never holds two copies of every static file. The compiler does not accept that: `shared-components/static-files.apx` names each payload in a `fileName` property, and every missing one is a `REFERENCE_NOT_FOUND`.
@@ -95,6 +103,8 @@ A hardlink is one inode with two names, so this copies no bytes and adds nothing
 
 An application with no `files/` export gets a `NOTES:` row naming `export_apex -files`, because eight `REFERENCE_NOT_FOUND` messages say what is missing but not how to get it.
 
+<br>
+
 ### Why an empty placeholder is worse than a missing file
 
 The compiler checks that a referenced path **exists**, not what is in it. Real payload bytes and payloads truncated to zero bytes validate identically, while deleting one file produces its `REFERENCE_NOT_FOUND`.
@@ -102,6 +112,8 @@ The compiler checks that a referenced path **exists**, not what is in it. Real p
 That makes touching a placeholder into existence the most dangerous shortcut available here: it turns the gate green and then imports an application with broken images. Staging therefore links only payloads that genuinely exist and lets the compiler report every real gap.
 
 This is a live hazard in existing repositories too. A tree whose `shared-components/static-files/` holds zero-byte files validates clean today and would import an application with no icons. A payload folder that is suspiciously all-zero is not a valid export.
+
+<br>
 
 ## Which folders get validated
 
@@ -111,11 +123,15 @@ Targets are collected in this order, and `-input` and `-app` can be combined:
 - `-app ID`, resolved offline: `config/internal/apex.db` gives the owner and alias, which locate `apex/<owner>/<id>_<alias>/apexlang/` under the configured `path_apex`. An application with no export on disk produces a `NOTES:` row naming the path where one was expected, never a traceback.
 - Neither, in which case every `apexlang/` folder under the configured APEX root is validated, sorted, hidden folders skipped. That is what makes a bare `adtai validate` after an `-all` export one obvious command.
 
+<br>
+
 ## Notes
 
 - The compiler validates against metadata from the APEX version that exported the application, so a result is only as meaningful as the SQLcl build running it. An old SQLcl against a 26.1 export is not a trustworthy pass.
 - One SQLcl session per folder. Batching several calls into one session is measurably cheaper, since JVM startup dominates the few seconds a run costs, but a batch is a single blocking call and could not stream a per-folder row, so the per-folder call wins.
 - Importing the tree back is `patch -deploy -app`, which stages exactly this tree and lands it on a sandbox id first, on [patch_import.md](patch_import.md). The loop from export to promotion is on apex_round_trip.md.
+
+<br>
 
 ## Arguments
 

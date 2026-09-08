@@ -6,11 +6,15 @@ You already answer these questions by hand: what is running in UAT, what breaks 
 
 This page is the case for adopting it, one command group at a time. Each section says what you do by hand today, what the command does instead, and where the honest limit is. Every command has its own reference page, all of them listed in the [command index](README.md).
 
+<br>
+
 ## Nothing is installed in your database
 
 ADT.ai is a Python tool that runs on a developer's machine. It creates no schema, no package, no job and no trigger. It connects as an Oracle user with the privileges you grant, reads the dictionary, writes files, and runs SQL you can read first. Withdraw the credential and it stops, leaving nothing behind.
 
 Its caches are local SQLite files and YAML under `config/`, added to `.gitignore` on first use, so nothing it learns about your schema reaches version control. There is no server, no graph database and nothing to provision.
+
+<br>
 
 ## Export: the database becomes files, the same bytes every time
 
@@ -27,6 +31,8 @@ adtai export_apex -reveal
 adtai export_apex -app 100 -apexlang -files
 ```
 
+<br>
+
 ## Check: prove it still works before it ships
 
 **By hand today:** compile everything, watch the invalid count, and hope the twenty red objects share one cause.
@@ -41,9 +47,13 @@ adtai ut -gate 90
 adtai validate -app 100
 ```
 
+<br>
+
 ## Explore: ask the questions offline, and let an agent ask them too
 
 **By hand today:** grep the export, click through the builder, and hope.
+
+<br>
 
 ### discovery: a SELECT-only surface you can hand to an AI agent
 
@@ -62,6 +72,8 @@ adtai discovery -env DEV -sql "UPDATE app_settings SET value = 1"
 
 The second line is refused, with the reason printed where the table would be.
 
+<br>
+
 ### dependencies: what breaks before you change it
 
 `USER_DEPENDENCIES` answers in one direction and its raw dump is mostly noise: on a real schema more than half the edges point at Oracle and APEX built-ins, and the catalog stops being readable past a few hundred objects.
@@ -77,6 +89,8 @@ adtai dependencies -tree "ORDER_ITEMS_ORDER_FK"
 
 Only the refresh touches Oracle. Every query after it answers in milliseconds, which is also what makes it cheap for an agent: a fraction of the tokens a live schema crawl costs.
 
+<br>
+
 ### flow: every link into a page, without clicking through the builder
 
 APEX scatters navigation across branches, buttons, lists, the navigation bar and report column links, and no screen says "everything that links into page 50." [`flow`](flow.md) scrapes an application's edges once, stores them locally, and answers in either direction. Every refresh also writes Mermaid, DOT and JSON diagrams you can drop into documentation.
@@ -85,6 +99,8 @@ APEX scatters navigation across branches, buttons, lists, the navigation bar and
 adtai flow -app 100 -refresh -env DEV
 adtai flow -app 100 -to 50
 ```
+
+<br>
 
 ### search_repo, rebuild and calendar: the history you already committed
 
@@ -97,6 +113,8 @@ adtai rebuild
 adtai search_repo -type VIEW -name MONTHLY_REPORT_V
 adtai calendar
 ```
+
+<br>
 
 ## Deliver: from committed changes to a deployable release
 
@@ -111,6 +129,8 @@ adtai patch -target UAT -name 12 -create
 adtai patch -target UAT -name 12 -deploy
 ```
 
+<br>
+
 ## Set up: one command to check the machine, one to scaffold the project
 
 [`doctor`](doctor.md) reports which piece of the toolchain is missing or old, and it is the only command that installs or updates anything, on an explicit flag. `-init` scaffolds a project folder with the config and ignore rules already written. [`connection`](connection.md) edits the connection file for you and asks for passwords interactively, so one never lands in shell history.
@@ -123,11 +143,15 @@ adtai doctor -init -root /path/to/project
 adtai connection -set-pwd -env DEV -schema APP -encrypt -key /secure/adt.key -go
 ```
 
+<br>
+
 ## Built to be run by an AI agent
 
 Every command prints one console shape, takes the same shared flags, and turns its verdict into an exit code, which is what an agent branches on. The read-only commands are the ones an agent runs unsupervised: `discovery` cannot write, `dependencies` and `flow` answer from a local mirror, and `validate` needs no database at all.
 
 The repository ships [skills/adt/SKILL.md](../skills/adt/SKILL.md), a lean router that sends an agent to only the page it needs, with the safety boundaries stated. Point Claude Code, Codex, Copilot or Cursor at it and the first command it types is a real one.
+
+<br>
 
 ## Why it is safe to try this week
 
@@ -135,6 +159,8 @@ The repository ships [skills/adt/SKILL.md](../skills/adt/SKILL.md), a lean route
 - **No new infrastructure.** SQLite, YAML and Markdown from the Python standard library, plus the Oracle client you already have.
 - **Nothing reaches git.** Reports, mirrors and connection files live under folders the first run adds to `.gitignore`.
 - **Zero blast radius on DEV.** Refresh against a development schema with a least-privilege user, run the queries, and delete `config/` if you hate it. Nothing changed in the database.
+
+<br>
 
 ## Try it in fifteen minutes
 
@@ -168,6 +194,8 @@ adtai flow -app 100 -to 50
 ```
 
 The reverse edge you did not know about is the whole pitch.
+
+<br>
 
 ## Further reading
 

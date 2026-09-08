@@ -1,6 +1,6 @@
 ---
 created: 2026-06-10
-updated: 2026-08-24
+updated: 2026-09-07
 name: adt-setup
 version: 1.0.0
 tags: [oracle, apex, deployment, setup, doctor]
@@ -151,7 +151,7 @@ After install, scaffold a project config template:
 adtai doctor -init
 ```
 
-It writes the project config template, repo ignore rules for generated artifacts, and safe `connections/.gitkeep` / `connections/wallets/.gitkeep` placeholders. It never writes connection YAML secrets, wallet contents, generated-cache folders, or APEX credentials folders. Existing generated files are skipped; `-force` overwrites generated templates.
+It writes the project config template, repo ignore rules for generated artifacts, a `.gitattributes` pinning the exported file types to LF, and safe `connections/.gitkeep` / `connections/wallets/.gitkeep` placeholders. It never writes connection YAML secrets, wallet contents, generated-cache folders, or APEX credentials folders. Existing generated files are skipped; `-force` overwrites generated templates.
 
 ## Troubleshooting
 

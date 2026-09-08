@@ -89,9 +89,33 @@ CORE_LOCKS_COLUMN = """,
                 AND x.object_type = 'PACKAGE BODY' AND x.status = 'VALID') AS core_locks#"""
 
 # Take the lock, and let CORE_LOCKS answer the signature question on its way.
+#
+# The handler is ADT #730, and the distinction it draws is the whole of it. A
+# refusal is CORE_LOCKS doing its job -- `LOCK_TIME_ERROR` for an object somebody
+# else holds, `LOCK_HASH_ERROR` for one whose source moved since they took it --
+# and those still stop the deploy, because letting them through is the overwrite
+# this block exists to prevent. Anything else is CORE_LOCKS itself failing to
+# answer, and an advisory lock that cannot be taken is not a reason to abandon a
+# release: it degrades to the same "no lock" a schema without CORE_LOCKS gets.
+#
+# Measured 2026-09-06 on a schema whose vendored CORE_LOCK predated `create_lock`
+# being callable outside a DDL trigger: `get_object` read `ora_sql_txt`, which
+# carries a statement in trigger context only, so every object raised ORA-06502
+# and `WHENEVER SQLERROR EXIT ROLLBACK` took the whole patch down. That schema
+# could not deploy ANY patch, the one carrying the corrected package included,
+# because this block runs before the objects it protects. A guard that cannot be
+# bypassed by fixing the thing it depends on is a bootstrap trap, not a guard.
 LOCK_BRANCH = """        IF c.core_locks# > 0 THEN
-            EXECUTE IMMEDIATE 'BEGIN core_lock.create_lock(USER, :t, :n); END;'
-                USING c.object_type, c.object_name;"""
+            BEGIN
+                EXECUTE IMMEDIATE 'BEGIN core_lock.create_lock(USER, :t, :n); END;'
+                    USING c.object_type, c.object_name;
+            EXCEPTION
+            WHEN OTHERS THEN
+                IF INSTR(SQLERRM, 'LOCK_TIME_ERROR')
+                    + INSTR(SQLERRM, 'LOCK_HASH_ERROR') > 0 THEN RAISE; END IF;
+                DBMS_OUTPUT.PUT_LINE('-- OBJECT LOCK SKIPPED: '
+                    || c.object_name || ' -- ' || SQLERRM);
+            END;"""
 
 # The dictionary's own reading, resolved to UTC on the machine that took it. Only
 # the drift branch reads it, so it is selected only when that branch is emitted.
@@ -159,3 +183,89 @@ BEGIN
 END;
 /
 """.strip()
+
+# One artifact of the patch, as a row of the cursor's own IN list. Its own row
+# rather than the pair `OBJECT_ROW` writes: a workspace artifact is identified by
+# a single name, there being no type column to pair it with.
+WORKSPACE_ROW = "            '{name}'"
+
+# The same guard, over the two dictionaries `user_objects` does not cover.
+#
+# `-rest` and `-files_ws` export artifacts that belong to a SCHEMA rather than to
+# an application, which is what leaves them unguarded from both ends: the object
+# block above walks `user_objects`, where neither appears, and `#592`'s checksum
+# gate walks an application, which neither belongs to. So a REST handler edited
+# in the Builder while a patch was in flight was overwritten silently.
+#
+# There is no lock branch and no CORE_LOCKS half. CORE_LOCKS hashes source it
+# reads out of `user_objects`, so it has nothing to say about either artifact,
+# and the drift comparison is the whole of the block.
+#
+# `{clock}` is the card's own `updated_on`, wrapped in the same
+# `SYS_EXTRACT_UTC(FROM_TZ(...))` the object block uses and for the same reason
+# (see §The two clocks above): both readings are the DATABASE server's naive wall
+# clock, and `built_at` answers in UTC.
+WORKSPACE_LOCK_BLOCK = """
+PROMPT --;
+PROMPT -- {heading}
+PROMPT --;
+BEGIN
+    FOR c IN (
+        SELECT a.{name_column} AS artifact
+        FROM {view} a
+        WHERE a.{name_column} IN (
+{rows}
+        ){scope}
+            AND SYS_EXTRACT_UTC(FROM_TZ(CAST({clock} AS TIMESTAMP),
+                TO_CHAR(SYSTIMESTAMP, 'TZH:TZM')))
+                > TO_TIMESTAMP('{built_at}', 'YYYY-MM-DD HH24:MI:SS')
+    ) LOOP
+        RAISE_APPLICATION_ERROR(-20901, '{code}: ' || c.artifact
+            || ' was changed after this patch was built, deploying it would'
+            || ' overwrite work this patch never saw');
+    END LOOP;
+END;
+/
+""".strip()
+
+# Where each kind lives on the target, and which column answers "did anybody move
+# this?". Every value here was read off SANDBOX (Oracle 26ai, APEX 26.1, ORDS) on
+# 2026-09-07 rather than recalled, the rule `#473` was filed on:
+#
+#   * `USER_ORDS_MODULES` carries `NAME`, `CREATED_ON` and `UPDATED_ON`, and ORDS
+#     stamps both dates when it defines a module. The `NVL` is therefore only ever
+#     reached on a row some other ORDS version left blank, and it is there because
+#     a NULL compares FALSE: without it the guard would fail OPEN on exactly the
+#     row it knows least about.
+#   * `WWV_FLOW_FILES` carries `FILENAME` and `UPDATED_ON`, and is the same view
+#     `-files_ws` reads its payloads out of (`APEX_FILES_QUERY`). Asking the
+#     export's own source is what keeps the two halves from disagreeing about
+#     which row an exported file came from.
+#
+# The scope repeats that query's slice for the same reason: `flow_id = 0` with no
+# content type is what `-files_ws` wrote, so a row outside it is not something
+# this patch overwrites and refusing on one would be a false refusal.
+#
+# Both views are referenced statically. Neither is optional the way CORE_LOCKS is:
+# a patch carrying a REST module runs `ORDS.DEFINE_MODULE`, and one carrying a
+# workspace file runs `wwv_flow_imp_shared.create_app_static_file`, so a target
+# missing either dictionary cannot install that patch whatever this block does.
+WORKSPACE_GUARDS: dict[str, dict[str, str]] = {
+    "rest": {
+        "heading"     : "REST MODULE LOCKS",
+        "view"        : "user_ords_modules",
+        "name_column" : "name",
+        "clock"       : "NVL(a.updated_on, a.created_on)",
+        "scope"       : "",
+        "code"        : "REST_MODULE_CHANGED",
+    },
+    "files_ws": {
+        "heading"     : "WORKSPACE FILE LOCKS",
+        "view"        : "wwv_flow_files",
+        "name_column" : "filename",
+        "clock"       : "NVL(a.updated_on, a.created_on)",
+        "scope"       : "\n            AND a.flow_id = 0"
+                        "\n            AND a.content_type IS NULL",
+        "code"        : "WORKSPACE_FILE_CHANGED",
+    },
+}

@@ -2,6 +2,8 @@
 
 The APEX half of `config/internal/dependencies.db`, refreshed per application with `-app`, is what lets `-impact` name the page, component and property that use a database object. Three APEX dictionary views are mirrored under their own names and keyed by application id, so a second application's refresh never touches the first. The schema half is on [storage_dependencies.md](storage_dependencies.md).
 
+<br>
+
 ## Diagram
 
 ```mermaid
@@ -42,9 +44,13 @@ erDiagram
 
 The mirror declares no foreign keys; the lines follow the `APPLICATION_ID` and `USED_DB_OBJECT_ID` pair every table carries.
 
+<br>
+
 ## Tables
 
 Nullable is No where the column is declared NOT NULL or belongs to the primary key.
+
+<br>
 
 ### APEX_USED_DB_OBJECTS
 
@@ -56,6 +62,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | USED_DB_OBJECT_OWNER | TEXT    | Yes      |     | The schema of the database object.                    |
 | USED_DB_OBJECT_NAME  | TEXT    | Yes      |     | The object's name.                                    |
 | USED_DB_OBJECT_TYPE  | TEXT    | Yes      |     | The object's type as APEX resolved it.                |
+
+<br>
 
 ### APEX_USED_DB_OBJECT_COMP_PROPS
 
@@ -72,6 +80,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | PROPERTY_NAME       | TEXT    | Yes      |     | The property's display name.                                        |
 | PROPERTY_VALUE      | TEXT    | Yes      |     | The property's value, the SQL or PL/SQL that names the object.      |
 
+<br>
+
 ### APEX_USED_DB_OBJ_DEPENDENCIES
 
 | Column                  | Type    | Nullable | Key | Meaning                                             |
@@ -85,6 +95,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | REFERENCED_OBJECT_NAME  | TEXT    | No       | PK  | That object's name.                                 |
 | REFERENCED_OBJECT_TYPE  | TEXT    | No       | PK  | That object's type.                                 |
 
+<br>
+
 ## Indexes
 
 | Index                                   | Table                          | Columns                                   | Unique |
@@ -94,6 +106,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | ix_apex_used_db_obj_dependencies_lookup | APEX_USED_DB_OBJ_DEPENDENCIES  | USED_DB_OBJECT_OWNER, USED_DB_OBJECT_NAME | No     |
 
 Every index serves the same question, which components use this object, asked by owner and name.
+
+<br>
 
 ## Lifetime
 

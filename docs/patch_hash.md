@@ -6,6 +6,8 @@ Building a patch from commits works when the commits and the work you want to sh
 
 Hash mode asks a different question. What does my repository no longer agree with the target about? Every file gets a hash, the environment has a baseline of hashes, and the patch is the difference between the two. The command itself is on [patch.md](patch.md).
 
+<br>
+
 ## Examples
 
 Record the baseline, the state you believe the environment is at:
@@ -32,6 +34,8 @@ Deploy it as usual, and the baseline advances itself:
 adtai patch -target DEV -name 13 -deploy
 ```
 
+<br>
+
 ## The baseline
 
 One complete file per environment, `patch_hashes/baseline.<TARGET_ENV>.log`, with one `file | commit | hash` line per file the layout resolves and a `#` header naming the environment, the time and the count. The folder comes from `patch_hashes`, and it is one flat folder holding every environment you track:
@@ -50,6 +54,8 @@ The environment is on the file rather than on a folder above it, so a baseline s
 `-baseline` means one thing, hash everything. It reads every file the layout resolves out of the working tree, needs no database and no patch name, and overwrites the file whole.
 
 The commit column is filled from the commit store the run has already levelled, so a file whose newest commit sits outside `patch_scan_commits` records a blank commit rather than a guessed one.
+
+<br>
 
 ## Output
 
@@ -74,6 +80,8 @@ TIMER: 0s
 - **A first baseline has nothing to compare against and prints `TOTAL` alone**, as above, rather than four zeroes over it. A later run adds `UNCHANGED`, `MODIFIED`, `NEW` and `REMOVED` rows.
 - Every path on screen is relative to the project root.
 
+<br>
+
 ## What a hash is
 
 Hashes are SHA-1 over a **canonical** form of the file, the same value the commit store records for a committed blob, so a working-tree hash and a committed one are directly comparable.
@@ -83,6 +91,8 @@ The canonical form is the file's text with every CRLF and lone CR collapsed to L
 That is what makes a hash a property of the content rather than of the machine that wrote it. `file_crlf` writes CRLF when a project asks for it, and Oracle returns whatever was compiled, so hashing the raw bytes meant one object hashed two ways on two platforms.
 
 Two consequences worth knowing. A file differing from another only in trailing whitespace or a final newline has the same hash, while a change to indentation inside the body does not. And the value is not `git hash-object` minus its header, so read the baseline rather than reproducing a hash by hand.
+
+<br>
 
 ## What a hash patch contains
 
@@ -124,6 +134,8 @@ no hash-changed files to patch: the working tree matches baseline.DEV.log in eve
 
 The folder, its snapshots and its `hashes.log` are all still on disk, so re-deploying it and reading back what it carried are unaffected.
 
+<br>
+
 ## Pointing at another baseline
 
 Both flags take an optional `FILE`, so a baseline can live anywhere:
@@ -134,6 +146,8 @@ adtai patch -baseline before-the-refactor.log
 ```
 
 A relative value resolves against the project root and an absolute one stands. Naming a file is the whole address, so `-target` is only required when there is no `FILE` for the path to come from.
+
+<br>
 
 ## Table changes
 
@@ -150,6 +164,8 @@ WARNING - NO TABLE BASELINE:
 ```
 
 Read it when it appears. The patch will ship a `CREATE TABLE` against a table that already exists, and the column change is yours to write into `patch_scripts/`.
+
+<br>
 
 ## The baseline advances on deploy
 

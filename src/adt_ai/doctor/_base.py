@@ -51,6 +51,13 @@ ACTION_LINE_WIDTH = 72
 STATUS_LINE_WIDTH = 78
 STATUS_LABEL_WIDTH = 20
 
+# The one spelling of the SQLcl-only offer. Two sections reach for it and they
+# are different questions: the staleness rows offer it when a newer release
+# exists, and the APEXlang floor when the installed one is too old to export
+# correctly (ADT #723). A machine can be both at once, so the row is deduplicated
+# rather than printed twice, which only one spelling makes possible.
+SQLCL_UPGRADE_ACTION = "  Run `adtai doctor -sqlcl` to upgrade SQLcl only."
+
 PROJECT_CONFIG_TEMPLATE = """
 # ADT.ai project override config.
 #
@@ -158,6 +165,10 @@ class DoctorHost(Protocol):
     version_cache_ttl     : float
     _package_root_is_checkout: bool
     _stale_components     : set[str]
+    # The installed SQLcl version when this project's APEXlang exports outrank
+    # it, else "". Resolved once per run, before the version rows stream, so the
+    # SQLcl row and the `ACTIONS:` section report one verdict rather than two.
+    _apexlang_sqlcl_shortfall: str
 
     def _add(self, lines: list[str], line: str) -> None: ...
     def _extend(self, lines: list[str], new_lines: Iterable[str]) -> None: ...
@@ -262,6 +273,7 @@ __all__ = [
     "INSTANT_CLIENT_PAGE",
     "PYPI_PACKAGE_URL",
     "PROJECT_CONFIG_TEMPLATE",
+    "SQLCL_UPGRADE_ACTION",
     "CommandRunner",
     "ExecutableResolver",
     "OraclePageFetcher",

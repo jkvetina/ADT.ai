@@ -328,6 +328,15 @@ def add_export_parsers(subparsers: SubParsers) -> None:
         dest   = "apexlang",
         help   = "export APEXlang (.apx) source, whole app (APEX 26.1+)",
     )
+    # Takes the ref as the user spells it (`db/dev`, or a full `refs/...` path),
+    # because that string is what a deploy refusal prints into its `git rebase`
+    # line. `-apexlang` only: the mirror exists to be merged, and no other format
+    # writes an application as files git can three-way merge (`#725`).
+    export_apex.add_argument(
+        "--mirror",
+        "-mirror",
+        help = "commit each -apexlang export onto REF (for example db/dev) as a shared merge base",
+    )
     export_apex.add_argument("--rest", "-rest", action="store_true", help="export REST services")
     export_apex.add_argument(
         "--files", "-files", action="store_true", help="export application files"

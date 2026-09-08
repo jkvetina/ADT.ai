@@ -4,6 +4,8 @@
 
 Every `ut` run measures code coverage. The figure lands as the `COVERAGE` column of the two summary tables, `-gate` turns it into a pass or fail condition, and `-verbose` reports what moved since the last run that was different. The command itself is on [ut.md](ut.md).
 
+<br>
+
 ## The summaries
 
 ```text
@@ -36,6 +38,8 @@ That suite's `COVERAGE` reads `?` because `ut_match` derives `ADT_FIXTURE` from 
 - **`LINES` counts the packages the group's suites test**, each once however many suites name it, over the same deduplicated set `COVERAGE` beside it is computed over, so the two columns can never describe two different bodies of code.
 - **The last row is the whole run and its module name is blank.** A `TOTAL` label would be a value in a column of module names and would sort among them. A suite whose name `ut_module` cannot parse groups at the top with `?` in that cell: two blank names in one table would say nothing about which row is which.
 
+<br>
+
 ## What the figure is
 
 **`COVERAGE` is a property of the package a suite tests, not of the suite.** The pairing is `ut_match`'s capture group, resolved by Oracle at discovery, so a suite named for a package puts its figure on that package's block coverage. Two suites testing one package print the same figure, because block coverage records which blocks ran and never which test ran them.
@@ -55,6 +59,8 @@ That suite's `COVERAGE` reads `?` because `ut_match` derives `ADT_FIXTURE` from 
 
 **Coverage is run-scoped, and that is a deliberate trade.** The report is built from the pairings of the suites that ran, so a package no suite tests appears nowhere: no row, no contribution to any module figure, no total. `ut` does not answer "what in this schema is untested"; it answers "how much of what these suites test did they reach", which is the question the rest of the table is about.
 
+<br>
+
 ## The module figure covers the whole group
 
 **A module row is not the average of the suite rows above it.** It is the group's own figure: covered blocks over measured blocks across the group's target packages, scaled by the share of the group's body lines Oracle measured at all. A group every target of which was measured has a share of 1 and is unchanged, so the scaling can only move a figure that was over-claiming.
@@ -66,6 +72,8 @@ The scaling exists because unreached code is invisible to Oracle. A package a su
 **A group with nothing measured reads `0.0`, not a blank.** Unreached code is 0% covered and that is the answer the column is scanned for; an empty cell reads as "no data" and files the group under nothing to see. Only a group holding no package body at all has nothing to print.
 
 The group rows and the unnamed total go through one helper, so a group and the total beneath it can never be two calculations that drift apart.
+
+<br>
 
 ## Which coverage source, and why
 
@@ -80,6 +88,8 @@ A figure that honours the pragma reads higher than utPLSQL's, and that is intend
 **`PLSQL_OPTIMIZE_LEVEL` is not a prerequisite.** Level 2 is Oracle's default and block coverage is collected there regardless. The optimizer reshapes the *line* map the profiler reads, not the basic-block map this figure is built on.
 
 **Collection costs a session and every run pays it.** What buys it back is run-scoping, which removed the schema-wide package listing and a per-package compile-settings query.
+
+<br>
 
 ## Collected but not shown
 
@@ -98,6 +108,8 @@ Two details worth knowing if you go looking at the numbers:
 
 The compile-time prerequisites are the ones package bodies already have: an `INTERPRETED` unit that is not wrapped. A natively compiled trigger produces no block row however often it fires.
 
+<br>
+
 ## What moved since last time
 
 Every run records what it measured, and `-verbose` prints the difference above the summaries, under `COVERAGE CHANGED SINCE LAST RUN:`. Four columns: the suite package, `WAS`, `NOW`, and the signed `DELTA` between them.
@@ -113,6 +125,8 @@ Every run records what it measured, and `-verbose` prints the difference above t
 The history lives in `config/internal/ut.db`, gitignored with the other internal stores. It keeps the **last 20 runs per schema** and prunes the rest on every write, and a schema is keyed upper-case so two spellings read one history. A root ADT.ai cannot write still runs, reports and exits normally; only the history is skipped.
 
 Its tables are on [storage_ut.md](storage_ut.md).
+
+<br>
 
 ## The coverage gate
 
@@ -141,6 +155,8 @@ COVERAGE BELOW 80.0:
 - **Only a package with a measured figure is compared.** A blank cell has nothing to compare, and gating a blank would fail every real schema permanently from the first run. **A `0.0` does gate**: that is a measurement, of a package Oracle instrumented and nothing entered.
 - **At the boundary, `>=` passes.** `-gate 80` asks for eighty percent, not more than eighty.
 - **There are no per-package thresholds.** `-name` already narrows a run, so a stricter bar for one group needs no second configuration surface.
+
+<br>
 
 ## Estimating the time left
 

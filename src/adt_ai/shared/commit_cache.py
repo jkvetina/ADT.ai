@@ -37,6 +37,12 @@ def current_branch(root: Path) -> str:
         check=True,
         capture_output=True,
         text=True,
+        # UTF-8, never the console codepage: `branch_filename` rejects a name
+        # outside its small alphabet, so a locale-mangled branch would be
+        # refused as unsupported rather than read as the branch it is
+        # (`shared/git_files.py` module docstring, ADT #743).
+        encoding="utf-8",
+        errors="replace",
         env=safe_subprocess_environment(),
     )
     return result.stdout.strip() or "HEAD"

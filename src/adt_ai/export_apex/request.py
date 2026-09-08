@@ -45,6 +45,11 @@ class ApexExportRequest:
     # parity output and stay the default, so the flag is the bar (`#376`, the
     # polarity `export_db -compact` settled in `#373`).
     compact     : bool = False
+    # `-mirror db/<ENV>`: the ref every APEXlang export of this environment is
+    # committed onto, so the commit a deploy names as the merge base is one the
+    # whole team has (`#725`). Spelled as the user typed it, because that is the
+    # string a refusal prints into its `git rebase` line.
+    mirror_ref  : str | None = None
     reporter    : ApexProgressReporter | None = None
     # `timers_file` lived here until `#369`. The rolling ETA it pointed at is a
     # table in `config/internal/apex.db` now, resolved from `root` like every

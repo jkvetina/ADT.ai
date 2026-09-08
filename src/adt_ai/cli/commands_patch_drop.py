@@ -31,6 +31,7 @@ from adt_ai.cli.context import (
     _print_connection_block,
     _repo_root,
 )
+from adt_ai.cli.context_errors import _project_relative
 from adt_ai.patch.apex_drop import (
     ApexApplication,
     ApexRelease,
@@ -207,7 +208,7 @@ def run_drop_applications(
     # applications.
     reporter = ConsoleDropReporter()
     reporter.begin_drop(sandboxes)
-    statuses: list[str] = []
+    rows: list[dict[str, object]] = []
     failure: Exception | None = None
     for sandbox in sandboxes:
         reporter.begin_application(sandbox)
@@ -226,13 +227,46 @@ def run_drop_applications(
             row = _drop_row(sandbox, FAILED_STATUS)
             failure = error
         reporter.end_application(row)
-        statuses.append(str(row["STATUS"]))
+        rows.append(row)
         if failure is not None:
             break
     reporter.end_drop()
+    _print_drop_receipts(rows, root)
     if failure is not None:
         raise failure
-    return 1 if any(status != DROPPED_STATUS for status in statuses) else 0
+    return 1 if any(str(row["STATUS"]) != DROPPED_STATUS for row in rows) else 0
+
+
+def _print_drop_receipts(rows: list[dict[str, object]], root: Path) -> None:
+    """Name the receipt every dropped application left, under the table.
+
+    A receipt nothing names is a receipt nobody commits. `write_drop_log`
+    returned its path from the day it was written and the command dropped it on
+    the floor, so the table said `DELETED` and never said where the evidence
+    landed; a client repo lost eleven of them that way, while the deploy side's
+    own logs survived because `_print_apex_scans` names each one.
+
+    So this is that row, not a new one: `LOG:` and `_project_relative`, both
+    read off `patch_deploy_render.py`, spelled the way the reader thinks of a
+    path so it can be pasted straight into `git add`. Growing the console is a
+    reviewed act (`#372`), and reusing a section is how it is not grown.
+
+    Under the table rather than between its rows: `APEX APPLICATIONS:` is a
+    streamed table whose live paint and closing row have to draw the same
+    geometry, and a free-text path is exactly what §Console output contract
+    keeps out of a cell. Order carries the pairing, and each filename holds its
+    own application id besides.
+
+    A row with no `RECEIPT` is the one whose drop raised before the log was
+    written; it is skipped rather than printed as an empty path, and the
+    exception that caused it is already on its way to the shared handler.
+    """
+    receipts = [row["RECEIPT"] for row in rows if row.get("RECEIPT") is not None]
+    if not receipts:
+        return
+    for receipt in receipts:
+        print(f"  LOG: {_project_relative(Path(str(receipt)), root)}")
+    print()
 
 
 def _drop_row(sandbox: SandboxApplication, status: str) -> dict[str, object]:
@@ -383,7 +417,7 @@ def _drop_application(
     output = gateway.sqlcl_request(build_drop_script(sandbox, release), root)
     survived = read_applications(gateway).get(sandbox.target.app_id) is not None
     outcome = FAILED_STATUS if survived else DROPPED_STATUS
-    write_drop_log(
+    receipt = write_drop_log(
         root,
         config,
         schema      = schema,
@@ -393,11 +427,15 @@ def _drop_application(
         output      = output,
         override    = override,
     )
+    # `RECEIPT` is carried on the row and not in `DROP_COLUMNS`: the table renders
+    # the columns it is given, so the path travels to `_print_drop_receipts`
+    # without widening a cell it would destroy the layout from.
     return {
         "APPLICATION": sandbox.target.app_id,
         "ALIAS": sandbox.target.alias,
         "SOURCE": sandbox.source.app_id,
         "STATUS": outcome,
+        "RECEIPT": receipt,
     }
 
 

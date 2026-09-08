@@ -4,6 +4,8 @@
 
 The output is normalized, so repeated exports of an unchanged object are byte-identical and a change on screen is a real change rather than the export moving things around. Where the files land, and how to reorganize them, is on [export_db_layout.md](export_db_layout.md).
 
+<br>
+
 ## Examples
 
 Export the whole schema from your project folder:
@@ -45,6 +47,8 @@ Replace the per-object rows with one moving bar, for a whole-schema run:
 ```bash
 adtai export_db -compact
 ```
+
+<br>
 
 ## Output
 
@@ -97,6 +101,8 @@ TIMER: 1s
 - **A materialized view and its log end on their semicolon, with no `/` after it.** Both are plain SQL and neither can be created twice, so the `;` runs the statement and a `/` under it would submit the same statement again, which fails the deploy on `ORA-12006` / `ORA-12000`. A view or synonym still carries the `/`, harmlessly, because `CREATE OR REPLACE` is idempotent, and a type still needs it because its body is PL/SQL.
 - **Rename a file and the export keeps your spelling, inside the file as well as on it.** Files are written lowercase by default. Rename `app_users.sql` to `App_Users.sql`, `APP_USERS.sql`, or anything else, and every later run writes to that same file and spells the object's own name the way the file does, on the `CREATE` line and on the `COMMENT ON` lines under it. Nothing else moves: column names, the body of the object, and every reference to another object keep the casing the database gave them, and an unquoted Oracle identifier is case-insensitive, so this changes how the file reads and never what it deploys.
 
+<br>
+
 ## Windows: what changed, and since when
 
 `-recent DAYS` reaches the query as `SYSDATE - DAYS`, and Oracle counts a `DATE` in days, so a fraction is a shorter window: `1/24` is the past hour and `5/1440` the past five minutes. A whole-day window keeps its `CHANGED SINCE <date>` header; a shorter one reports the instant it starts at, read off the database clock rather than yours.
@@ -110,6 +116,8 @@ Every type a window narrows is narrowed by a column that dates a **change**, whi
 - **A job** has no change timestamp anywhere in the dictionary, so the signal is built: the listing returns a SHA-256 of exactly the columns the exported file is rendered from, hashed inside the database. A windowed run exports the jobs whose signature moved and remembers the rest in `config/internal/job_signatures.yaml`.
 
 The signature narrows a window, never an explicit request. `-type JOB` with no `-recent` exports every matching job with no comparison, which is how to re-pull a whole job tree on demand.
+
+<br>
 
 ## Exporting one author's work
 
@@ -155,6 +163,8 @@ COALESCE(
 
 `CLIENT_IDENTIFIER` is there because every ADT.ai connection runs `DBMS_SESSION.SET_IDENTIFIER(db_schema)` from `config/IDENTITY.yaml`, which is also where `-my` reads your identity from (see [config.md](config.md#developer-identity)).
 
+<br>
+
 ## Permanently excluding objects
 
 `-name` and `-type` narrow a single run. To keep a set of objects out of **every** export, put the pattern in the schema's `export:` block in the connection file:
@@ -177,6 +187,27 @@ adtai connection -create -env DEV -schema APP -ignore 'REST_INCOMING_RETRY%' -go
 The patterns are matched by the discovery query, so ignored objects are never listed and never exported. Because a config filter is not a runtime filter they also count as *missing* on the next full run, so `auto_delete` removes the files a previous export already wrote.
 
 That is what makes this the right tool for runtime-generated objects: an application creating one scheduler job per request otherwise adds one file to the repository forever. `export_data` reads the same block.
+
+<br>
+
+## What the privileges file records
+
+`<SCHEMA>_schema.sql` is what the exported user was granted, in three blocks separated by `--`: roles, system privileges, and, on 23ai and above, schema privileges.
+
+```text
+GRANT CONNECT               TO sandbox;
+--
+GRANT CREATE TABLE                      TO sandbox;
+--
+GRANT EXECUTE ANY PROCEDURE             ON SCHEMA system TO sandbox WITH ADMIN OPTION;
+GRANT SELECT ANY TABLE                  ON SCHEMA core_locks TO sandbox;
+```
+
+A schema privilege covers every object of one schema, present and future, so it is the only line here naming a second schema. `WITH ADMIN OPTION` is carried on all three kinds, because a user who can pass a grant on is not the same user as one who cannot.
+
+The schema block needs `user_schema_privs`, which is 23ai. On an older database the read finds no such view and the file simply ends after the system privileges, exactly as it always did.
+
+<br>
 
 ## Watching a long export
 
@@ -202,11 +233,29 @@ EXPORTING 6 OBJECTS:
 - A first export of a schema has no history, so the row reads `0:00:00` until the first object returns. Deleting `config/internal/recent.yaml` resets the rates and the watermarks together.
 - `-silent` outranks `-compact`, since it removes the very rows the bar stands in for.
 
+<br>
+
+## Asking for a type ADT.ai does not export
+
+`object_types` in `config.yaml` is the list of types `export_db` writes files for, and `-type` selects from it. A pattern that names something outside that list is refused rather than exported, exit `2`:
+
+```text
+export_db: -type selected object types export_db does not export: DOMAIN. Its exported types are the 'object_types' keys in config.yaml.
+```
+
+The refusal comes before the connection when the config alone settles it, so `-type DOMAIN` on a 26ai schema costs nothing.
+
+A wildcard is different. `-type %` covers every configured type, so it is a request `export_db` can only judge once the schema has answered, and there the refusal lands under the overview table, naming every type it found no home for.
+
+A typo takes the same path, on purpose. `-type NOSUCHTYPE` used to export nothing and exit `0`, which reads as *this schema has none of those* rather than *that is not a type I export*.
+
+<br>
+
 ## Arguments
 
 | Argument       | Repeatable | Default | Description |
 | -------------- | ---------- | ------- | ----------- |
-| `-type`, `--type` | Yes | configured object types | Object type pattern or patterns to export, with SQL-like `%` and `_` wildcards plus comma lists (`\` escapes a literal one, quoted: `-type 'PACKAGE\_%'`). Oracle type names, resolved exactly as on `recompile`: a bare `PACKAGE` exports specifications only, `PACKAGE BODY` bodies only, and `MVIEW`/`MATERIALIZED` both mean `MATERIALIZED VIEW`. See [recompile](recompile.md#object-types). |
+| `-type`, `--type` | Yes | configured object types | Object type pattern or patterns to export, with SQL-like `%` and `_` wildcards plus comma lists (`\` escapes a literal one, quoted: `-type 'PACKAGE\_%'`). Oracle type names, resolved exactly as on `recompile`: a bare `PACKAGE` exports specifications only, `PACKAGE BODY` bodies only, and `MVIEW`/`MATERIALIZED` both mean `MATERIALIZED VIEW`. See [recompile](recompile.md#object-types). A pattern matching none of the configured `object_types` is an error, exit `2`. |
 | `-name`, `--name` | Yes | all names | Object name pattern or patterns to export, with SQL-like `%` and `_` wildcards plus comma lists, for example `APP_%,TMP_%`. `\` escapes a literal `_` or `%`, quoted: `-name 'APP\_SETTINGS'`. |
 | `-recent [DAYS]`, `--recent [DAYS]` | No | all objects | Export objects changed in the last `DAYS` days, or a fraction of a day (`1/24` is the past hour). Bare `-recent` exports everything changed since that schema's last covering export. Narrowed runs never advance the watermark. `JOB` is filtered on a content signature instead of a timestamp. |
 | `-by`, `--by` | No | all authors | Export only objects an author has changed, resolved by joining the export set against the configured `audit:` source. Requires that block in `config.yaml`. |

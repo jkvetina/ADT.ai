@@ -4,6 +4,8 @@
 
 The `USER_*` views scope themselves to the connected schema and carry no owner, so the mirror adds a leading `OWNER` to each and one file holds many schemas. This page is the schema half, refreshed per schema; the APEX half, refreshed per application, is on [storage_dependencies_apex.md](storage_dependencies_apex.md).
 
+<br>
+
 ## Diagram
 
 ```mermaid
@@ -70,9 +72,13 @@ erDiagram
 
 The mirror declares no foreign keys, because the dictionary declares none either: the lines follow the owner and name pairs the views share.
 
+<br>
+
 ## Tables
 
 Nullable is No where the column is declared NOT NULL or belongs to the primary key. Every `USER_*` table's first column is the `OWNER` the mirror adds.
+
+<br>
 
 ### refreshes
 
@@ -83,6 +89,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | refreshed_at  | TEXT | Yes      |     | When the scope was last refreshed: `YYYY-MM-DD HH:MM:SS` on this machine's local clock.                                              |
 | db_utc_offset | TEXT | Yes      |     | The database's UTC offset, `+02:00` shape, read on that refresh so a mirrored `LAST_DDL_TIME` is read on the clock that produced it. |
 
+<br>
+
 ### USER_OBJECTS
 
 | Column        | Type | Nullable | Key | Meaning                                                                                |
@@ -91,6 +99,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | OBJECT_NAME   | TEXT | No       | PK  | The object's name.                                                                     |
 | OBJECT_TYPE   | TEXT | No       | PK  | `TABLE`, `VIEW`, `PACKAGE`, `PACKAGE BODY` and the rest of Oracle's object types.      |
 | LAST_DDL_TIME | TEXT | Yes      |     | The last DDL on the object, `YYYY-MM-DD HH:MM:SS` on the database server's wall clock. |
+
+<br>
 
 ### USER_DEPENDENCIES
 
@@ -103,6 +113,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | REFERENCED_NAME  | TEXT | No       | PK  | That object's name.                     |
 | REFERENCED_TYPE  | TEXT | No       | PK  | That object's type.                     |
 
+<br>
+
 ### USER_CONSTRAINTS
 
 | Column            | Type | Nullable | Key | Meaning                                                        |
@@ -114,6 +126,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | R_OWNER           | TEXT | Yes      |     | For a foreign key, the schema of the constraint it references. |
 | R_CONSTRAINT_NAME | TEXT | Yes      |     | For a foreign key, the referenced constraint.                  |
 
+<br>
+
 ### USER_CONS_COLUMNS
 
 | Column          | Type    | Nullable | Key | Meaning                                      |
@@ -123,6 +137,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | TABLE_NAME      | TEXT    | No       |     | The table.                                   |
 | COLUMN_NAME     | TEXT    | No       | PK  | One column the constraint covers.            |
 | POSITION        | INTEGER | Yes      |     | The column's position within the constraint. |
+
+<br>
 
 ### USER_IDENTIFIERS
 
@@ -137,6 +153,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | USAGE_ID         | INTEGER | No       | PK  | The usage's number, unique within the unit.                                            |
 | USAGE_CONTEXT_ID | INTEGER | Yes      |     | The `USAGE_ID` of the enclosing usage.                                                 |
 
+<br>
+
 ### USER_STATEMENTS
 
 | Column           | Type    | Nullable | Key | Meaning                                                                                                 |
@@ -147,6 +165,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | TYPE             | TEXT    | Yes      |     | `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `EXECUTE IMMEDIATE` and the rest of PL/Scope's statement types. |
 | USAGE_ID         | INTEGER | No       | PK  | The statement's number, unique within the unit.                                                         |
 | USAGE_CONTEXT_ID | INTEGER | Yes      |     | The `USAGE_ID` of the enclosing usage.                                                                  |
+
+<br>
 
 ## Indexes
 
@@ -159,6 +179,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | ix_user_constraints_table            | USER_CONSTRAINTS  | TABLE_NAME, OWNER                                  | No     |
 | ix_user_constraints_referenced       | USER_CONSTRAINTS  | R_OWNER, R_CONSTRAINT_NAME                         | No     |
 | ix_user_cons_columns_table           | USER_CONS_COLUMNS | OWNER, TABLE_NAME                                  | No     |
+
+<br>
 
 ## Version and lifetime
 

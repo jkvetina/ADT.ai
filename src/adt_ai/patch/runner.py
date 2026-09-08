@@ -29,6 +29,7 @@ from adt_ai.patch.deploy import (
     _compile_statement,
     _deployment_app_id,
     _deployment_error_excerpt,
+    _deployment_order_key,
     _deployment_payload,
     _deployment_schema,
     _deployment_succeeded,
@@ -268,6 +269,16 @@ class PatchWorkspace:
         ref: str | None = None,
     ) -> tuple[PatchFolder, list[DeploymentPlanItem]]:
         folder = _select_patch_folder(self.discover(ref=ref), ref)
+        # Schema scripts first, then each application's halves (ADT #735). A
+        # plain name sort put `<SCHEMA>.1000.sql` ahead of `<SCHEMA>.sql`, so
+        # the application ran before the objects its pages query; Jan,
+        # 2026-09-07: *"schema driving files must be executed BEFORE the app
+        # files!"*. Within an application `init` precedes `end`, with the
+        # `apex import` slotted between them by the deploy loop.
+        scripts = sorted(
+            folder.path.glob("*.sql"),
+            key = lambda sql_path: _deployment_order_key(sql_path.name, config),
+        )
         plan = [
             DeploymentPlanItem(
                 order   = index,
@@ -283,7 +294,7 @@ class PatchWorkspace:
                 commits = len(folder.commits),
                 path    = sql_path,
             )
-            for index, sql_path in enumerate(sorted(folder.path.glob("*.sql")), start=1)
+            for index, sql_path in enumerate(scripts, start=1)
         ]
         if not plan:
             raise PatchError(f"patch folder has no deployable SQL files: {folder.folder}")

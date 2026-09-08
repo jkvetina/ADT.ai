@@ -6,6 +6,8 @@
 
 The store is a SQLite file at `config/internal/flow.db` (gitignored), and every refresh also writes Mermaid, Graphviz DOT and JSON diagrams under `config/flow/`. Its tables are on [storage_flow.md](storage_flow.md).
 
+<br>
+
 ## Examples
 
 Build or rebuild one application's graph from the database:
@@ -28,6 +30,8 @@ adtai flow -app 100 -delete
 ```
 
 `-app` is required for every action. The store holds many applications side by side, keyed by workspace and application id, so every run has to say which one it means.
+
+<br>
 
 ## Output
 
@@ -93,6 +97,8 @@ TIMER: 0s
 - With a store present and no action flag, the run prints a short hint and exits `2`.
 - Each refreshed application scans under its own `APP <id>, REFRESHING:` header, printed before the reads rather than after them, so the wait never sits on a blank screen. The owner lookup for every requested application runs once, up front, under the banner.
 
+<br>
+
 ## The three modes
 
 - **Query** (`-to PAGE` or `-from PAGE`) reads the local store and lists the incoming or outgoing links for one page. It opens no connection.
@@ -100,6 +106,8 @@ TIMER: 0s
 - **Delete** (`-delete`) removes the application, its pages and its edges from the store.
 
 One action per run. `-refresh`, `-delete`, `-to` and `-from` name four different jobs, so two of them in one invocation is an argument error and exits `2` rather than the first one quietly winning.
+
+<br>
 
 ## What counts as an edge
 
@@ -117,6 +125,8 @@ Every edge carries a flag describing how resolvable its target is:
 `-to` and `-from` surface only the resolvable flags, `PAGE` and `CROSS_APP`. The Mermaid and DOT diagrams draw the same set. The JSON dump is lossless and keeps every edge, `DYNAMIC` and `NONE` included, so downstream tooling can decide for itself what to draw.
 
 A store written before the report-column label fix can still hold rendered HTML or heading text where a column name belongs. Those rows display as `COL_<component_id>` until the application is refreshed again.
+
+<br>
 
 ## Arguments
 

@@ -166,6 +166,8 @@ def _run_command(command: Sequence[str]) -> str:
         check        = True,
         capture_output = True,
         text         = True,
+        encoding     = "utf-8",
+        errors       = "replace",
         env          = safe_subprocess_environment(),
         timeout      = COMMAND_TIMEOUT_SECONDS,
     )

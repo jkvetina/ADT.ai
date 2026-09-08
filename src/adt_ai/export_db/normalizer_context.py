@@ -28,6 +28,12 @@ class NormalizationContext:
     #: lowercase default, which is what `display_name` below encodes, so a
     #: caller never has to know which of the two it got.
     object_display_name: str | None = None
+    #: An immutable or blockchain table's retention clauses, already rendered
+    #: (`NO DROP UNTIL 0 DAYS IDLE NO DELETE UNTIL 16 DAYS AFTER INSERT
+    #: VERSION "V1"`). A string rather than fields because nothing downstream
+    #: reasons about the numbers -- the normalizer only places the clause.
+    #: Empty for every other table, which is all of them before 21c (`#736`).
+    table_retention: str = ""
 
     @property
     def display_name(self) -> str:

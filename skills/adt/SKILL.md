@@ -3,8 +3,8 @@ name: adt
 description: "Lean ADT.ai command router for Oracle/APEX work. Invoke only when the user explicitly asks an agent to use the ADT skill by name; never auto-load it for repository work, general discussion, development, review, command lookup, or incidental mentions of ADT."
 metadata:
   created: "2026-06-10"
-  updated: "2026-09-02 22:09"
-  version: "2.0.0"
+  updated: "2026-09-08 17:20"
+  version: "2.1.0"
   tags: [oracle, apex, deployment, cli, database]
 ---
 # ADT.ai
@@ -66,7 +66,7 @@ adtai discovery -sql "SELECT object_type, COUNT(*) FROM user_objects GROUP BY ob
 
 ## doctor: setup checks, updates, and project bootstrap
 
-Read [docs/doctor.md](../../docs/doctor.md). Bare `doctor` checks the machine. `-init`, `-update`, `-sqlcl`, and `-force` change the project or installed tools, so use them only when that change was requested.
+Read [docs/doctor.md](../../docs/doctor.md). Bare `doctor` checks the machine. `-init`, `-update`, `-sqlcl`, and `-force` change the project or installed tools, so use them only when that change was requested. A project that exports APEXlang fails on a SQLcl older than 26.2.2; that is a prerequisite to repair, not an upgrade offer to decline.
 
 ```bash
 adtai doctor
@@ -74,7 +74,7 @@ adtai doctor
 
 ## export_apex: export APEX applications
 
-Read [docs/export_apex.md](../../docs/export_apex.md) and [docs/export_apex_formats.md](../../docs/export_apex_formats.md). `-reveal` lists applications; an export writes only the formats named. After exporting or editing APEXlang, run `validate`.
+Read [docs/export_apex.md](../../docs/export_apex.md) and [docs/export_apex_formats.md](../../docs/export_apex_formats.md). `-reveal` lists applications; an export writes only the formats named. After exporting or editing APEXlang, run `validate`. `-mirror <ref>` requires `-apexlang` and writes Git: it commits each exported tree onto that ref so a later refused deploy can rebase instead of being redone; HEAD, the branch, the working tree and staged work are untouched.
 
 ```bash
 adtai export_apex -app 100 -full -split -files
@@ -91,7 +91,7 @@ adtai export_data -silent -name APP_LOOKUP%
 
 ## export_db: export database objects
 
-Read [docs/export_db.md](../../docs/export_db.md) and [docs/export_db_layout.md](../../docs/export_db_layout.md). Use `-silent` for agent-driven exports unless per-object progress is useful. Combine `-schema`, `-type`, `-name`, and `-recent` to keep the write set intentional. `-delete` removes existing object files before export; `-baseline` measures an environment instead of exporting it.
+Read [docs/export_db.md](../../docs/export_db.md) and [docs/export_db_layout.md](../../docs/export_db_layout.md). Use `-silent` for agent-driven exports unless per-object progress is useful. Combine `-schema`, `-type`, `-name`, and `-recent` to keep the write set intentional. A `-type` naming something ADT.ai does not export is refused before the run connects and exits `2`, so read the refusal rather than retrying it. `-delete` removes existing object files before export; `-baseline` measures an environment instead of exporting it.
 
 ```bash
 adtai export_db -silent -recent 7
@@ -100,7 +100,7 @@ adtai export_db -silent -type PACKAGE% -name APP_%
 
 ## patch: build and deploy patches from commits
 
-Read [docs/patch.md](../../docs/patch.md), then only the linked patch topic needed for content, install order, deployment, hashes, archiving, or sandbox removal. A bare filtered run previews. `-create` rewrites a patch folder, `-deploy` changes the target database/APEX application, `-archive` moves and removes patch folders, and `-drop` removes sandbox APEX applications whose recorded creator is the `apex_account` in `config/IDENTITY.yaml`, or which record no creator at all (no APEX import writes that column); somebody else's needs `-force`. A successful or failed `-drop` also writes one dictionary-verified receipt per application at `<path_apex>/logs_<ENV>/<timestamp>_apex_drop_<application-id>_<DELETED|FAILED>.log`; the folder comes from `-target` and the filename id comes from `-drop`. APEXlang files remain selected but are never snapshotted; deploy imports the application's live `apexlang/` folder. `-deploy -app <sandbox-id>` also stamps that sandbox's `last_updated_by`/`last_updated_on` with the same `apex_account` and the current moment, so the clone shows its author in the Builder; a bare `-app` stamps nothing, and no import can write `created_by` in any format. A target already deployed is skipped only when its `logs_<ENV>/deployment.json` receipt matches the same executable inputs and target, so a partial script failure, a SQLcl error or a failed APEX verification leaves that target incomplete and it deploys again on the next run; a patch deployed before 1.0 carries no receipt and runs once more. A post-deploy APEX verification that could not complete fails the deploy instead of passing as skipped. Never guess `-target`, `-name`, commit selectors, content mode, or application id. Preview the exact selection before creation or deployment.
+Read [docs/patch.md](../../docs/patch.md), then only the linked patch topic needed for content, install order, deployment, hashes, archiving, or sandbox removal. A bare filtered run previews. `-create` rewrites a patch folder, `-deploy` changes the target database/APEX application, `-archive` moves and removes patch folders, and `-drop` removes sandbox APEX applications whose recorded creator is the `apex_account` in `config/IDENTITY.yaml`, or which record no creator at all (no APEX import writes that column); somebody else's needs `-force`. A successful or failed `-drop` also writes one dictionary-verified receipt per application at `<path_apex>/logs_<ENV>/<timestamp>_apex_drop_<application-id>_<DELETED|FAILED>.log`; the folder comes from `-target` and the filename id comes from `-drop`. An APEXlang patch snapshots the pages its own commits touched, for visibility; the install script links no `.apx` and the deploy still imports the application's live `apexlang/` folder. `-deploy -app <sandbox-id>` also stamps that sandbox's `last_updated_by`/`last_updated_on` with the same `apex_account` and the current moment, so the clone shows its author in the Builder; a bare `-app` stamps nothing, and no import can write `created_by` in any format. A target already deployed is skipped only when its `logs_<ENV>/deployment.json` receipt matches the same executable inputs and target, so a partial script failure, a SQLcl error or a failed APEX verification leaves that target incomplete and it deploys again on the next run; a patch deployed before 1.0 carries no receipt and runs once more. A post-deploy APEX verification that could not complete fails the deploy instead of passing as skipped, and by default a failed scan reverts the application to a backup taken immediately before the import (`deploy_revert_on_scan_failure`). By default `-deploy -app` also holds the target at build status `RUN_ONLY` from the signature read until after the scan and then restores it (`deploy_build_status`), so the application is not editable in the Builder while the deploy runs. Never guess `-target`, `-name`, commit selectors, content mode, or application id. Preview the exact selection before creation or deployment.
 
 ```bash
 adtai patch -target UAT -name TASK-123
@@ -126,7 +126,7 @@ adtai recompile -schema APP
 
 ## search_repo: search Git history
 
-Read [docs/search_repo.md](../../docs/search_repo.md). Searching is read-only. `-restore` writes historical copies; adding `-stage` replaces original paths and stages them in Git, refusing a file with uncommitted changes rather than overwrite it.
+Read [docs/search_repo.md](../../docs/search_repo.md). Searching is read-only. `-restore` writes historical copies beside the originals; adding `-stage` restores to the original paths and stages them in Git, overwriting whatever stands there, uncommitted work included. `COULD NOT RESTORE:` now means only that Git cannot resolve the version asked for.
 
 ```bash
 adtai search_repo -name APP_ORDERS -files

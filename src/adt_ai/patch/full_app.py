@@ -238,6 +238,47 @@ def require_fresh_full_app_exports(
     raise PatchError(stale_full_app_message(stale))
 
 
+def carried_by_apexlang_import(
+    path: str,
+    config: dict[str, Any],
+    apexlang_app_ids: set[int],
+) -> bool:
+    """A static-file payload the APEXlang import already delivers (ADT #722).
+
+    `-apexlang` writes the tree WITHOUT its static-file payloads, and both
+    `validate` and `patch -deploy -app` stage the sibling `files/` export back
+    into `shared-components/static-files/` before SQLcl reads the folder. The
+    payload therefore reaches APEX through the import, and a patch generating a
+    `wwv_flow_imp` script for the same file installs it a second time.
+
+    **The second copy does not merely duplicate, it stops the deploy.** The
+    generated script opens no PL/SQL block, so SQLcl answers `Unknown Command`
+    to its first line and the run dies in `HUB.<id>.init.sql`, before the import
+    the payload was staged for ever starts (Jan's deploy, APEX 26.1.4,
+    2026-09-08). The missing `begin` is its own defect in `snapshots.py` and
+    still bites an `f<id>.sql` application; what this answers is that an
+    APEXlang application should never have been given the script.
+
+    Asked per path and per application, the shape `ships_in_patch` already has:
+    an `f<id>.sql` application beside this one has no tree to stage a payload
+    out of, so its own static files keep their script.
+    """
+    if not apexlang_app_ids or not is_apex_static_file(path, config):
+        return False
+    app_id = apex_app_id(path, config)
+    return app_id is not None and app_id in apexlang_app_ids
+
+
+def apexlang_app_ids(records: list[CommitRecord], config: dict[str, Any]) -> set[int]:
+    """Public spelling of `_apexlang_app_ids`, for the selection's payload filter.
+
+    `resolve_full_app_ids` deliberately DROPS these ids from what it returns, so
+    a caller downstream cannot recover them from its answer; the selection needs
+    the set itself rather than its absence.
+    """
+    return _apexlang_app_ids(records, config)
+
+
 def _apexlang_app_ids(records: list[CommitRecord], config: dict[str, Any]) -> set[int]:
     """Applications the selected commits ship as an APEXlang tree.
 

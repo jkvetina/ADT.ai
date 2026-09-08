@@ -1,7 +1,37 @@
+"""Reading git, under the two rules every call in here obeys.
+
+**Paths come back on `-z`, never on newlines.** `run_git_paths` owns that one
+and its own docstring says why.
+
+**Text comes back as UTF-8, and the console gets no vote** (ADT #743). A
+`subprocess.run(..., text=True)` naming no `encoding=` decodes with
+`locale.getpreferredencoding(False)`, which describes the machine ADT.ai is
+running on rather than the program that wrote the bytes. Git emits UTF-8, so
+that lookup answered correctly here and wrongly on a customer's Czech Windows
+console, where cp1250 leaves byte 0x88 undefined and a single `ň` in a commit
+subject took `patch` down mid-`git log`.
+
+It fails worse than it sounds. On Windows the decode runs on `communicate()`'s
+reader thread, and a thread that raises leaves the buffer empty, so `stdout`
+comes back `None` beside `returncode == 0`: `check=True` reads a success and the
+caller raises `AttributeError` on `None` several frames from the cause.
+
+`errors="replace"` and not `strict`, because git hands back the bytes a commit
+was written with when it carries no encoding header, so a pre-UTF-8 message is
+undecodable however carefully we ask. A replacement character in one old subject
+is something the reader can see past; an exception is a tool that cannot run in
+that repository at all. Paths are the deliberate exception below and stay on
+`surrogateescape`, because a path is reopened rather than read.
+
+`tests/contracts/test_subprocess_text_encoding.py` holds this at every call site
+in `src/adt_ai`, this module and beyond.
+"""
+
 from __future__ import annotations
 
 import hashlib
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -190,6 +220,36 @@ def _canonical_payload(payload: bytes | str, encoding: str) -> bytes:
     return text_files.normalize(text).lstrip(BOM).strip().encode(encoding)
 
 
+def git_output(
+    root: Path, args: list[str], environment: Mapping[str, str] | None = None
+) -> str | None:
+    """One git command's stdout, or ``None`` when git refused the command.
+
+    The returncode-tolerant sibling of :func:`run_git`, for a caller that reads
+    a refusal as an answer rather than an error: a root outside version control,
+    a ref that resolves to nothing, a compare-and-swap `update-ref` that another
+    writer won. ``None`` and `""` stay distinguishable, because a git command can
+    legitimately succeed with no output at all (ADT #725).
+
+    ``environment`` overlays the safe child environment, which is how a caller
+    runs git against an index file of its own (`GIT_INDEX_FILE`) rather than
+    against the repository's.
+    """
+    child_environment = safe_subprocess_environment()
+    child_environment.update(environment or {})
+    completed = subprocess.run(
+        ["git", *args],
+        cwd            = root,
+        check          = False,
+        capture_output = True,
+        text           = True,
+        encoding       = "utf-8",
+        errors         = "replace",
+        env            = child_environment,
+    )
+    return completed.stdout.strip() if completed.returncode == 0 else None
+
+
 def run_git(root: Path, args: list[str]) -> str:
     return subprocess.run(
         ["git", *args],
@@ -197,6 +257,8 @@ def run_git(root: Path, args: list[str]) -> str:
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=safe_subprocess_environment(),
     ).stdout
 
@@ -220,6 +282,8 @@ def git_config_value(key: str, root: Path | None = None) -> str:
         cwd=root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=safe_subprocess_environment(),
     )
     return result.stdout.strip() if result.returncode == 0 else ""
@@ -244,6 +308,8 @@ def fetch_origin(root: Path) -> None:
         cwd=root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=safe_subprocess_environment(),
     )
 
@@ -255,6 +321,8 @@ def git_ref_exists(root: Path, ref: str) -> bool:
         cwd=root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=safe_subprocess_environment(),
     )
     return result.returncode == 0
@@ -273,6 +341,8 @@ def last_commit_time(root: Path, ref: str, path: str) -> int:
         cwd            = root,
         capture_output = True,
         text           = True,
+        encoding       = "utf-8",
+        errors         = "replace",
         check          = False,
         env            = safe_subprocess_environment(),
     ).stdout.strip()
@@ -286,6 +356,8 @@ def git_is_ancestor(root: Path, commit: str, branch: str) -> bool:
         cwd=root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=safe_subprocess_environment(),
     )
     return result.returncode == 0
@@ -315,25 +387,14 @@ def git_blob_exists(root: Path, ref: str, path: str) -> bool:
     return result.returncode == 0
 
 
-def git_status_porcelain(root: Path, path: str) -> str:
-    """Raw ``git status --porcelain`` output scoped to ``path``."""
-    return subprocess.run(
-        ["git", "status", "--porcelain", "--", path],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-        env=safe_subprocess_environment(),
-    ).stdout.strip()
-
-
 def git_status_paths(root: Path, paths: list[str]) -> dict[str, str]:
     """One ``git status --porcelain -z`` call answering every path in ``paths``.
 
     `patch/report.py::_uncommitted` and `patch/files.py::file_source_modes`
-    used to call :func:`git_status_porcelain` once per file, spawning one `git
-    status` subprocess per patch file (ADT #670); this batches every path the
-    caller has into a single call, through the same `-z` NUL-terminated reader
+    used to call a single-path `git status --porcelain` helper once per file,
+    spawning one `git status` subprocess per patch file (ADT #670); this batches
+    every path the caller has into a single call, through the same `-z`
+    NUL-terminated reader
     the rest of this module already uses so a non-ASCII path is not silently
     dropped by C-quoting the way `#664` found plain `ls-files` doing it.
 
@@ -366,6 +427,8 @@ def git_checkout(root: Path, name: str) -> None:
         cwd=root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=safe_subprocess_environment(),
     )
     if result.returncode != 0:
@@ -385,6 +448,8 @@ def default_branch_ref(root: Path) -> tuple[str, str]:
         cwd=root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=safe_subprocess_environment(),
     )
     ref = result.stdout.strip()
@@ -397,6 +462,8 @@ def default_branch_ref(root: Path) -> tuple[str, str]:
             cwd=root,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=safe_subprocess_environment(),
         )
         if probe.returncode == 0:

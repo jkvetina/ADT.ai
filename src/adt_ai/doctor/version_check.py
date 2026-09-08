@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 
 from adt_ai.doctor._base import (
+    SQLCL_UPGRADE_ACTION,
     _first_line,
     _instant_client_version,
     _is_newer_version,
@@ -16,6 +17,7 @@ from adt_ai.doctor._base import (
     _normalize_oracledb_version,
     format_status_line,
 )
+from adt_ai.doctor.apexlang_floor import apexlang_floor_lines
 from adt_ai.doctor.version_fetch import DoctorLatestVersionMixin
 from adt_ai.shared.env_check import CheckResult
 
@@ -108,11 +110,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
             yield format_status_line(
                 "SQLcl",
                 sqlcl_value,
-                self._display_status(
-                    checks,
-                    "SQLcl",
-                    online_status=self._online_update_status("sqlcl", sqlcl_value, online=online),
-                ),
+                self._sqlcl_status(checks, sqlcl_value, online=online),
             )
         finally:
             self._shutdown_version_executor()
@@ -126,6 +124,31 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         that nobody asked this row.
         """
         return version or "unknown"
+
+    def _sqlcl_status(
+        self,
+        checks: Mapping[str, CheckResult],
+        value : str,
+        *,
+        online: bool,
+    ) -> str | None:
+        """The status word beside the installed SQLcl version.
+
+        The APEXlang floor outranks everything else this row can say (ADT #723).
+        A SQLcl too old to export APEXlang correctly is a broken prerequisite on
+        a project whose own exports prove the floor applies, and `UPDATE` would
+        report that as an offer the reader may decline.
+
+        The online check still runs and still records staleness, because the
+        `ACTIONS:` section reads that separately: the floor decides this word,
+        never which upgrades exist.
+        """
+        status = self._display_status(
+            checks,
+            "SQLcl",
+            online_status=self._online_update_status("sqlcl", value, online=online),
+        )
+        return "FAIL" if self._apexlang_sqlcl_shortfall else status
 
     def _status_action_lines(self) -> list[str]:
         """The upgrade commands worth offering, given what the online checks found.
@@ -142,8 +165,23 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
                 "  Run `adtai doctor -update` for full ADT.ai + requirements + SQLcl upgrade."
             )
         if "sqlcl" in stale:
-            lines.append("  Run `adtai doctor -sqlcl` to upgrade SQLcl only.")
+            lines.append(SQLCL_UPGRADE_ACTION)
         return lines
+
+    def _apexlang_floor_action_lines(self, offered: list[str]) -> list[str]:
+        """The floor rows, minus whatever the staleness rows already printed.
+
+        A SQLcl old enough to breach the floor is usually also behind the latest
+        release, so the `-sqlcl` offer is normally already on the list; printed
+        again it reads as two problems needing two upgrades.
+        """
+        if not self._apexlang_sqlcl_shortfall:
+            return []
+        return [
+            line
+            for line in apexlang_floor_lines(self._apexlang_sqlcl_shortfall)
+            if line not in offered
+        ]
 
     def _environment_lines(self, check_results: list[CheckResult]) -> list[str]:
         env = self._command_env()

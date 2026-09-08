@@ -82,6 +82,99 @@ def _configured_object_types(config: dict[str, Any]) -> list[str]:
         if object_type not in {"DATA", "GRANT"}
     ]
 
+def _exported_object_types(config: dict[str, Any]) -> list[str]:
+    """Every ``object_types`` key, ``DATA`` and ``GRANT`` included.
+
+    The map is what the file resolver reads to place an object, so this is the
+    honest answer to *does export_db have somewhere to put this type*, and it is
+    the one both ``-type`` refusals below are asking.
+
+    Deliberately NOT ``_configured_object_types``, whose job is the discovery
+    filter and which therefore drops the two pseudo-types: they have no
+    ``user_objects`` row to discover, and they are still perfectly good ``-type``
+    values, ``exports_grants`` reading `-type GRANT` to decide whether the four
+    privilege reads run at all. Refusing them here made `-type GRANT` an error on
+    the fix for `#739`, which is the defect this split repairs.
+    """
+    raw_types = config.get("object_types", {})
+    if not isinstance(raw_types, dict):
+        return []
+    return list(raw_types)
+
+
+class ObjectTypeFilterError(ValueError):
+    """A ``-type`` selection reaching object types ``export_db`` cannot write."""
+
+
+def unexported_requested_types(
+    requested_types: list[str] | None,
+    config: dict[str, Any],
+) -> list[str]:
+    """The ``-type`` patterns matching nothing the config says to export (`#739`).
+
+    The runner takes ``request.object_types or _configured_object_types(config)``,
+    so a requested type REPLACES the map instead of narrowing it, and a type the
+    map does not carry reaches discovery, the overview and then a wall: the file
+    resolver has no destination for it, or ``DBMS_METADATA`` refuses the type
+    outright. Both arrive as a screen for a defect in ADT.
+
+    Answered from the config alone, so the refusal lands before the run connects.
+    ``-type`` is a LIKE pattern, hence the match rather than a set membership: a
+    pattern covering a real type is a narrowing the export can honor, and one
+    covering none of them is a request nothing could satisfy, whether it names a
+    type ADT does not carry or is simply a typo.
+    """
+    if not requested_types:
+        return []
+    exported = _exported_object_types(config)
+    return [
+        requested
+        for requested in requested_types
+        if not any(
+            matches_sql_like(object_type, requested) for object_type in exported
+        )
+    ]
+
+
+def unexportable_object_types(
+    discovered_types: Iterable[str],
+    config: dict[str, Any],
+) -> list[str]:
+    """Discovered object types the config gives no destination, in listing order.
+
+    The second route into the same wall, and the one no pre-check can close:
+    ``-type %`` matches every exported type, so the request is honorable, and on
+    a 26ai schema discovery still comes back holding a domain. What the database
+    actually returned is the earliest this can be known, so the refusal waits for
+    the overview rather than the command line.
+
+    Reads the whole ``object_types`` map, ``DATA`` and ``GRANT`` included, for the
+    reason ``_exported_object_types`` gives.
+    """
+    exported = {object_type.upper() for object_type in _exported_object_types(config)}
+    unexportable: list[str] = []
+    for object_type in discovered_types:
+        if object_type.upper() in exported or object_type in unexportable:
+            continue
+        unexportable.append(object_type)
+    return unexportable
+
+
+def unexportable_object_types_message(object_types: Iterable[str]) -> str:
+    """The one sentence both checks above refuse with.
+
+    Names the types and says export_db does not carry them, so the reader can act
+    on it, and points at the map rather than telling anyone to add a row to it:
+    which of the 26ai types ADT should carry is the approval-gated question
+    `#738` holds, and `DOMAIN` would not export from a new row anyway.
+    """
+    return (
+        "export_db: -type selected object types export_db does not export: "
+        f"{', '.join(object_types)}. Its exported types are the 'object_types' "
+        "keys in config.yaml."
+    )
+
+
 def _requested_object_type_matches(
     object_type: str,
     requested_types: list[str] | None,

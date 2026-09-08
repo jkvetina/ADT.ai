@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from adt_ai.patch import queries, settings
+from adt_ai.patch import queries, settings, stages
 from adt_ai.patch.deploy_progress import _COUNTABLE_ECHO_RE
 from adt_ai.patch.layout import (
     database_object_name as _database_object_name,
@@ -117,8 +117,44 @@ def _deployment_schema(name: str, config: dict[str, Any] | None = None) -> str:
     return _deployment_group(name, config).split(".", 1)[0].upper()
 
 def _deployment_app_id(name: str, config: dict[str, Any] | None = None) -> int | None:
-    parts = _deployment_group(name, config).split(".", 1)
+    # The stage comes off first (ADT #735): `APP.100.init.sql` is application
+    # 100's script as much as `APP.100.sql` was, and reading `100.init` as no
+    # application at all is what would have taken the halves out of `-app`.
+    group, _stage = stages.split_stage(_deployment_group(name, config))
+    parts = group.split(".", 1)
     return int(parts[1]) if len(parts) == 2 and parts[1].isdigit() else None
+
+def _deployment_stage(name: str, config: dict[str, Any] | None = None) -> str | None:
+    """`init`, `end`, or ``None`` for a script that is not one half of an application.
+
+    The deploy loop reads it to place the `apex import` between the two halves
+    (ADT #735); a whole `<SCHEMA>.<APP>.sql` built before the split has no stage
+    and takes the import right after it, so an older patch folder still deploys.
+    """
+    return stages.split_stage(_deployment_group(name, config))[1]
+
+# Where a script sits in the deploy: `init` opens an application, a whole
+# pre-split `<SCHEMA>.<APP>.sql` stands in for it, `end` closes one.
+_STAGE_RANK = {stages.APP_SCRIPT_INIT: 0, None: 1, stages.APP_SCRIPT_END: 2}
+
+def _deployment_order_key(
+    name: str, config: dict[str, Any] | None = None,
+) -> tuple[bool, str, int, int, str]:
+    """The order a patch folder's scripts run in (ADT #735).
+
+    Every schema script before any application script, because an application
+    imports onto the objects its pages query; then application by application,
+    each one's `init` half, then its `end` half. The name is the tie-break, so
+    two schemas keep the order they always had.
+    """
+    app_id = _deployment_app_id(name, config)
+    return (
+        app_id is not None,
+        _deployment_schema(name, config),
+        app_id or 0,
+        _STAGE_RANK[_deployment_stage(name, config)],
+        name,
+    )
 
 def _skipped_deployment_result(item: DeploymentPlanItem) -> DeploymentResult:
     return _unrun_deployment_result(item, "SKIPPED")

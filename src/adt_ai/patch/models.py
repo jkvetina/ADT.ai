@@ -314,3 +314,9 @@ class DeploymentRunResult:
     #: reads the application the patch just deployed, so a finding is this
     #: deploy's. Empty when `deploy_verify_scan` is off or no application landed.
     apex_scans: list[Any] = field(default_factory=list)
+    #: One `ApexRevert` per application whose scan failed and whose pre-import
+    #: backup was imported back (`#727`), each already written to its own report
+    #: beside the scan. It never flips the run's status: a revert undoes the
+    #: write, it does not make the patch correct, so a deploy whose scan failed
+    #: stays `ERROR` whether or not the target came back.
+    apex_reverts: list[Any] = field(default_factory=list)

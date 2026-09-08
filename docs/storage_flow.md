@@ -2,6 +2,8 @@
 
 `flow -refresh` scrapes one application's links out of the APEX dictionary into `config/internal/flow.db`, and every later `flow` question is answered from the file. Four tables: the application, its pages, a catalog of the twelve link sources the scrape resolves statically, and one row per link found.
 
+<br>
+
 ## Diagram
 
 ```mermaid
@@ -46,9 +48,13 @@ erDiagram
 
 The foreign keys are declared with a cascade and switched on by the opener, so deleting an application row takes its pages and edges with it.
 
+<br>
+
 ## Tables
 
 Nullable is No where the column is declared NOT NULL or belongs to the primary key.
+
+<br>
 
 ### applications
 
@@ -60,6 +66,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | app_alias | TEXT    | Yes      |     | The alias.                                                                                 |
 | loaded_at | TEXT    | Yes      |     | When the application was last refreshed: UTC, `YYYY-MM-DD HH:MM:SS`, this machine's clock. |
 
+<br>
+
 ### pages
 
 | Column     | Type    | Nullable | Key                        | Meaning                              |
@@ -69,12 +77,16 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | page_name  | TEXT    | Yes      |                            | The name.                            |
 | page_alias | TEXT    | Yes      |                            | The alias.                           |
 
+<br>
+
 ### link_sources
 
 | Column      | Type | Nullable | Key | Meaning                                                                                                                                                          |
 | ----------- | ---- | -------- | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | src_type    | TEXT | No       | PK  | `BRANCH`, `BUTTON`, `TAB`, `PARENT_TAB`, `LIST_ENTRY`, `BREADCRUMB`, `NAV_BAR`, `IR_COL_LINK`, `RPT_COL_LINK`, `CHART_SERIES`, `REGION_LINK` or `PAGE_DUP_GOTO`. |
 | description | TEXT | Yes      |     | What the source is, reseeded on every open.                                                                                                                      |
+
+<br>
 
 ### edges
 
@@ -95,6 +107,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | working_copy_id | INTEGER DEFAULT 0 | No       |                          | Zero for the application itself, otherwise the working copy the link was scraped from.                                    |
 | loaded_at       | TEXT              | Yes      |                          | When the row was written: UTC, `YYYY-MM-DD HH:MM:SS`, this machine's clock.                                               |
 
+<br>
+
 ## Indexes
 
 | Index              | Table | Columns                                         | Unique |
@@ -105,6 +119,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | ix_edges_workspace | edges | workspace, app_id                               | No     |
 
 The unique index is what makes a refresh an upsert: the same component scraped again replaces its row. The two directional indexes answer the two questions the command asks, what links into a page and what leaves it.
+
+<br>
 
 ## Version and lifetime
 

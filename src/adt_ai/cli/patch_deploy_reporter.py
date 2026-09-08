@@ -37,7 +37,7 @@ from adt_ai.shared.streamed_table import ERASE_TO_END_OF_LINE, StreamedTable
 # literal in two call sites, because it moved with the column order in ADT #444
 # and the two halves have to keep meeting at the same seam or they stop rejoining
 # byte-for-byte with the batch render.
-STREAM_SPLIT = DEPLOY_COLUMNS.index("FILES")
+STREAM_SPLIT = DEPLOY_COLUMNS.index("BLOCKS")
 
 # `ERASE_TO_END_OF_LINE` was defined in this module between `#444` and `#678`, and
 # the tests that pin the erase in both directions import it from here. Re-exported
@@ -63,7 +63,7 @@ class ConsoleDeployReporter:
 
     `begin_script` prints `FILE | SCHEMA`, everything knowable before the work,
     and stops mid-line; `end_script` completes that same line with
-    `FILES | TIMER | STATUS`. The seam between them is `STREAM_SPLIT`, which
+    `BLOCKS | TIMER | STATUS`. The seam between them is `STREAM_SPLIT`, which
     moved with the column order in ADT #444. `streamed` lets the CLI fall back to
     the batch render when the loop never ran, so the SKIPPED path is unchanged.
 
@@ -72,7 +72,7 @@ class ConsoleDeployReporter:
     left Jan's deploy showing a single half-written line for its whole duration:
     "You are not printing the files until you are fully done ... Idea is that you
     could reprint the line as you go to show you are doing something and how far
-    you are." `advance` moves the FILES cell as `run_sqlcl_script` hands over each
+    you are." `advance` moves the BLOCKS cell as `run_sqlcl_script` hands over each
     echoed marker, and a one-second ticker moves TIMER in between, because a
     single long statement prints nothing at all while it runs and a frozen
     counter is the thing being complained about.
@@ -248,7 +248,7 @@ class ConsoleDeployReporter:
         on its next statement, which is a worse lie than a slow counter, and
         `IN PROGRESS` is exactly the claim a running row can make.
 
-        The FILES cell is blank only when the total is genuinely unknown, which
+        The BLOCKS cell is blank only when the total is genuinely unknown, which
         no `DeploymentPlanItem` reaches today; `0/n` is what a run that has
         finished nothing yet prints.
         """

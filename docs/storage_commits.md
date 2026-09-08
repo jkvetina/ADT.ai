@@ -2,6 +2,8 @@
 
 `rebuild` keeps one SQLite file per branch at `config/commits/<branch>.db`, the path `repo_commits_file` points at. It is a cache of `git log` for that branch, numbered so that a commit keeps its number for life, plus the files each commit touched with their status and content hash. `search_repo`, `calendar` and the patch commands read it instead of walking git.
 
+<br>
+
 ## Diagram
 
 ```mermaid
@@ -27,9 +29,13 @@ erDiagram
 
 The foreign key is declared with a cascade and switched on by the opener, so dropping a branch's commits takes their file rows with them.
 
+<br>
+
 ## Tables
 
 Nullable is No where the column is declared NOT NULL or belongs to the primary key.
+
+<br>
 
 ### commits
 
@@ -43,6 +49,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | authored_at | TEXT    | Yes      |     | The author date on the author's own clock: `YYYY-MM-DD HH:MM:SS+HH:MM`, the offset kept because git's is the one clock ADT does not own. |
 | patch       | TEXT    | Yes      |     | The patch folder the commit touched, the first `patch/<name>/` path among its files, or NULL.                                            |
 
+<br>
+
 ### commit_files
 
 | Column | Type    | Nullable | Key                   | Meaning                                                                                                                  |
@@ -53,6 +61,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | hash   | TEXT    | Yes      |                       | SHA-1 of the file's canonical payload, line endings normalised and trailing whitespace trimmed; NULL for a deleted file. |
 | status | TEXT    | Yes      |                       | Git's status letter for the file in that commit: `A` added, `M` modified, `D` deleted.                                   |
 
+<br>
+
 ## Indexes
 
 | Index                | Table        | Columns      | Unique |
@@ -61,6 +71,8 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | ix_commit_files_path | commit_files | branch, path | No     |
 
 The primary keys are the numbering contract written down: a number belongs to one commit, and the unique index says a commit carries one number, so a hole or a reused number is unwritable rather than merely tested for.
+
+<br>
 
 ## Version and lifetime
 

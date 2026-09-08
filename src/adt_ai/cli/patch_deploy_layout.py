@@ -36,7 +36,12 @@ from adt_ai.patch.models import DeploymentPlanItem, DeploymentResult
 # untouched, it still sequences the deploy and names the logs, it just stops
 # being rendered. STATUS last is what a reader scans for: it is the answer the
 # table exists to give, and TIMER is the detail beside it.
-DEPLOY_COLUMNS = ("FILE", "SCHEMA", "FILES", "TIMER", "STATUS")
+#
+# `BLOCKS`, not `FILES` (ADT #735). The cell counts the `@` references the
+# install script runs, which are statements handed to SQLcl one block at a time;
+# Jan, 2026-09-07: *"FILES COLUMN NAME IS WRONG, SHOULD BE STATEMENTS, but that
+# is too long, so lets use BLOCKS"*.
+DEPLOY_COLUMNS = ("FILE", "SCHEMA", "BLOCKS", "TIMER", "STATUS")
 
 # Every status this table can render. The streamed header is sized before the
 # first script runs, so the widest one is reserved up front: a run that fails on
@@ -69,8 +74,8 @@ DEPLOY_STATUS_RUNNING = "IN PROGRESS"
 
 # `TIMER` is a quantity carrying a unit, so cell-sniffing reads `12s` as text and
 # would print it left-aligned; declaring the column numeric is the caller saying
-# what it IS (`_compute_adt_layout`). `FILES` carries its own digits.
-DEPLOY_NUMERIC = ("FILES", "TIMER")
+# what it IS (`_compute_adt_layout`). `BLOCKS` carries its own digits.
+DEPLOY_NUMERIC = ("BLOCKS", "TIMER")
 
 # No TIMER reservation: its own header is 5 characters, which holds every value
 # up to `9999s`, a single script running 2h46m. ADT #273 reserved 6 to cover 27
@@ -78,11 +83,13 @@ DEPLOY_NUMERIC = ("FILES", "TIMER")
 # (ADT #284). Old ADT sized it 5 too (patch.py:518).
 
 
-def _files_cell(result: DeploymentResult) -> str:
-    """`n/m` files reached, blank when the run reported no progress at all.
+def _blocks_cell(result: DeploymentResult) -> str:
+    """`n/m` blocks reached, blank when the run reported no progress at all.
 
-    A script that died before its first file has nothing measured, and `0/0` would
-    read as a finished empty deploy rather than an unknown one (ADT #254).
+    A block is one linked file the install script hands SQLcl, so the count is
+    the script's live `@` references. A script that died before its first one
+    has nothing measured, and `0/0` would read as a finished empty deploy rather
+    than an unknown one (ADT #254).
     """
     deployed = getattr(result, "deployed", None)
     total    = getattr(result, "deployed_total", None)
@@ -103,7 +110,7 @@ def _deployment_row_values(result: DeploymentResult) -> list[object]:
     return [
         result.file,
         result.schema,
-        _files_cell(result),
+        _blocks_cell(result),
         _timer_cell(result),
         result.status,
     ]
@@ -117,7 +124,7 @@ def _deployment_rows(results: Sequence[DeploymentResult]) -> list[dict[str, obje
 def _deployment_min_widths(plan: Sequence[DeploymentPlanItem]) -> dict[str, int]:
     """Column reservations both renders share, so neither can drift from the other.
 
-    `FILES` is seeded from the plan's per-item counts as `<n>/<n>`, which is a
+    `BLOCKS` is seeded from the plan's per-item counts as `<n>/<n>`, which is a
     real upper bound rather than an estimate: `item.files` is a count of the
     finished install script's own live `@` file references, excluding anything
     under `patch_template_dir` (ADT #321), `deployed_total` on a run's result is
@@ -131,7 +138,7 @@ def _deployment_min_widths(plan: Sequence[DeploymentPlanItem]) -> dict[str, int]
         # render of the same results.
         "FILE": max((len(item.file) for item in plan), default = 0),
         "SCHEMA": max((len(item.schema) for item in plan), default = 0),
-        "FILES": max(
+        "BLOCKS": max(
             (len(f"{item.files}/{item.files}") for item in plan),
             default = 0,
         ),

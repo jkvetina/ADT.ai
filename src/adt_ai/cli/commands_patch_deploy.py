@@ -167,10 +167,10 @@ def run_patch_deploy(
         # the finished table is still the report.
         print_adt_header("DEPLOYING PATCH:", reporter.folder)
         print_deployment_table(result.results, result.plan)
-    _print_deployment_errors(result.results)
+    _print_deployment_errors(result.results, root)
     _print_view_mismatches(result.view_mismatches)
     _print_still_invalid_objects(result.still_invalid)
-    _print_apex_scans(result.apex_scans, root)
+    _print_apex_scans(result.apex_scans, root, result.apex_reverts)
     _print_apex_notes(result.apex_notes)
     advance_baseline(root, config, args, workspace, ref=ref, results=result.results)
     print()

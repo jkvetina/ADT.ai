@@ -2,6 +2,8 @@
 
 The project SQL a generated install script wraps around the object files: the session defaults, the reusable templates linked in at fixed slots, the one-off scripts moved into the patch, the emitted APEX environment, and the generated helpers. What goes into a patch is on [patch_install.md](patch_install.md).
 
+<br>
+
 ## Templates
 
 Every generated patch opens with the session defaults, before anything a project configures:
@@ -16,16 +18,16 @@ SET SQLBLANKLINES ON
 
 On top of that, `-create` injects the project's own reusable SQL at fixed slots, read from `patch_template_dir` (default `config/patch_template/`) relative to the project root:
 
-| Folder            | Runs                                              |
-| ----------------- | ------------------------------------------------- |
-| `db_init/`        | first, in every database patch                    |
-| `<group>_before/` | before the object files of that `patch_map` group |
-| `<group>_after/`  | after the object files of that `patch_map` group  |
-| `db_end/`         | last, in every database patch                     |
-| `apex_init/`      | first, in every APEX patch                        |
-| `apex_end/`       | last, in every APEX patch                         |
+| Folder            | Runs                                                              |
+| ----------------- | ----------------------------------------------------------------- |
+| `db_init/`        | first, in every database patch                                    |
+| `<group>_before/` | before the object files of that `patch_map` group                 |
+| `<group>_after/`  | after the object files of that `patch_map` group                  |
+| `db_end/`         | last, in every database patch                                     |
+| `apex_init/`      | first, in every APEX patch; an APEXlang application's `init` half |
+| `apex_end/`       | last, in every APEX patch; an APEXlang application's `end` half   |
 
-Files within a slot are injected in filename order, which is what the numeric prefixes in the shipped scaffold are for. `patch_add_templates: False` turns the mechanism off.
+Files within a slot are injected in filename order, which is what the numeric prefixes in the shipped scaffold are for. `patch_add_templates: False` turns the mechanism off. An APEXlang application is two scripts around the import `patch -deploy -app` runs, `<SCHEMA>.<APP>.init.sql` and `<SCHEMA>.<APP>.end.sql`, so `apex_init/` runs before the tree lands and `apex_end/` after it ([patch_import.md](patch_import.md)).
 
 A template is **linked in place, never copied**, so the install script names which template shipped instead of absorbing its body:
 
@@ -40,6 +42,8 @@ Two consequences worth knowing before you rely on either:
 - **The patch folder is no longer self-contained if you move it out of the repository.** Committed, cloned and deployed in place the relative link resolves; carried off on its own the linked templates do not travel with it.
 
 ADT.ai ships a reference scaffold in its own checkout. It is not read from there: copy it into your project and edit it. Read `db_end/` before you keep it, since those files refresh every materialized view, gather schema stats and run every enabled daily job.
+
+<br>
 
 ## Per-patch scripts move into the patch
 
@@ -57,6 +61,8 @@ Three things follow, and they are the whole reason the move is safe:
 - **Only what this patch uses moves.** A script no selected commit touched stays where it is, reported under `WARNING - NOT COMMITTED SCRIPTS, IGNORED:`. One in a slot no `patch_map` group can produce stays too, under `WARNING - UNKNOWN SCRIPTS:`. The filter runs before the move, so it cannot see what the folder already holds: `-force` empties it, and without one a re-create adds to the pile and the install script links all of it, so a folder first built from a wide commit range keeps shipping that range's generated `ALTER TABLE` helpers. Clearing loses nothing hand-written, which goes back to `patch_scripts/<CODE>/<slot>/` and faces the filter again.
 
 A `name.[ENV].sql` script moves like any other but is linked only under its own `-target`.
+
+<br>
 
 ## The APEX environment is emitted, not templated
 
@@ -88,6 +94,8 @@ patch_apex_build_status:
 ```
 
 On a matching `-target` the install script closes with `APEX_UTIL.SET_APP_BUILD_STATUS`; on any other target nothing is emitted. Locking an application is never a tool default.
+
+<br>
 
 ## Helpers create generates for you
 

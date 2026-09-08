@@ -2,6 +2,8 @@
 
 What `-app` on a `-deploy` run does with the application's committed `apexlang/` tree: which id it lands on, where it is staged, the signatures the log records, and what is refused before the first install script runs. The command and its flags are on [patch.md](patch.md); the loop from export to promotion is on apex_round_trip.md.
 
+<br>
+
 ## Examples
 
 Land the tree on a derived sandbox id, beside the real application:
@@ -18,6 +20,8 @@ adtai patch -target UAT -name 601 -deploy -app
 
 Without `-app` nothing here runs, and the deploy is byte for byte what it was before the import existed.
 
+<br>
+
 ## Where the tree lands
 
 **The value is where the tree LANDS, not which applications ship.** Bare `-app` changes no application id. `-app <id>` installs the same tree on that id, with the alias derived in the same step, since an APEX alias is unique per workspace and a copied id keeping the source alias collides with the application it came from. One id per run: several applications cannot fold onto one id, and a second value is refused rather than reduced to the first.
@@ -25,6 +29,8 @@ Without `-app` nothing here runs, and the deploy is byte for byte what it was be
 The sandbox id is derived, never configured per developer: the application number carrying the task number, so application `100` under task `601` is `100601` and its alias `ORDERS_601`. Uniqueness comes from the task number, which is already unique across developers.
 
 Retargeting is a flag on SQLcl's `apex import`, never an edit to the tree's `deployments/default.json`, which is what lets a promote install the byte-identical tree a sandbox import validated.
+
+<br>
 
 ## A sandbox is stamped with the developer who deployed it
 
@@ -38,6 +44,8 @@ Only a retarget is stamped. A bare `-app` lands each application under its own i
 
 `created_by` stays empty either way, because APEX exposes nothing that can write it, which is why [`patch -drop`](patch_drop.md) clears an ownerless sandbox rather than refusing one.
 
+<br>
+
 ## The tree is staged, never imported where it sits
 
 `export_apex -apexlang` omits the static-file payloads by design, and `apex import` validates before it writes, so an unstaged tree fails one `REFERENCE_NOT_FOUND` per payload.
@@ -45,6 +53,8 @@ Only a retarget is stamped. A bare `-app` lands each application under its own i
 The run therefore hardlinks `apexlang/` plus its sibling `files/` export into `config/temp/apexlang/<app>/`, the same staging tree [`validate`](validate.md) builds, so the bytes the import sees are the bytes the compile gate passed.
 
 An application the patch ships and nobody exported a tree for is a `NOTES:` row naming the export that would fix it, never a refusal: the patch may legitimately carry an application this run was not asked to import.
+
+<br>
 
 ## Three signatures, read before anything is written
 
@@ -56,13 +66,33 @@ The first two are APEX's own `CHECKSUM-SH256`, independent of ids and comparable
 -- APEX APPLICATION 100 IMPORTED AS 100601
 --   LATEST ON TARGET | (no application)
 --   CHANGE BASED ON  | SH256:795mkyqBRAN1UkZCYSV6l3ntA3JyqzBP8fmKN6LOT7k=
+--   MERGE BASE       | 9f2c1ab7d0e34c5f8b6a2d1e7c0f4a93b5d8e621 (db/dev)
 --   DEPLOYING        | TREE:785c6726ff679a37894c1eb3157b4f9862e797b5
 --   DEPLOYED FROM    | sandbox/apex/100_ORDERS/apexlang
 ```
 
 `DEPLOYED FROM` names the folder the application was read out of. The patch carries no copy of an APEXlang tree ([patch_content.md](patch_content.md)), so the log is the one place a reader finds where the bytes came from.
 
-**The target moving is a showstopper.** When the first two disagree, somebody changed the application after the tree was exported and an import would overwrite work this patch never saw, so the deploy refuses before its first install script and names the re-export that clears it. An application with no recorded signature refuses the same way: the run cannot say what the change was based on. An id nothing is installed on yet, the ordinary first sandbox import, is not drift and passes.
+`MERGE BASE` is the commit `export_apex -apexlang` recorded when it wrote the tree, and in brackets the ref [`-mirror`](export_apex.md) shares it on. It is not a signature and moves no verdict; it is what the refusal below turns into an instruction.
+
+The row is absent for a tree exported without a recorded commit, which is every tree exported before this existed.
+
+**The target moving is a showstopper.** When the first two disagree, somebody changed the application after the tree was exported and an import would overwrite work this patch never saw, so the deploy refuses before its first install script. An application with no recorded signature refuses the same way: the run cannot say what the change was based on. An id nothing is installed on yet, the ordinary first sandbox import, is not drift and passes.
+
+The refusal names the two states and the way out of them:
+
+```text
+APP 100 moved since the tree was exported, so an import would overwrite work this patch never saw.
+  BASE    9f2c1ab7d0e34c5f8b6a2d1e7c0f4a93b5d8e621 SH256:795mkyqBRAN1UkZCYSV6l3ntA3JyqzBP8fmKN6LOT7k=
+  CURRENT SH256:HTIddFLS1G5jp2GiVk2z/HzDAxaS77J9idV2cEpeM0o=
+Run: git rebase db/dev, then deploy again (or -force to overwrite)
+```
+
+**`Run: git rebase` needs both halves of the merge base.** A recorded commit is only a base this checkout has; a shared ref is what makes it everybody's.
+
+With both, the state now live on the target is a commit on that ref, disjoint pages merge as text, and the recovery is a rebase. With either missing, the recovery is the one it always was, a re-export and a reconciliation by hand.
+
+<br>
 
 ## What else is refused
 
@@ -76,17 +106,23 @@ The first two are APEX's own `CHECKSUM-SH256`, independent of ids and comparable
 
 A completed deployment of the same payload to the same target is skipped without `-force` ([patch_deploy.md](patch_deploy.md)). Changing the application target or source invalidates that completion. Retargeted imports verify the application they landed on; a failed verification leaves the deployment incomplete.
 
+<br>
+
 ## The row in the deploy table
 
-The import is a row like any install script, named `apex_import_<id>` and carrying a log of its own under the patch's `logs_<ENV>/` folder:
+The import is a SQLcl command, not a file in the patch folder, and its row says so: `> BUILDING APP`. An APEXlang application's install script is two halves around it: `<SCHEMA>.<APP>.init.sql` carries the workspace block, the `apex_init` slot and the `APEXLANG SOURCE:` rows; `<SCHEMA>.<APP>.end.sql` carries the `apex_end` slot and the build status. The schema's own script runs before either:
 
 ```text
-  FILE                 SCHEMA    FILES   TIMER   STATUS
-  ------------------   -------   -----   -----   -----------
-  SANDBOX.100.sql      SANDBOX              2s   SUCCESS
-  apex_import_100601   SANDBOX              5s   SUCCESS
+  FILE                   SCHEMA    BLOCKS   TIMER   STATUS
+  --------------------   -------   ------   -----   -----------
+  SANDBOX.sql            SANDBOX      2/2      4s   SUCCESS
+  SANDBOX.100.init.sql   SANDBOX      1/1      1s   SUCCESS
+  > BUILDING APP         SANDBOX               5s   SUCCESS
+  SANDBOX.100.end.sql    SANDBOX      1/1      1s   SUCCESS
 ```
 
-It runs after the install scripts, never before: a tree imports onto the objects its pages query, so a failed script leaves it `NOT RUN` rather than importing over a half-deployed schema. The compiler's warnings are repeated in the log, and a compile error marks the row `ERROR` with the compiler's own rows under it.
+The order is the point. A tree imports onto the objects its pages query, so the schema scripts and the `init` half run first; a failed script leaves the import and the `end` half `NOT RUN` rather than importing over a half-deployed schema, and a refused import leaves the `end` half `NOT RUN`.
+
+The compiler's warnings are repeated in the log, which keeps the application id in its name, `<timestamp>_apex_import_<id>_<STATUS>.log` under the patch's `logs_<ENV>/` folder, and a compile error marks the row `ERROR` with the compiler's own rows under it. A folder built before the split holds one script per application and still deploys, the import following that script.
 
 The sandbox an import created is removed with `-drop`, on [patch_drop.md](patch_drop.md).

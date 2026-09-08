@@ -121,7 +121,7 @@ def widest_object_type(objects: Iterable[Any]) -> str:
 
     It measures the dictionary listing, and the GRANT artifacts are not in it
     because they are not dictionary objects. That used to leave a gap: while the
-    four privilege reads ran under this bar they relabelled the row `GRANTS`, so
+    five privilege reads ran under this bar they relabelled the row `GRANTS`, so
     the track had to be widened for a label no listing could report (`#382`).
     Those reads happen under the overview table since `#437`, so this bar never
     names the type and the dictionary listing is the whole measurement again.

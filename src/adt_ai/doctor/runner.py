@@ -31,6 +31,7 @@ from adt_ai.doctor._base import (
     format_action_line,
     format_status_line,
 )
+from adt_ai.doctor.apexlang_floor import apexlang_sqlcl_shortfall
 from adt_ai.doctor.init import DoctorInitMixin
 from adt_ai.doctor.layout_check import schema_case_action_lines
 from adt_ai.doctor.upgrade import DoctorUpgradeMixin
@@ -77,6 +78,11 @@ def _run_command(
         check          = True,
         capture_output = True,
         text           = True,
+        # A version banner is the one thing `doctor` exists to read, so it is
+        # the worst place to let the console codepage decide (ADT #743, and
+        # `shared/git_files.py`'s module docstring for the whole rule).
+        encoding       = "utf-8",
+        errors         = "replace",
     )
     return (completed.stdout or completed.stderr).strip()
 
@@ -188,6 +194,8 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
         # unset (None) by tests, which inject deterministic fetchers instead.
         self.version_cache_dir   = version_cache_dir
         self.version_cache_ttl   = version_cache_ttl
+        # Rewritten by every `run()`, before the version rows stream.
+        self._apexlang_sqlcl_shortfall = ""
 
     def run(self, request: DoctorRequest) -> DoctorResult:
         if request.init:
@@ -195,6 +203,13 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
 
         lines: list[str] = []
         check_results = self._check_results()
+        # Resolved before the rows stream, because the SQLcl row's status word
+        # and the `ACTIONS:` section both read it and must agree (ADT #723).
+        self._apexlang_sqlcl_shortfall = apexlang_sqlcl_shortfall(
+            request.root,
+            request.config,
+            self._check_value(self._checks_by_name(check_results), "SQLcl"),
+        )
         self._extend(
             lines,
             self._version_lines(
@@ -220,7 +235,13 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
             # layout rows join it because a rename is an offer too, and the
             # section is already the place a read-only run puts its offers.
             action_lines = self._status_action_lines()
+            action_lines.extend(self._apexlang_floor_action_lines(action_lines))
             action_lines.extend(self._layout_action_lines(request))
+            # A floor breach is the one thing here that is not an offer: the
+            # exports on disk were taken, or will be taken, with a SQLcl that
+            # gets them wrong silently, so the run reports a failure (ADT #723).
+            if self._apexlang_sqlcl_shortfall:
+                exit_code = max(exit_code, 1)
             if action_lines:
                 self._begin_actions_section(lines)
                 self._extend(lines, action_lines)

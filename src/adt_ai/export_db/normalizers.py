@@ -93,6 +93,7 @@ def normalize_ddl(
     keep_owner: bool = False,
     keep_view_column_names: bool = False,
     object_display_name: str | None = None,
+    table_retention: str = "",
 ) -> str:
     registry = registry or NormalizerRegistry.builtin()
     normalized_payload = payload.replace("\t", "    ").strip()
@@ -105,6 +106,7 @@ def normalize_ddl(
         keep_owner          = keep_owner,
         keep_view_column_names = keep_view_column_names,
         object_display_name = object_display_name,
+        table_retention     = table_retention,
     )
     normalizer = registry.get(object_type)
     if normalizer is not None and context.object_type in RAW_NORMALIZER_OBJECT_TYPES:
@@ -527,8 +529,6 @@ def build_table_fix_sql(
     object_name: str,
     object_display_name: str | None = None,
 ) -> str | None:
-    from adt_ai.export_db.object_normalizers.table import (
-        build_table_fix_sql as _build_table_fix_sql,
-    )
+    from adt_ai.export_db.object_normalizers import table
 
-    return _build_table_fix_sql(payload, object_name, object_display_name)
+    return table.build_table_fix_sql(payload, object_name, object_display_name)

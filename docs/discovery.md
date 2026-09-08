@@ -8,6 +8,8 @@ Direct DML, DDL, transaction control, PL/SQL blocks, inline `WITH FUNCTION` / `W
 
 This is intentionally SELECT-only, not a sandbox for untrusted database code. Oracle permits a `SELECT` to invoke stored functions. Discovery allows those calls, as required for normal Oracle queries, and an autonomous-transaction function can commit independently of the caller's read-only transaction. Use a least-privilege discovery account and do not grant it `EXECUTE` on functions with side effects.
 
+<br>
+
 ## Examples
 
 Run one query from your project folder:
@@ -35,6 +37,8 @@ adtai discovery -schema APP -sql "SELECT * FROM app_settings" -limit 500
 ```
 
 Exactly one of `-sql` or `-file` is required. Passing both, or neither, is an argument error.
+
+<br>
 
 ## Output
 
@@ -68,6 +72,8 @@ TIMER: 0s
 - A statement Oracle rejects prints the error the same way, with the documentation link Oracle supplies, and the run still exits `0`. Only a connection or setup failure exits non-zero, through the shared `DATABASE CONNECTION FAILED` screen.
 - Rows are capped at `-limit` (default `200`) per query.
 
+<br>
+
 ## What it refuses, and the trust boundary
 
 Two controls narrow the session:
@@ -78,6 +84,8 @@ Two controls narrow the session:
 The boundary matters: a SELECT may invoke a stored function or view whose implementation the client cannot inspect. Discovery deliberately permits function calls. An autonomous transaction is separate, so the caller cannot roll it back. Database grants are the final control: give an agent only the dictionary, object and function privileges its exploration requires.
 
 Per-query failures, refusals and database errors alike, are captured into the report instead of ending the run, so one bad statement in a file does not throw away the answers around it.
+
+<br>
 
 ## The report and the write-back
 
@@ -101,6 +109,8 @@ ORDER  BY object_type;
 
 `-nolog` does **not** turn that off. It suppresses the report and the `.gitignore` update only, and the write-back still happens on every `-file` run. To run a file of statements without changing it, do not pass `-file`.
 
+<br>
+
 ## One schema per run
 
 `-schema` takes a single schema here, where `export_db`, `export_data`, `export_apex`, `dependencies` and `recompile` all repeat it. That is deliberate. Discovery runs your SQL and prints one result per statement, so N schemas would mean N result sets per query, which is a different output contract rather than a second connection.
@@ -112,6 +122,8 @@ adtai discovery -sql "SELECT owner, object_type, COUNT(*) FROM all_objects WHERE
 ```
 
 To run the same query against several schemas separately, run discovery once per schema.
+
+<br>
 
 ## Arguments
 
