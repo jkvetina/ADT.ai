@@ -20,16 +20,15 @@ from adt_ai.patch.create_apex import (
 from adt_ai.patch.files import (
     _patch_map,
 )
+from adt_ai.patch.generated_helpers import is_alter_helper_filename
 from adt_ai.patch.helpers import (  # noqa: F401  (re-exported for existing importers)
     _drop_helper_sql,
-    _parse_table_columns,
     _path_is_deleted,
-    _split_sql_columns,
-    _table_alter_sql,
     _table_versions,
     _write_drop_helpers,
     _write_generated_patch_scripts,
     _write_table_diff_helpers,
+    table_alter_sql,
 )
 from adt_ai.patch.install_links import _file_link_rows, _object_link
 from adt_ai.patch.layout import (
@@ -204,8 +203,27 @@ def _database_patch_payload(
             *_script_payload(root, folder, config, before_slot, patch_code, target_env),
             *_template_payload(root, folder, config, before_slot, patch_code, target_env),
         ]
+        # The generated ALTERs leave the `after` slot they are WRITTEN to and run
+        # ahead of the object files (ADT #753). A table with a generated ALTER
+        # already exists in the target, so its exported file contributes only a
+        # no-op `CREATE TABLE IF NOT EXISTS` and its `COMMENT ON COLUMN` lines,
+        # and those describe the shape the ALTER is about to produce. Run after
+        # the file, an added column's comment is `ORA-00904: invalid identifier`
+        # and the whole patch rolls back, which is every "add a column and deploy
+        # it" on any project whose export carries comments (measured on the
+        # `patch/table_change` story fixture, 2026-09-09).
+        #
+        # A hand-written script in the same slot keeps its place behind the
+        # files: that one was put there by a person who meant "after".
+        alters = _script_payload(
+            root, folder, config, after_slot, patch_code, target_env,
+            keep=is_alter_helper_filename,
+        )
         after = [
-            *_script_payload(root, folder, config, after_slot, patch_code, target_env),
+            *_script_payload(
+                root, folder, config, after_slot, patch_code, target_env,
+                keep=lambda name: not is_alter_helper_filename(name),
+            ),
             *_template_payload(root, folder, config, after_slot, patch_code, target_env),
         ]
         # Old ADT's own condition (patch.py:1401): a group earns a section when it
@@ -215,10 +233,11 @@ def _database_patch_payload(
         # linked by nothing, which is the silent non-delivery that card exists to
         # stop. Found by running `-create`, not by a test: every fixture happened
         # to put a script in a slot whose group also had a file.
-        if not group_files and not before and not after:
+        if not group_files and not before and not after and not alters:
             continue
         payload.extend(["", "PROMPT --;", f"PROMPT -- {group.upper()}", "PROMPT --;"])
         payload.extend(before)
+        payload.extend(alters)
         for path in group_files:
             # Presence belongs to the selected source; deletion remains an
             # object-identity question so a group move never claims a DROP.
@@ -290,10 +309,10 @@ __all__ = [
     "_patch_group",
     "_refresh_apex_components",
     "_refresh_database_files",
-    "_table_alter_sql",
     "_write_generated_patch_scripts",
     "_write_patch_files",
     "annotations",
+    "table_alter_sql",
     "apex_owner_schemas",
     "install_script_name",
     "os",

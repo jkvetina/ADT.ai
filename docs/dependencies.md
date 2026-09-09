@@ -10,10 +10,10 @@ The mirror is a single gitignored SQLite file at `config/internal/dependencies.d
 
 ## Examples
 
-Refresh the mirror. Naming no query flag is what makes a run a refresh:
+Refresh the mirror. `-refresh` is required, exactly like `-scan`:
 
 ```bash
-adtai dependencies -env DEV -schema SANDBOX
+adtai dependencies -refresh -env DEV -schema SANDBOX
 adtai dependencies -refresh -env DEV -schema APP CORE
 adtai dependencies -refresh -env DEV -app 100 200
 adtai dependencies -refresh -recent -env DEV -schema APP
@@ -32,6 +32,14 @@ Ask for the transitive blast radius, or walk a foreign key:
 ```bash
 adtai dependencies -impact "TABLE.ADT_ANNO_TICKET"
 adtai dependencies -tree "ORDER_ITEMS_ORDER_FK"
+```
+
+Ask a live application whether anything in it still compiles:
+
+```bash
+adtai dependencies -scan -env DEV -app 100
+adtai dependencies -scan -env DEV -app 100 200
+adtai dependencies -scan -env DEV -app 100 -page 12 40-60
 ```
 
 Check how stale the mirror is, or emit machine-readable output:
@@ -94,13 +102,15 @@ USED BY TABLE.ADT_ANNO_TICKET (2):
 
 <br>
 
-## Query or refresh, decided by one rule
+## Query, refresh or scan, decided by one rule
 
-**Name a query and it queries; name none and it refreshes.** A bare `adtai dependencies` refreshes, and so does any run carrying no query flag, so `-schema APP`, `-app 100`, `-force` and `-recent` each describe a refresh on their own.
+**Every mode is named, and none of them is the default.** `-refresh` rebuilds the mirror, `-scan` checks a live application, and `-from` / `-to` / `-impact` / `-tree` / `-age` query the mirror offline. A run naming none of them is refused before it connects, with the three spellings on screen.
 
-Those last three steer the rebuild, so passing one beside a query is refused with `steers -refresh and cannot be combined with a query` and exit `2`.
+Refresh was the default until then, which made it the one mode reachable by accident: a bare `adtai dependencies`, a mistyped query, or `-schema APP` / `-app 100` / `-force` / `-recent` on their own all connected and rebuilt the mirror. Those four steer a refresh, they no longer request one, so each now needs `-refresh` beside it.
 
-Refresh is the only mode that connects, and the only one that reads `-config-dir` and `-env`. Query modes are entirely offline. There is no separate cache-rebuild step: re-running the refresh is the update path.
+Those last three steer the rebuild, so passing one beside a query is refused with `steers -refresh and cannot be combined with a query` and exit `2`. `-scan` is a mode of its own and combines with neither of the others, so `-scan` beside a query or beside `-refresh` is refused the same way.
+
+Refresh and scan are the modes that connect, and the only ones that read `-config-dir` and `-env`. Query modes are entirely offline. There is no separate cache-rebuild step: re-running the refresh is the update path.
 
 <br>
 
@@ -123,6 +133,42 @@ The `-impact` walk stops at `dependencies_max_depth` levels (project `config.yam
 Its columns are `TABLE NAME`, `COLUMN NAME`, `CONSTRAINT NAME` and `TYPE`, sorted by traversal path.
 
 `-age` reads the completion stamps every refresh writes, and prints `SCOPE TYPE`, `SCOPE` and a sortable `LAST REFRESH` timestamp, schemas first then applications. It is how an agent checks staleness per scope rather than guessing from a file's modification time.
+
+<br>
+
+## Scanning an application for errors
+
+`-scan` asks the target what an application's components still compile against, and prints what they do not. It is the same `APEX_APP_OBJECT_DEPENDENCY.SCAN` a deploy runs afterwards, described on [patch_verify.md](patch_verify.md), reachable on its own so the question does not need a patch to be asked.
+
+```text
+SCANNING APPLICATIONS:
+------------------------
+  APP 100 | ERROR | 2 error(s) in 431 fragments
+    PAGE 12 | Region | EMPLOYEES | SQL Query | ORA-00942: table or view does not exist
+    APPLICATION | List of Values | STATUS_LOV | SQL Query | ORA-00904: invalid identifier
+```
+
+**A clean application still prints its row.** Silence and a scan that never ran read identically on a screen, and telling those two apart is the whole point of the mode. The five verdicts are `patch -deploy`'s own, unchanged: `SUCCESS`, `ERROR`, `UNSUPPORTED` on a release older than APEX 24.2, `FAILED` when the scan did not complete, and `EMPTY` when it analyzed nothing and the application does hold pages. Every verdict but `SUCCESS` and `UNSUPPORTED` exits `1`, and each prints its reason under the row.
+
+**`-page` narrows the work, not just the answer.** `APEX_APP_OBJECT_DEPENDENCY.SCAN` takes a page, so a page selection is scanned rather than filtered: APEX compiles that page's fragments and nothing else. Changing one page of a large application therefore costs one page's scan instead of the whole application's. Measured against a 42-page application on APEX 26.1, that is 1.8s for a page against 4.0s for all of it, and the gap widens with the page count because only the application-level components are scanned either way.
+
+Each scan is its own row, and its own verdict:
+
+```text
+SCANNING APPLICATIONS:
+------------------------
+  APP 100 PAGE 12 | ERROR | 1 error(s) in 14 fragments
+    PAGE 12 | Region | EMPLOYEES | SQL Query | ORA-00942: table or view does not exist
+  APP 100 PAGE 40 | SUCCESS | 9 fragments, no errors
+```
+
+**Several pages are several scans.** APEX has no page-scoped cache clear (`CLEAR_CACHE` takes only an application), so scanning page 40 discards what page 12's scan recorded, and each page is read back before the next one runs. `-page 12 40` is two scans and two rows, never one merged verdict.
+
+**A page the application does not hold is `EMPTY`, and fails.** APEX scans an unknown page id without complaining, so the run asks `apex_application_pages` whether the page is there: one that is not gets `application 100 holds no page 7777, so the scan verified nothing`. A page that IS there and compiles nothing is a real `SUCCESS`, with the reason saying so.
+
+`-page` needs `-scan`. Without it, an invocation carrying `-app` is a refresh, and a refresh has no page scope.
+
+**It writes nothing.** No mirror row, no log file, no deploy receipt: the console is the whole report, in `table`, `yaml` or `md` like every other mode here. The helper procedures the scan generates on the schema are dropped again before the run ends, whether or not it succeeded.
 
 <br>
 
@@ -206,10 +252,12 @@ The refresh connection is an ordinary ADT.ai connection and runs the ordinary se
 | `-impact`, `--impact` | No | none | List the transitive reverse impact of changing the given object. |
 | `-tree`, `--tree` | No | none | Show the foreign-key reference and dependency cascade around a named constraint. |
 | `-age`, `--age` | No | off | Offline: list when each schema and application scope was last refreshed. |
-| `-refresh [NAME ...]`, `--refresh [NAME ...]` | No | on when no query flag is given | Connect and rebuild the mirror. This is what the command does with no query flag, so the flag is the explicit spelling of the default. Object names or SQL wildcards trigger a deep refresh for matching objects and the dependency rows on both sides of them. |
+| `-refresh [NAME ...]`, `--refresh [NAME ...]` | No | off | Connect and rebuild the mirror. Required to run a refresh at all: it is never implied, and `-schema` / `-app` / `-force` / `-recent` steer it rather than requesting it. Object names or SQL wildcards trigger a deep refresh for matching objects and the dependency rows on both sides of them. |
 | `-force`, `--force` | No | off | Refresh only: delete the requested schema and application rows before reloading that scope. Rejected beside a query flag. |
 | `-recent [DAYS]`, `--recent [DAYS]` | No | off | Refresh only: reload just what changed in the last DAYS days, where DAYS may be a fraction of a day (`1/24` is the past hour). Bare `-recent` scopes each refresh to that scope's own last-refresh stamp, selected server-side and patched per object, so unchanged rows stay intact; a scope with no stamp is refreshed in full and one with no changes skips the detail pulls. Rejected beside a query flag. |
-| `-app`, `--app` | Yes | none | APEX application ids whose dictionary to mirror, refresh only. Repeat, space-separate, or pass a range, `MIN-MAX` closed or `MIN+` open, resolved against the discovered applications. |
+| `-app`, `--app` | Yes | none | APEX application ids whose dictionary to mirror, or to scan. Repeat, space-separate, or pass a range, `MIN-MAX` closed or `MIN+` open, resolved against the discovered applications. |
+| `-scan`, `--scan` | No | off | Connect and compile every component of the `-app` applications, reporting each property that does not compile. Writes nothing. Requires `-app`; rejected beside a query flag or `-refresh`. |
+| `-page`, `--page` | Yes | none | Scan only: scan these page ids instead of the whole application, repeated, space-separated, or as a `MIN-MAX` / `MIN+` range. |
 | `-format`, `--format` | No | `table` | Output format: `table`, `yaml` or `md`. |
 
 Shared options (-root, -env, -schema, -config-dir, -key, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

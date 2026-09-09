@@ -444,11 +444,26 @@ def _object_name(path: str, config: dict[str, Any], read: Any) -> str | None:
     return name
 
 
+def is_apex_workspace_static_file(path: str, config: dict[str, Any]) -> bool:
+    """A static file under the WORKSPACE root rather than an application's.
+
+    `apex_path_files` names the same folder under both roots, so the two are
+    told apart by whether the path carries an application id at all (ADT #720).
+    """
+    return is_apex_static_file(path, config) and apex_app_id(path, config) is None
+
+
 def database_schema(path: str, config: dict[str, Any]) -> str:
     # "DATABASE" is the sentinel for a layout that carries no schema level, and
     # `_patch_group` names the install script off this answer, so a path that
     # sits outside the layout must report it too, never a stray segment.
-    head = apex_path_head(config) if is_rest_path(path, config) else _head_for(path, config)
+    #
+    # Both workspace-level artifacts read their schema off the APEX head rather
+    # than the object head: `workspace/rest/` since `#314`, and
+    # `workspace/<files>/` since `#720`. Neither sits under `path_objects`, so
+    # the object head does not match them and the sentinel would be the answer.
+    workspace_level = is_rest_path(path, config) or is_apex_workspace_static_file(path, config)
+    head = apex_path_head(config) if workspace_level else _head_for(path, config)
     if head is None or not head_matches(path, head):
         return "DATABASE"
     index = schema_index(head)

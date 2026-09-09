@@ -3,14 +3,11 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
 
 from adt_ai.cli.constants import (
     ConfigLoader,
     ConnectionConfigError,
-    ConnectionResult,
     DependencyIndexRequest,
     DependencyIndexRunner,
     DependencyStore,
@@ -20,8 +17,6 @@ from adt_ai.cli.constants import (
     print_module_banner,
 )
 from adt_ai.cli.context import (
-    ApexAppSelection,
-    _app_in_selection,
     _config_search_paths,
     _flatten_arg_groups,
     _load_startup_context,
@@ -29,20 +24,28 @@ from adt_ai.cli.context import (
     _print_connection_block,
     _repo_root,
 )
+from adt_ai.cli.dependencies_modes import (
+    _connecting_mode_gateways,
+    _mode_requested,
+    _query_requested,
+    _refresh_chrome_stream,
+    _refresh_lookup_schema,
+    _resolve_refresh_app_ids,
+    _resolve_refresh_names,
+)
 from adt_ai.cli.dependencies_reporters import (
     _print_dependency_age,
     _print_dependency_impact,
     _print_dependency_list,
     _print_foreign_key_tree,
 )
+from adt_ai.cli.dependencies_scan import _scan_applications, _scan_argument_error
 from adt_ai.cli.export_apex_owners import listed_applications, resolve_apex_owner_routes
 from adt_ai.cli.export_reporters import ConsoleApexRevealReporter
-from adt_ai.cli.gateways import build_gateway, cached_schema_gateway_factory
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.dependencies.store import DEFAULT_MAX_DEPTH
 from adt_ai.export_apex.inventory import ApexApplication, ApexDiscovery
 from adt_ai.shared.apex_store import ApexStore
-from adt_ai.shared.connections import Connection
 from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.progress import FixedWidthProgressPrinter, schema_label
 
@@ -51,59 +54,31 @@ _NO_DEPENDENCY_INDEX_MESSAGE = (
 )
 
 
-@contextmanager
-def _refresh_chrome_stream(machine_format: bool) -> Iterator[None]:
-    """Where one refresh segment's console output goes.
-
-    A refresh prints no document at all: the connection block, both headers, the
-    APEX applications table and the runner's progress rows are chrome to the last
-    byte. Under `-format yaml`/`md` that whole screen belongs on stderr beside the
-    timer, so `dependencies -refresh -format yaml` leaves stdout empty and stays
-    pipeable, which is what the routing beside `timer_stdout` already claimed and
-    only the footer honoured (`#656`).
-
-    Redirecting the segment keeps that one decision in one place instead of a
-    `file=` threaded through five printers, and the caller wraps the segment body
-    rather than the `run_schema_sections` call: that one marks its final-timer
-    latch on the real `sys.stdout` after the loop, and a redirect spanning it
-    would set the latch on stderr and earn the run a second `TIMER` footer.
-    """
-    if not machine_format:
-        yield
-        return
-    with redirect_stdout(sys.stderr):
-        yield
-
-
-def _query_requested(args: argparse.Namespace) -> bool:
-    """True when the invocation names a query mode, so it reads the mirror offline.
-
-    The one question the command asks of its own arguments, and the reason it is
-    a named helper rather than an inline chain: the dispatcher's argument check
-    and the command body both decide refresh against query, and a second spelling
-    of the same list is how two such decisions drift apart.
-    """
-    return bool(
-        args.uses
-        or args.used_by
-        or args.impact
-        or args.tree
-        or getattr(args, "age", False)
-    )
-
-
 def _dependencies_argument_error(args: argparse.Namespace) -> str | None:
     """Reject the refresh options beside a query, and reject bad ``-app`` ids.
 
     Returned (non-``None``) by the dispatcher before the command runs, so misuse
     surfaces as a parser-style error screen, never a silently-accepted flag.
-    ``-app``/``-force``/``-recent`` steer the refresh, so they are refused only
-    when the invocation also asked a question; on their own they now describe a
-    refresh, which is what a query-less invocation means. ``-schema`` is accepted
-    either way and reads as whichever mode it landed in: an offline owner
-    disambiguator beside a query (see ``_resolve_query_schemas``), the refresh
-    scope without one.
+    ``-app``/``-force``/``-recent`` steer the refresh, so they are refused
+    beside a query, and on their own they no longer imply one. ``-schema`` is
+    accepted either way and reads as whichever mode it landed in: an offline
+    owner disambiguator beside a query (see ``_resolve_query_schemas``), the
+    refresh scope without one.
+
+    **Every mode is named, and none is the default** (ADT #751). A third mode
+    arrived on this command and the refresh was still whatever was left over
+    when no question was asked, so `-refresh` was the one mode a user could run
+    without meaning to: `dependencies -app 100`, a typo'd query, and a bare
+    `dependencies` all connected and rebuilt the mirror. Jan: *"With -scan
+    added, the -refresh should be mandatory (not implied)"*, which is the rule
+    `-scan` already followed and the same reason it is never implied either.
     """
+    # The scan gate runs first, because `-app` beside `-scan` is not steering a
+    # refresh: it says what to scan. Judged the other way round, every misuse of
+    # the scan mode came back wearing the refresh mode's error message.
+    scan_error = _scan_argument_error(args)
+    if scan_error is not None:
+        return scan_error
     offenders = [
         flag
         for flag, present in (
@@ -115,6 +90,11 @@ def _dependencies_argument_error(args: argparse.Namespace) -> str | None:
     ]
     if offenders and _query_requested(args):
         return f"{' / '.join(offenders)} steers -refresh and cannot be combined with a query"
+    if not _mode_requested(args):
+        return (
+            "name a mode: -refresh to rebuild the mirror, -scan to check an "
+            "application, or a query (-from, -to, -impact, -tree, -age)"
+        )
     # Delegate -app validation to the shared APEX selection parser so ranges
     # (MIN-MAX / MIN+) are accepted exactly as export_apex/flow accept them; a
     # malformed range surfaces as the parser-style error screen. Explicit ids
@@ -128,75 +108,6 @@ def _dependencies_argument_error(args: argparse.Namespace) -> str | None:
             if not app_id.isdigit():
                 return f"invalid APP_ID: {app_id}"
     return None
-
-
-def _refresh_lookup_schema(
-    connections: ConnectionResult,
-    environment: str | None,
-) -> str | None:
-    """The schema the APEX axis of a refresh reads the inventory through.
-
-    The configured default wins, else the first schema the environment lists,
-    else nothing. ``default_schemas`` RAISES on an unconfigured default rather
-    than returning an empty list, so written inline as
-    ``defaults[0] if defaults else configured[0]`` the fallback can never run:
-    a connection file carrying ``schemas:`` and no ``defaults:`` failed
-    ``dependencies -refresh -app 100-200`` on the configuration screen instead
-    of reading its first schema (`#670`). Same shape, and the same reason, as
-    ``export_apex_owners.apex_lookup_schema``.
-    """
-    try:
-        defaults = connections.default_schemas(environment)
-    except ConnectionConfigError:
-        defaults = []
-    if defaults:
-        return defaults[0]
-    configured = connections.schema_names(environment)
-    return configured[0] if configured else None
-
-
-def _resolve_refresh_app_ids(
-    selection: ApexAppSelection | None,
-    connections: ConnectionResult,
-    environment: str | None,
-    gateway_factory: GatewayFactory,
-) -> list[int]:
-    """Resolve the ``-app`` selection into a unique, ordered list of app ids.
-
-    No selection → no apps. Explicit ids (no ranges) pass straight through. A
-    range (MIN-MAX / MIN+) is resolved against apps discovered across the
-    configured schemas and filtered with ``_app_in_selection``, the same shape
-    ``_refresh_flow`` uses (cli_commands_flow.py) so the two commands agree on
-    range semantics.
-    """
-    if selection is None:
-        return []
-    if not selection.has_ranges:
-        return [int(app_id) for app_id in selection.explicit_ids]
-
-    configured_schemas = connections.schema_names(environment)
-    lookup_schema = _refresh_lookup_schema(connections, environment)
-    if lookup_schema is None:
-        return []
-    discovery = ApexDiscovery(gateway_factory(lookup_schema))
-    seen: set[int] = set()
-    app_ids: list[int] = []
-    for app in listed_applications(discovery, configured_schemas):
-        if _app_in_selection(app.app_id, selection) and app.app_id not in seen:
-            seen.add(app.app_id)
-            app_ids.append(app.app_id)
-    return app_ids
-
-
-def _resolve_refresh_names(raw: list[str] | None) -> list[str]:
-    """Flatten repeated/comma-joined refresh names into unique uppercase values."""
-    names: list[str] = []
-    for value in raw or []:
-        for part in str(value).split(","):
-            part = part.strip().upper()
-            if part and part not in names:
-                names.append(part)
-    return names
 
 
 def _resolve_query_schemas(raw: list[str] | None) -> list[str]:
@@ -224,12 +135,16 @@ def _run_dependencies(
     root    = Path(args.root).expanduser().resolve()
     db_path = internal_path(root, "dependencies.db")
 
-    # Refresh is the default, and a query is the thing you opt into. Rebuilding
-    # the mirror is the one job here that needs no argument to describe it, so an
-    # invocation carrying no question is that job; -refresh stays as its explicit
-    # spelling. What used to sit here was a four line usage hint, which made the
-    # zero-argument run the only run that did nothing.
-    if args.refresh is not None or not _query_requested(args):
+    # Three modes, each named by the user, none of them the default (ADT #751).
+    # Refresh used to be what an invocation meant when it asked no question,
+    # which made it the one mode reachable by accident -- a mistyped query or a
+    # bare `dependencies` connected and rebuilt the mirror. `_mode_requested`
+    # has already refused the mode-less invocation by the time this runs, so
+    # each branch below tests only for its own flag and nothing falls through.
+    if getattr(args, "scan", False):
+        return _scan_applications(args, root, gateway_factory)
+
+    if args.refresh is not None:
         return _refresh_dependency_index(args, root, gateway_factory)
 
     if not db_path.exists():
@@ -311,22 +226,10 @@ def _refresh_dependency_index(
         schemas = connections.default_schemas(environment)
 
     debug = getattr(args, "debug", False)
-    connection_cache: dict[str, Connection] = {}
-
-    def connection_for(schema: str) -> Connection:
-        if schema not in connection_cache:
-            connection_cache[schema] = connections.resolve(
-                environment=environment, schema=schema
-            )
-        return connection_cache[schema]
-
-    def default_gateway_factory(schema: str) -> QueryGateway:
-        return build_gateway(startup, connection_for(schema))
-
     # Per-schema cache and `-debug` wrap in one shared helper, so the console
     # guard keeps the nesting `build_gateway` documents (`#670`).
-    selected_gateway_factory = cached_schema_gateway_factory(
-        gateway_factory or default_gateway_factory, debug=debug
+    connection_for, selected_gateway_factory = _connecting_mode_gateways(
+        startup, environment, gateway_factory, debug=debug
     )
 
     # -app reuses the shared APEX selection parser: explicit ids flow through

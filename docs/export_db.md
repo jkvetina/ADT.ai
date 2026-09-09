@@ -209,6 +209,50 @@ The schema block needs `user_schema_privs`, which is 23ai. On an older database 
 
 <br>
 
+## What an assertion exports as
+
+A 23ai assertion is a CHECK constraint spanning more than one table, so the rule it enforces belongs to none of them and none of them carries it. It exports on its own, to `assertions/`:
+
+```text
+BEGIN
+    DBMS_UTILITY.EXEC_DDL_STATEMENT('DROP ASSERTION F26_QTY_ASSERT');
+    ...
+END;
+/
+--
+CREATE ASSERTION f26_qty_assert CHECK
+(
+  NOT EXISTS (
+    SELECT 1
+    FROM   f26_assert_t
+    WHERE  qty > 1000
+  )
+)
+ENABLE
+NOT DEFERRABLE
+INITIALLY IMMEDIATE
+VALIDATE;
+```
+
+Oracle has no `CREATE OR REPLACE ASSERTION`, so the file drops before it creates, the same shape a materialized view log takes and for the same reason. The condition between the parentheses is kept exactly as it was written, because it is your SQL rather than something the dictionary formatted.
+
+Two things about this type are unlike every other one, and both are invisible until they bite:
+
+- Its `user_objects` row says `UNDEFINED`, not `ASSERTION`, so it is found by name against `user_assertions`. That view is 23ai; on an older database the read finds nothing and a plain `export_db` carries on exactly as before.
+- Its DDL does not come from `DBMS_METADATA`, which refuses the type outright with `ORA-31600`. It comes from `user_assertions.DEFINITION_SQL`.
+
+In a patch it installs in its own `assertions` section, after the tables and views its condition can name and before the data, so a seed row that breaks the rule fails at that row.
+
+<br>
+
+## What the 26ai object types export as
+
+A SQL domain, a property graph, an MLE module and an MLE environment each carry their own `user_objects` row and each has a folder of its own, so a plain `export_db` sweeps them like any other type. None of the four comes from `DBMS_METADATA`, which refuses all four with `ORA-31600`.
+
+What each exports as, and the two repository references that stop dangling once they do, are on export_db_26ai.md.
+
+<br>
+
 ## Watching a long export
 
 The default screen prints a row per object, which is what you want while watching a handful. On a whole schema it is hundreds of rows, and the overview has left the scrollback long before the export ends. `-compact` keeps the overview and replaces the rows with one line that moves:
@@ -240,10 +284,10 @@ EXPORTING 6 OBJECTS:
 `object_types` in `config.yaml` is the list of types `export_db` writes files for, and `-type` selects from it. A pattern that names something outside that list is refused rather than exported, exit `2`:
 
 ```text
-export_db: -type selected object types export_db does not export: DOMAIN. Its exported types are the 'object_types' keys in config.yaml.
+export_db: -type selected object types export_db does not export: LOB. Its exported types are the 'object_types' keys in config.yaml.
 ```
 
-The refusal comes before the connection when the config alone settles it, so `-type DOMAIN` on a 26ai schema costs nothing.
+The refusal comes before the connection when the config alone settles it, so a type outside the map costs no round trip.
 
 A wildcard is different. `-type %` covers every configured type, so it is a request `export_db` can only judge once the schema has answered, and there the refusal lands under the overview table, naming every type it found no home for.
 

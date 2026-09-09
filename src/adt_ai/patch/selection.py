@@ -279,7 +279,25 @@ def _patch_group(
 ) -> str:
     if _is_apex_application_path(path, config):
         app_id = _apex_app_id(path, config)
-        return f"{apex_patch_schema(config, owners, app_id)}.{app_id or '0'}"
+        if app_id is None:
+            # A WORKSPACE-level artifact belongs to no application, so `#602`'s
+            # per-application owner lookup has no row to find and
+            # `apex_patch_schema` falls through to the shipped literal `APEX`,
+            # which no connection file names: the deploy died on
+            # `Schema not configured: <ENV>.APEX` before its first script.
+            # Measured on the story fixture 2026-09-09, with the workspace
+            # static file `#724`'s own guard is about (ADT #720).
+            #
+            # `#314` gave `workspace/rest/` the same answer by sending it down
+            # the database route entirely. A static file cannot follow it there,
+            # because a `.css` has no SQL route and needs the `wwv_flow_imp`
+            # wrapper only the APEX route generates. So it keeps the route and
+            # takes the schema from the path, which is where the database route
+            # reads it from too, and which is the project's own answer Jan asked
+            # for in `#602`: the schema is known from the connection, never from
+            # a config key.
+            return f"{_database_schema(path, config)}.0"
+        return f"{apex_patch_schema(config, owners, app_id)}.{app_id}"
     return _database_schema(path, config)
 
 def install_script_name(

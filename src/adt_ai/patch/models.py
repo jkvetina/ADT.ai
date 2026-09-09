@@ -96,6 +96,12 @@ class GeneratedScripts:
     #: `CREATE` against a table that already exists, and the developer is the
     #: only one who can say what the column change was.
     unresolved_tables: list[str] = field(default_factory=list)
+    #: `(table file, reason)` for every table Oracle was never asked about,
+    #: because one of the two versions would not build as a shadow table (ADT
+    #: #753). Reported for the same reason as the field above and with more
+    #: urgency: this one names a table the developer DID change, whose ALTER is
+    #: silently missing from a patch that otherwise looks complete.
+    refused_tables: list[tuple[str, str]] = field(default_factory=list)
 
 @dataclass(frozen=True)
 class PatchScripts:
@@ -231,6 +237,10 @@ class DatabasePatchResult:
     # reach, so no ALTER could be generated for them (ADT #447). Empty on every
     # commit-built patch, which has a version walk to read instead.
     unresolved_tables: list[str] = field(default_factory=list)
+    # Tables changed by this patch that Oracle was never asked about, because a
+    # version would not build as a shadow table (ADT #753). A missing ALTER is
+    # invisible in a patch that deploys green, so it earns a warning section.
+    refused_tables: list[tuple[str, str]] = field(default_factory=list)
     # Objects the database moved past after they were exported, so this patch
     # ships the previous body for them (ADT #261, reported rather than refused
     # since #468). Carried on the result rather than raised, which is what makes
@@ -313,10 +323,23 @@ class DeploymentRunResult:
     #: this DOES flip the run's status, because it is patch-scoped: the scan
     #: reads the application the patch just deployed, so a finding is this
     #: deploy's. Empty when `deploy_verify_scan` is off or no application landed.
+    #: `-continue` is the one exception, and `scan_waived` below records it.
     apex_scans: list[Any] = field(default_factory=list)
+    #: True when `-continue` waived a failing scan (`#749`): the run carried at
+    #: least one failing report AND was told to keep going, so the verdict cost
+    #: the deploy neither its status nor a revert. False on every other run,
+    #: including a `-continue` run whose scans all passed -- there is then
+    #: nothing to waive, and a console line claiming otherwise would describe an
+    #: event that did not happen.
+    scan_waived: bool = False
     #: One `ApexRevert` per application whose scan failed and whose pre-import
     #: backup was imported back (`#727`), each already written to its own report
     #: beside the scan. It never flips the run's status: a revert undoes the
     #: write, it does not make the patch correct, so a deploy whose scan failed
     #: stays `ERROR` whether or not the target came back.
     apex_reverts: list[Any] = field(default_factory=list)
+    #: The deploy's build status ledger, `app_id` to `BuildStatusLock` (`#726`),
+    #: as it stands AFTER the release step: `final` is set there and nowhere
+    #: else. Empty when `patch_apex_build_status` names no status for this target
+    #: environment, which is the default, and then the console grows no row.
+    apex_locks: dict[int, Any] = field(default_factory=dict)

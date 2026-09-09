@@ -60,6 +60,8 @@ COMMAND_SUMMARIES = {
         "The answers come from a local picture of the database you refresh when it "
         "moves on, so asking is fast, needs no connection, and costs an AI agent a "
         "fraction of the tokens that digging through a live schema would.",
+        "It also scans an APEX application on demand and names every component that "
+        "no longer compiles.",
     ),
     "discovery": (
         "Answers questions about a database, writes down what it found, and only "

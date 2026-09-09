@@ -116,6 +116,7 @@ RELEVANT COMMITS FOR "%report%":
 - **`-search` is a discovery run, so `-create` beside it lists the commits instead of building.** Finding the right commits is what the flag is for, and a build chosen by nothing is a build over every commit the search matched. Add `-commit`, `-ignore` or `-force` once you know which ones you want and the same command builds. Nothing is written in the meantime, so an existing patch folder, its `patch_scripts/` and its snapshots survive the search untouched. A `-create` with no `-search` is unaffected.
 - `-commit` and `-ignore` take a number, a hash prefix, or a range (`12`, `12+`, `12-40`). An all-digit ref shorter than seven characters is a number, never a hash prefix, so `-ignore 1` cannot also drop a commit whose hash opens on `1`. A commit you name is an instruction and is never filtered out.
 - `patch_commit_pattern` in `config.yaml` keeps commits whose subject does not match that shape out of every patch. An explicit `-search` or `-commit` overrides it.
+- **A `-create` whose name matches no commit subject stops with `NO COMMITS MATCHED "<CODE>"`**, quoting the pattern it ran, counting the commits that passed every other filter, and offering two options: `-search PATTERN` to select them by a different term, or `-commit N` and `-ignore N` to select them by number, hash prefix or range. It closes on the habit that avoids the screen altogether, **putting the patch name in the commit message**: the name is matched against subjects, so a repository that writes its ticket number into the subject is found by `-name` alone. `NO COMMITS FOUND ... commits scanned` is the other failure and a different fix, the scan reached nothing at all, so raise `patch_scan_commits`.
 - The commits come from the per-branch store `rebuild` maintains, at `repo_commits_file`. There is one store, shared with `search_repo` and `calendar`, and `patch` tops it up rather than keeping a copy. Use `adtai rebuild` to rebuild one from scratch.
 
 <br>
@@ -163,6 +164,8 @@ All four modes, what each one costs, and which two refs `-head` reads are on [pa
 
 Both modes, the stale export refusal and the retarget rules are on [patch_app.md](patch_app.md). The import's staging, signatures and refusals are on [patch_import.md](patch_import.md), and the loop around it on apex_round_trip.md.
 
+`-deploy -app`'s drift check is measured against the target as it stood immediately before the `RUN_ONLY` lock, not after: setting build status moves the application's own export checksum, so a deploy-in-place no longer refuses on drift that reading it post-lock would have invented. See [patch_verify.md](patch_verify.md#deploy_build_status) for the measurement.
+
 <br>
 
 ## What a deleted object generates, and what a moved one does not
@@ -208,12 +211,12 @@ Each application gets a receipt at `<path_apex>/logs_<ENV>/<timestamp>_apex_drop
 
 | Argument       | Repeatable | Default | Description |
 | -------------- | ---------- | ------- | ----------- |
-| `-name`, `--name` | No | none | The patch this run acts on, in every mode: an id, a patch code, or a full folder name. On its own it inspects and builds nothing. A value matching no patch lists the available patches and exits `2`. |
+| `-name`, `--name` | No | none | The patch this run acts on, in every mode: an id, a patch code, or a full folder name. With no `-search` beside it, it is also the commit filter, matched against commit subjects. On its own it inspects and builds nothing. A value matching no patch lists the available patches and exits `2`. |
 | `-target`, `--target` | No | connection file default environment | Environment to deploy into. An omitted flag uses the connection file's default. |
 | `-create`, `--create` | No | off | Build the patch named by `-name`, which is mandatory beside it. An existing folder is rewritten; a well-formed folder name that exists nowhere is refused. |
 | `-deploy`, `--deploy` | No | off | Deploy the patch named by `-name`, mandatory beside it, exactly as it stands on disk. Beside `-create`, only a name with no folder is built first. |
 | `-force`, `--force` | No | off | Proceed on a patch already deployed to this target. With `-deploy`, re-run a completed deployment of the same payload, otherwise reported `SKIPPED`. With `-create`, rebuild a folder carrying a deploy log: logs are kept and generated artifacts follow the new commit window. With `-drop`, remove a sandbox somebody else created. |
-| `-continue`, `--continue` | No | off | With `-deploy`, keep running the remaining install scripts after one fails, instead of stopping and rolling back. It does not resume an interrupted run. |
+| `-continue`, `--continue` | No | off | With `-deploy`, keep running the remaining install scripts after one fails, instead of stopping and rolling back. A failing `deploy_verify_scan` verdict also becomes advisory: the row still prints, the run still ends `SUCCESS`, and nothing is reverted. A failed install script still ends the run `ERROR`. It does not resume an interrupted run. |
 | `-by`, `--by` | Yes | none | Limit commits and patch folders to an author, as a case-insensitive substring of the commit author email. |
 | `-my`, `--my` | No | off | Limit commits and patch folders to you, matched against `IDENTITY.yaml` or `git config user.email`. |
 | `-recent [DAYS]`, `--recent [DAYS]` | No | off | Only commits and folders from the last `DAYS` days, or a fraction of a day (`1/24` is the past hour). A whole-day window counts today, so `-recent 1` is today. Bare `-recent` means `1`. |

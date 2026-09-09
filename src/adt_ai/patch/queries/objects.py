@@ -250,7 +250,8 @@ END;
 """.lstrip()
 
 # ADT emits the APEX environment itself, with the workspace resolved from the
-# cached `config/internal/apex_apps.yaml` (ADT #298). These are the same two APEX_UTIL /
+# cached `config/internal/apex.db` (ADT #298; the store was `apex_apps.yaml` until
+# `#369` folded it into the database). These are the same two APEX_UTIL /
 # APEX_APPLICATION_INSTALL calls the shipped scaffold's `apex_init/00_init.sql`
 # carried; what changed is where the value comes from, a hand-edited
 # `<APEX_WORKSPACE>` placeholder before, `export_apex`'s own metadata now.
@@ -262,6 +263,38 @@ END;
 #
 # Emitted BEFORE the apex_init templates, for the same reason the session
 # defaults are: a project's own template can then override any of it.
+# The same context for a group that holds no application at all (ADT #720).
+#
+# App id `0` is the WORKSPACE group, so `export_apex`'s per-application metadata
+# has no row to answer from, and a project whose only APEX artifact is a
+# workspace static file may never have exported an application to record one.
+# The target knows: a parsing schema belongs to a workspace, and
+# `apex_workspace_schemas` is the mapping. Resolving it there rather than
+# offline also means the value cannot go stale the way a cached one can.
+#
+# A cursor rather than a scalar SELECT, because a schema mapped to no workspace
+# must leave the context unset rather than raise `NO_DATA_FOUND` on a line that
+# is only setting up: whatever needs the workspace fails next with its own
+# message, which is the more useful one. Ordered so a schema in two workspaces
+# picks the same one on every run instead of whichever the block scan returned.
+APEX_WORKSPACE_ENVIRONMENT_BLOCK = """
+PROMPT --;
+PROMPT -- APEX ENVIRONMENT
+PROMPT --;
+BEGIN
+    FOR c IN (
+        SELECT s.workspace_name
+        FROM   apex_workspace_schemas s
+        WHERE  UPPER(s.schema) = USER
+        ORDER  BY s.workspace_name
+    ) LOOP
+        APEX_UTIL.SET_WORKSPACE (p_workspace => c.workspace_name);
+        EXIT;
+    END LOOP;
+END;
+/
+""".strip()
+
 APEX_ENVIRONMENT_BLOCK = """
 PROMPT --;
 PROMPT -- APEX ENVIRONMENT
@@ -317,3 +350,37 @@ wwv_flow_imp.component_end;
 end;
 /
 """.strip()
+
+# A WORKSPACE static file is the same payload through a different door, and both
+# halves of the difference are load-bearing (ADT #720):
+#
+#   * `create_app_static_file` is the APPLICATION procedure and raises
+#     `ORA-20001 ... Application not found` at `flow_id = 0`. The workspace has
+#     its own `create_workspace_static_file`, measured on SANDBOX 2026-09-09,
+#     with no `p_flow_id` argument at all.
+#   * The application form above carries no `begin` on purpose: it is `@`-linked
+#     from inside an application import script that already opened one. A
+#     workspace file's group holds no application and no import, so its snapshot
+#     is the whole statement or SQLcl reads the lines as bare commands and
+#     answers `SP2-0044` to every one of them.
+#
+# The workspace context comes from the group's own `APEX ENVIRONMENT` block,
+# `APEX_WORKSPACE_ENVIRONMENT_BLOCK` above, so this block states no workspace of
+# its own: two spellings of that lookup is how they start disagreeing.
+APEX_WORKSPACE_FILE_BLOCK = """
+BEGIN
+{rows}
+    wwv_flow_imp_shared.create_workspace_static_file(
+        p_id            => wwv_flow_id.next_val,
+        p_file_name     => '{file_name}',
+        p_mime_type     => '{mime_type}',
+        p_file_charset  => 'utf-8',
+        p_file_content  => wwv_flow_imp.varchar2_to_blob(wwv_flow_imp.g_varchar2_table));
+    COMMIT;
+END;
+/
+""".strip()
+APEX_WORKSPACE_FILE_HEADER = (
+    "    wwv_flow_imp.g_varchar2_table := wwv_flow_imp.empty_varchar2_table;"
+)
+APEX_WORKSPACE_FILE_ROW = "    wwv_flow_imp.g_varchar2_table({index}) := '{row}';"

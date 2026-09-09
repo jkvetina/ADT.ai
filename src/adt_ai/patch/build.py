@@ -21,7 +21,7 @@ snapshots behind.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -61,6 +61,7 @@ def build_database_patch(
     hash_shipped: Mapping[str, str] | None = None,
     hash_commits: Mapping[str, int] | None = None,
     hash_previous: Mapping[str, str] | None = None,
+    gateway_factory: Callable[[str], Any] | None = None,
 ) -> DatabasePatchResult:
     """Write ``folder`` and report what went into it.
 
@@ -127,6 +128,10 @@ def build_database_patch(
         # by content hash rather than by commit number.
         hash_previous = hash_previous,
         window        = window,
+        # The ALTER half asks Oracle what changed (ADT #753). One connection per
+        # schema, opened only if a table in it actually has two versions to
+        # compare, so a patch carrying no table opens none.
+        gateway_factory = gateway_factory,
     )
     # The scripts move INTO the patch before the install script is written,
     # because that is where `_script_payload` now reads them from (ADT #309).
@@ -181,6 +186,7 @@ def build_database_patch(
         files             = files,
         scripts           = scripts,
         unresolved_tables = generated.unresolved_tables,
+        refused_tables    = generated.refused_tables,
         changed_objects   = freshness.changed,
         unclocked_schemas = freshness.unclocked,
         # Built last, and off the install scripts already on disk: the templates

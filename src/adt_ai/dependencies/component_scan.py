@@ -40,6 +40,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from adt_ai.dependencies.queries import (
+    APEX_SCAN_PAGE_STATEMENT,
     APEX_SCAN_STATEMENT,
     DEPSCAN_CLEANUP_STATEMENT,
 )
@@ -68,9 +69,17 @@ def run_component_scan(
     gateway: Any,
     app_id: int,
     *,
+    page_id: int | None = None,
     session_statements: Sequence[str] = (),
 ) -> None:
     """Scan one application's components, always taking the helpers away after.
+
+    ``page_id`` narrows the scan to a single page (ADT #751). It is a real
+    narrowing rather than a filter over the answer: `APEX_APP_OBJECT_DEPENDENCY.
+    SCAN` takes `p_page_id`, and given one it compiles that page's fragments
+    instead of the application's. `None` scans the whole application, which is
+    what both the post-deploy verification and the dependency refresh want --
+    neither asks about a page, and neither should have to say so.
 
     ``session_statements`` are issued between the security context and the scan
     itself, for a caller whose session prerequisites are not already set. The
@@ -85,10 +94,14 @@ def run_component_scan(
     gateway.execute(EXPORT_START_QUERY, {"app_id": app_id})
     for statement in session_statements:
         gateway.execute(statement)
+    statement = APEX_SCAN_STATEMENT if page_id is None else APEX_SCAN_PAGE_STATEMENT
+    params: dict[str, int] = {"app_id": app_id}
+    if page_id is not None:
+        params["page_id"] = page_id
     scan_error: BaseException | None = None
     cleanup_error: BaseException | None = None
     try:
-        gateway.execute(APEX_SCAN_STATEMENT, {"app_id": app_id})
+        gateway.execute(statement, params)
     except Exception as error:  # noqa: BLE001 - re-raised below, after the cleanup
         scan_error = error
     finally:

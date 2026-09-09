@@ -23,18 +23,34 @@ PLSQL_OBJECT_TYPES = ("PACKAGE", "PACKAGE BODY", "PROCEDURE", "FUNCTION", "TRIGG
 # The object types ADT.ai knows about, spelled the way Oracle spells them. DATA and
 # GRANT are ADT's own pseudo-types (they have no user_objects row); MVIEW LOG is
 # ADT's name for a materialized view log, which Oracle stores as an MLOG$_ table.
+#
+# ASSERTION is the one entry whose ``user_objects`` row does not carry its own name:
+# a 23ai assertion is typed ``UNDEFINED`` there, a bucket shared with other things,
+# so it is recognised against ``user_assertions`` instead (`#740`). The vocabulary
+# still spells it the way Oracle does, because ``-type ASSERTION`` is what a user
+# types and where the rows come from is ADT's problem rather than theirs.
+#
+# DOMAIN, MLE ENVIRONMENT, MLE MODULE and PROPERTY GRAPH are the 26ai types (`#738`).
+# Each one is spelled here the way ``user_objects`` spells it, which for the
+# environment is NOT the way its DDL is written: the row says ``MLE ENVIRONMENT``
+# and the keyword is ``MLE ENV``, so the alias table below carries the second.
 ORACLE_OBJECT_TYPES = frozenset(
     {
+        "ASSERTION",
         "DATA",
+        "DOMAIN",
         "FUNCTION",
         "GRANT",
         "INDEX",
         "JOB",
         "MATERIALIZED VIEW",
+        "MLE ENVIRONMENT",
+        "MLE MODULE",
         "MVIEW LOG",
         "PACKAGE",
         "PACKAGE BODY",
         "PROCEDURE",
+        "PROPERTY GRAPH",
         "SCHEDULE",
         "SEQUENCE",
         "SYNONYM",
@@ -53,10 +69,17 @@ ORACLE_OBJECT_TYPES = frozenset(
 # SPEC is the counterpart of BODY: Oracle has no 'PACKAGE SPEC' type because the bare
 # type name *is* the specification, but a reader who just typed `-type PACKAGE BODY`
 # reasonably expects `-type PACKAGE SPEC` to work as its opposite.
+#
+# MLE ENV is the spelling of the DDL keyword, and the one anybody who has written a
+# `CREATE MLE ENV` will reach for; the dictionary's own `MLE ENVIRONMENT` is the
+# canonical form because that is what `user_objects` has to be filtered on. GRAPH is
+# how a property graph is spoken about once the sentence has already said "graph".
 OBJECT_TYPE_ALIASES = {
+    "GRAPH": "PROPERTY GRAPH",
     "MVIEW": "MATERIALIZED VIEW",
     "MATERIALIZED": "MATERIALIZED VIEW",
     "MATERIALIZED VIEW LOG": "MVIEW LOG",
+    "MLE ENV": "MLE ENVIRONMENT",
     "PACKAGE SPEC": "PACKAGE",
     "TYPE SPEC": "TYPE",
 }

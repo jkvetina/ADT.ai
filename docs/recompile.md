@@ -158,7 +158,11 @@ There is no lock report. It read `gv$locked_object`, which needs a DBA grant no 
 | `MVIEW`, `MATERIALIZED`, `MATERIALIZED VIEW`, `MATERIALIZED_VIEW` | `MATERIALIZED VIEW` | materialized view logs |
 | `MVIEW LOG`, `MVIEW_LOG`, `MATERIALIZED VIEW LOG` | the log object class | the views; `M%` matches both |
 | `MATERIALIZED VIEW` | the single type | `MATERIALIZED VIEW` plus `VIEW`; write `MVIEW VIEW` for that |
+| `MLE ENV`, `MLE_ENV`, `MLE ENVIRONMENT` | `MLE ENVIRONMENT` | the modules it imports |
+| `GRAPH`, `PROPERTY GRAPH`, `PROPERTY_GRAPH` | `PROPERTY GRAPH` | the tables its elements are built from |
 | `%BODY`, `PACKAGE%` | a LIKE pattern passed through unchanged | a resolved type name |
+
+`MLE ENV` is the only entry where Oracle disagrees with itself: the DDL keyword is `MLE ENV` and the `user_objects` row says `MLE ENVIRONMENT`. The canonical form is the dictionary's, because that is the string the filter compares against, and both spellings resolve to it.
 
 Words are rejoined only when they name a real type, which is what keeps two types side by side as two filters. This resolution applies to `-type` alone: `-name` is an identifier pattern, where `_` stays LIKE's single-character wildcard.
 

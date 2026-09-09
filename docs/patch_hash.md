@@ -165,6 +165,8 @@ WARNING - NO TABLE BASELINE:
 
 Read it when it appears. The patch will ship a `CREATE TABLE` against a table that already exists, and the column change is yours to write into `patch_scripts/`.
 
+`WARNING - NO TABLE DIFF:` is the same silence one step later, and hash mode reaches it exactly as the commit walk does: the two versions were both found, and the target database refused one of them, so `DBMS_METADATA_DIFF` was never asked. Oracle's own error prints under the file. See [patch_templates.md](patch_templates.md) for how the comparison is made.
+
 <br>
 
 ## The baseline advances on deploy

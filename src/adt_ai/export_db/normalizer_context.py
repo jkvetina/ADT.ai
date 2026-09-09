@@ -11,6 +11,19 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+# The one type whose DDL keyword is not what `user_objects` calls it: the row says
+# `MLE ENVIRONMENT` and the statement says `MLE ENV` (`#738`). Both of the regexes
+# that find an object's name in its own definition line anchor on the keyword, so
+# they are given the spelling that is in the file rather than the one the type is
+# filtered by -- otherwise the owner is silently never resolved for this type.
+DDL_KEYWORDS = {
+    "MLE ENVIRONMENT": "MLE ENV",
+}
+
+
+def ddl_keyword(object_type: str) -> str:
+    return DDL_KEYWORDS.get(object_type.upper(), object_type)
+
 
 @dataclass(frozen=True)
 class NormalizationContext:

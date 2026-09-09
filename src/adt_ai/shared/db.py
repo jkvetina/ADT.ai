@@ -132,6 +132,13 @@ class QueryGateway(Protocol):
     ) -> None:
         ...
 
+    def fetch_clob(
+        self,
+        sql: str,
+        params: Mapping[str, Any] | None = None,
+    ) -> str:
+        ...
+
     def sqlcl_request(
         self,
         request: str,
@@ -276,6 +283,34 @@ class OracleGateway:
         try:
             cursor.execute(sql, dict(params or {}))
             connection.commit()
+        except Exception as error:
+            _attach_sql(error, sql)
+            raise
+        finally:
+            _close_resource(cursor)
+
+    def fetch_clob(
+        self,
+        sql: str,
+        params: Mapping[str, Any] | None = None,
+    ) -> str:
+        """Run a PL/SQL block whose one OUT bind, ``:result``, is a CLOB.
+
+        `fetch_all` cannot reach this: `DBMS_METADATA_DIFF` is a multi-call API
+        with handles, so the whole comparison is one anonymous block and its
+        answer arrives through a bind rather than a result set (ADT #753).
+
+        The bind is named rather than positional and named `result` on purpose,
+        so a block written later carries the contract in its own text instead of
+        in this method's argument order.
+        """
+        connection = self.connect()
+        cursor = connection.cursor()
+        try:
+            value = cursor.var(self._driver().DB_TYPE_CLOB)
+            cursor.execute(sql, {**dict(params or {}), "result": value})
+            answer = value.getvalue()
+            return answer.read() if hasattr(answer, "read") else str(answer or "")
         except Exception as error:
             _attach_sql(error, sql)
             raise

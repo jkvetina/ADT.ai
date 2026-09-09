@@ -24,9 +24,13 @@ class FakeGateway:
         self,
         results: Mapping[str, list[dict[str, Any]]] | None = None,
         sqlcl_output: str = "",
+        clob_results: Mapping[str, str] | None = None,
     ) -> None:
         self.results = dict(results or {})
         self.sqlcl_output = sqlcl_output
+        #: Keyed by the block's own text, the way `results` is keyed by the
+        #: query's: a caller running two blocks gets two answers (ADT #753).
+        self.clob_results = dict(clob_results or {})
         self.queries: list[tuple[str, dict[str, Any]]] = []
         self.read_only_queries: list[tuple[str, dict[str, Any]]] = []
         self.statements: list[tuple[str, dict[str, Any]]] = []
@@ -62,6 +66,20 @@ class FakeGateway:
         params: Mapping[str, Any] | None = None,
     ) -> None:
         self.statements.append((sql, dict(params or {})))
+
+    def fetch_clob(
+        self,
+        sql: str,
+        params: Mapping[str, Any] | None = None,
+    ) -> str:
+        """The CLOB a PL/SQL block would have answered through `:result`.
+
+        Recorded in `queries` beside the fetches, because a caller that has to
+        prove WHICH block it ran and with which binds is asking the same
+        question of this method as of `fetch_all` (ADT #753).
+        """
+        self.queries.append((sql, dict(params or {})))
+        return self.clob_results.get(sql, "")
 
     def sqlcl_request(
         self,

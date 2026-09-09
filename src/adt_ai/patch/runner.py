@@ -21,9 +21,9 @@ from adt_ai.patch.create import (
     _patch_files,
     _refresh_apex_components,
     _refresh_database_files,
-    _table_alter_sql,
     _write_generated_patch_scripts,
     _write_patch_files,
+    table_alter_sql,
 )
 from adt_ai.patch.deploy import (
     _compile_statement,
@@ -360,6 +360,7 @@ class PatchWorkspace:
         hash_shipped: Mapping[str, str] | None = None,
         hash_commits: Mapping[str, int] | None = None,
         hash_previous: Mapping[str, str] | None = None,
+        gateway_factory: Callable[[str], Any] | None = None,
     ) -> DatabasePatchResult:
         """Build the patch folder and report what went into it.
 
@@ -386,6 +387,7 @@ class PatchWorkspace:
             hash_shipped  = hash_shipped,
             hash_commits  = hash_commits,
             hash_previous = hash_previous,
+            gateway_factory = gateway_factory,
         )
 
 __all__ = [
@@ -442,8 +444,8 @@ __all__ = [
     "_reject_unresolved_merges",
     "_select_patch_folder",
     "_skipped_deployment_result",
-    "_table_alter_sql",
     "_verify_view_columns",
+    "table_alter_sql",
     "_write_deployment_log",
     "_write_generated_patch_scripts",
     "_write_patch_files",

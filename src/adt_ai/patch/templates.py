@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,7 @@ def _script_payload(
     folder_name: str,
     patch_code: str,
     target_env: str | None,
+    keep: Callable[[str], bool] | None = None,
 ) -> list[str]:
     """Link the per-patch scripts `scripts.collect_patch_scripts` already moved.
 
@@ -72,6 +74,11 @@ def _script_payload(
     disagreed once, and against the shipped `patch_scripts/{$PATCH_CODE}/` default
     the reader looked inside a directory literally named `{$PATCH_CODE}` and every
     generated helper went unlinked (ADT #18).
+
+    ``keep`` selects a subset of the slot by filename. One slot is linked in two
+    places since ADT #753: a generated ALTER runs BEFORE the table files and the
+    hand-written scripts in the same slot still run after them. See
+    `create._database_patch_payload` for why.
     """
     if not config.get("patch_add_scripts", True):
         return []
@@ -84,6 +91,7 @@ def _script_payload(
         target_env,
         label  = "SCRIPT",
         origin = _patch_scripts_folder(root, config, patch_code) / folder_name,
+        keep   = keep,
     )
 
 def _configured_sql_payload(
@@ -96,6 +104,7 @@ def _configured_sql_payload(
     *,
     label: str,
     origin: Path | None = None,
+    keep: Callable[[str], bool] | None = None,
 ) -> list[str]:
     """LINK each file where it already lives, never inline it, never copy it.
 
@@ -128,6 +137,8 @@ def _configured_sql_payload(
     for path in sorted(folder.glob("*.sql")):
         tagged_env = _env_tag(path.name)
         if tagged_env is not None and tagged_env != (target_env or ""):
+            continue
+        if keep is not None and not keep(path.name):
             continue
         source = (origin / path.name) if origin is not None else path
         relative = source.relative_to(root).as_posix()
@@ -166,7 +177,20 @@ def _apex_environment_payload(root: Path, app_id: int) -> list[str]:
     or blank one fails the deploy at the first APEX call, worse than leaving
     the project's own `apex_init` template in charge, which is what happened for
     every patch before ADT #298 anyway.
+
+    **App id `0` is the exception, and it resolves on the target** (ADT #720).
+    It is the WORKSPACE group rather than an application, so the store holds no
+    row for it and a project whose only APEX artifact is a workspace static file
+    may never have exported an application to record one either. Emitting
+    nothing there is not neutral: `wwv_flow_files` returns NO ROWS AT ALL until
+    a workspace is set, so `#724`'s workspace-file guard queried an empty view
+    and passed whatever the target held, and the file's own
+    `create_workspace_static_file` failed with `ORA-20001: Package variable
+    g_security_group_id must be set`. Both measured 2026-09-09. The target knows
+    the answer from the connected schema, so the block asks it there.
     """
+    if app_id == 0:
+        return ["", *queries.APEX_WORKSPACE_ENVIRONMENT_BLOCK.splitlines()]
     workspace = _cached_apex_workspace(root, app_id)
     if not workspace:
         return []

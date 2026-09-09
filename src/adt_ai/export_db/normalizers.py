@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import importlib.util
 import re
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
-from types import ModuleType
 
 from adt_ai.export_db.normalizer_clauses import owner_qualifier_stripper
 
@@ -12,10 +10,20 @@ from adt_ai.export_db.normalizer_clauses import owner_qualifier_stripper
 # cap; re-exported so every object normalizer keeps importing them from here.
 from adt_ai.export_db.normalizer_context import NormalizationContext as NormalizationContext
 from adt_ai.export_db.normalizer_context import Normalizer as Normalizer
+from adt_ai.export_db.normalizer_context import ddl_keyword as _ddl_keyword
 from adt_ai.export_db.normalizer_context import qualified as qualified
+
+# The plugin loader went the same way when `#740` took it past that cap again.
+from adt_ai.export_db.normalizer_plugins import NormalizerError as NormalizerError
+from adt_ai.export_db.normalizer_plugins import load_plugin as _load_plugin
 
 BODY_PRESERVING_OBJECT_TYPES = {
     "FUNCTION",
+    # An MLE module's body is JavaScript (`#738`), so the quoted-identifier and
+    # owner-stripping rewrites below would corrupt it: `"x"` is a string in that
+    # language, not an Oracle identifier. Only its definition line is normalized,
+    # exactly as a package body's is.
+    "MLE MODULE",
     "PACKAGE",
     "PACKAGE BODY",
     "PROCEDURE",
@@ -31,9 +39,6 @@ RAW_NORMALIZER_OBJECT_TYPES = {
     "TABLE",
 }
 
-class NormalizerError(Exception):
-    """Raised when a user normalizer plugin cannot be loaded."""
-
 class NormalizerRegistry:
     def __init__(self, normalizers: Mapping[str, Normalizer] | None = None) -> None:
         self._normalizers = {
@@ -43,6 +48,7 @@ class NormalizerRegistry:
 
     @classmethod
     def builtin(cls) -> NormalizerRegistry:
+        from adt_ai.export_db.object_normalizers.assertion import normalize_assertion
         from adt_ai.export_db.object_normalizers.index import normalize_index
         from adt_ai.export_db.object_normalizers.job import normalize_job
         from adt_ai.export_db.object_normalizers.materialized_view import (
@@ -54,14 +60,25 @@ class NormalizerRegistry:
         from adt_ai.export_db.object_normalizers.table import normalize_table
         from adt_ai.export_db.object_normalizers.trigger import normalize_trigger
         from adt_ai.export_db.object_normalizers.type import normalize_type, normalize_type_body
+        from adt_ai.export_db.object_normalizers.types_26ai import (
+            normalize_domain,
+            normalize_mle_environment,
+            normalize_mle_module,
+            normalize_property_graph,
+        )
         from adt_ai.export_db.object_normalizers.view import normalize_view
 
         return cls(
             {
+                "ASSERTION": normalize_assertion,
+                "DOMAIN": normalize_domain,
                 "INDEX": normalize_index,
                 "JOB": normalize_job,
                 "MATERIALIZED VIEW": normalize_materialized_view,
+                "MLE ENVIRONMENT": normalize_mle_environment,
+                "MLE MODULE": normalize_mle_module,
                 "MVIEW LOG": normalize_mview_log,
+                "PROPERTY GRAPH": normalize_property_graph,
                 "SEQUENCE": normalize_sequence,
                 "SYNONYM": normalize_synonym,
                 "TABLE": normalize_table,
@@ -124,36 +141,6 @@ def normalize_ddl(
             terminate=_uses_slash_terminator(context.object_type),
         )
     return "\n".join(line.rstrip() for line in lines) + "\n"
-
-def _load_plugin(plugin_path: Path) -> dict[str, Normalizer]:
-    module = _import_plugin(plugin_path)
-
-    mapping = getattr(module, "NORMALIZERS", None)
-    if isinstance(mapping, dict):
-        return {
-            str(object_type).upper(): normalizer
-            for object_type, normalizer in mapping.items()
-            if callable(normalizer)
-        }
-
-    object_type = getattr(module, "OBJECT_TYPE", None)
-    normalizer = getattr(module, "normalize", None)
-    if isinstance(object_type, str) and callable(normalizer):
-        return {object_type.upper(): normalizer}
-
-    raise NormalizerError(
-        f"Plugin does not expose NORMALIZERS or OBJECT_TYPE + normalize: {plugin_path}"
-    )
-
-def _import_plugin(plugin_path: Path) -> ModuleType:
-    path = Path(plugin_path)
-    spec = importlib.util.spec_from_file_location(f"adt_ai_normalizer_{path.stem}", path)
-    if spec is None or spec.loader is None:
-        raise NormalizerError(f"Cannot load normalizer plugin: {plugin_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 def _normalize_common(
     lines: list[str],
@@ -228,7 +215,8 @@ def _normalize_definition_line(line: str, context: NormalizationContext) -> str:
         flags=re.IGNORECASE,
     )
 
-    object_type_pattern = r"\s+".join(re.escape(part) for part in context.object_type.split())
+    keyword = _ddl_keyword(context.object_type)
+    object_type_pattern = r"\s+".join(re.escape(part) for part in keyword.split())
     match = re.search(
         rf"\b{object_type_pattern}\s+"
         r"(?P<name>(?:\"[^\"]+\"|[A-Za-z0-9_$#]+)\.(?:\"[^\"]+\"|[A-Za-z0-9_$#]+)"
@@ -248,7 +236,8 @@ def _normalize_definition_line(line: str, context: NormalizationContext) -> str:
 
 def _extract_definition_owner(payload: str, object_type: str) -> str | None:
     first_line = payload.splitlines()[0] if payload else ""
-    object_type_pattern = r"\s+".join(re.escape(part) for part in object_type.upper().split())
+    keyword = _ddl_keyword(object_type).upper()
+    object_type_pattern = r"\s+".join(re.escape(part) for part in keyword.split())
     match = re.search(
         rf"\b{object_type_pattern}\s+"
         r"(?P<name>(?:\"[^\"]+\"|[A-Za-z0-9_$#]+)\.(?:\"[^\"]+\"|[A-Za-z0-9_$#]+))",
