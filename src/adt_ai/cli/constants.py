@@ -103,7 +103,7 @@ PUBLIC_MODULES = (
     ("flow", "map APEX page navigation links (to/from, refresh)", ()),
     ("calendar", "show your Git activity across all branches as a calendar", ()),
     ("connection", "edit the connection file (add env/schema, set password)", ()),
-    ("dependencies", "query or refresh the dependency index", ()),
+    ("dependencies", "query or refresh the index, or scan an APEX app", ()),
     ("discovery", "run read-only SELECT discovery queries", ()),
     ("doctor", "check local setup and run explicit updates", ()),
     ("export_apex", "export APEX applications", ()),

@@ -377,6 +377,39 @@ FROM   user_schema_privs
 ORDER  BY schema, privilege
 """.strip()
 
+# A 23ai assertion, whose `user_objects` row is typed `UNDEFINED` rather than
+# `ASSERTION` (measured on the live 26ai fixture 2026-09-08), so `OBJECTS_QUERY`
+# can never name it and `UNDEFINED` is too shared a bucket to export wholesale.
+# The name is the identity, and `user_assertions` is where it lives.
+#
+# The join to `user_objects` on OBJECT_ID is what makes the window bind here the
+# way it binds for an ordinary type: `user_assertions` carries no timestamp of its
+# own, but the `UNDEFINED` row does, so an assertion needs none of the invented
+# change signal a JOB does.
+ASSERTIONS_QUERY = """
+SELECT 'ASSERTION' AS object_type, a.assertion_name AS object_name
+FROM   user_assertions a
+JOIN   user_objects o
+    ON o.object_id = a.object_id
+WHERE  (:schema IS NOT NULL)
+AND    (:recent_days IS NULL OR o.last_ddl_time >= SYSDATE - :recent_days)
+AND    (
+    :changed_since IS NULL
+    OR o.last_ddl_time >= TO_DATE(:changed_since, 'YYYY-MM-DD HH24:MI:SS')
+)
+ORDER  BY a.assertion_name
+""".strip()
+
+# `DBMS_METADATA.GET_DDL` refuses the type outright -- `ORA-31600: invalid input
+# value ASSERTION for parameter OBJECT_TYPE`, measured on the same fixture -- so the
+# dictionary's own `DEFINITION_SQL` is the only source. It carries the whole
+# statement, owner-qualified and with CRLF endings the normalizer undoes.
+ASSERTION_DDL_QUERY = """
+SELECT definition_sql AS ddl
+FROM   user_assertions
+WHERE  assertion_name = :object_name
+""".strip()
+
 DIRECTORIES_QUERY = """
 SELECT directory_name, directory_path
 FROM all_directories

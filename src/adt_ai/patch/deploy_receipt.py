@@ -74,12 +74,21 @@ def deployment_fingerprint(
     apex_target: ApexTarget | None,
     apex_version: str | None,
     apex_account: str,
+    continue_on_error: bool = False,
 ) -> str:
     """Hash executable inputs, never deployment logs or mutable hash baselines.
 
     Snapshot and moved-script trees include nested SQL and binary payloads.
     Direct installer links also cover live sources and shared templates. An
     APEXlang import reads its current local tree and static payloads by design.
+
+    ``continue_on_error`` is in the policy for the same reason ``scan`` is
+    (`#749`): it decides what a verdict COSTS, so two runs that would reach
+    different conclusions from identical scan output are not the same run. A
+    `-continue` deploy that waived a failing scan writes `SUCCESS`, and without
+    this the next plain `-deploy` of the same payload would match that receipt,
+    skip before its first script, and never issue the scan the operator did not
+    waive.
     """
     paths = {item.path.resolve() for item in plan}
     for name in (settings.snapshots_folder(config), settings.scripts_snap_folder(config)):
@@ -98,6 +107,7 @@ def deployment_fingerprint(
     policy = {
         "plan": [(item.file, item.schema, item.app_id) for item in plan],
         "scan": settings.verify_deploy_scan(config),
+        "continue_on_error": continue_on_error,
         "apex_target": asdict(apex_target) if apex_target is not None else None,
         "apex_version": apex_version,
         "apex_account": apex_account,

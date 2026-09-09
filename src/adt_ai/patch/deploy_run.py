@@ -119,7 +119,8 @@ def run_deployment(
     target = target_env.upper()
     log_folder = folder.path / deploy_log_folder(config, target)
     fingerprint = deployment_fingerprint(
-        workspace.root, folder.path, plan, config, apex_target, apex_version, apex_account
+        workspace.root, folder.path, plan, config, apex_target, apex_version, apex_account,
+        continue_on_error,
     )
     if deployment_complete(log_folder, target, fingerprint) and not force:
         return DeploymentRunResult(
@@ -298,6 +299,11 @@ def run_deployment(
             if settings.verify_deploy_scan(config)
             else []
         )
+        # **`-continue` waives the verdict** (`#749`, Jan 2026-09-09). The flag
+        # reached only the install scripts, so a run that asked not to be stopped
+        # was still stopped dead here. Computed once, so the console and the
+        # status cannot disagree about whether a waiver happened.
+        scan_waived = continue_on_error and any(report.failed for report in apex_scans)
         # **The write the scan just condemned is undone** (`#727`). Before this, a
         # scan that found an application whose region queries no longer compile
         # failed the deploy and left that application installed: the import is a
@@ -305,6 +311,12 @@ def run_deployment(
         # applications THIS run imported are in `apex_backups`, so an application a
         # per-app install script landed is reported and never touched, and a deploy
         # with the key off keeps the pre-`#727` behaviour exactly.
+        #
+        # Under `-continue` it does not run at all: putting the application back
+        # is the strongest show-stopper here, and a run that continued past a
+        # failure only to lose its application has not continued. The backup is
+        # still taken -- same round trip either way, and it is the way back if
+        # the waived findings turn out to matter.
         apex_reverts = (
             revert_failed_scans(
                 apex_scans,
@@ -314,7 +326,7 @@ def run_deployment(
                 log_folder = log_folder,
                 config     = config,
             )
-            if apex_backups
+            if apex_backups and not continue_on_error
             else []
         )
         if reporter is not None:
@@ -323,10 +335,16 @@ def run_deployment(
         # beside it, this IS patch-scoped -- the scan reads one application, the one
         # this patch just deployed -- so it cannot fail a deploy over somebody
         # else's month-old debt, which is the reason that one deliberately does not.
+        #
+        # `-continue` waives that clause and only that clause (`#749`): Jan chose
+        # SUCCESS with chips, so a pipeline gating on the exit code is not blocked
+        # by findings the operator asked to carry on past. The SCRIPT clause is
+        # deliberately not guarded -- `-continue` has never laundered a failed
+        # install script into SUCCESS and still does not.
         status = (
             "ERROR"
             if any(result.status == "ERROR" for result in results)
-            or any(report.failed for report in apex_scans)
+            or (not continue_on_error and any(report.failed for report in apex_scans))
             else "SUCCESS"
         )
         write_deploy_receipt(log_folder, target, fingerprint, status)
@@ -344,6 +362,8 @@ def run_deployment(
             apex_notes      = apex_notes,
             apex_scans      = apex_scans,
             apex_reverts    = apex_reverts,
+            apex_locks      = apex_locks,
+            scan_waived     = scan_waived,
         )
 
 

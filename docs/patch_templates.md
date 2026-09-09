@@ -104,13 +104,31 @@ Two kinds of one-off are written into `patch_scripts_dir` (default `patch_script
 | Written to       | When                                                                          |
 | ---------------- | ----------------------------------------------------------------------------- |
 | `objects_after/` | the patch window **deleted** an object file, as a `drop.<type>.<name>.sql` |
-| `tables_after/`  | a table file whose columns changed, as an `ALTER TABLE` per version step   |
+| `tables_after/`  | a table file that changed, as the `ALTER TABLE` Oracle itself writes, per version step   |
 
 The DROP helper is written for any object your `path_objects` layout resolves. It is a helper, not an automatic destructive action: review it before deploying, and delete it if the deletion was a repository-side move rather than a real drop.
 
 The type and the name come out of `object_types`, whole. Where two types share a folder, the longest configured extension a file ends with owns it, so `packages/core.spec.sql` is `PACKAGE CORE` and `packages/core.sql` is `PACKAGE BODY CORE`. Stripping only the last suffix would leave a name that is not an Oracle identifier at all.
 
 The ALTER helper compares each version of a table file against the one before it, including the version standing before the patch opens, which is read from the parent of the first selected commit that touches the file. A table the window **creates** earns no ALTER: the `CREATE TABLE` shipping in the patch is the whole statement needed.
+
+<br>
+
+### Oracle writes the ALTER, not ADT.ai
+
+`-create` builds the two versions as `<NAME>$1` and `<NAME>$2` in the schema `-target` points at, hands them to `DBMS_METADATA.GET_SXML` and `DBMS_METADATA_DIFF`, and ships what `ALTERXML` answers.
+
+That is why `-create` opens a connection at all, and it opens one only when a table in that schema has two versions to compare. Both shadow tables are dropped before they are built and again afterwards; `patch -deploy` sweeps any that a lost connection left behind.
+
+So the coverage is Oracle's own: columns added, dropped and retyped, `NOT NULL` and `DEFAULT`, and `PRIMARY KEY`, `UNIQUE`, `FOREIGN KEY` and `CHECK` added or dropped. Three things are worth knowing before you read a helper:
+
+- **A renamed column is a drop and an add.** The comparison matches columns by name, so the data in the old column does not survive the patch. Write the `RENAME COLUMN` into `patch_scripts/` yourself when you need the rows kept.
+- **An index is not part of a table.** Indexes are their own object files under `path_objects`, so adding or removing one travels the ordinary object path and never appears in an ALTER helper.
+- **A `DEFAULT` cannot be removed by the comparison.** Oracle answers `ORA-39267: Cannot remove default from table column.` and no statement; ADT.ai ships that sentence as a comment, so it reaches your deploy log where the missing statement would have run.
+
+A generated ALTER runs **ahead of** its own table file in the patch script, because a table with an ALTER already exists on the target: its exported file then contributes a no-op `CREATE TABLE IF NOT EXISTS` plus `COMMENT ON COLUMN` lines describing the shape the ALTER just produced. Hand-written scripts you put in `tables_after/` still run after the files.
+
+If the target database refuses one of the two versions, no comparison happens and `-create` says so under `WARNING - NO TABLE DIFF:`, with Oracle's own error under the file. The patch still builds; the table simply carries no ALTER, and that is the one case where a green deploy would otherwise change nothing.
 
 Whitespace inside SQL string literals is part of the value. Generated ADD and MODIFY statements preserve it, including quoted defaults; changing only that whitespace still produces a column change.
 

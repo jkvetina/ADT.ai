@@ -1,15 +1,27 @@
 from __future__ import annotations
 
-import fnmatch
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from adt_ai.export_db import queries
+from adt_ai.export_db.dictionary_ddl import ASSEMBLED_OBJECT_TYPES, assemble_ddl, with_owner
+
+# The runtime filters moved to their own module when `#740` took this file past
+# the 24 KB context cap; re-exported under their old private names so nothing
+# that imported one from here has to change.
+from adt_ai.export_db.discovery_filters import ObjectFilters as _ObjectFilters
+from adt_ai.export_db.discovery_filters import has_exact_name_filter as has_exact_name_filter
+from adt_ai.export_db.discovery_filters import includes_object_type as _includes_object_type
+from adt_ai.export_db.discovery_filters import (
+    is_old_adt_eligible_index as _is_old_adt_eligible_index,
+)
+from adt_ai.export_db.discovery_filters import normalize_list as _normalize_list
+from adt_ai.export_db.discovery_filters import normalize_patterns as _normalize_patterns
+from adt_ai.export_db.discovery_filters import query_pattern_list as _query_pattern_list
+from adt_ai.export_db.discovery_filters import user_object_types as _user_object_types
 from adt_ai.export_db.timeless_types import discover_job_names, discover_mview_log_names
 from adt_ai.shared.db import QueryGateway
-from adt_ai.shared.diff_tables import is_diff_table
-from adt_ai.shared.sql_like import matches_sql_like
 
 
 @dataclass(frozen=True)
@@ -35,6 +47,9 @@ class ObjectDiscovery:
     GRANTS_RECEIVED_QUERY  = queries.GRANTS_RECEIVED_QUERY
     USER_PRIVILEGES_QUERY  = queries.USER_PRIVILEGES_QUERY
     SCHEMA_PRIVILEGES_QUERY = queries.SCHEMA_PRIVILEGES_QUERY
+    ASSERTIONS_QUERY       = queries.ASSERTIONS_QUERY
+    ASSERTION_DDL_QUERY    = queries.ASSERTION_DDL_QUERY
+    MLE_MODULE_DDL_QUERY   = queries.MLE_MODULE_DDL_QUERY
     DIRECTORIES_QUERY      = queries.DIRECTORIES_QUERY
     COMMENTS_QUERY         = queries.COMMENTS_QUERY
     TABLE_RETENTION_QUERY  = queries.TABLE_RETENTION_QUERY
@@ -109,6 +124,14 @@ class ObjectDiscovery:
         if _includes_object_type("MVIEW LOG", filters.object_types):
             objects.extend(
                 self._discover_mview_logs(schema, filters, recent_days, changed_since)
+            )
+        # An assertion answers the window like an ordinary type -- its `UNDEFINED`
+        # row in `user_objects` carries the timestamp -- so it needs neither the
+        # signature a JOB does nor a widening. What it does need is its own read:
+        # `user_objects` never spells its type (`#740`).
+        if _includes_object_type("ASSERTION", filters.object_types):
+            objects.extend(
+                self._discover_assertions(schema, filters, recent_days, changed_since)
             )
         return objects
 
@@ -185,6 +208,40 @@ class ObjectDiscovery:
         return [
             DatabaseObject(schema, "MVIEW LOG", name)
             for name in discover_mview_log_names(rows, filters.matches)
+        ]
+
+    def _discover_assertions(
+        self,
+        schema: str,
+        filters: _ObjectFilters,
+        recent_days: int | float | None = None,
+        changed_since: str | None = None,
+    ) -> list[DatabaseObject]:
+        """The schema's 23ai assertions, or none on a dictionary without the view.
+
+        Swallowed exactly as `schema_privileges` and `table_retention` swallow:
+        `user_assertions` arrived in 23ai, ADT exports from older databases, and a
+        type that cannot exist on that release is an answer rather than an error.
+        Swallowing here rather than at the caller keeps a plain `export_db` over an
+        11g schema working, since the shipped config now asks for this type on
+        every run.
+        """
+        try:
+            rows = self.gateway.fetch_all(
+                self.ASSERTIONS_QUERY,
+                {
+                    "schema": schema,
+                    "recent_days": recent_days,
+                    "changed_since": changed_since,
+                },
+            )
+        except Exception:
+            return []
+        return [
+            DatabaseObject(schema, "ASSERTION", name)
+            for row in rows
+            if (name := str(row.get("OBJECT_NAME") or row.get("object_name") or ""))
+            if filters.matches("ASSERTION", name)
         ]
 
     def _discover_indexes(
@@ -353,6 +410,15 @@ class ObjectDiscovery:
         return self._retention_by_schema[schema].get(database_object.name.upper(), "")
 
     def ddl(self, database_object: DatabaseObject) -> str:
+        object_type = database_object.object_type.upper()
+        if object_type in ASSEMBLED_OBJECT_TYPES:
+            # Three of the four types `DBMS_METADATA` refuses are more than one row
+            # of one view, so their statement is assembled rather than selected
+            # (`#738`). Everything downstream still sees a plain DDL string.
+            return with_owner(
+                assemble_ddl(object_type, database_object.name, self.gateway),
+                database_object.schema,
+            )
         query, params = _ddl_query(database_object)
         rows = self.gateway.fetch_all(
             query,
@@ -444,137 +510,6 @@ def _comment_query_params(
     }
 
 
-def _query_pattern_list(values: Iterable[str] | None, default: str) -> str:
-    if values is None:
-        return default
-    normalized = [str(value).upper() for value in values if str(value).strip()]
-    return ",".join(normalized) if normalized else default
-
-
-@dataclass(frozen=True)
-class _ObjectFilters:
-    object_types : list[str] | None = None
-    names        : list[str] | None = None
-    prefix       : list[str] | None = None
-    ignore       : list[str] | None = None
-
-    def matches(self, object_type: str, object_name: str) -> bool:
-        if _is_old_adt_system_generated_object(object_name):
-            return False
-        if self.object_types and not _matches_any(object_type, self.object_types):
-            return False
-        if self.names and not _matches_any(object_name, self.names):
-            return False
-        if self.prefix and not _matches_any(object_name, self.prefix):
-            return False
-        return not (self.ignore and _matches_any(object_name, self.ignore))
-
-    def matches_exact(self, object_type: str, object_name: str) -> bool:
-        if _is_old_adt_system_generated_object(object_name):
-            return False
-        if self.object_types and not _matches_any(object_type, self.object_types):
-            return False
-        if self.names and object_name.upper() not in set(self.names):
-            return False
-        if self.prefix and not _matches_any(object_name, self.prefix):
-            return False
-        return not (self.ignore and _matches_any(object_name, self.ignore))
-
-    def matches_index(self, index_name: str, table_name: str) -> bool:
-        if (
-            _is_old_adt_system_generated_object(index_name)
-            or _is_old_adt_system_generated_index(index_name)
-        ):
-            return False
-        if self.object_types and not _matches_any("INDEX", self.object_types):
-            return False
-        if self.names and not _matches_any_of([index_name, table_name], self.names):
-            return False
-        if self.prefix and not _matches_any_of([index_name, table_name], self.prefix):
-            return False
-        return not (self.ignore and _matches_any_of([index_name, table_name], self.ignore))
-
-
-def _normalize_list(values: Iterable[str] | None) -> list[str] | None:
-    if values is None:
-        return None
-    return [value.upper() for value in values]
-
-
-def _normalize_patterns(values: Iterable[str] | str | None) -> list[str] | None:
-    if values is None:
-        return None
-    if isinstance(values, str):
-        return [value.strip().upper() for value in values.split(",") if value.strip()]
-    return [value.upper() for value in values]
-
-
-def has_exact_name_filter(names: Iterable[str] | None) -> bool:
-    normalized = _normalize_list(names) or []
-    return bool(normalized) and all(not _has_wildcard(name) for name in normalized)
-
-
-def _has_wildcard(pattern: str) -> bool:
-    return any(character in pattern for character in "%*?")
-
-
-def _matches_any(value: str, patterns: Iterable[str]) -> bool:
-    return any(_matches_like(value, pattern) for pattern in patterns)
-
-
-def _matches_any_of(values: Iterable[str], patterns: Iterable[str]) -> bool:
-    return any(_matches_any(value, patterns) for value in values if value)
-
-
-def _matches_like(value: str, pattern: str) -> bool:
-    return matches_sql_like(value, pattern)
-
-
-def _includes_object_type(object_type: str, object_types: Iterable[str] | None) -> bool:
-    if object_types is None:
-        return True
-    return _matches_any(object_type, object_types)
-
-
-def _user_object_types(object_types: Iterable[str] | None) -> list[str] | None:
-    if object_types is None:
-        return None
-    return [
-        object_type
-        for object_type in object_types
-        if _matches_like(object_type, "%")
-        and object_type.upper() not in {"INDEX", "JOB", "MVIEW LOG"}
-    ]
-
-
-def _is_old_adt_eligible_index(row: dict[str, Any]) -> bool:
-    return (
-        str(row.get("GENERATED") or "").upper() == "N"
-        and str(row.get("CONSTRAINT_INDEX") or "").upper() == "NO"
-        and not row.get("CONSTRAINT_NAME")
-    )
-
-
-def _is_old_adt_system_generated_object(object_name: str) -> bool:
-    name = object_name.upper()
-    return (
-        name.startswith("SYS_")
-        or name.startswith("ISEQ$$_")
-        or name.startswith("BIN$")
-        or (name.startswith("ST") and name.endswith("="))
-        # A SQLcl DIFF leftover is machine-made scaffolding like the rest of this
-        # list, and it must never reach the repo (ADT #356). The sweep that drops
-        # them is not enough on its own: an export reading the dictionary in the
-        # same second would still write the file, and a committed `%$1` table is
-        # permanent in a way the table itself is not.
-        or is_diff_table(name)
-    )
-
-
-def _is_old_adt_system_generated_index(object_name: str) -> bool:
-    return fnmatch.fnmatchcase(object_name.upper(), "SYS*$$")
-
-
 def _ddl_query(database_object: DatabaseObject) -> tuple[str, dict[str, str]]:
     object_type = database_object.object_type.upper()
     if object_type == "JOB":
@@ -590,6 +525,21 @@ def _ddl_query(database_object: DatabaseObject) -> tuple[str, dict[str, str]]:
     if object_type == "SCHEDULE":
         return (
             queries.SCHEDULE_DDL_QUERY,
+            {"object_name": database_object.name},
+        )
+    if object_type == "ASSERTION":
+        # `DBMS_METADATA` has no handler for the type at all (`ORA-31600`), so the
+        # dictionary's own `DEFINITION_SQL` is the source rather than a fallback.
+        return (
+            queries.ASSERTION_DDL_QUERY,
+            {"object_name": database_object.name},
+        )
+    if object_type == "MLE MODULE":
+        # Same `ORA-31600` refusal, and the same answer: `user_mle_modules` carries
+        # the language, the version and the source, so one row is the whole
+        # statement and no assembly is needed (`#738`).
+        return (
+            queries.MLE_MODULE_DDL_QUERY,
             {"object_name": database_object.name},
         )
     return (

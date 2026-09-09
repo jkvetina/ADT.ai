@@ -16,7 +16,7 @@ from __future__ import annotations
 # ruff: noqa: F401 - re-exports keep the pre-split import path working.
 import argparse
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +47,8 @@ from adt_ai.cli.patch_deploy_layout import (
 from adt_ai.cli.patch_deploy_reporter import ConsoleDeployReporter
 from adt_ai.cli.patch_preview_render import RELEVANT_COMMITS_HEADER
 from adt_ai.export_db.render import _commit_stdout
+from adt_ai.patch.apex_backup import REVERT_FAILED, REVERT_RESTORED
+from adt_ai.patch.apex_lock import build_status_timeline
 from adt_ai.patch.models import DeploymentPlanItem, DeploymentResult, ViewMismatch
 from adt_ai.shared.commit_discovery import CommitRecord
 from adt_ai.shared.object_list import print_object_rows
@@ -271,6 +273,9 @@ def _print_apex_scans(
     reports: Sequence[Any],
     root: Path,
     reverts: Sequence[Any] = (),
+    *,
+    waived: bool = False,
+    locks: Mapping[int, Any] | None = None,
 ) -> None:
     """`VERIFYING APPLICATIONS:`, what the post-deploy scan found (`#676`).
 
@@ -291,6 +296,13 @@ def _print_apex_scans(
     the undo of a finding belongs to the finding. It is also what stops the
     revert report joining the list of artifacts ADT writes and never names --
     the failure the `patch -drop` receipt was measured losing eleven times.
+
+    ``waived`` is `-continue` (`#749`). The row keeps its real verdict, because
+    Jan asked to SEE the status; what the run then did about it is the half a
+    reader cannot infer, and an `ERROR` row sitting above a `SUCCESS` deploy
+    reads as a broken report rather than as the waiver he asked for. One line
+    under the failing row, in the same place the revert already writes, so this
+    grows no section and no column.
     """
     if not reports:
         return
@@ -314,11 +326,27 @@ def _print_apex_scans(
             print(f"    {report.reason}")
         for finding in report.findings:
             print(f"    {finding.line()}")
+        # Under the findings and above the log, which is the order a reader asks
+        # the questions in: what is wrong, what did the run do about it, where is
+        # the file. Only a row that actually failed carries it -- a waiver
+        # printed under a clean scan describes an event that did not happen.
+        if waived and getattr(report, "failed", False):
+            print("    -continue: this verdict did not fail the deploy and nothing was reverted")
+        # The BASENAME, not the project-relative path (Jan, 2026-09-09): every
+        # log this section names lives in one folder, that folder is
+        # `patch/<code>/logs_<ENV>/`, and both halves of it are already on
+        # screen above -- the patch code on the `DEPLOYING PATCH:` header and the
+        # environment on the connection header. *"it is redundand ... this is
+        # just a clutter adding noise"*.
         if report.log_path:
-            print(f"    LOG: {_project_relative(Path(report.log_path), root)}")
+            print(f"    LOG: {Path(report.log_path).name}")
+        lock = (locks or {}).get(report.app_id)
+        timeline = build_status_timeline(lock) if lock is not None else ""
+        if timeline:
+            print(f"    BUILD STATUS: {timeline}")
         revert = _revert_for(reverts, report.app_id)
         if revert is not None:
-            _print_apex_revert(revert, root)
+            _print_apex_revert(revert)
     print()
 
 
@@ -326,20 +354,24 @@ def _revert_for(reverts: Sequence[Any], app_id: int) -> Any | None:
     return next((revert for revert in reverts if revert.app_id == app_id), None)
 
 
-def _print_apex_revert(revert: Any, root: Path) -> None:
+def _print_apex_revert(revert: Any) -> None:
     """What putting one application back achieved, under the scan that asked.
 
-    The path is on the row rather than on a second `LOG:` line: two of those
-    under one application read as one artifact written twice, and the outcome
-    word is what a reader is looking for anyway. The reason follows underneath
-    when there is one, exactly as the scan's own reason sits under its row.
+    The outcome word alone (Jan, 2026-09-09). The report's path was on this row
+    until then and is not any more: it is one of a folder of logs whose location
+    the header already gives, and the row's job is to say what happened to the
+    application, which is the half a reader cannot get anywhere else.
+
+    `SKIPPED` prints NOTHING. It is the ordinary case -- a fresh sandbox id held
+    no application, so there was nothing to put back -- and a row saying so under
+    every such deploy is *"noise"*. What survives is the pair a reader has to
+    act on: `RESTORED`, the application is as it was, and `FAILED`, it is not,
+    with its reason underneath exactly as the scan's own reason sits under its
+    row.
     """
-    where = (
-        _project_relative(Path(revert.log_path), root)
-        if revert.log_path
-        else "(no report written)"
-    )
-    print(f"    REVERT {revert.outcome} | {where}")
+    if revert.outcome not in (REVERT_RESTORED, REVERT_FAILED):
+        return
+    print(f"    REVERT: {revert.outcome}")
     if revert.reason:
         print(f"      {revert.reason}")
 

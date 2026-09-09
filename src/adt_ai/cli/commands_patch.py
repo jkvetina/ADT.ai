@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from adt_ai.cli.commands_patch_deploy import run_patch_deploy
+from adt_ai.cli.commands_patch_deploy import patch_build_gateway_factory, run_patch_deploy
 from adt_ai.cli.constants import (
     ConfigLoader,
     GatewayFactory,
@@ -276,6 +276,9 @@ def _run_patch_command(
         return 0
     if patch_ref and not records:
         # Three answers to one question, in `patch_no_commits.py` since ADT #467.
+        # The unfiltered `window` rides along since ADT #752: a build refusal has
+        # to know whether the scan reached nothing or the filters emptied it, and
+        # the selection alone (empty by definition here) cannot tell it apart.
         return answer_without_commits(
             workspace,
             patch_config(),
@@ -284,6 +287,7 @@ def _run_patch_command(
             patch_ref,
             selection.selected_folder,
             selection.create_requested,
+            window,
         )
     if selection.create_requested and discovery:
         # `-search` is the flag for FINDING the commits, so a `-create` beside it
@@ -316,6 +320,13 @@ def _run_patch_command(
             window         = window,
             hash_selection = hashed.selection,
             root           = root,
+            # The table ALTERs are Oracle's answer since ADT #753, so the build
+            # resolves the target connection the same way the deploy does. An
+            # injected factory travels through unchanged; without one it is built
+            # from the startup context, exactly as `-deploy` builds its own.
+            gateway_factory = patch_build_gateway_factory(
+                args, root, patch_config(), gateway_factory
+            ),
         )
         # `-create -deploy` on a name with no folder behind it: the build just
         # happened, so the deploy ships what this run produced.

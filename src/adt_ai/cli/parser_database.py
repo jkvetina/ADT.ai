@@ -155,10 +155,11 @@ def add_database_parsers(subparsers: SubParsers) -> None:
     dependencies = subparsers.add_parser(
         "dependencies",
         description=(
-            "query the committed dependency index, or refresh it from the "
-            "database when no query is given"
+            "query the committed dependency index, refresh it from the "
+            "database with -refresh, or scan an APEX application for "
+            "components that no longer compile with -scan; name one of them"
         ),
-        help="query or refresh the dependency index",
+        help="query or refresh the index, or scan an APEX app",
     )
     dependencies.add_argument("--root", "-root", default=".", help="project root folder")
     # -from/-to keep dest=uses/used_by so the command body and store calls are
@@ -203,7 +204,7 @@ def add_database_parsers(subparsers: SubParsers) -> None:
         metavar="NAME",
         help=(
             "rebuild the index from the database, optionally scoped to object "
-            "names (the default when no query is given)"
+            "names; required to refresh, never implied"
         ),
     )
     dependencies.add_argument(
@@ -223,6 +224,25 @@ def add_database_parsers(subparsers: SubParsers) -> None:
         "-force",
         action="store_true",
         help="wipe the requested refresh scope before reloading it",
+    )
+    dependencies.add_argument(
+        "--scan",
+        "-scan",
+        action="store_true",
+        help=(
+            "compile every component of the -app application(s) and report what "
+            "no longer compiles; writes nothing"
+        ),
+    )
+    dependencies.add_argument(
+        "--page",
+        "-page",
+        action="append",
+        nargs="+",
+        help=(
+            "scan only: page id(s), or ranges MIN-MAX / MIN+, to scan instead "
+            "of the whole application"
+        ),
     )
     dependencies.add_argument(
         "--format",

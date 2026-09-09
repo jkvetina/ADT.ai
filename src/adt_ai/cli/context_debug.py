@@ -68,6 +68,18 @@ class DebugQueryGateway:
         mark_announced()
         self.wrapped.execute(sql, params)
 
+    def fetch_clob(
+        self,
+        sql: str,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
+        print()
+        print("QUERY:")
+        print(_debug_sql(sql, params or {}))
+        print()
+        mark_announced()
+        return self.wrapped.fetch_clob(sql, params)
+
     def sqlcl_request(
         self,
         request: str,

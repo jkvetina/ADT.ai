@@ -247,9 +247,40 @@ USER_TABLE_SCOPED_QUERIES: dict[str, str] = {
 # reflect the live definition before they are pulled. Runs once per app via
 # ``gateway.execute`` (autocommits, fine for a PL/SQL call). Needs PL/Scope on
 # the session, which the schema prerequisite already set.
+#
+# **The CLEAR_CACHE is not optional and never was** (ADT #751, measured). Every
+# scan re-inserts the application-level component rows, and the dictionary holds
+# a unique key over `(component_type_id, flow_id, component_id, property_id)`,
+# so a scan of an application that already carries rows collides with itself. On
+# SANDBOX (APEX 26.1, 2026-09-09) that surfaced as `ORA-00001` from the
+# page-scoped call and as `ORA-00600 [updolev_21]` -- which also drops the
+# session -- from the application-wide one. Both callers were therefore
+# reporting `FAILED` on every run after the first against a given application,
+# and that second run is the ordinary case rather than an edge: the scan itself
+# is what left the rows behind.
+#
+# The clear is scoped to the application because `CLEAR_CACHE` takes no page.
+# That is the whole reason a page-scoped scan cannot accumulate: clearing for
+# page 101 takes page 100's rows with it, so `-page 100 101` reads each page
+# back before scanning the next rather than scanning both and reading once.
 APEX_SCAN_STATEMENT = """
 BEGIN
+    APEX_APP_OBJECT_DEPENDENCY.CLEAR_CACHE(p_application_id => :app_id);
     APEX_APP_OBJECT_DEPENDENCY.SCAN(p_application_id => :app_id);
+END;
+""".strip()
+
+# The same call narrowed to one page (ADT #751). `p_page_id` is a defaulted
+# parameter of the public `APEX_APP_OBJECT_DEPENDENCY.SCAN` synonym, read off
+# `all_arguments` on the 26.1 container rather than inferred: the scan genuinely
+# compiles one page's fragments instead of the whole application's, which is what
+# makes changing one page cheap. Measured on a 42-page application, 1.8s against
+# 4.0s for the whole of it, and the gap widens with the page count because the
+# application-level components are the fixed part of either run.
+APEX_SCAN_PAGE_STATEMENT = """
+BEGIN
+    APEX_APP_OBJECT_DEPENDENCY.CLEAR_CACHE(p_application_id => :app_id);
+    APEX_APP_OBJECT_DEPENDENCY.SCAN(p_application_id => :app_id, p_page_id => :page_id);
 END;
 """.strip()
 
@@ -306,6 +337,56 @@ APEX_APPLICATION_PAGE_COUNT_QUERY = """
 SELECT COUNT(*) AS pages
 FROM apex_application_pages
 WHERE application_id = :app_id
+""".strip()
+
+# The page-scoped halves of the three reads above (ADT #751). A page-scoped scan
+# leaves the application's rows holding that page plus the application-level
+# components it re-compiles every time, and those carry no page at all -- so
+# reading the whole application back would answer about components the caller
+# did not name. `page_id = :page_id` is what keeps the answer to the question.
+APEX_COMPONENT_ERRORS_PAGE_QUERY = """
+SELECT page_id,
+       component_type_name AS component_type,
+       component_display_name AS component_name,
+       property_name,
+       error_message
+FROM apex_used_db_object_comp_props
+WHERE application_id = :app_id
+  AND page_id = :page_id
+  AND error_message IS NOT NULL
+ORDER BY component_display_name, property_name
+""".strip()
+
+APEX_COMPONENT_SCAN_COUNT_PAGE_QUERY = """
+SELECT COUNT(*) AS analyzed
+FROM apex_used_db_object_comp_props
+WHERE application_id = :app_id
+  AND page_id = :page_id
+""".strip()
+
+# What settles a page-scoped zero, the way the page count settles an
+# application-wide one. The distinction it draws is the one a reader cares about:
+# a page that holds no compilable fragment is a real answer, and a page the
+# application does not hold at all is a question about nothing. APEX itself does
+# not separate them -- `SCAN` on a page id no application carries returns
+# quietly, measured on SANDBOX -- so nothing but this read can.
+APEX_APPLICATION_PAGE_EXISTS_QUERY = """
+SELECT COUNT(*) AS pages
+FROM apex_application_pages
+WHERE application_id = :app_id
+  AND page_id = :page_id
+""".strip()
+
+# Which pages an application actually holds, for resolving a `-page` RANGE into
+# the concrete ids a page-scoped scan needs. An explicit `-page 100` is scanned
+# as given -- a page that turns out not to exist is a finding the caller wants,
+# not one to swallow -- but `-page 1-50` cannot be turned into fifty scans of
+# pages that were never there.
+APEX_APPLICATION_PAGE_IDS_QUERY = """
+SELECT page_id
+FROM apex_application_pages
+WHERE application_id = :app_id
+ORDER BY page_id
 """.strip()
 
 # Columns are inferred from the APEX dictionary and verified live before commit.

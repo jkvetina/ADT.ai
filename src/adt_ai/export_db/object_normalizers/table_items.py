@@ -104,14 +104,15 @@ def _format_table_item(item: str, context: NormalizationContext) -> list[str] | 
         # Pass the raw item: a constraint body's own line breaks are content.
         return _format_table_constraint(item.strip(), context)
 
-    item = _cleanup_table_item(item)
+    item = _cleanup_table_item(item, context)
     # pragma: no cover reason: every substitution requires a non-whitespace prefix
     if not item:  # pragma: no cover
         return None
     return _format_table_column(item)
 
-def _cleanup_table_item(item: str) -> str:
+def _cleanup_table_item(item: str, context: NormalizationContext) -> str:
     item = re.sub(r"\s+", " ", item.replace("\n", " ")).strip()
+    item = _strip_domain_owner(item, context)
     item = re.sub(
         r"\s+COLLATE\s+\"?USING_NLS_COMP\"?",
         "",
@@ -149,6 +150,48 @@ def _cleanup_table_item(item: str) -> str:
     return re.sub(r"\s+", " ", item).strip()
 
 _SEQUENCE_IDENT = r'(?:"[A-Za-z0-9_$#]+"|[A-Za-z0-9_$#]+)'
+
+#: `DOMAIN "OWNER"."NAME"` on a 26ai column. The owner half is optional so a file
+#: that has already been unqualified once is left alone on a re-export.
+_COLUMN_DOMAIN = re.compile(
+    rf'(?<![A-Za-z0-9_$#])DOMAIN\s+(?:(?P<owner>{_SEQUENCE_IDENT})\.)?(?P<name>{_SEQUENCE_IDENT})',
+    flags=re.IGNORECASE,
+)
+
+
+def _strip_domain_owner(item: str, context: NormalizationContext) -> str:
+    """Unqualify a column's `DOMAIN` reference, the way every other name is (`#738`).
+
+    `DBMS_METADATA` writes the clause fully qualified and quoted --
+    `EMAIL VARCHAR2(200) DOMAIN "SANDBOX"."F26_EMAIL_DOM"` -- which makes it the one
+    string in an otherwise schema-neutral table file that names the schema it was
+    exported from. Left there the table cannot be deployed into a differently-named
+    schema, which is exactly what `keep_owner: False` promises everywhere else.
+
+    The qualifier goes only when it names the TABLE's own owner, on the `#652`
+    rule: a domain that genuinely lives in another schema keeps its qualifier,
+    because dropping it would silently repoint the column at a same-named domain
+    in the deploying schema.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        owner = match.group("owner")
+        name = _normalize_sql_identifier(match.group("name"), context)
+        if owner is None:
+            return f"DOMAIN {name}"
+        if context.keep_owner:
+            return f"DOMAIN {_normalize_sql_identifier(owner, context)}.{name}"
+        if context.object_owner and _identifier_key(owner) != _identifier_key(
+            context.object_owner
+        ):
+            return f"DOMAIN {_normalize_sql_identifier(owner, context)}.{name}"
+        return f"DOMAIN {name}"
+
+    return _COLUMN_DOMAIN.sub(replace, item)
+
+
+def _identifier_key(identifier: str) -> str:
+    return identifier.strip().strip('"').upper()
 
 def _strip_sequence_nextval(item: str) -> str:
     """Normalize sequence defaults to bare ``sequence.nextval`` like old ADT.
@@ -197,8 +240,12 @@ def _split_column_data_type_and_extras(body: str) -> tuple[str, str]:
     # annotation was read as part of the data type, which the caller uppercases,
     # so `ANNOTATIONS("DISPLAY" 'Identifier')` exported as `'IDENTIFIER'`. An
     # annotation value is a string literal, and its case is the user's data.
+    #
+    # DOMAIN joined it at ADT #738 for the same reason one step along: the clause
+    # names an object, and an object name follows the file's lowercase spelling
+    # rather than being uppercased along with `VARCHAR2`.
     match = re.search(
-        r"\s+(?=(?:DEFAULT|GENERATED|CONSTRAINT|NOT\s+NULL|NULL\b|PRIMARY\s+KEY|UNIQUE\b|REFERENCES\b|CHECK\b|ANNOTATIONS\b))",
+        r"\s+(?=(?:DEFAULT|GENERATED|CONSTRAINT|NOT\s+NULL|NULL\b|PRIMARY\s+KEY|UNIQUE\b|REFERENCES\b|CHECK\b|ANNOTATIONS\b|DOMAIN\b))",
         body,
         flags=re.IGNORECASE,
     )

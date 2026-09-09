@@ -32,6 +32,9 @@ from adt_ai.patch.layout import (
 from adt_ai.patch.layout import (
     is_apex_static_file as _is_apex_static_file,
 )
+from adt_ai.patch.layout import (
+    is_apex_workspace_static_file as _is_apex_workspace_static_file,
+)
 from adt_ai.shared import text_files
 from adt_ai.shared.commit_discovery import CommitRecord
 from adt_ai.shared.mime import guess_mime_type
@@ -84,7 +87,7 @@ def _write_snapshots(
                 continue
             target = target.with_suffix(target.suffix + ".sql")
             target.parent.mkdir(parents=True, exist_ok=True)
-            text_files.write_text(target, _apex_static_file_sql(path, payload))
+            text_files.write_text(target, _apex_static_file_sql(path, payload, config))
             continue
         text = file_text(root, path, mode=content_mode, records=records)
         if text is None:
@@ -118,7 +121,7 @@ def _snapshot_content(text: str, path: str, config: dict[str, Any], patch_code: 
     return text
 
 
-def _apex_static_file_sql(path: str, content: bytes) -> str:
+def _apex_static_file_sql(path: str, content: bytes, config: dict[str, Any]) -> str:
     file_name = Path(path).name
     # `application/octet-stream` for an unrecognised extension is the one
     # fallback that keeps an unknown static file downloadable; a browser
@@ -128,6 +131,18 @@ def _apex_static_file_sql(path: str, content: bytes) -> str:
     mime_type = guess_mime_type(file_name, default="application/octet-stream")
     hex_payload = content.hex().upper()
     hex_rows = [hex_payload[index:index + 200] for index in range(0, len(hex_payload), 200)]
+    if _is_apex_workspace_static_file(path, config):
+        rows = "\n".join([
+            queries.APEX_WORKSPACE_FILE_HEADER,
+            *[
+                queries.APEX_WORKSPACE_FILE_ROW.format(index=index, row=row)
+                for index, row in enumerate(hex_rows, start=1)
+            ],
+        ])
+        block = queries.APEX_WORKSPACE_FILE_BLOCK.format(
+            rows=rows, file_name=file_name, mime_type=mime_type
+        )
+        return f"{block}\n"
     footer = queries.APEX_STATIC_FILE_FOOTER.format(file_name=file_name, mime_type=mime_type)
     payload = [
         queries.APEX_STATIC_FILE_HEADER,

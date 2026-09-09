@@ -107,6 +107,20 @@ The hint prints only where the parser declares `-debug`. `calendar`, `dependenci
 
 The project-folder footer belongs to the first row alone. When every connection failure took that first screen, a hand-edited YAML typo, an unauthenticated vault CLI and a failed SQLcl connect all reported `CONFIGURATION NOT FOUND:` and advised running from a folder holding the file that had just been read.
 
+A refusal that leaves you a **choice** prints the ways forward as numbered lines, never stacked into a sentence: two leading spaces, `1)`, `2)`, the flag or key, then a column of short descriptions.
+
+Below them an optional `NOTE:` names the habit that keeps the failure from happening again, and it prints only where that habit would actually have applied. One way forward stays one sentence; the numbered shape is for a fork.
+
+```text
+  1) -search PATTERN            select them by a different term
+  2) -commit N [-ignore N]      select them by number, hash or range
+
+NOTE: put the patch name in the commit message and -name finds them
+      by itself.
+```
+
+That is `patch -create` refusing because `-name` matched no commit subject. Written as prose it read as a paragraph to parse before the operator could act, and the two remedies were the only part of it he needed.
+
 <br>
 
 ### Multi-schema runs

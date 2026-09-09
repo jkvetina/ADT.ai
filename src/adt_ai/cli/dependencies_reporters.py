@@ -8,10 +8,13 @@ stdout, machine formats keep stdout pure data.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import yaml
 
 from adt_ai.cli.constants import print_adt_header, print_adt_table
 from adt_ai.dependencies.classify import split_object_row
+from adt_ai.patch.apex_scan import ApexScanReport
 
 
 def _print_dependency_list(
@@ -203,6 +206,102 @@ def _foreign_key_tree_markdown_rows(rows: list[dict[str, str]]) -> list[str]:
         f"`{row['constraint_name']}` ({row['type']})"
         for row in rows
     ]
+
+
+def _scan_summary(report: ApexScanReport) -> str:
+    """The right-hand cell of a scan row, in the shape `patch -deploy` prints."""
+    if report.findings:
+        return f"{len(report.findings)} error(s) in {report.analyzed} fragments"
+    return f"{report.analyzed} fragments, no errors"
+
+
+def _scan_scope(report: ApexScanReport) -> str:
+    """What one report is about, as the row's left-hand cell.
+
+    `APP 100` for an application-wide scan and `APP 100 PAGE 12` for a
+    page-scoped one (ADT #751). The scope is on the row rather than announced
+    once above the section because a run scans several pages of several
+    applications, and every verdict under it answers a different question.
+    """
+    if report.page_id is None:
+        return f"APP {report.app_id}"
+    return f"APP {report.app_id} PAGE {report.page_id}"
+
+
+def _scan_yaml_payload(report: ApexScanReport) -> dict[str, object]:
+    payload: dict[str, object] = {"app": report.app_id}
+    if report.page_id is not None:
+        payload["page_scanned"] = report.page_id
+    payload["status"] = report.status
+    payload["analyzed"] = report.analyzed
+    if report.reason:
+        payload["reason"] = report.reason
+    payload["findings"] = [
+        {
+            "page": finding.page_id,
+            "component_type": finding.component_type,
+            "component_name": finding.component_name,
+            "property": finding.property_name,
+            "error": " ".join(str(finding.error_message or "").split()),
+        }
+        for finding in report.findings
+    ]
+    return payload
+
+
+def _print_component_scans(
+    reports: Sequence[ApexScanReport],
+    output_format: str,
+) -> int:
+    """`SCANNING APPLICATIONS:`, what the on-demand component scan found (`#751`).
+
+    A clean application still prints its row, for the reason the post-deploy
+    scan prints one (`#676`): silence and a verification that never happened
+    read identically, and the second is what this mode exists to rule out.
+
+    One row per SCAN, which under `-page` means one row per page rather than one
+    per application. Nothing is filtered here any more: each report is already
+    the answer to the question its own scan asked, so a row that reads `SUCCESS`
+    is the database's verdict on that scope rather than arithmetic over a wider
+    one.
+
+    Findings are stanza lines rather than a table column. An `ORA-` message in a
+    cell destroys the layout at 80 columns, which is the same call
+    `_print_apex_scans` and `_print_deployment_errors` already make.
+    """
+    if output_format == "yaml":
+        print(
+            yaml.safe_dump(
+                {"scan": [_scan_yaml_payload(report) for report in reports]},
+                sort_keys=False,
+            ).rstrip()
+        )
+    elif output_format == "md":
+        lines: list[str] = []
+        for report in reports:
+            lines.append(f"## Scan: {_scan_scope(report)} ({report.status})")
+            lines.append("")
+            lines.append(f"- {_scan_summary(report)}")
+            if report.reason:
+                lines.append(f"- {report.reason}")
+            lines.extend(f"- {finding.line()}" for finding in report.findings)
+            lines.append("")
+        print("\n".join(lines).rstrip())
+    else:
+        # The `SCANNING APPLICATIONS:` header belongs to the caller, printed
+        # before the scan runs so it announces the reads under it. Printing it
+        # here as well is how the section came to open twice on one screen.
+        for report in reports:
+            print(f"  {_scan_scope(report)} | {report.status} | {_scan_summary(report)}")
+            # The reason under the row for every outcome that is not a plain
+            # success: `FAILED`, `EMPTY` and `UNSUPPORTED` all print a row that
+            # looks quiet, and this line says which of the three it is.
+            if report.reason:
+                print(f"    {report.reason}")
+            for finding in report.findings:
+                print(f"    {finding.line()}")
+        print()
+    return 1 if any(report.failed for report in reports) else 0
 
 
 def _print_dependency_age(

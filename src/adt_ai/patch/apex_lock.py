@@ -291,14 +291,21 @@ def build_status_lock(
     try:
         yield locks
     finally:
-        release_targets(
-            locks,
-            lambda schema: gateways.get(schema) or gateway_factory(schema),
-            root       = root,
-            config     = config,
-            schemas    = schemas,
-            target_env = target_env,
-            log_folder = log_folder,
+        # Written BACK into the ledger the caller was handed, rather than only
+        # returned (ADT #720). `final` is set here and nowhere else, so a caller
+        # holding the pre-release entries can report where an application ended
+        # up only if this dict is the one it kept -- which is what lets the
+        # deploy print `BUILD STATUS:` on the `VERIFYING APPLICATIONS:` row.
+        locks.update(
+            release_targets(
+                locks,
+                lambda schema: gateways.get(schema) or gateway_factory(schema),
+                root       = root,
+                config     = config,
+                schemas    = schemas,
+                target_env = target_env,
+                log_folder = log_folder,
+            )
         )
 
 
@@ -346,6 +353,32 @@ def build_status_line(lock: BuildStatusLock) -> str:
     if not lock.locked:
         return _row("BUILD STATUS", f"{_NO_LOCK} {lock.reason}".strip())
     return _row("BUILD STATUS", f"{RUN_ONLY} (was {lock.before})")
+
+
+def build_status_timeline(lock: BuildStatusLock) -> str:
+    """The deploy console's `BUILD STATUS:` value: where the application went.
+
+    Three moments rather than the log's four (ADT #720): what it was, the lock
+    this deploy put on, and what it is left on. `AFTER IMPORT` is APEX resetting
+    the status on its own, a fact about APEX rather than about this deploy, and
+    it is in the timeline file for a reader who wants it.
+
+    An application nothing locked answers "" and prints no row at all. Jan,
+    2026-09-09, on a `(not locked)` row: *"dont show, it is a noise"* -- the key
+    is off by default, so on most deploys that row would be a line per
+    application saying nothing happened.
+
+    The vocabulary is the timeline file's own, display text either side of the
+    API value `RUN_ONLY`, because the row summarises that file and a second
+    spelling of the same three values is how the two start disagreeing.
+    """
+    if not lock.locked:
+        return ""
+    return " -> ".join((
+        lock.before or "(no application)",
+        RUN_ONLY,
+        lock.final or "(not set)",
+    ))
 
 
 def build_status_log_text(lock: BuildStatusLock) -> str:
@@ -507,6 +540,7 @@ __all__ = [
     "build_status_line",
     "build_status_lock",
     "build_status_log_text",
+    "build_status_timeline",
     "lock_target",
     "release_target",
     "release_targets",

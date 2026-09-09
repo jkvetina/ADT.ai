@@ -119,6 +119,13 @@ class ApexScanReport:
     """
 
     app_id: int
+    #: The page this report is about, when the scan was narrowed to one (ADT
+    #: #751). `None` is an application-wide scan, which is every `patch -deploy`
+    #: verification and a `dependencies -scan` with no `-page`. It is what lets a
+    #: row say WHICH question it answers, and the distinction matters: an
+    #: application-wide `SUCCESS` and a one-page `SUCCESS` are very different
+    #: claims about the same application.
+    page_id: int | None = None
     #: Component properties the scan compiled. Zero means the scan produced
     #: nothing, which reads very differently from a scan that ran and found
     #: nothing, so the two are never collapsed into one number.
@@ -149,12 +156,24 @@ class _Collector:
 
     gateway: Any
     app_id: int
+    #: The page to narrow to, or `None` for the whole application (ADT #751).
+    #: It steers three things at once and they have to agree: which statement
+    #: the scan issues, which rows are read back, and which read settles a zero.
+    page_id: int | None = None
     analyzed: int = 0
     findings: list[ApexScanFinding] = field(default_factory=list)
     #: Pages the application holds, read only when `analyzed` came back zero.
     #: `None` means the read produced no row at all, which is not evidence of
-    #: anything and is treated as such.
+    #: anything and is treated as such. Under `page_id` it counts the named page
+    #: instead, so zero means the application does not hold it.
     pages: int | None = None
+
+    @property
+    def _params(self) -> dict[str, int]:
+        params: dict[str, int] = {"app_id": self.app_id}
+        if self.page_id is not None:
+            params["page_id"] = self.page_id
+        return params
 
     def run(self) -> None:
         # The whole helper lifecycle sits behind one boundary (`#699`): the scan
@@ -169,16 +188,24 @@ class _Collector:
         # still missing scope; that is right for an index refresh the user asked
         # for and wrong here, because a verification step must not recompile the
         # schema it is verifying. The session ALTER alone is taken.
+        scoped = self.page_id is not None
         run_component_scan(
             self.gateway,
             self.app_id,
+            page_id            = self.page_id,
             session_statements = [dependency_queries.PLSCOPE_SESSION_STATEMENT],
         )
-        self.analyzed = _first_number(
-            self.gateway.fetch_all(
-                dependency_queries.APEX_COMPONENT_SCAN_COUNT_QUERY, {"app_id": self.app_id}
-            )
+        count_query = (
+            dependency_queries.APEX_COMPONENT_SCAN_COUNT_PAGE_QUERY
+            if scoped
+            else dependency_queries.APEX_COMPONENT_SCAN_COUNT_QUERY
         )
+        errors_query = (
+            dependency_queries.APEX_COMPONENT_ERRORS_PAGE_QUERY
+            if scoped
+            else dependency_queries.APEX_COMPONENT_ERRORS_QUERY
+        )
+        self.analyzed = _first_number(self.gateway.fetch_all(count_query, self._params))
         self.findings = [
             ApexScanFinding(
                 page_id        = _optional_int(row.get("PAGE_ID")),
@@ -187,21 +214,23 @@ class _Collector:
                 property_name  = str(row.get("PROPERTY_NAME") or ""),
                 error_message  = str(row.get("ERROR_MESSAGE") or ""),
             )
-            for row in self.gateway.fetch_all(
-                dependency_queries.APEX_COMPONENT_ERRORS_QUERY, {"app_id": self.app_id}
-            )
+            for row in self.gateway.fetch_all(errors_query, self._params)
         ]
         # Only when the count came back zero, so the ordinary run costs nothing
         # (ADT #701). A zero has two readings and the count cannot separate them:
         # an application with nothing to analyze, or a verification that did not
         # happen. This read is the one that can settle it, and it is asked of a
-        # view the scan did not write.
+        # view the scan did not write. Under `-page` the same question narrows to
+        # the named page: a page the application does not hold is the one way a
+        # page-scoped zero is somebody's mistake rather than a quiet page.
         if self.analyzed == 0:
+            pages_query = (
+                dependency_queries.APEX_APPLICATION_PAGE_EXISTS_QUERY
+                if scoped
+                else dependency_queries.APEX_APPLICATION_PAGE_COUNT_QUERY
+            )
             self.pages = _first_number_or_none(
-                self.gateway.fetch_all(
-                    dependency_queries.APEX_APPLICATION_PAGE_COUNT_QUERY,
-                    {"app_id": self.app_id},
-                )
+                self.gateway.fetch_all(pages_query, self._params)
             )
 
 
@@ -228,9 +257,10 @@ def scan_application(
     gateway: Any,
     app_id: int,
     *,
+    page_id: int | None = None,
     apex_version: str | None = None,
 ) -> ApexScanReport:
-    """Scan one application and read back what it could not compile.
+    """Scan one application, or one of its pages, and read back what failed.
 
     Never raises, and never passes what it did not prove (ADT #701). A release
     the capability check shows is too old is `UNSUPPORTED` and does not fail the
@@ -238,6 +268,12 @@ def scan_application(
     analyzed nothing is `EMPTY` unless the application is shown to hold nothing
     to analyze. The three used to be one `SKIPPED` that failed nothing, which is
     how a deploy came to report `SUCCESS` on a verification that never ran.
+
+    ``page_id`` narrows the scan itself, not its answer (ADT #751): APEX compiles
+    that page's fragments and the report is about that page. Every outcome keeps
+    its meaning, read one scope down -- `SUCCESS` says the page compiles rather
+    than the application, and a page the application does not hold is `EMPTY`,
+    because a question about a page that is not there verifies nothing.
 
     ``apex_version`` is optional: `None` asks the gateway, which is what the
     deploy does, and an explicit value is how a test pins a release.
@@ -250,29 +286,32 @@ def scan_application(
     if not dependency_queries.supports_apex_used_views(apex_version):
         return ApexScanReport(
             app_id  = app_id,
+            page_id = page_id,
             outcome = SCAN_UNSUPPORTED,
             reason  = f"APEX {apex_version or 'unknown'} is older than 24.2, which is "
             "the first release whose dictionary reports component scan errors",
         )
-    collector = _Collector(gateway, app_id)
+    collector = _Collector(gateway, app_id, page_id)
     try:
         collector.run()
     except Exception as error:  # noqa: BLE001 - reported as a row, like a script
         return ApexScanReport(
             app_id  = app_id,
+            page_id = page_id,
             outcome = SCAN_FAILED,
             reason  = f"the scan did not complete, so nothing was verified: {error}",
         )
     if collector.findings or collector.analyzed:
         return ApexScanReport(
             app_id   = app_id,
+            page_id  = page_id,
             analyzed = collector.analyzed,
             findings = tuple(collector.findings),
         )
-    return _empty_report(app_id, collector.pages)
+    return _empty_report(app_id, collector.pages, page_id)
 
 
-def _empty_report(app_id: int, pages: int | None) -> ApexScanReport:
+def _empty_report(app_id: int, pages: int | None, page_id: int | None = None) -> ApexScanReport:
     """A scan that analyzed nothing, judged against what the application holds.
 
     Zero is accepted only when something OUTSIDE the scan says zero is the whole
@@ -281,7 +320,36 @@ def _empty_report(app_id: int, pages: int | None) -> ApexScanReport:
     verification that did not run. Anything else (pages present, or a page count
     that produced no row and therefore no evidence at all) is `EMPTY` and fails,
     because the alternative is the fail-open shape this replaced.
+
+    Under ``page_id`` the same read answers the narrower question and the verdict
+    inverts with it (ADT #751): a page that IS there and analyzed nothing holds
+    no compilable fragment, which is a real `SUCCESS`, while a page the
+    application does not hold is `EMPTY` and fails. APEX will not say so on its
+    own -- `SCAN` on a page id no application carries returns quietly, measured
+    on SANDBOX -- so a page-scoped run that skipped this read would report
+    `SUCCESS` for a page nobody ever wrote.
     """
+    if page_id is not None:
+        if pages == 0:
+            return ApexScanReport(
+                app_id  = app_id,
+                page_id = page_id,
+                outcome = SCAN_EMPTY,
+                reason  = f"application {app_id} holds no page {page_id}, so the scan "
+                "verified nothing",
+            )
+        held = (
+            "the page could not be read"
+            if pages is None
+            else "the page holds no component fragment to compile"
+        )
+        outcome = SCAN_EMPTY if pages is None else SCAN_SUCCESS
+        return ApexScanReport(
+            app_id  = app_id,
+            page_id = page_id,
+            outcome = outcome,
+            reason  = f"the scan analyzed no component property and {held}",
+        )
     if pages == 0:
         return ApexScanReport(
             app_id  = app_id,
@@ -386,6 +454,7 @@ def _written(report: ApexScanReport, *, log_folder: Path, config: dict[str, Any]
         lost = f"the log could not be written: {error}"
         return ApexScanReport(
             app_id   = report.app_id,
+            page_id  = report.page_id,
             analyzed = report.analyzed,
             findings = report.findings,
             outcome  = report.outcome,

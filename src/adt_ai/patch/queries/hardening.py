@@ -56,21 +56,33 @@ END;
 /
 """.lstrip()
 
-# ORA-01430 (column already exists), ORA-02260, ORA-02275.
+# ORA-01430 (column already exists), ORA-02260, ORA-02275, and since ADT #753
+# ORA-00942 (table or view does not exist).
+#
+# The table test is the one addition to old ADT's block, and it is what lets a
+# generated ALTER run AHEAD of the table's own exported file (`patch/create.py`).
+# A target that never received the table has nothing to alter; skipping leaves
+# the `CREATE TABLE IF NOT EXISTS` behind this block to create it whole. Without
+# the test the same case is `ORA-00942` and the patch rolls back.
 ADD_COLUMN_TEMPLATE = """
 PROMPT "-- {header}";
 DECLARE
     in_table_name       CONSTANT VARCHAR2(256) := '{object_name}';
     in_column_name      CONSTANT VARCHAR2(256) := '{cc_name}';
     --
+    v_table CHAR;
     v_found CHAR;
 BEGIN
+    SELECT MAX('Y') INTO v_table
+    FROM user_tables
+    WHERE table_name    = in_table_name;
+    --
     SELECT MAX('Y') INTO v_found
     FROM user_tab_columns
     WHERE table_name    = in_table_name
         AND column_name = in_column_name;
     --
-    IF v_found IS NULL THEN
+    IF v_table = 'Y' AND v_found IS NULL THEN
         EXECUTE IMMEDIATE
             '{statement}';
     END IF;
@@ -101,21 +113,27 @@ END;
 /
 """.lstrip()
 
-# ORA-02260 (one primary key), ORA-02261, ORA-02264, ORA-02275.
+# ORA-02260 (one primary key), ORA-02261, ORA-02264, ORA-02275, and ORA-00942
+# through the same table test the ADD COLUMN block carries. Same reason.
 ADD_CONSTRAINT_TEMPLATE = """
 PROMPT "-- {header}";
 DECLARE
     in_table_name           CONSTANT VARCHAR2(256) := '{object_name}';
     in_constraint_name      CONSTANT VARCHAR2(256) := '{cc_name}';
     --
+    v_table CHAR;
     v_found CHAR;
 BEGIN
+    SELECT MAX('Y') INTO v_table
+    FROM user_tables
+    WHERE table_name        = in_table_name;
+    --
     SELECT MAX('Y') INTO v_found
     FROM user_constraints
     WHERE table_name        = in_table_name
         AND constraint_name = in_constraint_name;
     --
-    IF v_found IS NULL THEN
+    IF v_table = 'Y' AND v_found IS NULL THEN
         EXECUTE IMMEDIATE
             '{statement}';
     END IF;

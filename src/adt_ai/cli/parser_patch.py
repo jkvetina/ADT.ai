@@ -85,7 +85,14 @@ def add_patch_parser(subparsers: SubParsers) -> None:
         # true on all four surfaces this promise was written on.
         # The comma matches the fourteen other "with -X, ..." rows; this row was
         # the only one using a colon (ADT #326).
-        help="with -deploy, keep running the remaining install scripts after one fails",
+        # `#749` extended the flag past the install scripts to the post-deploy
+        # APEX scan, so the text names both halves: the verdict still prints, it
+        # just stops deciding the run. Jan settled the exit code with chips on
+        # 2026-09-09 and chose SUCCESS.
+        help=(
+            "with -deploy, keep running the remaining install scripts after one fails, "
+            "and report a failing APEX scan without failing the run or reverting the app"
+        ),
     )
     # `-window` was withdrawn by ADT #351. How much history the scan walks and
     # how much of it fits on a screen are project settings, not something to
@@ -296,7 +303,13 @@ def add_patch_parser(subparsers: SubParsers) -> None:
         "-name",
         dest    = "name",
         metavar = "PATCH_NAME",
-        help    = "the patch to act on: its id, its patch code or its folder name",
+        # It also says the name FILTERS, because that is the half nobody guesses
+        # and the half that produces the "the listing showed commits, the build
+        # says there are none" report (ADT #752).
+        help    = (
+            "the patch to act on: id, patch code or folder name; "
+            "with no -search it also filters commits by subject"
+        ),
     )
     # NOT "deployment target", which named the flag back at itself and left the
     # reader guessing between an environment, a schema and a patch folder

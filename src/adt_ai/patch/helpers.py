@@ -16,7 +16,8 @@ forced the split.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import contextlib
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,9 @@ from adt_ai.patch.layout import (
 from adt_ai.patch.layout import (
     database_object_type as _database_object_type,
 )
+from adt_ai.patch.layout import (
+    database_schema as _database_schema,
+)
 from adt_ai.patch.models import AlterHelper, GeneratedScripts
 
 # Reading a repo path's object identity and whether it is still exported
@@ -55,15 +59,13 @@ from adt_ai.patch.object_identity import (  # noqa: F401 (re-exported for existi
     _path_is_deleted,
 )
 
-# Reading two `CREATE TABLE` versions into ALTER statements moved to
-# `patch/table_alter.py` with ADT #494, the second time this family has been cut
-# out at the 20 000 byte context guard (`#287` cut it out of `create.py`). Named
-# here rather than relocated at every call site: `create.py` re-exports these
-# four for existing importers, and the tests reach for them by name.
-from adt_ai.patch.table_alter import (  # noqa: F401 (re-exported for existing importers)
-    _parse_table_columns,
-    _split_sql_columns,
-    _table_alter_sql,
+# Which two versions to compare is still git's answer, and still lives beside
+# the writers that ask it. WHAT changed between them stopped being Python's
+# answer with ADT #753: `table_alter.py` parsed the two `CREATE TABLE` texts and
+# covered columns only, so a PK, UNIQUE, FK, CHECK or index change generated
+# nothing at all. `table_diff_runner.table_alter_sql` asks Oracle instead.
+from adt_ai.patch.table_diff_runner import TableDiffRefused, table_alter_sql
+from adt_ai.patch.table_versions import (  # noqa: F401 (re-exported for existing importers)
     _table_baseline,
     _table_versions,
 )
@@ -82,6 +84,7 @@ def _write_generated_patch_scripts(
     patch_code: str,
     hash_previous: Mapping[str, str] | None = None,
     window: list[CommitRecord] | None = None,
+    gateway_factory: Callable[[str], Any] | None = None,
 ) -> GeneratedScripts:
     """Write the one-off SQL, and report what was written.
 
@@ -102,8 +105,15 @@ def _write_generated_patch_scripts(
     script_root = _patch_scripts_folder(root, config, patch_code)
     drops = _write_drop_helpers(root, script_root, files, records, config)
     unresolved: list[str] = []
+    # One gateway per schema, opened only if a table in that schema actually has
+    # two versions to compare (ADT #753). A patch carrying no table file opens no
+    # connection at all, which is most of them.
+    gateways = _SchemaGateways(gateway_factory)
+    refused: list[tuple[str, str]] = []
     if hash_previous is None:
-        alters = _write_table_diff_helpers(root, script_root, files, records, config)
+        alters = _write_table_diff_helpers(
+            root, script_root, files, records, config, gateways, refused
+        )
     else:
         alters, unresolved = _write_hash_table_diff_helpers(
             root,
@@ -112,12 +122,62 @@ def _write_generated_patch_scripts(
             window if window is not None else records,
             config,
             hash_previous,
+            gateways,
+            refused,
         )
+    gateways.close()
     return GeneratedScripts(
         alters            = alters,
         paths             = [*drops, *(helper.path for helper in alters)],
         unresolved_tables = unresolved,
+        refused_tables    = refused,
     )
+
+#: What `database_schema` answers for a layout that carries no schema level at
+#: all (`patch/layout.py`). It names a GROUP, never a schema, so handing it to a
+#: connection file gets `Schema not configured: DEV.DATABASE`. An empty string is
+#: what the resolver reads as "this project's default schema", which is the only
+#: schema such a layout has.
+_NO_SCHEMA_LEVEL = "DATABASE"
+
+
+def _alter_schema(file: str, config: dict[str, Any]) -> str:
+    schema = _database_schema(file, config)
+    return "" if schema == _NO_SCHEMA_LEVEL else schema
+
+
+class _SchemaGateways:
+    """One connection per schema, opened on first use and closed with the run.
+
+    `-create` connected to nothing until ADT #753, and the ALTER half is the one
+    part of it that cannot be answered without a database. Opening lazily is what
+    keeps that from becoming a connection every patch pays for: the factory is
+    called only when a table in that schema has two versions to compare.
+
+    A missing factory is not an offline mode. It means the caller has no
+    connection to give -- an in-process test, or a code path that has not been
+    threaded yet -- and the ALTER is skipped rather than guessed at. Jan settled
+    the product question on `#753`: there is no config switch and no parser to
+    fall back to.
+    """
+
+    def __init__(self, factory: Callable[[str], Any] | None) -> None:
+        self._factory = factory
+        self._open: dict[str, Any] = {}
+
+    def for_schema(self, schema: str) -> Any | None:
+        if self._factory is None:
+            return None
+        if schema not in self._open:
+            self._open[schema] = self._factory(schema)
+        return self._open[schema]
+
+    def close(self) -> None:
+        for gateway in self._open.values():
+            with contextlib.suppress(Exception):
+                gateway.close()
+        self._open.clear()
+
 
 def _write_hash_table_diff_helpers(
     root: Path,
@@ -126,6 +186,8 @@ def _write_hash_table_diff_helpers(
     window: list[CommitRecord],
     config: dict[str, Any],
     previous_hashes: Mapping[str, str],
+    gateways: _SchemaGateways,
+    refused: list[tuple[str, str]],
 ) -> tuple[list[AlterHelper], list[str]]:
     """One ALTER step per table: what the target holds, to what this patch ships.
 
@@ -175,7 +237,14 @@ def _write_hash_table_diff_helpers(
         # layout, so `_database_object_stem` cannot itself resolve empty
         if not table_name:  # pragma: no cover
             continue
-        sql = _table_alter_sql(table_name, previous, current)
+        gateway = gateways.for_schema(_alter_schema(file, config))
+        if gateway is None:
+            continue
+        try:
+            sql = table_alter_sql(gateway, table_name, previous, current)
+        except TableDiffRefused as refusal:
+            refused.append((file, refusal.reason))
+            continue
         if not sql:
             continue
         folder = script_root / ALTER_HELPER_SLOT
@@ -306,6 +375,8 @@ def _write_table_diff_helpers(
     files: list[str],
     records: list[CommitRecord],
     config: dict[str, Any],
+    gateways: _SchemaGateways,
+    refused: list[tuple[str, str]],
 ) -> list[AlterHelper]:
     """Write one ALTER script per version step a table takes in this patch.
 
@@ -353,7 +424,14 @@ def _write_table_diff_helpers(
             # `CREATE` this patch already ships is the whole statement needed.
             if previous is None:
                 continue
-            sql = _table_alter_sql(table_name, previous, current)
+            gateway = gateways.for_schema(_alter_schema(file, config))
+            if gateway is None:
+                continue
+            try:
+                sql = table_alter_sql(gateway, table_name, previous, current)
+            except TableDiffRefused as refusal:
+                refused.append((file, refusal.reason))
+                continue
             if not sql:
                 continue
             folder = script_root / ALTER_HELPER_SLOT
@@ -379,10 +457,7 @@ __all__ = [
     "Mapping",
     "Path",
     "_drop_helper_sql",
-    "_parse_table_columns",
     "_path_is_deleted",
-    "_split_sql_columns",
-    "_table_alter_sql",
     "_table_versions",
     "_write_drop_helpers",
     "_write_generated_patch_scripts",
@@ -390,6 +465,7 @@ __all__ = [
     "annotations",
     "drop_helper_filename",
     "git_show",
+    "table_alter_sql",
     "is_alter_helper_filename",
     "is_drop_helper_filename",
     "queries",

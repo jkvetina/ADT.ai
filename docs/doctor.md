@@ -74,6 +74,7 @@ TIMER: 1s
 - A bare version row is good news: that value was detected and no newer one was found, or online checks were skipped.
 - Encryption key material is never printed. A direct `ADT_KEY` renders as `<redacted>`, a configured command as `<from ADT_KEY_CMD>`, and no source as `<empty>`. Setting both sources is ambiguous and renders a warning without showing either value.
 - The `ENVIRONMENT:` rows are what the process actually holds, so a run under an AI tool shows the values ADT.ai filled in for itself from your startup file. How that works is on [config.md](config.md#environment-variables).
+- Every version banner `doctor` reads from a child process (Git, Java, SQLcl and the rest) decodes as UTF-8, not the console's own codepage, so a non-ASCII byte in the banner renders correctly instead of turning into replacement characters.
 - Status words append after a dot leader, capped at 78 characters.
 
 <br>

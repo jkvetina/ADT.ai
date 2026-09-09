@@ -170,7 +170,13 @@ def run_patch_deploy(
     _print_deployment_errors(result.results, root)
     _print_view_mismatches(result.view_mismatches)
     _print_still_invalid_objects(result.still_invalid)
-    _print_apex_scans(result.apex_scans, root, result.apex_reverts)
+    _print_apex_scans(
+        result.apex_scans,
+        root,
+        result.apex_reverts,
+        waived = result.scan_waived,
+        locks  = result.apex_locks,
+    )
     _print_apex_notes(result.apex_notes)
     advance_baseline(root, config, args, workspace, ref=ref, results=result.results)
     print()
@@ -361,6 +367,44 @@ def _patch_deploy_gateway_factories(
         )
 
     return target_gateway_factory, source_gateway_factory, target_connection
+
+
+def patch_build_gateway_factory(
+    args: argparse.Namespace,
+    root: Path,
+    config: dict[str, object],
+    gateway_factory: GatewayFactory | None,
+) -> GatewayFactory:
+    """The connection `-create` opens for its table ALTERs (ADT #753).
+
+    The TARGET environment's, and only that one: an ALTER describes the step
+    from what the target holds to what the patch ships, and the shadow tables it
+    builds to work that out are created and dropped in the schema the patch is
+    for. The source environment is the deploy's own question and never this one.
+
+    Built by the deploy's own resolver so the two cannot drift about wallets,
+    startup SQL, the `-debug` wrap or the announcement guard, which is what
+    `#670` established when it moved that wrap into `cli/gateways.py`.
+
+    **Resolved on first use, never here.** The resolver loads the startup
+    context, which REFUSES a project with no connection file, and `-create` is
+    reached by every patch whether or not it carries a table. Resolving eagerly
+    turned `CONFIGURATION NOT FOUND:` into the answer for a patch of three
+    views, on a project that had never needed a connection at all. The laziness
+    matches `patch/helpers._SchemaGateways`, which only calls this when a table
+    in that schema actually has two versions to compare.
+    """
+    resolved: list[GatewayFactory] = []
+
+    def factory(schema: str) -> QueryGateway:
+        if not resolved:
+            target, _source, _connection = _patch_deploy_gateway_factories(
+                args, root, config, gateway_factory
+            )
+            resolved.append(target)
+        return resolved[0](schema)
+
+    return factory
 
 
 def _patch_print_connection_block(

@@ -1,4 +1,4 @@
-"""The seven warning sections `patch -create` can close a schema block with.
+"""The eight warning sections `patch -create` can close a schema block with.
 
 Split out of `patch_create_render.py` when ADT #465 pushed that module past the
 20 KB context guard (`tests/contracts/test_context_file_size.py`). The same call
@@ -27,7 +27,7 @@ from adt_ai.patch.object_folders import object_folder_resolver
 from adt_ai.shared.file_list import nested_files, parent_folder, plain_row, print_file_rows
 from adt_ai.shared.object_list import print_object_rows
 
-# The seven warning sections `-create` can print, spelled once each. Constants
+# The eight warning sections `-create` can print, spelled once each. Constants
 # rather than literals at the call sites so `tests/helpers/console_surface.py`
 # records every one by name: it folds a module-level `NAME = "literal"` at the
 # call site AND reads any `*_HEADER` constant on its own, which is what keeps a
@@ -40,6 +40,10 @@ from adt_ai.shared.object_list import print_object_rows
 OUTDATED_HEADER = "WARNING - OUTDATED FILES:"
 UNCOMMITTED_HEADER = "WARNING - UNCOMMITTED FILES:"
 NO_TABLE_BASELINE_HEADER = "WARNING - NO TABLE BASELINE:"
+# ADT #753, the eighth. `NO TABLE BASELINE:` is the same shape one step earlier:
+# there ADT had nothing to compare, here it had two versions and the database
+# would not accept one of them, so Oracle was never asked.
+NO_TABLE_DIFF_HEADER = "WARNING - NO TABLE DIFF:"
 UNKNOWN_SCRIPTS_HEADER = "WARNING - UNKNOWN SCRIPTS:"
 # Renamed from `WARNING - IGNORED SCRIPTS:` by ADT #509. The state leads and the
 # consequence trails: `collect_patch_scripts` files a path here when the script
@@ -171,6 +175,33 @@ def print_unresolved_tables(result: DatabasePatchResult, config: dict[str, Any])
     )
 
 
+def print_refused_tables(result: DatabasePatchResult, config: dict[str, Any]) -> None:
+    """A changed table Oracle was never asked about (ADT #753).
+
+    The ALTER is written by `DBMS_METADATA_DIFF` over two shadow copies of the
+    table, so a version the database will not accept produces no comparison and
+    no statement. Left silent, the patch still ships that table's
+    `CREATE TABLE IF NOT EXISTS`, which is a no-op against a table that already
+    exists: the deploy succeeds and the column change never happens.
+
+    Oracle's own error hangs under each file, because it is the only thing that
+    says what to fix. The one measured on the story fixture is a foreign key
+    pointing at a key the target does not have yet, which is a real ordering
+    problem in the patch rather than a defect in the diff.
+    """
+    if not result.refused_tables:
+        return
+    reasons = dict(result.refused_tables)
+    print_adt_header(NO_TABLE_DIFF_HEADER)
+    print("  the database refused a version of these tables, so no ALTER was generated")
+    print_file_rows(
+        [file for file, _reason in result.refused_tables],
+        nested    = nested_files(config),
+        folder_of = object_folder_resolver(config),
+        children  = lambda path, depth: [refusal_line(reasons[path], depth)],
+    )
+
+
 def print_changed_objects(result: DatabasePatchResult) -> None:
     """Objects the database moved past after they were exported (ADT #261, #468).
 
@@ -266,6 +297,19 @@ def commit_line(number: int, summary: str, depth: int) -> str:
     """
     prefix = f"{plain_row('', depth)}{number}) "
     return prefix + summary[: max(COMMIT_LINE_WIDTH - len(prefix), 1)]
+
+
+def refusal_line(reason: str, depth: int) -> str:
+    """Oracle's own words about one table, hanging off its file row.
+
+    Same indent and same budget as `commit_line`, and dashless for the same
+    reason: the file is the entry, this says why it is listed. An `ORA-` message
+    arrives with its newline still in it, so it is folded to one line before it
+    is measured, or the truncation would count characters nobody sees.
+    """
+    prefix = plain_row("", depth)
+    folded = " ".join(reason.split())
+    return prefix + folded[: max(COMMIT_LINE_WIDTH - len(prefix), 1)]
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

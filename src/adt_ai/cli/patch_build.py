@@ -245,11 +245,18 @@ def build_database_patch(
     window: list[Any],
     hash_selection: HashSelection | None,
     root: Path,
+    gateway_factory: GatewayFactory | None = None,
 ) -> None:
     """Write the patch folder and print the whole `-create` screen.
 
     The screen's section order is the render module's business, not this
     function's (ADT #443).
+
+    `-create` connects since ADT #753, for the table ALTERs and nothing else:
+    the comparison between two versions of a table is `DBMS_METADATA_DIFF`'s
+    answer, not a Python parse of the two `CREATE TABLE` texts. The factory is
+    handed over rather than a gateway, so a patch that carries no table still
+    opens no connection.
     """
     result = workspace.create_database_patch(
         config,
@@ -289,6 +296,7 @@ def build_database_patch(
         # empties the folder's patch_scripts/, which is an input to the build
         # rather than a record of one.
         force      = args.force,
+        gateway_factory = gateway_factory,
     )
     print_create_screen(workspace, config, result, records, root)
 

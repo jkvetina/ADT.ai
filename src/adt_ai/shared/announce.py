@@ -261,6 +261,10 @@ class AnnouncedGateway:
         guard(sql)
         return self.wrapped.execute(sql, params)
 
+    def fetch_clob(self, sql: Any, params: Any = None) -> Any:
+        guard(sql)
+        return self.wrapped.fetch_clob(sql, params)
+
     def sqlcl_request(self, request: Any, *args: Any, **kwargs: Any) -> Any:
         guard(request)
         return self.wrapped.sqlcl_request(request, *args, **kwargs)

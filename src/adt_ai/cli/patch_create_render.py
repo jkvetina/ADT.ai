@@ -43,6 +43,7 @@ from adt_ai.cli.patch_create_warnings import (
     print_changed_objects,
     print_no_database_clock,
     print_outdated,
+    print_refused_tables,
     print_script_warnings,
     print_uncommitted,
     print_unresolved_tables,
@@ -255,6 +256,7 @@ def print_create_report(result: DatabasePatchResult, config: dict[str, object]) 
     print_changed_objects(result)
     print_no_database_clock(result)
     print_unresolved_tables(result, config)
+    print_refused_tables(result, config)
     print_script_warnings(result, config)
 
 
