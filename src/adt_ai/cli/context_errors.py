@@ -1,35 +1,38 @@
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 import oracledb
 
-from adt_ai.cli.constants import DROPBOX_PATH_RE, print_adt_header
-from adt_ai.shared.announce import settle_screen_before_error
+from adt_ai.cli.constants import DROPBOX_PATH_RE
 from adt_ai.shared.config import InvalidConfigValueError
 from adt_ai.shared.connection_errors import (
     ConnectFailedError,
     CredentialUnavailableError,
     InvalidConnectionError,
 )
+from adt_ai.shared.error_screen import print_adt_error
 
 # The remedy for a configuration nothing could locate, and the line ADT #407 is
 # about: it is noise above every failure where the file WAS found and read.
+# Wrapped by hand rather than left as one long line: the body is indented two
+# columns now, so an 88-character remedy wrapped on an 80-column terminal and
+# the continuation landed flush left, outside the block it belongs to (#764).
 _PROJECT_FOLDER_REMEDY = (
-    "Run ADT.ai from a project folder that has a connection file, or pass "
-    "-config-dir / -root to point at one. See docs/config.md and `adtai doctor -init`."
+    "Run ADT.ai from a project folder that has a connection file,\n"
+    "or pass -config-dir / -root to point at one.\n"
+    "See docs/config.md and `adtai doctor -init`."
 )
 
-# Header and remedy both branch on the error CLASS, so a raise site says which
+# Code and remedy both branch on the error CLASS, so a raise site says which
 # screen it wants by choosing its exception and nothing here has to recognise a
 # message. Most specific first; a class matching no row is a configuration that
 # could not be located, the one case the remedy above is written for.
 _CONFIG_ERROR_SCREENS: tuple[tuple[type[Exception], str, str | None], ...] = (
-    (CredentialUnavailableError, "CREDENTIAL UNAVAILABLE:", None),
-    (InvalidConnectionError, "CONFIGURATION INVALID:", None),
-    (InvalidConfigValueError, "CONFIGURATION INVALID:", None),
+    (CredentialUnavailableError, "CREDENTIAL UNAVAILABLE", None),
+    (InvalidConnectionError, "CONFIGURATION INVALID", None),
+    (InvalidConfigValueError, "CONFIGURATION INVALID", None),
 )
 
 
@@ -106,56 +109,39 @@ def _project_relative(path: Path, root: Path) -> str:
         return _display(path)
 
 
-def _print_debug_hint(debug_available: bool) -> None:
-    """The traceback hint, on the commands that can actually act on it.
-
-    Every failure screen closed with it unconditionally, and five commands have
-    never declared the flag: `calendar`, `dependencies`, `doctor`, `rebuild` and
-    `search_repo`. `console.md` §Which command takes which says so three sections
-    below the failure-screen table that promised the hint on every refusal, and
-    the same page opens the shared-arguments section with "A flag a command does
-    not take is a parser error, not a flag it ignores" -- so the line was advice
-    that fails with `unrecognized arguments: -debug` when you follow it (`#656`).
-
-    The caller passes ``hasattr(args, "debug")``: argparse gives a namespace the
-    attribute only where the parser declared the flag, so the parser stays the
-    single authority and a command gaining `-debug` gains the hint with it.
-    """
-    if not debug_available:
-        return
-    print("Use -debug to show the Python traceback.", file=sys.stderr)
-    print(file=sys.stderr)
-
-
 def _print_database_error(error: Exception, *, debug_available: bool = True) -> None:
     # A failing query attaches its SQL to the exception (OracleGateway). When the
     # SQL is present the failure happened *after* connecting, so it is a query
     # error, not a connection failure, show the offending query and a query
-    # banner. Otherwise classify by message markers (TNS/wallet/credential codes).
+    # code. Otherwise classify by message markers (TNS/wallet/credential codes).
+    #
+    # The error leads and the SQL follows it (ADT #764). It was the other way
+    # round, which put a statement long enough to wrap between the header and
+    # the one line saying what went wrong.
     sql = getattr(error, "adt_sql", None)
     is_connection = sql is None and _is_database_connection_error(error)
-    header = "DATABASE CONNECTION FAILED:" if is_connection else "DATABASE QUERY FAILED:"
-    settle_screen_before_error()
-    print_adt_header(header, file=sys.stderr)
+    code = "DATABASE CONNECTION FAILED" if is_connection else "DATABASE QUERY FAILED"
+    details: list[str] = []
     if sql is not None:
-        print("Query:", file=sys.stderr)
-        print(_display(sql), file=sys.stderr)
-        print(file=sys.stderr)
-    print(_display(error), file=sys.stderr)
-    print(file=sys.stderr)
+        details.append("Query:")
+        details.extend(f"  {line}" for line in _display(sql).splitlines())
     if is_connection:
-        print(
-            "Check the connection file and wallet under ADT.ai connections/wallets, then rerun.",
-            file=sys.stderr,
+        details.append(
+            "Check the connection file and wallet under ADT.ai connections/wallets, then rerun."
         )
-    _print_debug_hint(debug_available)
+    print_adt_error(
+        code,
+        _display(error),
+        details or None,
+        debug_available=debug_available,
+    )
 
 
 def _config_error_screen(error: Exception) -> tuple[str, str | None]:
-    for error_type, header, remedy in _CONFIG_ERROR_SCREENS:
+    for error_type, code, remedy in _CONFIG_ERROR_SCREENS:
         if isinstance(error, error_type):
-            return header, remedy
-    return "CONFIGURATION NOT FOUND:", _PROJECT_FOLDER_REMEDY
+            return code, remedy
+    return "CONFIGURATION NOT FOUND", _PROJECT_FOLDER_REMEDY
 
 
 def _print_config_error(error: Exception, *, debug_available: bool = True) -> None:
@@ -175,44 +161,30 @@ def _print_config_error(error: Exception, *, debug_available: bool = True) -> No
     if isinstance(error, ConnectFailedError):
         _print_database_error(error, debug_available=debug_available)
         return
-    header, remedy = _config_error_screen(error)
-    settle_screen_before_error()
-    print_adt_header(header, file=sys.stderr)
-    print(_display(error), file=sys.stderr)
-    print(file=sys.stderr)
-    if remedy is not None:
-        print(remedy, file=sys.stderr)
-    _print_debug_hint(debug_available)
+    code, remedy = _config_error_screen(error)
+    print_adt_error(code, _display(error), remedy, debug_available=debug_available)
 
 
 def _print_sqlcl_error(error: Exception, *, debug_available: bool = True) -> None:
     # SQLcl exiting non-zero is a failure ADT.ai raises on purpose, so it gets a
-    # banner that says so rather than the internal-surprise catch-all. The
+    # code that says so rather than the internal-surprise catch-all. The
     # message IS the captured transcript: printed on its own lines, never after
     # a type name, because whatever line lands beside the type reads as the
     # diagnosis (ADT #271).
-    settle_screen_before_error()
-    print_adt_header("SQLCL SCRIPT FAILED:", file=sys.stderr)
-    print(_display(error), file=sys.stderr)
-    print(file=sys.stderr)
-    _print_debug_hint(debug_available)
+    print_adt_error("SQLCL SCRIPT FAILED", _display(error), debug_available=debug_available)
 
 
 def _print_unexpected_error(error: Exception, *, debug_available: bool = True) -> None:
     # Catch-all for any failure that is not a recognised config/database error.
     # The command banner has already printed (it is the first handler statement),
     # so this only adds a friendly framing instead of leaking a raw traceback.
-    settle_screen_before_error()
-    print_adt_header("UNEXPECTED ERROR:", file=sys.stderr)
     message = _display(error)
     if "\n" in message:
         # A multi-line message is a captured transcript, not a sentence. Gluing
         # the type onto its first line makes that line the reported cause --
         # `RuntimeError: Connection <name> has been deleted` above the SP2-0556
         # that actually failed the run (ADT #271).
-        print(f"{type(error).__name__}:", file=sys.stderr)
-        print(message, file=sys.stderr)
+        description = [f"{type(error).__name__}:", *message.splitlines()]
     else:
-        print(f"{type(error).__name__}: {message}", file=sys.stderr)
-    print(file=sys.stderr)
-    _print_debug_hint(debug_available)
+        description = [f"{type(error).__name__}: {message}"]
+    print_adt_error("UNEXPECTED ERROR", description, debug_available=debug_available)

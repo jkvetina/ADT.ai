@@ -18,7 +18,6 @@ was already there; `commands_export_db_groups.py` is the same split made for
 from __future__ import annotations
 
 import argparse
-import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -50,6 +49,7 @@ from adt_ai.export_apex.deep import ApexDeepFilterError
 from adt_ai.export_apex.filters import ApexComponentFilter, ApexPageSelection
 from adt_ai.export_apex.schema_level import schema_level_only
 from adt_ai.shared.connections import Connection, ConnectionResult
+from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 
 
 @dataclass(frozen=True)
@@ -201,8 +201,8 @@ def run_apex_export(run: ApexRun) -> int:
             try:
                 _export_one_schema(run, schema, versions)
             except ApexDeepFilterError as exc:
-                print(f"export_apex: {exc}", file=sys.stderr)
-                return 2
+                print_adt_error("ARGUMENT INVALID", str(exc))
+                return exit_code_for("ARGUMENT INVALID")
         return 0
 
     return run_schema_sections(run.schemas, run_one, first_started_at=run.started_at)

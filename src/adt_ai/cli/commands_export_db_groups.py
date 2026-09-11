@@ -8,7 +8,6 @@ budget, the same split `#395` and `#407` made in `shared/connections.py`.
 from __future__ import annotations
 
 import argparse
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -21,6 +20,7 @@ from adt_ai.export_db.group_moves import (
 )
 from adt_ai.export_db.groups import GroupRules, detect_groups_by_prefix
 from adt_ai.shared.config import as_int
+from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 
 
 def run_groups_move(
@@ -45,12 +45,12 @@ def run_groups_move(
     prefixes = parse_group_prefixes(args.groups)
     forced_group = args.force if isinstance(args.force, str) else None
     if forced_group and not prefixes:
-        print(
-            f"export_db: -force {forced_group} needs the prefixes it renames; "
-            f"name them on -groups, as in -groups APP_VPD APP_ABC -force {forced_group}.",
-            file=sys.stderr,
+        print_adt_error(
+            "ARGUMENT INVALID",
+            f"-force {forced_group} needs the prefixes it renames.",
+            f"Name them on -groups, as in -groups APP_VPD APP_ABC -force {forced_group}.",
         )
-        return 2
+        return exit_code_for("ARGUMENT INVALID")
     if prefixes:
         rules = build_prefix_rules(prefixes, group=forced_group)
     else:

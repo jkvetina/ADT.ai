@@ -143,6 +143,16 @@ Leave it `false` where the declaration only repeats the query, which is the comm
 
 Turn it `true` where the declaration is part of what the repository is expected to carry: a file reviewed against a hand-maintained original, or a view whose declared names deliberately differ from the expressions behind them.
 
+**An annotated list is kept whatever the key says.** A 23ai column annotation can only be written inside the declaration, so dropping the list would delete documentation held nowhere else:
+
+```sql
+CREATE OR REPLACE FORCE VIEW adt_anno_ticket_v (
+    ticket_id ANNOTATIONS("DISPLAY" 'Ticket ID', "IDENTITY")
+) ANNOTATIONS("TITLE" 'Open high-severity tickets') AS
+```
+
+The object's own clause, after the bracket, never depended on this key, and annotation names keep Oracle's quoting.
+
 The key covers `VIEW` and `MATERIALIZED VIEW` together. It changes only the header, and the select list is reflowed the same way under either setting.
 
 <br>

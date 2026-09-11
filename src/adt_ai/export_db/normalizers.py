@@ -156,15 +156,10 @@ def _normalize_common(
             return _ensure_sql_terminator(lines)
         return lines
 
-    payload = "\n".join(lines)
-    payload = _replace_outside_sql_strings(
-        payload,
-        lambda chunk: re.sub(
-            r'"([A-Z][A-Z0-9_$#]*)"',
-            lambda match: match.group(1).lower(),
-            chunk,
-        ),
-    )
+    # Deferred: that module reads this one's scanners, as the registry does.
+    from adt_ai.export_db.object_normalizers.annotations import lower_simple_quoted_identifiers
+
+    payload = lower_simple_quoted_identifiers("\n".join(lines))
     if not context.keep_owner:
         payload = _replace_outside_sql_strings(
             payload,

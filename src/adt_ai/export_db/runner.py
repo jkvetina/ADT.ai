@@ -54,7 +54,6 @@ from adt_ai.export_db.normalizers import (
     build_table_fix_sql,
     normalize_ddl,
 )
-from adt_ai.export_db.progress import widest_object_type
 from adt_ai.export_db.render import (
     ConsoleExportDbReporter,
     ExportDbReporter,
@@ -300,7 +299,6 @@ class ExportDbRunner:
                 schema,
                 len(database_objects),
                 estimate_for(request.root, request.environment, schema, database_objects),
-                widest_object_type(database_objects),
             )
             # The DBMS_METADATA setup and the comment pre-read are elapsed the
             # bar counts and no per-object rate can explain, so they are booked
@@ -513,5 +511,4 @@ __all__ = [
     "stored_watermark",
     "unexportable_object_types",
     "unexportable_object_types_message",
-    "widest_object_type",
 ]

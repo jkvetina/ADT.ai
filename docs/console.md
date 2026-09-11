@@ -31,7 +31,7 @@ Command help opens with the `APEX DEPLOYMENT TOOL - <CMD>` banner, then the usag
 
 Every command that reaches a handler prints the same chrome: the module banner, dashed section headers, and the shared `TIMER: Ns` footer. Early validation errors, successful no-ops and ordinary failures all keep that shape, so automation and a human read the same screen.
 
-Top-level help and a missing module print the generic banner and the `MODULES:` overview with no timer. An unknown command prints `APEX DEPLOYMENT TOOL - ERROR`, a short message, any targeted replacement command, and the same overview. Neither prints a raw `usage:` or `choose from` block.
+Top-level help and a bare `adtai` print the generic banner and the `MODULES:` overview with no timer. An unknown command prints the generic banner, then `ERROR - UNKNOWN COMMAND:`, any targeted replacement command, and the same overview, the whole screen on stderr. Neither prints a raw `usage:` or `choose from` block.
 
 A command that connects also prints the shared connection block:
 
@@ -91,21 +91,56 @@ A listing built in one go sorts by type and then by name. One printed as the wor
 
 ### Failure screens
 
-A refusal names what to go and fix, so the header is chosen by what your next move is rather than by which layer raised the error:
+**Every refusal takes one shape.** The header is `ERROR - <CODE>:` under its dashed rule, the description is indented two columns, and anything further sits one blank line below it on the same indent:
 
-| Header | What happened | Footer under it |
+```text
+APEX DEPLOYMENT TOOL - EXPORT_DB
+--------------------------------
+
+
+ERROR - CONFIGURATION NOT FOUND:
+--------------------------------
+  Connection file not found. Searched:
+    - ./connections.yaml
+    - ./connections/app.yaml
+
+  Run ADT.ai from a project folder that has a connection file,
+  or pass -config-dir / -root to point at one.
+  See docs/config.md and `adtai doctor -init`.
+
+
+TIMER: 0s
+```
+
+The code is chosen by what your next move is rather than by which layer raised the error:
+
+| Code | What happened | What follows the description |
 | --- | --- | --- |
-| `CONFIGURATION NOT FOUND:` | No connection or config file could be located, or the file names no such environment or schema. | Run from a project folder that has a connection file, or pass `-config-dir` or `-root`. |
-| `CONFIGURATION INVALID:` | A file was found and read and cannot be used as written: unparsable YAML, a document that is not a mapping, a value ADT cannot use, external auth naming no TNS alias. | None. The message names the key. |
-| `CREDENTIAL UNAVAILABLE:` | The connection is described and its secret could not be obtained: a vault command that failed or timed out, a missing or wrong key, two sources configured for one secret. | None. The message names the key. |
-| `DATABASE CONNECTION FAILED:` | A connect attempt was made and refused: SQLcl reported no session, or Oracle returned a known connection ORA, DPY, DPI or TNS code. Ordinary application text that merely says connection, listener or wallet does not select this screen. | Check the connection file and the wallet folder. |
-| `DATABASE QUERY FAILED:` | A statement failed after a successful connect. The offending SQL prints above the error. | None. |
+| `ARGUMENT INVALID` | What you typed cannot be parsed or cannot be combined: an unknown flag, two actions that are exclusive, a required value that is missing, a prompt that produced no password. | The `-h` pointer for that command, or the flag to use instead. |
+| `UNKNOWN COMMAND` | The first word is not a command. | The `MODULES:` overview, plus the `adtai doctor` line for `init`, `update` and `upgrade`. |
+| `INPUT NOT FOUND` | The thing to work on is not there yet: a branch that is not in the repo, a commit store no `rebuild` has built. | What to run first. |
+| `CONFIGURATION NOT FOUND` | No connection or config file could be located, or the file names no such environment or schema. | Run from a project folder that has a connection file, or pass `-config-dir` or `-root`. |
+| `CONFIGURATION INVALID` | A file was found and read and cannot be used as written: unparsable YAML, a document that is not a mapping, a value ADT cannot use, external auth naming no TNS alias. | None. The message names the key. |
+| `CREDENTIAL UNAVAILABLE` | The connection is described and its secret could not be obtained: a vault command that failed or timed out, a missing or wrong key, two sources configured for one secret. | None. The message names the key. |
+| `DATABASE CONNECTION FAILED` | A connect attempt was made and refused: SQLcl reported no session, or Oracle returned a known connection ORA, DPY, DPI or TNS code. Ordinary application text that merely says connection, listener or wallet does not select this screen. | Check the connection file and the wallet folder. |
+| `DATABASE QUERY FAILED` | A statement failed after a successful connect. The error leads and the offending SQL follows it under `Query:`. | The `-debug` hint. |
+| `SQLCL SCRIPT FAILED` | SQLcl exited non-zero. The description is the captured transcript. | The `-debug` hint. |
+| `STARTUP FAILED` | ADT.ai could not import itself. The banner carries no command, because none resolved. | The `-debug` hint. |
+| `UNEXPECTED ERROR` | Anything ADT.ai could not classify. | The `-debug` hint. |
 
-Every one exits non-zero, prints the command banner above and the `TIMER` footer below, and ends with the `-debug` hint. `-debug` re-raises instead, for the traceback.
+The set is closed: a code outside it is refused, and all eleven headers are held in the checked-in console inventory, so adding one is a reviewed console change like any other section header.
 
-The hint prints only where the parser declares `-debug`. `calendar`, `dependencies`, `doctor`, `rebuild` and `search_repo` never did, so they close on the message alone: a flag a command does not take is a parser error, and advice you cannot follow is worse than none.
+**Every refusal goes to stderr**, and the `TIMER` footer follows it there. **The exit code is a property of the code**: `2` for `ARGUMENT INVALID` and `UNKNOWN COMMAND`, which are about what you typed, `1` for every other, which happened during the work.
 
-The project-folder footer belongs to the first row alone. When every connection failure took that first screen, a hand-edited YAML typo, an unauthenticated vault CLI and a failed SQLcl connect all reported `CONFIGURATION NOT FOUND:` and advised running from a folder holding the file that had just been read.
+**The `-debug` hint prints on four codes only**, the ones where a Python traceback is the next thing worth reading. A screen that names its own cause and its own remedy does not carry it: the hint above a located config file or a refused connect is advice that leads nowhere. `-debug` itself re-raises for the traceback on any command whose parser declares it, and `calendar`, `dependencies`, `doctor`, `rebuild` and `search_repo` never did, so the hint never prints there either.
+
+The description is indented plain text, not a bullet list, and a nested list stays a nested list where the content genuinely is one: the searched-paths rows above are the case that shape is for.
+
+A section that says something failed is not the same thing as a refusal, and the `ERROR - ` prefix is what tells them apart. `COMPILE ERRORS:`, `INVALID OBJECTS:`, `DEPLOYMENT ERROR:` and `PATCH FAILED:` are findings inside a run that reached its work.
+
+An `ERROR - ` header is the run declining to start at all, which is why those sections keep their own names rather than joining the family.
+
+The project-folder remedy belongs to `CONFIGURATION NOT FOUND` alone. When every connection failure took that screen, a hand-edited YAML typo, an unauthenticated vault CLI and a failed SQLcl connect all reported it and advised running from a folder holding the file that had just been read.
 
 A refusal that leaves you a **choice** prints the ways forward as numbered lines, never stacked into a sentence: two leading spaces, `1)`, `2)`, the flag or key, then a column of short descriptions.
 

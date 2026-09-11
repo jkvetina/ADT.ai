@@ -46,11 +46,11 @@ Only a retarget is stamped. A bare `-app` lands each application under its own i
 
 <br>
 
-## The tree is staged, never imported where it sits
+## The tree is imported where it sits
 
-`export_apex -apexlang` omits the static-file payloads by design, and `apex import` validates before it writes, so an unstaged tree fails one `REFERENCE_NOT_FOUND` per payload.
+`export_apex -apexlang` omits the static-file payloads by design, and `apex import` validates before it writes, so an incomplete tree fails one `REFERENCE_NOT_FOUND` per payload.
 
-The run therefore hardlinks `apexlang/` plus its sibling `files/` export into `config/temp/apexlang/<app>/`, the same staging tree [`validate`](validate.md) builds, so the bytes the import sees are the bytes the compile gate passed.
+The run therefore hardlinks the sibling `files/` export into the tree's own `shared-components/static-files/`, the same reconciliation [`validate`](validate.md) performs, so the bytes the import sees are the bytes the compile gate passed and the bytes that are committed.
 
 An application the patch ships and nobody exported a tree for is a `NOTES:` row naming the export that would fix it, never a refusal: the patch may legitimately carry an application this run was not asked to import.
 

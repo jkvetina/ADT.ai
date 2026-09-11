@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from typing import TextIO
 
 from adt_ai import __version__
 from adt_ai.cli.commands_connection import _run_connection
@@ -51,6 +52,7 @@ from adt_ai.cli.parser import (
 )
 from adt_ai.shared.announce import announced_factory, strict_mode
 from adt_ai.shared.env_bootstrap import hydrate_environment
+from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.internal_paths import migrate_internal_files
 from adt_ai.shared.sqlcl_script import SqlclScriptError
 
@@ -148,14 +150,20 @@ def _run_command_argument_error(
     message: str,
     raw_args: Sequence[str] | None = None,
 ) -> int:
+    # `<command>: error: <message>` sat flush under the banner until ADT #764:
+    # no header, no remedy, and a lowercase word as the only thing marking a
+    # refusal on a screen that can run to hundreds of lines.
     def render() -> None:
         print_module_banner(_command_title(command), file=sys.stderr)
-        print(f"{command}: error: {message}", file=sys.stderr)
-        print(file=sys.stderr)
+        print_adt_error(
+            "ARGUMENT INVALID",
+            message,
+            f"Run `adtai {command} -h` for the options this command takes.",
+        )
 
     return _run_static_screen(
         render,
-        exit_code=2,
+        exit_code=exit_code_for("ARGUMENT INVALID"),
         completion_args=_completion_args_from_raw(raw_args or []),
     )
 
@@ -169,15 +177,18 @@ def _run_top_level_argument_error(
     # "on any executable path, argument errors and connection failures
     # included". This screen alone passed no args, so `adtai -bogus -beep` was
     # silent while `adtai export_db -bogus -beep` chimed (`#656`).
+    # The whole screen is a refusal, so all of it goes to stderr (ADT #764).
+    # The banner no longer carries the word ERROR either: the code below it says
+    # so, and putting it in the module slot made the tool's own name look like
+    # the thing that failed.
     def render() -> None:
-        print_module_banner("ERROR")
-        print(f"Error: {message}")
-        print()
-        _print_module_overview()
+        print_module_banner(file=sys.stderr)
+        print_adt_error("ARGUMENT INVALID", message)
+        _print_module_overview(file=sys.stderr)
 
     return _run_static_screen(
         render,
-        exit_code=2,
+        exit_code=exit_code_for("ARGUMENT INVALID"),
         completion_args=_completion_args_from_raw(raw_args or []),
     )
 
@@ -187,12 +198,14 @@ def _run_top_level_error(error: Exception) -> int:
     # command banner has printed. Always show the banner and a friendly
     # message; the raw traceback only appears under -debug (handled by caller).
     def render() -> None:
-        print_module_banner("ERROR", file=sys.stderr)
-        print(f"Error: {type(error).__name__}: {error}", file=sys.stderr)
-        print(file=sys.stderr)
-        print("This is unexpected. Use -debug to show the Python traceback.", file=sys.stderr)
+        print_module_banner(file=sys.stderr)
+        print_adt_error(
+            "UNEXPECTED ERROR",
+            f"{type(error).__name__}: {error}",
+            debug_available=True,
+        )
 
-    return _run_static_screen(render, exit_code=1)
+    return _run_static_screen(render, exit_code=exit_code_for("UNEXPECTED ERROR"))
 
 
 def main(
@@ -393,16 +406,16 @@ def _module_display_name(module_name: str, aliases: tuple[str, ...]) -> str:
     return f"{module_name} ({', '.join(aliases)})"
 
 
-def _print_module_overview() -> None:
+def _print_module_overview(file: TextIO | None = None) -> None:
     module_rows = [
         (_module_display_name(module_name, aliases), description)
         for module_name, description, aliases in PUBLIC_MODULES
     ]
     module_width = max(len(module_name) for module_name, _description in module_rows)
 
-    print_adt_header("MODULES:")
+    print_adt_header("MODULES:", file=file)
     for module_name, description in module_rows:
-        print(f"  {module_name:<{module_width}}  {description}")
+        print(f"  {module_name:<{module_width}}  {description}", file=file)
 
 
 def _run_module_overview() -> int:
@@ -415,27 +428,21 @@ def _run_module_overview() -> int:
 
 
 def _run_invalid_command(command: str) -> int:
-    with _tracked_screen() as screen:
-        started_at = time.monotonic()
-        try:
-            print_module_banner("ERROR")
-            print(f"Error: unknown command `{command}`.")
-            print()
-            if command == "init":
-                print("Use:")
-                print("  adtai doctor -init")
-                print()
-            elif command in {"update", "upgrade"}:
-                print("Use one of:")
-                print("  adtai doctor -update")
-                print("  adtai doctor -sqlcl")
-                print()
-            _print_module_overview()
-        finally:
-            # The whole screen is on stdout, message included, so the footer
-            # follows it rather than asking `footer_target` about stderr.
-            _print_completion_timer(started_at, stdout=screen.stdout)
-    return 1
+    # The whole screen is a refusal, so all of it goes to stderr and
+    # `footer_target` puts the TIMER under it there (ADT #764). Before this card
+    # it was on stdout, exited 1 where an unknown FLAG exited 2, and put the
+    # word ERROR in the banner's module slot.
+    def render() -> None:
+        print_module_banner(file=sys.stderr)
+        details: list[str] | None = None
+        if command == "init":
+            details = ["Use:", "  adtai doctor -init"]
+        elif command in {"update", "upgrade"}:
+            details = ["Use one of:", "  adtai doctor -update", "  adtai doctor -sqlcl"]
+        print_adt_error("UNKNOWN COMMAND", f"`{command}` is not an ADT.ai command.", details)
+        _print_module_overview(file=sys.stderr)
+
+    return _run_static_screen(render, exit_code=exit_code_for("UNKNOWN COMMAND"))
 
 
 def _command_timer_stdout(args: argparse.Namespace, stdout: TextSink) -> TextSink:

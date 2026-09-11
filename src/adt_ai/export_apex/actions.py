@@ -11,7 +11,7 @@ wrapper every action goes through.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from adt_ai.export_apex.inventory import ApexApplication
@@ -21,8 +21,7 @@ from adt_ai.export_apex.progress import (
     CompactApexProgressReporter,
     _timer_value,
     _update_timer,
-    segment_budget,
-    segment_row_label,
+    row_key,
 )
 from adt_ai.export_apex.schema_level import SCHEMA_LEVEL_ACTIONS, schema_level_only
 from adt_ai.export_apex.writers import CollectionWriteResult
@@ -31,7 +30,6 @@ from adt_ai.shared.apex_version import readable_yaml_removed, supports_apexlang
 from adt_ai.shared.progress import (
     ROW_INDENT,
     print_adt_header,
-    progress_dot_capacity,
     schema_label,
 )
 
@@ -103,6 +101,35 @@ def _schema_level_pairs(request: Any) -> list[tuple[int, str]]:
     return [(0, action) for action in SCHEMA_LEVEL_ACTIONS if request.actions.get(action)]
 
 
+def segment_row_budgets(
+    timers: Mapping[Any, Any],
+    planned: list[tuple[int, str]],
+) -> dict[tuple[str, Any], float]:
+    """What each ROW of this segment is expected to cost, in seconds.
+
+    A row's budget is the sum of the stored time of the pairs that run on it,
+    which is what makes it **time-weighted rather than item-counted**: a
+    `FULL APP EXPORT` and a `SPLIT COMPONENTS` slice differ by an order of
+    magnitude, so a row advanced one step per action would sit at 50% with 90%
+    of the work still to come. A pair with no history falls back rather than
+    counting as free, for the same reason `FALLBACK_TARGET_SECONDS` exists on
+    the per-action bar.
+
+    Built here rather than in `progress.py` because grouping the pairs needs
+    `ACTION_HEADERS`, and a schema-level row is keyed on the header it prints
+    (`-rest` and `-files_ws` share timer slot `0` and are two separate rows).
+    Insertion order is the order the rows open, which is what lets the bar draw
+    its first row before any work starts.
+    """
+    budgets: dict[tuple[str, Any], float] = {}
+    for app_id, action in planned:
+        key = row_key(app_id, ACTION_HEADERS[action])
+        budgets[key] = budgets.get(key, 0.0) + (
+            _timer_value(timers, app_id, action) or FALLBACK_TARGET_SECONDS
+        )
+    return budgets
+
+
 def open_segment_bar(
     request: Any,
     applications: list[ApexApplication],
@@ -111,13 +138,16 @@ def open_segment_bar(
 ) -> CompactApexProgressReporter | None:
     """The `-compact` bar for one schema segment, or ``None`` outside the mode.
 
-    Opened once per segment, before the first application, because the point of
-    the flag is that the segment has ONE row: a bar opened per application would
-    be the per-application blocks again with a percentage on them.
+    One bar object for the segment, drawing one ROW per unit of work inside it:
+    an application, or a schema-level slice. What `-compact` removes is the
+    per-application HEADER BLOCK and the row per action under it, not the ability
+    to see which application finished. `#376` removed both, and left a run's whole
+    screen reading as whichever slice happened to run last (`#772`).
 
-    The dot track is sized here, once, from the widest label the segment can
-    print, and every frame measures against it, so a percentage draws the same
-    number of dots whichever slice happens to be running (`#380`).
+    The dot track is not sized here any more. `#380` measured it once per
+    segment, from the widest label the segment could print, which left every
+    shorter slice's leader stopping short of the right margin; `#767` moved the
+    sizing back into the renderer, against the label being drawn.
     """
     if not request.compact:
         return None
@@ -138,28 +168,9 @@ def open_segment_bar(
         print_adt_header(SEGMENT_APPS_HEADER.format(schema=schema_label(schema)))
     else:
         print_adt_header(SEGMENT_SCHEMA_HEADER.format(schema=schema_label(schema)))
-    bar = CompactApexProgressReporter(
-        segment_budget(timers, planned),
-        dot_capacity = segment_dot_capacity(planned),
-    )
+    bar = CompactApexProgressReporter(segment_row_budgets(timers, planned))
     bar.begin()
     return bar
-
-
-def segment_dot_capacity(planned: list[tuple[int, str]]) -> int:
-    """The dot track every row of this segment measures against.
-
-    Sized from the widest label the segment will print, so the longest row still
-    fits and every shorter one ends its dots early rather than growing extra
-    ones. Jan, 2026-08-16: *"the dots should always match available space to
-    calculate 100%"*.
-    """
-    widest = max(
-        (segment_row_label(app_id, ACTION_HEADERS[action]) for app_id, action in planned),
-        key = len,
-        default = "",
-    )
-    return progress_dot_capacity(widest, CompactApexProgressReporter.line_width)
 
 
 def skipped_by_apex_release(action: str, apex_version: str | None) -> bool:

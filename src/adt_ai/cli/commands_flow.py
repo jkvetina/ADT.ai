@@ -32,11 +32,11 @@ from adt_ai.cli.context import (
 from adt_ai.cli.export_apex_owners import apex_lookup_schema, listed_applications
 from adt_ai.cli.gateways import build_gateway, cached_schema_gateway_factory
 from adt_ai.shared.connections import Connection
+from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.internal_paths import internal_path
 
-_NO_FLOW_DB_MESSAGE = (
-    "No APEX flow database found. Run 'adt flow -app N -refresh' to build it."
-)
+_NO_FLOW_DB_MESSAGE = "No APEX flow database found."
+_NO_FLOW_DB_REMEDY = "Run `adtai flow -app N -refresh` to build it."
 _APP_REQUIRED_MESSAGE = "An application id is required: pass -app N."
 _COMPONENT_DISPLAY_LIMIT = 30
 _REPORT_COLUMN_LINK_TYPES = {"IR_COL_LINK", "RPT_COL_LINK"}
@@ -82,11 +82,11 @@ def _run_flow(
     try:
         selection = _parse_apex_app_selection(_flatten_arg_groups(args.app))
     except ValueError as exc:
-        print(f"flow: -app {exc}", file=sys.stderr)
-        return 2
+        print_adt_error("ARGUMENT INVALID", str(exc))
+        return exit_code_for("ARGUMENT INVALID")
     if selection is None:
-        print(_APP_REQUIRED_MESSAGE, file=sys.stderr)
-        return 2
+        print_adt_error("ARGUMENT INVALID", _APP_REQUIRED_MESSAGE)
+        return exit_code_for("ARGUMENT INVALID")
 
     root    = Path(args.root).expanduser().resolve()
     db_path = internal_path(root, "flow.db")
@@ -100,8 +100,8 @@ def _run_flow(
     # Every other action reads the persistent store; opening it would create an
     # empty database, so a missing file is reported instead of silently seeded.
     if not db_path.exists():
-        print(_NO_FLOW_DB_MESSAGE, file=sys.stderr)
-        return 1
+        print_adt_error("INPUT NOT FOUND", _NO_FLOW_DB_MESSAGE, _NO_FLOW_DB_REMEDY)
+        return exit_code_for("INPUT NOT FOUND")
 
     with ApexFlowStore.open(db_path) as store:
         app_ids = _selection_to_store_ids(store, selection)
@@ -178,8 +178,8 @@ def _refresh_flow(
                 seen.add(app.app_id)
                 app_ids.append(app.app_id)
         if not app_ids:
-            print("flow: -app range matched no applications.", file=sys.stderr)
-            return 1
+            print_adt_error("INPUT NOT FOUND", "-app range matched no applications.")
+            return exit_code_for("INPUT NOT FOUND")
     else:
         app_ids = [int(id) for id in selection.explicit_ids]
 

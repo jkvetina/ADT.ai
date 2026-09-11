@@ -352,12 +352,13 @@ def add_export_parsers(subparsers: SubParsers) -> None:
     # Same polarity as `export_db -compact` (`#373`, Jan's call 2026-08-16): the
     # per-application blocks and their action rows are old-ADT parity output and
     # stay the default, so the flag is the bar. Unlike `export_db` there is no
-    # `-silent` on this command for it to rank against.
+    # `-silent` on this command for it to rank against. The row is per unit of
+    # work rather than per schema segment since `#772`, so the help says so.
     export_apex.add_argument(
         "--compact",
         "-compact",
         action = "store_true",
-        help   = "replace the per-action rows with one progress bar per schema",
+        help   = "replace the per-action rows with one progress row per app or slice",
     )
     export_apex.add_argument(
         "--debug",
@@ -394,12 +395,11 @@ def add_export_parsers(subparsers: SubParsers) -> None:
         nargs  = "+",
         help   = "application id(s) whose exported apexlang/ folder to validate",
     )
-    validate.add_argument(
-        "--silent",
-        "-silent",
-        action = "store_true",
-        help   = "suppress per-folder progress; keep chrome, error tables, and timer",
-    )
+    # No `-silent`, removed on Jan's instruction 2026-09-10. The per-folder rows
+    # ARE the report on this command: a run validates a handful of folders, so
+    # suppressing them left a banner, a timer and an exit code the exit code had
+    # already given. `export_db` and `ut` keep the flag because they print a row
+    # per object and have thousands of them.
     validate.add_argument(
         "--debug",
         "-debug",

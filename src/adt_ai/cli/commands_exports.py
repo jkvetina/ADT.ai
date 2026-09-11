@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 import time
 
 from adt_ai.cli.commands_export_apex import ApexRun, run_apex_export, run_apex_reveal
@@ -48,6 +47,7 @@ from adt_ai.export_db.config import (
 )
 from adt_ai.export_db.groups import resolve_group_inputs
 from adt_ai.shared import identity
+from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.object_types import normalize_object_type_patterns
 
 
@@ -64,9 +64,8 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
             # reads on disk exactly like a complete one, and `patch -hash` would
             # then treat every object it never looked at as absent from the
             # target (`#452`).
-            print(refusal(refused), file=sys.stderr)
-            print(file=sys.stderr)
-            return 2
+            print_adt_error("ARGUMENT INVALID", refusal(refused))
+            return exit_code_for("ARGUMENT INVALID")
     startup = _load_startup_context(args)
     root = startup.root
     config = startup.config
@@ -94,12 +93,12 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
     if args.force:
         # -force applies a -groups plan and means nothing on an export. Accepting
         # it here would be the accepted-but-unused flag §Command surface bans.
-        print(
-            "export_db: -force applies a -groups plan; add -groups, "
-            "or drop -force to export.",
-            file=sys.stderr,
+        print_adt_error(
+            "ARGUMENT INVALID",
+            "-force applies a -groups plan.",
+            "Add -groups, or drop -force to export.",
         )
-        return 2
+        return exit_code_for("ARGUMENT INVALID")
     # -type resolves onto Oracle's vocabulary at the edge, as recompile does. -name is
     # an identifier pattern: its underscores are real wildcards, so it is left alone.
     flattened_types = _flatten_arg_groups(args.type)
@@ -113,8 +112,8 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
     # for a filter nothing could satisfy.
     unexported = unexported_requested_types(object_types, config)
     if unexported:
-        print(unexportable_object_types_message(unexported), file=sys.stderr)
-        return 2
+        print_adt_error("ARGUMENT INVALID", unexportable_object_types_message(unexported))
+        return exit_code_for("ARGUMENT INVALID")
     object_names = _flatten_arg_groups(args.name)
     if args.debug:
         _print_startup_debug(startup)
@@ -134,8 +133,8 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
             args.by, args.my, config, startup.config_search_paths
         )
     except AuthorFilterError as error:
-        print(str(error), file=sys.stderr)
-        return 2
+        print_adt_error("ARGUMENT INVALID", str(error))
+        return exit_code_for("ARGUMENT INVALID")
 
     runner = ExportDbRunner(cached_gateway_factory)
     measured: dict[str, str] = {}
@@ -176,8 +175,8 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
         # The wildcard route the check above cannot see, raised by the runner
         # once discovery said what is actually in the schema. Same refusal, same
         # exit code, and the shared teardown still prints the TIMER footer.
-        print(str(error), file=sys.stderr)
-        return 2
+        print_adt_error("ARGUMENT INVALID", str(error))
+        return exit_code_for("ARGUMENT INVALID")
     if measuring and exit_code == 0:
         write_measured_baseline(
             root, config, environment, schemas, measured, override=args.baseline
@@ -203,8 +202,8 @@ def _run_export_apex(
         if args.deep and page_selection is None:
             raise ValueError("-deep requires -page")
     except ValueError as exc:
-        print(f"export_apex: {exc}", file=sys.stderr)
-        return 2
+        print_adt_error("ARGUMENT INVALID", str(exc))
+        return exit_code_for("ARGUMENT INVALID")
     has_app_ranges = bool(app_selection and app_selection.has_ranges)
     sql_app_ids = None if has_app_ranges else _flatten_arg_groups(args.app)
     schema_app_ids: dict[str, list[str]] = {}
@@ -267,8 +266,8 @@ def _run_export_apex(
     # Checked here rather than in the parser because `-all` selects `apexlang`
     # without naming it, and only `_apex_actions` knows that (`#725`).
     if args.mirror and not actions.get("apexlang"):
-        print("export_apex: -mirror requires -apexlang", file=sys.stderr)
-        return 2
+        print_adt_error("ARGUMENT INVALID", "-mirror requires -apexlang")
+        return exit_code_for("ARGUMENT INVALID")
 
     def default_gateway_factory(schema: str) -> QueryGateway:
         return build_gateway(startup, schema_connections[schema], project_root=root)

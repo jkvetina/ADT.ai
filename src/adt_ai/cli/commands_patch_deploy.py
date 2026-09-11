@@ -17,7 +17,6 @@ from __future__ import annotations
 
 # ruff: noqa: F401 - re-exports keep the pre-split import path working.
 import argparse
-import sys
 from collections.abc import Callable
 from datetime import datetime
 from functools import partial
@@ -67,6 +66,7 @@ from adt_ai.patch.models import DeploymentResult
 from adt_ai.patch.selection import apex_owner_schemas
 from adt_ai.shared.connections import Connection
 from adt_ai.shared.diff_tables import drop_diff_tables
+from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.file_list import print_file_rows
 from adt_ai.shared.identity import commit_account, load_identity
 
@@ -96,9 +96,12 @@ def run_patch_deploy(
     already happened by the time this is called.
     """
     if not args.target:
-        print("Missing required target: use -target TARGET with -deploy", file=sys.stderr)
-        print(file=sys.stderr)
-        return 2
+        print_adt_error(
+            "ARGUMENT INVALID",
+            "-deploy needs a target, none was given",
+            "Use -target TARGET to name the environment to deploy to.",
+        )
+        return exit_code_for("ARGUMENT INVALID")
     ignored = _ignored_create_arguments(args)
     if ignored:
         print_adt_header("IGNORING WITH -deploy:", ", ".join(ignored))

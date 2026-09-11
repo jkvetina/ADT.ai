@@ -8,10 +8,24 @@ from adt_ai.ut.limits import GATE_FROM_CONFIG
 
 
 def add_database_parsers(subparsers: SubParsers) -> None:
+    # Defaulted rather than required (Jan, ADT #773: *"-source ENV should default
+    # to current env"*). It falls back to the connection default environment, the
+    # same fallback `-env` documents on every other command, so the side you are
+    # standing in is the side you compare FROM without saying so.
+    # `-schema`, not `-source-schema`: the usual comparison is one schema across
+    # two environments, so the name that reads as "the schema" is the one a user
+    # types (Jan, ADT #763). `-target-schema` is the exception it was always
+    # meant to be, and defaults to this one rather than to the environment.
+    # A `.zip` path names the artifact, anything else is the folder it lands in
+    # (`#773`). One suffix rather than "does it look like a file", so a folder
+    # called `releases/v1.2` cannot be mistaken for one.
+    # Multi-pattern, the shape `recompile` and `export_db` take: `-type A B`,
+    # `-type A,B` and a repeated `-type A -type B` all work. Both filters narrow
+    # the SCREEN; the artifact keeps every object SQLcl generated (`#773`).
     # NOT "show debug info" (ADT #326), which was the one -debug row of eleven
-    # that named neither what is shown nor where it comes from. Both this flag
-    # and -verbose above append themselves to the SQLcl DIFF command
-    # (`diff/runner.py:79-82`), so the extra output is SQLcl's, not ADT.ai's.
+    # that named neither what is shown nor where it comes from. `-debug` appends
+    # itself to the SQLcl DIFF command (`diff/runner.py`), so the extra output is
+    # SQLcl's, not ADT.ai's; `-verbose` above is ADT.ai's own screen.
     recompile = subparsers.add_parser(
         "recompile",
         description="recompile invalid database objects",

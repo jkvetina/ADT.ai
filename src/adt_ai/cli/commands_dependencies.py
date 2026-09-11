@@ -46,12 +46,12 @@ from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.dependencies.store import DEFAULT_MAX_DEPTH
 from adt_ai.export_apex.inventory import ApexApplication, ApexDiscovery
 from adt_ai.shared.apex_store import ApexStore
+from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.progress import FixedWidthProgressPrinter, schema_label
 
-_NO_DEPENDENCY_INDEX_MESSAGE = (
-    "No dependency database found. Run 'adt dependencies -refresh' to build it."
-)
+_NO_DEPENDENCY_INDEX_MESSAGE = "No dependency database found."
+_NO_DEPENDENCY_INDEX_REMEDY = "Run `adtai dependencies -refresh` to build it."
 
 
 def _dependencies_argument_error(args: argparse.Namespace) -> str | None:
@@ -148,8 +148,10 @@ def _run_dependencies(
         return _refresh_dependency_index(args, root, gateway_factory)
 
     if not db_path.exists():
-        print(_NO_DEPENDENCY_INDEX_MESSAGE, file=sys.stderr)
-        return 1
+        print_adt_error(
+            "INPUT NOT FOUND", _NO_DEPENDENCY_INDEX_MESSAGE, _NO_DEPENDENCY_INDEX_REMEDY
+        )
+        return exit_code_for("INPUT NOT FOUND")
 
     # -schema in a query mode is an offline owner disambiguator: parse it
     # locally and narrow the matched owner column. Empty/absent → all tracked
@@ -239,8 +241,8 @@ def _refresh_dependency_index(
         selection, connections, environment, selected_gateway_factory
     )
     if selection is not None and selection.has_ranges and not apps:
-        print("dependencies: -app range matched no applications.", file=sys.stderr)
-        return 1
+        print_adt_error("INPUT NOT FOUND", "-app range matched no applications.")
+        return exit_code_for("INPUT NOT FOUND")
 
     # APEX_* views are pulled over one schema's connection; default to the first
     # refreshed schema, else the environment's first default schema. When -app is

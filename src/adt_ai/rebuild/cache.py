@@ -51,9 +51,13 @@ def _require_branches_exist(root: Path, branches: list[str]) -> None:
         return
     names = ", ".join(f"'{b}'" for b in missing)
     label = "branch" if len(missing) == 1 else "branches"
+    # Two lines and a backticked command, because this reaches the reader through
+    # the shared refusal screen (ADT #764) where the body is indented two columns
+    # into an 80-column terminal. As one sentence it measured 99 and wrapped
+    # itself, which is the ragged look that card exists to end.
     raise RebuildError(
-        f"{label} {names} not found in this repo, "
-        "run 'adtai rebuild -reveal' to list available branches"
+        f"{label} {names} not found in this repo.\n"
+        "Run `adtai rebuild -reveal` to list available branches."
     )
 
 def _branch_exists(root: Path, branch: str) -> bool:

@@ -58,10 +58,9 @@ shipped and what Jan measured as jumpy: two samples of an uneven population read
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterable
-from typing import Any
+from collections.abc import Callable
 
-from adt_ai.shared.progress import DottedProgressBar, progress_dot_capacity
+from adt_ai.shared.progress import DottedProgressBar
 
 # What the row reads before the first object type is known and after the last one
 # is written: the header is the newest thing on screen at both moments, so there
@@ -104,35 +103,6 @@ def object_type_label(object_type: str) -> str:
     return f"{name}S"
 
 
-def widest_object_type(objects: Iterable[Any]) -> str:
-    """The longest label this segment will print, or ``""`` for an empty run.
-
-    The bar's dot track is sized from it once, before the first row, so a
-    percentage is worth the same number of dots however long the type in flight
-    happens to be (`#380`). Lives here rather than in the runner because the
-    figure only exists to serve this bar, and `runner.py` is at its context
-    budget.
-
-    **Measured on the plural, because the plural is what draws** (`#383`).
-    Sizing the track from the singular leaves the longest row one column past it,
-    and it can pick the wrong type outright: `TYPE BODY` and `MVIEW LOG` tie at
-    nine characters while `TYPE BODIES` is longer than `MVIEW LOGS`, so the
-    singular answer depends on which one discovery happened to list first.
-
-    It measures the dictionary listing, and the GRANT artifacts are not in it
-    because they are not dictionary objects. That used to leave a gap: while the
-    five privilege reads ran under this bar they relabelled the row `GRANTS`, so
-    the track had to be widened for a label no listing could report (`#382`).
-    Those reads happen under the overview table since `#437`, so this bar never
-    names the type and the dictionary listing is the whole measurement again.
-    """
-    return max(
-        (object_type_label(item.object_type) for item in objects),
-        key     = len,
-        default = "",
-    )
-
-
 class ObjectProgressBar:
     """One redrawable row per schema segment, opened once and closed once."""
 
@@ -144,19 +114,11 @@ class ObjectProgressBar:
         started_at: float | None = None,
         bar: DottedProgressBar | None = None,
         previous_seconds: float = 0.0,
-        widest_label: str = "",
     ) -> None:
         self._total = max(0, int(total))
         self._clock = clock
         # The type currently being pulled, or ROW_HEADER before the first one.
         self._label = ROW_HEADER
-        # Sized once from the widest type this run exports, so a percentage is
-        # the same number of dots on every row of the segment (`#380`).
-        self._dot_capacity = (
-            progress_dot_capacity(widest_label, DottedProgressBar().line_width)
-            if widest_label
-            else None
-        )
         # What this schema's last export cost, priced for the objects THIS run
         # selected (`export_db/timers.estimate_seconds`). Zero on a first run, on
         # a root with no history, and on a run with no environment to key one by.
@@ -166,10 +128,7 @@ class ObjectProgressBar:
         # so the countdown measures the whole export rather than the part of it
         # that has rows.
         self._started_at = self._clock() if started_at is None else float(started_at)
-        self._bar = bar or DottedProgressBar(
-            dot_capacity = self._dot_capacity,
-            single_row   = True,
-        )
+        self._bar = bar or DottedProgressBar(single_row=True)
         self._done = 0
 
     @property
@@ -194,8 +153,7 @@ class ObjectProgressBar:
         over explains a wait that has already ended (`#360`).
 
         Takes the dictionary spelling and renders the plural here, so no caller
-        has to remember to (`#383`). `widest_label` above is already a label, so
-        the two never pluralise the same string twice.
+        has to remember to (`#383`).
         """
         self._label = object_type_label(object_type) or ROW_HEADER
         self._draw()

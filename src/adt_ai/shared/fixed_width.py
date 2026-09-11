@@ -24,6 +24,7 @@ from adt_ai.shared.progress import (
     ROW_INDENT,
     DottedProgressBar,
     commit_line,
+    leader_columns,
     print_adt_header,
 )
 
@@ -97,10 +98,14 @@ def fixed_width_row(
     by however much the label overran it. The `max` looked like a guard and was
     the defect: nothing anywhere trimmed the label. Jan measured it at 83
     columns on a 78-column grid, 2026-08-20.
+
+    The subtraction itself moved to ``shared/progress.leader_columns`` with
+    `#767`, so this row and the crawling bar answer "how many dots" the same way.
+    Only the fields differ: a value here, a percentage and a clock there.
     """
-    room = line_width - len(indent) - len(value) - 2 - LEADER_DOTS_MINIMUM
+    room = leader_columns(line_width, indent, len(value) + 2 + LEADER_DOTS_MINIMUM)
     left = f"{indent}{fit_label(label, room)}"
-    dots = "." * max(LEADER_DOTS_MINIMUM, line_width - len(left) - len(value) - 2)
+    dots = "." * max(LEADER_DOTS_MINIMUM, leader_columns(line_width, f"{left} ", len(value) + 1))
     return f"{left} {dots} {value}"
 
 
@@ -168,7 +173,9 @@ class FixedWidthProgressPrinter:
     def _left(self, label: str, indent: str | None = None) -> str:
         """The label on its margin, trimmed to what the reservation leaves it."""
         margin = self.indent if indent is None else indent
-        room = self.line_width - len(margin) - self.value_width - 2 - LEADER_DOTS_MINIMUM
+        room = leader_columns(
+            self.line_width, margin, self.value_width + 2 + LEADER_DOTS_MINIMUM
+        )
         return f"{margin}{fit_label(label, room)}"
 
     def bar(self) -> DottedProgressBar:
@@ -199,7 +206,7 @@ class FixedWidthProgressPrinter:
     ) -> None:
         left = self._active_left or self._left(label, indent)
         right = fixed_width_count_suffix(count, total=total, count_width=count_width)
-        dots_len = self.line_width - len(left) - len(right) - 2
+        dots_len = leader_columns(self.line_width, f"{left} ", len(right) + 1)
         dots = "." * max(LEADER_DOTS_MINIMUM, dots_len)
         print(f" {dots} {right}")
         # A row with its value on it is finished, so its newline goes out now
@@ -231,7 +238,7 @@ class FixedWidthProgressPrinter:
         no visible progress until the whole thing resolves.
         """
         left = self._active_left or self._left(label, indent)
-        dots_len = self.line_width - len(left) - len(status) - 2
+        dots_len = leader_columns(self.line_width, f"{left} ", len(status) + 1)
         dots = "." * max(LEADER_DOTS_MINIMUM, dots_len)
         print(f" {dots} {status}")
         commit_line()  # as in `finish` above, and `fail` comes through here

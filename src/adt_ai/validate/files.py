@@ -15,8 +15,9 @@ from typing import Any
 
 from adt_ai.export_apex.files import ApexFileResolver
 from adt_ai.export_apex.inventory import ApexApplication
-from adt_ai.shared.apex_paths import APEXLANG_DIR, apexlang_folders, apexlang_search_root
+from adt_ai.shared.apex_paths import APEXLANG_DIR, apexlang_folders
 from adt_ai.shared.apex_store import ApexStore
+from adt_ai.shared.path_template import DEFAULT_PATH_APP
 
 APPS_METADATA = "config/internal/apex.db"
 
@@ -67,13 +68,28 @@ def resolve_targets(
         if discovered:
             targets.extend(discovered)
         else:
-            where = _label(apexlang_search_root(root, config), root)
             notes.append(
-                f"No {APEXLANG_DIR}/ folder found under {where} "
+                f"No {APEXLANG_DIR}/ folder found under {discovery_label(root, config)} "
                 f"- run `adtai export_apex -apexlang` first."
             )
 
     return targets, notes
+
+
+def discovery_label(root: Path, config: Mapping[str, Any]) -> str:
+    """Where a bare run looked, phrased so the reader can go and check it.
+
+    A bare run matches one SHAPE rather than walking a folder, so the honest
+    answer is that shape written the way the project's own config writes it:
+    `path_apex` and `apex_path_app` with their tokens intact, which names the two
+    keys a reader would go and check. A rendered path could not be honest here,
+    because `<schema>` stands for every schema at once (ADT #765).
+    """
+    templates = [
+        str(config.get("path_apex") or "apex/").strip("/"),
+        str(config.get("apex_path_app") or DEFAULT_PATH_APP).strip("/"),
+    ]
+    return "/".join(part for part in templates if part) or "."
 
 
 def _targets_for_apps(
@@ -102,7 +118,12 @@ def _targets_for_apps(
                 )
                 continue
             targets.append(
-                ValidateTarget(folder, _label(folder, root), application.app_id, stageable=True)
+                ValidateTarget(
+                    folder,
+                    _export_label(folder, root),
+                    application.app_id,
+                    stageable = True,
+                )
             )
     return targets, notes
 
@@ -123,9 +144,26 @@ def _application(entry: Mapping[str, Any], raw_id: str) -> ApexApplication:
 
 def _discover(root: Path, config: Mapping[str, Any]) -> list[ValidateTarget]:
     return [
-        ValidateTarget(folder, _label(folder, root), stageable=True)
+        ValidateTarget(folder, _export_label(folder, root), stageable=True)
         for folder in apexlang_folders(root, config)
     ]
+
+
+def _export_label(folder: Path, root: Path) -> str:
+    """An export named by its application folder, not by the tree inside it.
+
+    Every folder this module resolves for itself ends in `apexlang/`, because
+    that is the only thing it compiles, so printing the segment on every row
+    spends width to say what the module is. Jan, 2026-09-10: "In the VALIDATING
+    section dont print the `/apexlang`, it is just noise".
+
+    An `-input` label is deliberately not trimmed: that mode validates exactly
+    the path it was handed, may be a zip or a single `.apx`, and its refusal
+    screen has to echo what the user typed for them to recognise the typo.
+    """
+    label = _label(folder, root)
+    suffix = f"/{APEXLANG_DIR}"
+    return label[:-len(suffix)] if label.endswith(suffix) else label
 
 
 def _label(path: Path, root: Path) -> str:

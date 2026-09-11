@@ -9,9 +9,11 @@ from adt_ai.export_db.normalizers import (
     _trim_trailing_blank_lines,
     sql_spans,
 )
+from adt_ai.export_db.object_normalizers.annotations import carries_annotations
 from adt_ai.export_db.object_normalizers.view_columns import (
-    COLUMN_LIST_RE,
+    collapse_spaces,
     column_block,
+    find_column_list,
 )
 
 
@@ -44,6 +46,11 @@ def _normalize_view_definition_line(
 
     Returns a list whose LAST entry is always the line carrying the trailing
     `AS` / `BEQUEATH`; everything before it is the `(` opener and the columns.
+
+    The tail is whatever sits between the list and that keyword, which since
+    23ai is where the object's own `ANNOTATIONS (...)` clause lives. It is
+    carried through verbatim: dropping it with the column list is what wrote a
+    dangling `ANNOTATIONS` keyword into every annotated view file (ADT #761).
     """
     line = re.sub(
         r"\s+DEFAULT\s+COLLATION\s+\S+",
@@ -51,18 +58,17 @@ def _normalize_view_definition_line(
         line,
         flags=re.IGNORECASE,
     )
-    match = COLUMN_LIST_RE.search(line)
-    if match is None:
-        return [re.sub(r" {2,}", " ", line).rstrip()]
+    bounds = find_column_list(line)
+    if bounds is None:
+        return [collapse_spaces(line)]
 
-    head = _collapse(line[: match.start()])
-    tail = _collapse(line[match.end() :])
-    if not context.keep_view_column_names:
+    open_index, close_index = bounds
+    inner = line[open_index + 1 : close_index]
+    head = collapse_spaces(line[:open_index])
+    tail = collapse_spaces(line[close_index + 1 :])
+    if not context.keep_view_column_names and not carries_annotations(inner):
         return [f"{head} {tail}".rstrip()]
-    return [f"{head} (", *column_block(match.group(1)), f") {tail}".rstrip()]
-
-def _collapse(payload: str) -> str:
-    return re.sub(r" {2,}", " ", payload).strip()
+    return [f"{head} (", *column_block(inner), f") {tail}".rstrip()]
 
 def _expand_simple_view_select(lines: list[str]) -> list[str]:
     if len(lines) < 2:

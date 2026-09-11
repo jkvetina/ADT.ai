@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import sys
 from pathlib import Path
 
 from adt_ai.cli.constants import (
@@ -28,6 +27,7 @@ from adt_ai.connection.runner import (
 )
 from adt_ai.shared import crypto
 from adt_ai.shared.connections import ConnectionNotFoundError
+from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.secret import Secret
 
 _CONNECTION_ACTIONS = (
@@ -137,9 +137,13 @@ def _prompt_password(prompt: str) -> str | None:
 
 
 def _no_password_available(action: str) -> str:
+    # Two lines, because the screen is 80 columns and the indent is two of them.
+    # It read as one 95-character sentence under the retired `connection: `
+    # prefix and wrapped mid-word on a default terminal, which is the ragged
+    # look ADT #764 exists to end.
     return (
-        f"-{action} needs a password, and nothing arrived at the prompt; "
-        "run it from a terminal"
+        f"-{action} needs a password, and nothing arrived at the prompt.\n"
+        "Run it from a terminal."
     )
 
 
@@ -219,25 +223,25 @@ def _run_connection(args: argparse.Namespace) -> int:
 
     action = _selected_connection_action(args)
     if action is None:
-        print(
-            f"connection: provide exactly one of {_CONNECTION_ACTION_LIST}",
-            file=sys.stderr,
+        print_adt_error(
+            "ARGUMENT INVALID",
+            f"provide exactly one of {_CONNECTION_ACTION_LIST}",
         )
-        return 2
+        return exit_code_for("ARGUMENT INVALID")
     missing = _missing_connection_selector(action, args)
     if missing:
-        print(f"connection: {missing}", file=sys.stderr)
-        return 2
+        print_adt_error("ARGUMENT INVALID", missing)
+        return exit_code_for("ARGUMENT INVALID")
     if args.encrypt and action in _ACTIONS_WITHOUT_ENCRYPT:
         if action == "rekey":
-            print(
-                "connection: -encrypt is not used with -rekey, which re-encrypts by "
-                "definition; give it -old-key and -new-key",
-                file=sys.stderr,
+            print_adt_error(
+                "ARGUMENT INVALID",
+                "-encrypt is not used with -rekey, which re-encrypts by definition",
+                "Give it -old-key and -new-key.",
             )
         else:
-            print("connection: -encrypt is only valid for password actions", file=sys.stderr)
-        return 2
+            print_adt_error("ARGUMENT INVALID", "-encrypt is only valid for password actions")
+        return exit_code_for("ARGUMENT INVALID")
 
     startup, path = _connection_edit_path(args, allow_missing=action == "create")
     if args.debug and startup is not None:
@@ -249,8 +253,8 @@ def _run_connection(args: argparse.Namespace) -> int:
             _connection_request(action, args, path, password=None, apply=False)
         )
     except ConnectionEditError as error:
-        print(f"connection: {error}", file=sys.stderr)
-        return 2
+        print_adt_error("ARGUMENT INVALID", str(error))
+        return exit_code_for("ARGUMENT INVALID")
 
     print()
     print(f"  Connection file   {path}")
@@ -267,8 +271,8 @@ def _run_connection(args: argparse.Namespace) -> int:
         try:
             crypto.resolve_key(args.key)
         except crypto.CryptoError as error:
-            print(f"connection: {error}", file=sys.stderr)
-            return 2
+            print_adt_error("CREDENTIAL UNAVAILABLE", str(error))
+            return exit_code_for("CREDENTIAL UNAVAILABLE")
 
     password = None
     wallet_password = None
@@ -277,8 +281,13 @@ def _run_connection(args: argparse.Namespace) -> int:
     elif action in {"add-schema", "set-pwd", "set-wallet-pwd"}:
         password, error_message = _collect_connection_password(action, args)
         if error_message:
-            print(f"connection: {error_message}", file=sys.stderr)
-            return 2
+            # A mismatched confirmation, a blank password, or EOF on the prompt
+            # is about what was typed at this invocation, not a secret ADT.ai
+            # could not fetch, so it is a usage refusal and keeps exit 2.
+            # `CREDENTIAL UNAVAILABLE` stays for the loader path, where a vault
+            # command or a stored key genuinely failed (`context_errors.py`).
+            print_adt_error("ARGUMENT INVALID", error_message)
+            return exit_code_for("ARGUMENT INVALID")
 
     try:
         result = editor.run(
@@ -290,8 +299,8 @@ def _run_connection(args: argparse.Namespace) -> int:
     except ConnectionEditError as error:
         # `-rekey` does its own validation on the apply pass, where the keys are
         # actually used, so this is the first point a wrong -old-key can surface.
-        print(f"connection: {error}", file=sys.stderr)
-        return 2
+        print_adt_error("ARGUMENT INVALID", str(error))
+        return exit_code_for("ARGUMENT INVALID")
     print()
     print(f"  {result.summary}")
     if action == "rekey" and result.preview:

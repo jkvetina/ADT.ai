@@ -144,7 +144,7 @@ ACTIONS:
   Run `adtai doctor -sqlcl` to upgrade SQLcl only.
 ```
 
-Only a project that already holds `apexlang/` exports under its configured `path_apex` is held to the floor. A database-only project has no reason to care which SQLcl it has, and `doctor` still diagnoses a machine that has no project at all.
+Only a project that already holds `apexlang/` exports at its configured export shape (`path_apex` / `apex_path_app` / `apexlang`, the same shape [validate](validate.md) matches) is held to the floor. A database-only project has no reason to care which SQLcl it has, and `doctor` still diagnoses a machine that has no project at all.
 
 The verdict compares your installed version against a fixed number, so `-offline` reports it exactly as a plain run does.
 

@@ -42,6 +42,7 @@ from adt_ai.export_apex.rest import (
 )
 from adt_ai.shared import text_files
 from adt_ai.shared.apex_paths import REST_SCHEMA_DEFINITION
+from adt_ai.shared.apex_payloads import link_payloads
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.row_values import row_value
 from adt_ai.shared.yaml_io import store_yaml_mapping
@@ -229,6 +230,15 @@ class ApexCollectionWriterMixin:
             # Through the shared writer, so a static file whose bytes have not
             # moved keeps its mtime like every other exported artifact (`#593`).
             text_files.write_bytes(target, payload)
+        if application is not None:
+            # ADT #765: an `-apexlang` tree beside these payloads is validatable and
+            # importable as it sits, so the links are reconciled as part of writing
+            # them rather than assembled later by whoever happens to read the tree.
+            # A no-op when this application exports no APEXlang.
+            link_payloads(
+                resolver.apexlang_root(application),
+                resolver.application_file(application, ""),
+            )
 
     def _write_page_comments(
         self,

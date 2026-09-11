@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 import time
 
 from adt_ai.cli.commands_export_data_groups import run_data_groups_move
@@ -22,6 +21,7 @@ from adt_ai.cli.export_reporters import ConsoleExportDataReporter
 from adt_ai.cli.gateways import build_gateway, cached_schema_gateway_factory
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.export_data.groups import resolve_group_inputs
+from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 
 
 def _run_export_data(
@@ -56,12 +56,12 @@ def _run_export_data(
     if args.force:
         # -force applies a -groups plan and means nothing on an export. Accepting
         # it here would be the accepted-but-unused flag §Command surface bans.
-        print(
-            "export_data: -force applies a -groups plan; add -groups, "
-            "or drop -force to export.",
-            file=sys.stderr,
+        print_adt_error(
+            "ARGUMENT INVALID",
+            "-force applies a -groups plan.",
+            "Add -groups, or drop -force to export.",
         )
-        return 2
+        return exit_code_for("ARGUMENT INVALID")
     if args.debug:
         _print_startup_debug(startup)
 

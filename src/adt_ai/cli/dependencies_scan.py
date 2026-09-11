@@ -47,6 +47,7 @@ from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.dependencies import queries as dependency_queries
 from adt_ai.export_apex.filters import ApexPageSelection
 from adt_ai.patch.apex_scan import ApexScanReport, resolve_apex_version, scan_application
+from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.internal_paths import internal_path
 
 
@@ -109,8 +110,8 @@ def _scan_applications(
         selection, connections, environment, selected_gateway_factory
     )
     if selection is not None and selection.has_ranges and not apps:
-        print("dependencies: -app range matched no applications.", file=sys.stderr)
-        return 1
+        print_adt_error("INPUT NOT FOUND", "-app range matched no applications.")
+        return exit_code_for("INPUT NOT FOUND")
 
     schemas = (
         connections.expand_schemas(
@@ -121,8 +122,8 @@ def _scan_applications(
     )
     schema = schemas[0] if schemas else _scan_schema(root, connections, environment, apps)
     if schema is None:
-        print("dependencies: no schema to scan through.", file=sys.stderr)
-        return 1
+        print_adt_error("INPUT NOT FOUND", "No schema to scan through.")
+        return exit_code_for("INPUT NOT FOUND")
 
     pages = _parse_apex_page_selection(_flatten_arg_groups(args.page))
     machine_format = getattr(args, "format", "table") != "table"

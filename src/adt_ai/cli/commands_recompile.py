@@ -53,6 +53,7 @@ from adt_ai.recompile.render import (
     print_trailing_updated_objects,
 )
 from adt_ai.shared.config import ConfigError, ConfigLoader
+from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.object_types import normalize_object_type_patterns
 
@@ -297,11 +298,8 @@ def _run_discovery(
     has_sql  = bool(args.sql and args.sql.strip())
     has_file = bool(args.statements_file)
     if has_sql == has_file:
-        print(
-            "discovery: provide exactly one of -sql or -file",
-            file=sys.stderr,
-        )
-        return 2
+        print_adt_error("ARGUMENT INVALID", "Provide exactly one of -sql or -file.")
+        return exit_code_for("ARGUMENT INVALID")
 
     startup = _load_startup_context(args)
     root = startup.root
@@ -402,8 +400,8 @@ def _run_doctor(args: argparse.Namespace) -> int:
             if len(selected_actions) == 2
             else f"{', '.join(selected_actions[:-1])}, and {selected_actions[-1]}"
         )
-        print(f"Error: {joined_actions} cannot be combined")
-        return 1
+        print_adt_error("ARGUMENT INVALID", f"{joined_actions} cannot be combined")
+        return exit_code_for("ARGUMENT INVALID")
 
     printed_lines: list[str] = []
     pending_blank_lines = 0
