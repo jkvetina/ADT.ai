@@ -68,6 +68,7 @@ import os
 import re
 import subprocess
 import time
+from pathlib import Path
 from typing import Any
 
 # A pseudo console renders rather than pipes, so the escapes come off before any
@@ -112,9 +113,19 @@ class PtyConsole:
 
     echoes = False
 
-    def __init__(self, launcher: tuple[str, ...], environment: dict[str, str]) -> None:
+    def __init__(
+        self,
+        launcher: tuple[str, ...],
+        environment: dict[str, str],
+        cwd: Path | None = None,
+    ) -> None:
         self.launcher = launcher
         self.environment = _with_dumb_terminal(environment)
+        # SQLcl resolves `@` scripts and a `SPOOL "./..."` path against its own
+        # working directory, and a driven process is spawned once and keeps the
+        # one it was given (ADT #760). `run_sqlcl_script` passes `cwd=root` per
+        # call, so a reusing caller has to restart when the root moves.
+        self.cwd = cwd
         self._process: subprocess.Popen[bytes] | None = None
         self._master: int | None = None
         self._writer: Any = None
@@ -136,6 +147,7 @@ class PtyConsole:
                 stdout = slave,
                 stderr = slave,
                 env    = self.environment,
+                cwd    = self.cwd,
             )
             writer_descriptor = os.dup(master)
             try:
@@ -176,6 +188,22 @@ class PtyConsole:
         # the POSIX path stays byte for byte what it was.
         return text
 
+    @property
+    def exit_code(self) -> int | None:
+        """The child's exit status, or `None` while it is still running.
+
+        A body carrying `WHENEVER SQLERROR EXIT ROLLBACK` ends the process
+        instead of answering, and `run_sqlcl_script` classifies exactly that
+        failure by its exit code (ADT #760). Reaped here rather than inferred,
+        with a short wait because the reader already saw EOF by the time anyone
+        asks.
+        """
+        if self._process is None:
+            return None
+        with contextlib.suppress(Exception):
+            self._process.wait(timeout=5)
+        return self._process.returncode
+
     def wait(self, timeout: float) -> None:
         if self._process is None:
             raise SqlclConsoleStateError("SQLcl console is not open: no child process")
@@ -213,12 +241,18 @@ class ConPtyConsole:
 
     echoes = True
 
-    def __init__(self, launcher: tuple[str, ...], environment: dict[str, str]) -> None:
+    def __init__(
+        self,
+        launcher: tuple[str, ...],
+        environment: dict[str, str],
+        cwd: Path | None = None,
+    ) -> None:
         self.launcher = launcher
         # The same dumb terminal the pty asks for. Measured 2026-08-22: the pair
         # is not what withholds the prompt, and without it SQLcl paints a line
         # editor widget over the session. See the module docstring.
         self.environment = _with_dumb_terminal(environment)
+        self.cwd = cwd
         self._child: Any = None
 
     def open(self) -> None:
@@ -234,6 +268,7 @@ class ConPtyConsole:
         self._child = winpty.PtyProcess.spawn(  # pragma: no cover - needs real pywinpty
             list(self.launcher),
             env        = self.environment,
+            cwd        = str(self.cwd) if self.cwd is not None else None,
             dimensions = (24, 500),
         )
 
@@ -253,6 +288,16 @@ class ConPtyConsole:
 
     def clean(self, text: str) -> str:
         return ANSI.sub("", text)
+
+    @property
+    def exit_code(self) -> int | None:
+        """The child's exit status, or `None` while it is still running."""
+        if self._child is None:
+            return None
+        with contextlib.suppress(Exception):
+            if self._child.isalive():
+                return None
+        return getattr(self._child, "exitstatus", None)
 
     def wait(self, timeout: float) -> None:
         if self._child is None:
@@ -276,15 +321,22 @@ class ConPtyConsole:
             self._child = None
 
 
-def open_console(launcher: tuple[str, ...], environment: dict[str, str]) -> Any:
+def open_console(
+    launcher: tuple[str, ...],
+    environment: dict[str, str],
+    cwd: Path | None = None,
+) -> Any:
     """The console this platform has, opened and ready to read.
 
     Keyed on `os.name` rather than on whether an import happens to succeed: a
     missing `pywinpty` on Windows is a message telling the user to install it,
     never a silent fall back onto a pty that cannot exist there.
+
+    `cwd` defaults to the caller's own, which is what `SqlclSession` has always
+    inherited; only a transport that resolves relative paths passes one.
     """
-    console = ConPtyConsole(launcher, environment) if os.name == "nt" else PtyConsole(
-        launcher, environment
+    console = ConPtyConsole(launcher, environment, cwd) if os.name == "nt" else PtyConsole(
+        launcher, environment, cwd
     )
     console.open()
     return console

@@ -10,6 +10,10 @@ from adt_ai.export_db.normalizers import (
     _trim_trailing_blank_lines,
     qualified,
 )
+from adt_ai.export_db.object_normalizers.annotations import (
+    annotation_clause_spans,
+    carries_annotations,
+)
 from adt_ai.export_db.object_normalizers.view_columns import column_block
 
 # Storage / physical / refresh-noise clauses DBMS_METADATA still emits for a
@@ -45,9 +49,15 @@ def normalize_materialized_view(
     text, columns = _split_mview_column_list("\n".join(lines), name)
     source = text.splitlines()
     header, body = _split_mview_header_body(source)
+    header, annotations = _split_mview_annotations(header)
 
     create_line = f"CREATE MATERIALIZED VIEW {qualified(name, context)}"
-    if context.keep_view_column_names and columns is not None:
+    # An annotated column list is kept at either setting: the declared list is
+    # the only place a column annotation can live, so dropping it is data loss
+    # rather than the layout cleanup the default exists for (ADT #761).
+    if columns is not None and (
+        context.keep_view_column_names or carries_annotations(columns)
+    ):
         kept = [f"{create_line} (", *column_block(columns), ")"]
     else:
         kept = [create_line]
@@ -55,6 +65,8 @@ def normalize_materialized_view(
         stripped = line.strip()
         if stripped and _MVIEW_KEEP_OPTION.match(stripped):
             kept.append(stripped)
+    if annotations:
+        kept.append(annotations)
     kept.append("AS")
     kept.extend(body)
 
@@ -112,6 +124,29 @@ def _split_mview_column_list(text: str, name: str) -> tuple[str, str | None]:
         text[:open_index].rstrip() + text[close_index + 1 :],
         text[open_index + 1 : close_index],
     )
+
+
+def _split_mview_annotations(header: list[str]) -> tuple[list[str], str | None]:
+    """`header` with its object-level ``ANNOTATIONS (...)`` clause lifted out.
+
+    The header is rebuilt from the `_MVIEW_KEEP_OPTION` allowlist, so a clause
+    that is not on it is dropped, which silently deleted every object-level
+    annotation a materialized view carried, leaving a valid file and no
+    documentation (ADT #761). The clause is matched by parentheses rather than
+    by line because an annotation value may hold a newline, and DBMS_METADATA
+    emits it verbatim.
+
+    The column list is lifted before this runs, so the only `ANNOTATIONS` left
+    in the header is the object's own. A clause whose parentheses never close
+    is reported as no clause at all, so the header keeps its own text rather
+    than losing a slice of the wrong length.
+    """
+    text = "\n".join(header)
+    spans = annotation_clause_spans(text)
+    if not spans:
+        return header, None
+    start, end = spans[0]
+    return (text[:start].rstrip() + text[end:]).splitlines(), text[start:end].strip()
 
 
 def _split_mview_header_body(lines: list[str]) -> tuple[list[str], list[str]]:

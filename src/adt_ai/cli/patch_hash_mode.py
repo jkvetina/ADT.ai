@@ -56,10 +56,13 @@ def hash_mode_error(args: argparse.Namespace) -> str | None:
     reason the module docstring gives: everything reached only under `-hash` or
     `-baseline` is on this side of the seam.
     """
+    # Each of the three wraps itself rather than running as one long sentence:
+    # these reach the reader through the shared refusal screen (ADT #764), whose
+    # body is indented two columns into an 80-column terminal.
     if args.hash is not None and args.baseline is not None:
         return (
-            "Pass one of -hash, -baseline, not both: -hash reads a baseline to "
-            "build a patch from, -baseline replaces it"
+            "Pass one of -hash, -baseline, not both.\n"
+            "-hash reads a baseline to build a patch from, -baseline replaces it."
         )
     # `-target` names the environment whose baseline this is, so it is required
     # exactly when the path has to be derived from it. A FILE spells the whole
@@ -67,15 +70,16 @@ def hash_mode_error(args: argparse.Namespace) -> str | None:
     for flag, value in (("-hash", args.hash), ("-baseline", args.baseline)):
         if value is not None and not value and not args.target:
             return (
-                f"Missing required target: use -target TARGET with {flag}, or name "
-                f"the baseline directly with {flag} FILE"
+                f"{flag} needs a target: pass -target TARGET,\n"
+                f"or name the baseline directly with {flag} FILE."
             )
     if args.hash is not None:
         refused = [flag for flag in ("-head", "-nosnap") if getattr(args, flag[1:], False)]
         if refused:
             return (
-                f"Pass -hash without {', '.join(refused)}: hash mode compares the "
-                "working tree against the baseline, so the working tree is what it ships"
+                f"Pass -hash without {', '.join(refused)}.\n"
+                "Hash mode compares the working tree against the baseline,\n"
+                "so the working tree is what it ships."
             )
     return None
 

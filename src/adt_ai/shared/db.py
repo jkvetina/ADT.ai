@@ -8,15 +8,16 @@ from typing import Any, Protocol
 
 from adt_ai.shared.connections import DEFAULT_PORT, Connection, InvalidConnectionError
 from adt_ai.shared.db_fakes import FakeGateway  # re-export, see `db_fakes` (`#670`)
+from adt_ai.shared.db_sqlcl import SqlclRequestMixin  # the SQLcl half, see `db_sqlcl`
 from adt_ai.shared.oracle_session import DDL_LOCK_TIMEOUT_STATEMENT
 from adt_ai.shared.sqlcl_connect import (
     SqlclConnect,
     _ensure_wallet_folder,
-    resolve_wallet_path,
     sqlcl_connect,
 )
 from adt_ai.shared.sqlcl_errors import SqlclNotConnectedError
 from adt_ai.shared.sqlcl_names import credential_fingerprint, record_sqlcl_registration
+from adt_ai.shared.sqlcl_request_session import SqlclRequestSession
 from adt_ai.shared.sqlcl_script import run_sqlcl_script
 from adt_ai.shared.startup import apply_startup
 
@@ -152,7 +153,14 @@ class QueryGateway(Protocol):
         ...
 
 
-class OracleGateway:
+class OracleGateway(SqlclRequestMixin):
+    """The gateway every command talks to the database through (ADT #179).
+
+    Its SQLcl half is `SqlclRequestMixin` (`shared/db_sqlcl`), split out when
+    ADT #760 took this module past the context cap; everything left here is the
+    python-oracledb connection and the session settings applied to it.
+    """
+
     FETCH_ARRAYSIZE = 5000
 
     def __init__(
@@ -178,6 +186,9 @@ class OracleGateway:
         )
         self._connection: Any | None = None
         self._thick_initialized = False
+        # The SQLcl process `sqlcl_request` reuses, opened on its first request
+        # and closed with this gateway (ADT #760). See `shared/db_sqlcl`.
+        self._sqlcl_request_session: SqlclRequestSession | None = None
 
     def connect(self) -> Any:
         if self._connection is not None:
@@ -209,6 +220,13 @@ class OracleGateway:
         return connection
 
     def close(self) -> None:
+        session, self._sqlcl_request_session = self._sqlcl_request_session, None
+        if session is not None:
+            # First, and best-effort: a SQLcl process left running would outlive
+            # the command, and its own teardown failing is not a reason to skip
+            # closing the driver connection below.
+            with contextlib.suppress(Exception):
+                session.close()
         connection, self._connection = self._connection, None
         if connection is not None:
             _close_resource(connection)
@@ -316,111 +334,6 @@ class OracleGateway:
             raise
         finally:
             _close_resource(cursor)
-
-    def sqlcl_request(
-        self,
-        request: str,
-        root: Path,
-        timeout_seconds: float | None = None,
-        on_line: Callable[[str], None] | None = None,
-    ) -> str:
-        root.mkdir(parents=True, exist_ok=True)
-        body = f"{request.rstrip()}\nexit;\n"
-        plan = self._sqlcl_plan()
-        if plan.registers is None:
-            if plan.name is None:
-                # Plain credentialed connect: nothing is registered, so a
-                # failure here is the caller's to see.
-                return self._run(plan, body, root, timeout_seconds, on_line)
-            try:
-                return self._run(plan, body, root, timeout_seconds, on_line)
-            except SqlclNotConnectedError:
-                # Fresh fingerprint, but the local SQLcl store has never seen
-                # the name (the YAML travels with the project, the store does
-                # not). Re-register and retry once.
-                #
-                # `SqlclNotConnectedError` is the ONLY failure this retry
-                # answers, and it has to be caught by name: a lost store entry
-                # does not exit non-zero the way this path once assumed (SQLcl
-                # reports `SP2-0640` and exits 0), so before ADT #232 the retry
-                # never ran for the failure it was written for.
-                #
-                # Catching bare `RuntimeError` re-ran the body for every other
-                # failure too, because `SqlclScriptError` and `SqlclTimeoutError`
-                # subclass it (ADT #661): a timeout (`export_apex -rest` is the
-                # caller that passes one) killed SQLcl and then waited the whole
-                # deadline a second time, and any body exiting non-zero ran twice
-                # with the first transcript discarded.
-                plan = self._sqlcl_plan(force_register=True)
-        output = self._run(plan, body, root, timeout_seconds, on_line)
-        if plan.registers is not None and plan.registers.sqlcl_source and plan.name:
-            record_sqlcl_registration(
-                plan.registers.sqlcl_source,
-                plan.registers.environment,
-                plan.registers.schema,
-                plan.name,
-                credential_fingerprint(plan.registers),
-            )
-        return output
-
-    def _run(
-        self,
-        plan: SqlclConnect,
-        body: str,
-        root: Path,
-        timeout_seconds: float | None,
-        on_line: Callable[[str], None] | None = None,
-    ) -> str:
-        # `oci` is passed ONLY when it is true, so the ordinary call is
-        # byte-for-byte the one every existing caller and test fake already
-        # takes. Per connection, off the auth mode, never a global switch: a
-        # SEPS connection needs the OCI driver and every other one still runs
-        # thin (ADT #395).
-        extra: dict[str, Any] = (
-            {
-                "oci": True,
-                "client_lib_dir": self.connection.client_lib_dir,
-                "tns_admin": self._tns_admin(),
-            }
-            if self.connection.external_auth
-            else {}
-        )
-        # `on_line` rides the same rule for the same reason (ADT #434): only a
-        # deploy with a live console passes one, so every other call stays the
-        # byte-for-byte one it was, test fakes included.
-        if on_line is not None:
-            extra["on_line"] = on_line
-        return run_sqlcl_script(
-            f"{plan.script}{body}",
-            root,
-            self.project_root,
-            timeout_seconds = timeout_seconds,
-            **extra,
-        )
-
-    def _tns_admin(self) -> str | None:
-        """The folder SQLcl reads `tnsnames.ora` from, resolved once for all callers.
-
-        `#670`: this handed SQLcl the raw `wallet_path`, while `_apply_wallet`
-        and `_initialize_thick_client` resolve the same field. A
-        `config/Wallet_X.zip` value therefore pointed TNS_ADMIN at a zip file,
-        relative to a cwd nobody had set, and the alias never resolved. Same two
-        steps as the driver paths: anchor a relative path to the project root,
-        then name the extracted folder rather than the archive.
-        """
-        if not self.connection.wallet_path:
-            return None
-        anchored = resolve_wallet_path(self.connection.wallet_path, self.project_root)
-        return str(_ensure_wallet_folder(anchored.expanduser()))
-
-    def _sqlcl_plan(self, *, force_register: bool = False) -> SqlclConnect:
-        return sqlcl_connect(
-            self.connection,
-            startup_sql       = self.startup_sql,
-            project_root      = self.project_root,
-            named_connections = self.sqlcl_named_enabled,
-            force_register    = force_register,
-        )
 
     def _apply_default_session_settings(self, connection: Any) -> None:
         cursor = connection.cursor()
@@ -587,6 +500,7 @@ __all__ = [
     "QUERY_TIMEOUT_SECONDS",
     "QueryGateway",
     "SqlclConnect",
+    "SqlclRequestMixin",
     "SqlclNotConnectedError",
     "_attach_sql",
     "annotations",

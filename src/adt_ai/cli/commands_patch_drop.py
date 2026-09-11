@@ -16,7 +16,6 @@ there imports back. `cli/patch_build.py` is the only caller of
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 from adt_ai.cli.commands_patch_deploy import _patch_deploy_gateway_factories
@@ -46,6 +45,7 @@ from adt_ai.patch.apex_drop import (
     write_drop_log,
 )
 from adt_ai.patch.selection import apex_owner_schemas, apex_patch_schema
+from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.identity import commit_account, load_identity
 from adt_ai.shared.streamed_table import StreamedTable
 from adt_ai.shared.tables import _AdtTableLayout, _compute_adt_layout
@@ -120,9 +120,12 @@ def run_drop_applications(
     connection file's default is exactly what a rail exists to prevent.
     """
     if not args.target:
-        print("Missing required target: use -target TARGET with -drop", file=sys.stderr)
-        print(file=sys.stderr)
-        return 2
+        print_adt_error(
+            "ARGUMENT INVALID",
+            "-drop needs a target, none was given",
+            "Use -target TARGET to name the environment to drop from.",
+        )
+        return exit_code_for("ARGUMENT INVALID")
     # The sandbox's own source application answers for the schema (ADT #602),
     # read off the first id because a run drops sandboxes of one application's
     # workspace. Same reader the install-script grouping uses, so `-drop`

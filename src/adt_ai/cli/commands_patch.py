@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +39,7 @@ from adt_ai.cli.patch_preview_render import print_patch_preview
 from adt_ai.patch.apex_import import resolve_target
 from adt_ai.patch.topup import ConsoleTopUpReporter
 from adt_ai.shared import text_files
+from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.git_files import fetch_origin, git_ref_exists
 
 
@@ -59,16 +59,20 @@ def _run_patch(
 
 
 def _refuse(message: str) -> int:
-    """An argument-shaped refusal: the message on stderr, then the exit code.
+    """An argument-shaped refusal: the shared screen, then the exit code.
 
     One spelling for all three of them (ADT #670). Each used to print its own
     two lines at its own call site, which is how the trailing blank every
     refusal owes the console became a property three separate blocks had to
     remember individually.
+
+    Folding them here still left the message bare on stderr under no header at
+    all, which is its own variant of the thing ADT #764 ended: a `patch` that
+    refuses read as one unlabelled sentence while every other command's refusal
+    announced itself.
     """
-    print(message, file=sys.stderr)
-    print(file=sys.stderr)
-    return 2
+    print_adt_error("ARGUMENT INVALID", message)
+    return exit_code_for("ARGUMENT INVALID")
 
 
 def _level_history(

@@ -7,7 +7,6 @@ handler beside it but the argument namespace and the config/root it was given.
 from __future__ import annotations
 
 import argparse
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -21,6 +20,7 @@ from adt_ai.export_data.groups import (
 )
 from adt_ai.export_data.runner import _data_folder
 from adt_ai.shared.config import as_int
+from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 
 
 def run_data_groups_move(
@@ -41,12 +41,12 @@ def run_data_groups_move(
     prefixes = parse_group_prefixes(args.groups)
     forced_group = args.force if isinstance(args.force, str) else None
     if forced_group and not prefixes:
-        print(
-            f"export_data: -force {forced_group} needs the prefixes it renames; "
-            f"name them on -groups, as in -groups INV_ INV_ARCHIVE -force {forced_group}.",
-            file=sys.stderr,
+        print_adt_error(
+            "ARGUMENT INVALID",
+            f"-force {forced_group} needs the prefixes it renames.",
+            f"Name them on -groups, as in -groups INV_ INV_ARCHIVE -force {forced_group}.",
         )
-        return 2
+        return exit_code_for("ARGUMENT INVALID")
 
     groups_min = as_int(config.get("groups_min", 5))
     exit_code = 0

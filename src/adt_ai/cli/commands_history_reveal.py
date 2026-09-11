@@ -21,6 +21,7 @@ from adt_ai.cli.constants import (
     reveal_branches,
     switch_to_branch,
 )
+from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 
 # `-reveal` shows branch names only, clipped to this width so long feature
 # branch names don't wrap the report.
@@ -71,9 +72,8 @@ def _run_rebuild_reveal(
             root, patterns=patterns, mine=mine, since=since_date, limit=limit
         )
     except GIT_LOOKUP_FAILURES as exc:
-        print(f"Error: {exc}")
-        print()
-        return 1
+        print_adt_error("INPUT NOT FOUND", str(exc))
+        return exit_code_for("INPUT NOT FOUND")
 
     # `-since` is rendered as a trailing ` SINCE <date>` on whichever title the
     # word/`-my` filters produced.
@@ -105,15 +105,13 @@ def _run_rebuild_switch(
             root, patterns=patterns, mine=mine, since=since_date, limit=None
         )
     except GIT_LOOKUP_FAILURES as exc:
-        print(f"Error: {exc}")
-        print()
-        return 1
+        print_adt_error("INPUT NOT FOUND", str(exc))
+        return exit_code_for("INPUT NOT FOUND")
 
     if switch < 1 or switch > len(result.branches):
         upper = len(result.branches)
-        print(f"Error: -switch {switch} is out of range (1..{upper})")
-        print()
-        return 1
+        print_adt_error("ARGUMENT INVALID", f"-switch {switch} is out of range (1..{upper})")
+        return exit_code_for("ARGUMENT INVALID")
     target = result.branches[switch - 1]
 
     # Skip the checkout entirely when we're already on the branch, no git ops,
@@ -122,9 +120,8 @@ def _run_rebuild_switch(
         try:
             switch_to_branch(root, target.name)
         except GIT_LOOKUP_FAILURES as exc:
-            print(f"Error: {exc}")
-            print()
-            return 1
+            print_adt_error("INPUT NOT FOUND", str(exc))
+            return exit_code_for("INPUT NOT FOUND")
 
     print_adt_header("BRANCH SWITCHED:")
     print()

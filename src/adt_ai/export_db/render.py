@@ -109,7 +109,6 @@ class ExportDbReporter:
         schema: str,
         total: int,
         estimate: float = 0.0,
-        widest_label: str = "",
     ) -> None:
         pass
 
@@ -299,7 +298,6 @@ class ConsoleExportDbReporter(ExportDbReporter):
         schema: str,
         total: int,
         estimate: float = 0.0,
-        widest_label: str = "",
     ) -> None:
         self._rows.reset(schema)
         # **A section header must not claim work it will not perform** (`#442`).
@@ -326,18 +324,16 @@ class ConsoleExportDbReporter(ExportDbReporter):
             # `estimate` is what the runner priced this run at from the stored
             # rates; the reporter never reads or writes that history itself, a
             # console class that touches the filesystem is the wrong seam.
-            # `widest_label` sizes the dot track once for the whole segment, so a
-            # percentage is the same number of dots whichever type is in flight.
+            # The dot track is the renderer's business since `#767`, sized
+            # against the type in flight so a full row reaches the right margin
+            # whichever one it is; this reporter used to hand down the segment's
+            # widest label instead and every shorter type stopped short.
             # **The bar counts objects and nothing else** (`#437`). It carried
             # one extra unit for the grant reads while those ran under it, which
             # is what stopped the row reading 100% mid-work (`#379`); the reads
             # happen under the overview table now, so a unit for them would be
             # one this bar never waits on.
-            self._bar = ObjectProgressBar(
-                total,
-                previous_seconds = estimate,
-                widest_label     = widest_label,
-            )
+            self._bar = ObjectProgressBar(total, previous_seconds=estimate)
             self._bar.begin()
             return
         # This bare `print()` was the ONLY object listing in the tool that

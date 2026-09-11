@@ -11,18 +11,20 @@ own for a mechanic that is identical either way, so the runner lives on `patch`
 and `-app` is what turns it on. Absent `-app` nothing here runs at all, which is
 what keeps the existing command exactly as it was.
 
-**The tree is staged, never imported where it sits.** `export_apex -apexlang`
-omits the static-file payloads by design, so a committed `apexlang/` folder
-reports one `REFERENCE_NOT_FOUND` per payload and `apex import` validates before
-it writes. `validate/staging.stage_apexlang` is the same hardlink tree
-`validate` already builds, reused rather than re-implemented, so the bytes the
-import sees are the bytes the compile gate passed.
+**The tree is imported where it sits.** `export_apex -apexlang` omits the
+static-file payloads by design, so an `apexlang/` folder on its own reports one
+`REFERENCE_NOT_FOUND` per payload and `apex import` validates before it writes.
+ADT #165 answered that with a staged copy under `config/temp/`; ADT #765 replaced
+it with `shared/apex_payloads.link_payloads`, which keeps the payloads hardlinked
+inside the export's own tree. So the bytes the import sees are the bytes the
+compile gate passed and the bytes that are committed, with no second tree that
+could disagree with any of them.
 
-**Everything that can refuse, refuses before the first install script runs.**
-Staging, the signature read and all three gates happen in `prepare` and the
-import itself in `run`, with the patch's own scripts in between. That ordering is
-the card's own requirement, the target's signature read before anything is
-written, and it has a second payoff: a deploy refused on drift has not deployed
+**Everything that can refuse, refuses before the first install script runs.** The
+payload reconciliation, the signature read and all three gates happen in `prepare`
+and the import itself in `run`, with the patch's own scripts in between. That
+ordering is the card's own requirement, the target's signature read before anything
+is written, and it has a second payoff: a deploy refused on drift has not deployed
 the database half either, so there is nothing to undo.
 
 **One import cannot serve two applications.** `resolve_target` already refuses a
@@ -64,16 +66,30 @@ from adt_ai.patch.apex_signature import (
 )
 from adt_ai.patch.layout import is_apex_full_export
 from adt_ai.patch.models import DeploymentPlanItem, DeploymentResult
+from adt_ai.shared.apex_payloads import IGNORE_NAME, drop_legacy_staging, link_payloads
 from adt_ai.shared.apex_store import ApexStore
 from adt_ai.validate.files import resolve_targets
 from adt_ai.validate.report import message_lines, parse_import_output
-from adt_ai.validate.staging import stage_apexlang, staging_root_for
 
 # The sibling export that owns the static-file payloads `-apexlang` skips, the
 # same constant `cli/commands_validate.py` reads for the same reason.
 FILES_DIR = "files"
 
 EXPORT_COMMAND = "adtai export_apex -apexlang -app"
+
+
+def _tree_files(apexlang_root: Path) -> int:
+    """How many files the import is about to carry, payload links included.
+
+    Counted off the tree rather than summed from a staging result, because the tree
+    IS what the import reads since ADT #765. The ignore file the payload folder
+    carries is ADT.ai's own bookkeeping and is not one of them.
+    """
+    return sum(
+        1
+        for path in apexlang_root.rglob("*")
+        if path.is_file() and path.name != IGNORE_NAME
+    )
 
 # What the deploy table calls the import (ADT #735). It was `apex_import_<id>`,
 # spelled like the install scripts around it, and nothing in the patch folder
@@ -222,6 +238,7 @@ def prepare_apex_imports(
 
     items: list[ApexImportItem] = []
     aliases, owners, workspaces = _application_facts(root, app_ids)
+    drop_legacy_staging(root)
     targets, notes = resolve_targets(
         root, config, app_ids=[str(app_id) for app_id in sorted(app_ids)]
     )
@@ -247,11 +264,13 @@ def prepare_apex_imports(
                 workspace = workspaces.get(app_id, ""),
                 mode      = mode,
             )
-        staged = stage_apexlang(
-            resolved.path,
-            resolved.path.parent / FILES_DIR,
-            staging_root_for(root, resolved.path),
-        )
+        # ADT #765: the payloads are linked into the export's own tree and kept
+        # there, so the import reads the folder that is committed rather than a
+        # copy assembled under `config/temp/`. `apex import` compiles before it
+        # writes, so it needs exactly the completeness `validate` needs, and it now
+        # gets it from the same reconciliation rather than from a second tree that
+        # could disagree with this one.
+        link_payloads(resolved.path, resolved.path.parent / FILES_DIR)
         # ADT #745: a held lock has already read the target, one statement
         # before it wrote the status that moves that reading. `None` where no
         # lock went on, so an unlocked deploy reads the target here exactly as
@@ -262,7 +281,7 @@ def prepare_apex_imports(
             root,
             app_id    = app_id,
             target_id = landing,
-            tree_root = staged.path,
+            tree_root = resolved.path,
             on_target = held.signature if held is not None and held.locked else None,
         )
         if signatures.refused and not force:
@@ -274,9 +293,9 @@ def prepare_apex_imports(
                 alias      = aliases.get(app_id, ""),
                 schema     = owners.get(app_id, ""),
                 source     = resolved.path,
-                staged     = staged.path,
+                staged     = resolved.path,
                 label      = resolved.label,
-                files      = staged.metadata_files + staged.payload_files,
+                files      = _tree_files(resolved.path),
                 signatures = signatures,
             )
         )

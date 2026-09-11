@@ -181,6 +181,40 @@ def row_left_margin(header: str) -> str:
     return f"{ROW_INDENT}{header} " if header else ROW_INDENT
 
 
+#: How wide `format_seconds` renders the clock a bar row closes on.
+CLOCK_WIDTH = 8
+
+#: The percentage field a bar row reserves, at its widest reading (`` 100%``).
+#:
+#: Reserved unconditionally rather than measured per frame, the same reservation
+#: a streamed table makes for `IN PROGRESS`: the row is repainted in place, so a
+#: field that shrank from `100%` to `50%` would drag every column left of it.
+PERCENT_FIELD = len(" 100%")
+
+#: The clock field, its separating space included.
+CLOCK_FIELD = 1 + CLOCK_WIDTH
+
+
+def leader_columns(line_width: int, left: str, trailing_width: int) -> int:
+    """The one width rule: what the dot leader gets once everything else is placed.
+
+    **Every dotted row in the tool is the same three parts** -- a label, a leader
+    of dots, and a trailing field -- and they only ever disagreed about how many
+    columns that third part costs. `DottedProgressBar` counted a percentage and a
+    clock, `fixed_width_row` counted a value, `failed_text` counted a word, and
+    each wrote the subtraction itself, so a fix to one of them was a fix to one
+    of them. Jan, 2026-09-10, on `#767`: *"I hope you implemented this as a
+    component and the fix will be just on 1 place, because you must have fucked
+    this up elsewhere too!"* He was right twice over -- the compact bars stopped
+    their leader twenty columns short of the margin, and `failed_text` ran a
+    column past it.
+
+    What legitimately differs stays with the caller: which fields it reserves and
+    how wide they are. What cannot differ is this subtraction.
+    """
+    return line_width - len(left) - trailing_width
+
+
 def commit_line() -> None:
     """Put a finished row's terminating newline on the stream now, not later.
 
@@ -207,16 +241,18 @@ def commit_line() -> None:
 class DottedProgressBar:
     """The redrawable dotted row every long-running command crawls under.
 
-    Two constructor knobs exist for the bars whose label CHANGES while the row
-    stays open (`export_db -compact`, `export_apex -compact`, `#380`); a bar with
-    one fixed label passes neither and renders exactly as it always has.
-
-    ``dot_capacity`` fixes the dot track for the whole run instead of sizing it
-    against each label. Without it the track is whatever is left after the label,
-    so `PACKAGE` at 50% drew more dots than `MATERIALIZED VIEW` at 50% and the
-    bar read as walking backwards. Jan, 2026-08-16: *"the dots should always
-    match available space to calculate 100%"*. The caller passes the capacity of
-    its WIDEST label, which both compact bars know before they open the row.
+    **The leader is sized against the label being drawn, and reaches the margin
+    on every one of them.** `#380` fixed the track for a whole run instead, sized
+    to the widest label the run could print, so that a percentage was worth the
+    same number of dots whichever slice happened to be running. It bought that
+    with a leader that stopped short on every label but the longest, and a
+    twenty-column void in front of the clock is what Jan actually read on a
+    `REST SERVICES` row: *"Why is the progress bar so tiny and not utilizing the
+    whole row?? 78 chars - timer - 2 chars, thats where it should have ended!"*
+    (2026-09-10, `#767`). Asked which of the two he wanted, he chose the reaching
+    leader: *"it stretches the row properly, even if the text on the line
+    changes"*. The trade he took with it is that a shorter slice draws a longer
+    track, so the dots retreat when a repainted row relabels itself.
 
     ``single_row`` says every draw is the same row however the label reads, so
     `_row_break` never fires. The guard it turns off is `#323`'s, and turning it
@@ -226,11 +262,9 @@ class DottedProgressBar:
     def __init__(
         self,
         line_width: int = 78,
-        dot_capacity: int | None = None,
         single_row: bool = False,
     ) -> None:
         self.line_width = line_width
-        self._dot_capacity = dot_capacity
         self._single_row = single_row
         # Header of the row being redrawn right now, nothing has closed it yet
         #, or None once a row closed itself. Read by _row_break.
@@ -284,12 +318,22 @@ class DottedProgressBar:
         return "\n"
 
     def failed_text(self, header: str) -> str:
-        # Padded to the crawling row's exact width: ``\r`` returns the cursor
-        # but clears nothing, so a shorter replacement leaves that row's tail
-        # on screen behind it.
-        width = len(self.line_text(header, 0, 0))
+        """The abandoned row, closed on a word instead of a percentage and a clock.
+
+        **On the grid, and still covering the paint.** It used to measure itself
+        against `len(line_text(...))`, which is the row PLUS the trailing space
+        the bar keeps to blank a stale column, so `FAILED` landed on column 79 of
+        a 78-column screen -- every row of every command, since `#232`. Sizing
+        the leader through the shared rule puts the word back on the margin
+        (`#767`).
+
+        Covering the crawling row does not need that extra column: `\\r` returns
+        the cursor and clears nothing, but the only byte this row leaves behind
+        is the paint's own trailing SPACE, which shows as nothing.
+        """
         left = row_left_margin(header)
-        dots = "." * max(1, width - len(left) - len(FAILED_STATUS) - 1)
+        budget = leader_columns(self.line_width, left, len(FAILED_STATUS) + 1)
+        dots = "." * max(LEADER_DOTS_MINIMUM, budget)
         return f"{left}{dots} {FAILED_STATUS}"
 
     def print_line(
@@ -314,35 +358,61 @@ class DottedProgressBar:
             mark_finished()
 
     def line_text(self, header: str, percent: int, seconds: int) -> str:
-        # The run's own budget when it has one, so a percentage means the same
-        # number of dots on every row of the segment (`#380`); otherwise sized
-        # against this label, which is what a one-label bar has always done.
-        max_dots = (
-            self._dot_capacity
-            if self._dot_capacity is not None
-            else progress_dot_capacity(header, self.line_width)
-        )
+        # Sized against the label being drawn, so a full row reaches the margin
+        # whatever it reads (`#767`). There is no second branch to fall back to:
+        # a caller-supplied capacity is exactly what used to leave the void.
+        max_dots = progress_dot_capacity(header, self.line_width)
         dot_count = min(max_dots, int(max_dots * percent / 100))
-        progress = f"{'.' * dot_count} {percent}%"
         # One branch, because the margin is decided in one place. This used to
         # fork on `if not header:` and the headerless arm simply had no left
         # margin at all, which is how two commands shipped a bar sitting two
         # columns left of every row around it (`#378`).
         left = row_left_margin(header)
-        progress_width = self.line_width - 9 - len(left)
-        return f"{left}{progress:<{progress_width}} {format_seconds(seconds)} "
+        # **The dots run up to the figure, and the slack sits after it.** Jan's
+        # layout for the row, in his own capitals on `#767`: `2 SPACES + TEXT +
+        # SPACE + DOTS + SPACE + PERCENTAGE + SPACES (AT LEAST TWO BUT MORE TO
+        # PUSH NEXT TEXT TO THE 78 CHARS EDGE) + STATUS (RIGHT ALIGNED TO 78
+        # CHARS)`. The percentage is left-aligned one space off the dot tip and
+        # the remainder of the track pads out behind it, which leaves the trailing
+        # field -- and only the trailing field -- on a fixed column.
+        #
+        # Two earlier passes put that slack somewhere else and both were
+        # rejected. `#380`'s track was the segment's WIDEST label, so a shorter
+        # slice drew fewer dots and parked the difference in front of the clock.
+        # The second pass padded the leader out to its whole track and
+        # right-aligned the figure in the field after it, which anchored the
+        # number on `line_width - CLOCK_FIELD` and moved the same blanks between
+        # the dots and the number instead.
+        #
+        # **The cost this layout carries, stated rather than discovered.** A
+        # figure one space off the dot tip is not on a fixed column: a row
+        # relabelling itself SHORTER hands the leader the columns the label gave
+        # up and gets back only `percent/100` of them, so at a constant
+        # percentage the number sits further left under a shorter label. That is
+        # the leftward step Jan read on the first pass, and this layout chooses it
+        # over a gap in the leader.
+        #
+        # **What survived all three passes is the arithmetic, not the bytes.**
+        # Every row is `line_width` wide in all of them, because `PERCENT_FIELD`
+        # and `CLOCK_FIELD` were always reserved out of the track and only their
+        # ORDER against the slack moved. A 100% row comes out byte-identical as a
+        # side effect of having no slack left to place; every partial row does not,
+        # which is the whole of what this pass changes.
+        figure = f" {percent}%".ljust(max_dots - dot_count + PERCENT_FIELD)
+        return f"{left}{'.' * dot_count}{figure} {format_seconds(seconds)} "
 
 
 def format_seconds(seconds: int) -> str:
     if seconds < 60:
-        return f"0:00:{seconds:02d}".rjust(8, " ")
+        return f"0:00:{seconds:02d}".rjust(CLOCK_WIDTH, " ")
     minutes, seconds = divmod(seconds, 60)
     hours, minutes = divmod(minutes, 60)
-    return f"{hours}:{minutes:02d}:{seconds:02d}".rjust(8, " ")
+    return f"{hours}:{minutes:02d}:{seconds:02d}".rjust(CLOCK_WIDTH, " ")
 
 
 def progress_dot_capacity(header: str, width: int) -> int:
-    return width - 5 - len(row_left_margin(header)) - 9
+    """The full dot track for one bar row: the leader rule, with the bar's fields."""
+    return leader_columns(width, row_left_margin(header), PERCENT_FIELD + CLOCK_FIELD)
 
 
 # The labelled fixed-width row family lives in `shared/fixed_width.py` since
@@ -368,6 +438,8 @@ from adt_ai.shared.fixed_width import (  # noqa: E402,F401  (facade: re-exported
 
 __all__ = [
     "ADT_TOOL_NAME",
+    "CLOCK_FIELD",
+    "CLOCK_WIDTH",
     "DEFAULT_VALUE_WIDTH",
     "DROPBOX_PATH_RE",
     "DottedProgressBar",
@@ -377,6 +449,7 @@ __all__ = [
     "LEADER_DOTS_MINIMUM",
     "MODULE_BANNER_SEPARATOR",
     "OPENING_GAP",
+    "PERCENT_FIELD",
     "ROW_INDENT",
     "SECTION_GAP",
     "annotations",
@@ -387,6 +460,7 @@ __all__ = [
     "fixed_width_row",
     "fixed_width_status_line",
     "format_seconds",
+    "leader_columns",
     "mark_announced",
     "mark_finished",
     "module_banner",

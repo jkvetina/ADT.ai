@@ -91,7 +91,6 @@ FILTER_DESTS = {
     "schema",
     "search",
     "source",
-    "source_schema",
     "summary",
     "target",
     "target_schema",
@@ -111,6 +110,20 @@ FILTER_DESTS = {
 # below is per COMMAND and is the only sanctioned way to disagree with the
 # dest sets above.
 COMMAND_SECTION_OVERRIDES = {
+    # The third use of the override, and the first that draws the line on
+    # OPTIONALITY rather than on subject matter. Jan, 2026-09-11, reading the
+    # four under `FILTERS:`: *"There are really not FILTERS, these are required
+    # to function, so no FILTERS section, but ACTIONS"*, then, asked where the
+    # other two go: *"-name -type ARE optional filters! -source and -target are
+    # NOT"*.
+    #
+    # Which is the honest reading of the screen. A command whose required
+    # values are two environments and two schemas has nothing left for a
+    # flag to narrow; `-type` and `-name` stay below because they
+    # are what a filter actually is, a thing you may leave out. Every dest here
+    # is shared (`schema` alone is declared by six commands, where it really
+    # does pick what to act on), which is why this is per-command rather than a
+    # `FILTER_DESTS` move.
     "patch": {
         # `-target` and `-name` are the two things a `patch` run acts ON, so they
         # render beside the verbs that act on them. `#494` had lifted the pair

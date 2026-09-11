@@ -2,6 +2,15 @@
 
 All notable changes to the public ADT.ai release are recorded here, newest first.
 
+## 1.2.1 - 2026-09-11
+
+- **`export_apex`'s `-compact` mode now prints one row per exported unit instead of one row for the whole schema**, and a finished row no longer names the slice that ran last.
+- **Every dotted progress row now reaches the right margin.** Two commands had stopped filling it.
+- **`export_apex`'s `-embedded` mode no longer fails with `ORA-06502` on an application with no embedded code.**
+- **`validate` no longer confuses a patch's own snapshot copies of an APEX export with the real export.** Several exports sharing one staging name could resolve to one directory and compile only the last, so a real application could report `EMPTY`. It now recognizes an export by its folder shape.
+- **`export_db` keeps a view's 23ai annotations, and a materialized view no longer loses them silently.**
+- **`patch` and `dependencies` commands run faster.** Where a run issues several SQLcl requests in a row — `patch -deploy` per script, `dependencies -refresh` per schema — it now reuses one SQLcl process instead of starting a fresh one each time.
+
 ## 1.2.0 - 2026-09-09
 
 - **`dependencies` now names its mode, and `-refresh` is required rather than implied.** A bare `adtai dependencies`, a mistyped query, or `-schema`, `-app`, `-force` and `-recent` on their own all used to connect and rebuild the mirror. An invocation naming no mode is refused before it connects.

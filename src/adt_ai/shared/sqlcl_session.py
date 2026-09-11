@@ -56,6 +56,7 @@ import contextlib
 import re
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Any
@@ -139,13 +140,22 @@ class SqlclSessionError(RuntimeError):
     """Raised when the driven SQLcl session cannot serve a statement."""
 
 
-class SqlclSession:
-    """A SQLcl process kept open for the lifetime of one command."""
+class DrivenSqlcl:
+    """A SQLcl process on a terminal, and the reader that talks to it.
 
-    # Two calls reach one database session here, which is the whole reason this
-    # class exists. `shared/session_scope` reads it, and `ScriptSession` answers
-    # the same question with False (ADT #449).
-    holds_a_session = True
+    Everything here is about the PROCESS: spawning it on this platform's
+    console, pumping its output into a queue, finding its prompt, sending one
+    payload and reading until the sentinel, and tearing it down. Nothing here
+    connects, and nothing here decides what an early ending means.
+
+    Split out of `SqlclSession` by ADT #760, when `sqlcl_request` gained a second
+    transport that drives the identical process and then answers those two
+    questions differently: it never connects at startup, because each request
+    carries its own connect block, and a request that ends the process is an
+    outcome to report rather than a broken session. Two classes over one base
+    rather than one class with two modes, so neither has to carry the other's
+    signature.
+    """
 
     def __init__(
         self,
@@ -168,45 +178,6 @@ class SqlclSession:
         self._secrets: set[str] = set()
 
     # -- lifecycle ---------------------------------------------------------
-
-    def start(self) -> None:
-        if self._console is not None:
-            return
-        plan = sqlcl_connect(
-            self.connection,
-            startup_sql       = self.startup_sql,
-            project_root      = self.project_root,
-            named_connections = self.config.get("sqlcl_named_connections") is not False,
-        )
-        self._secrets = _connect_secrets(plan.script)
-        # A retry after failed startup must not consume the EOF marker or prompt
-        # fragments left by the previous pump thread.
-        self._lines = Queue()
-        try:
-            self._spawn()
-            self._await_prompt()
-            # The connect line is the ONE exchange that can carry a credential,
-            # so it is the one whose reply is scrubbed. Scrubbing every reply
-            # looks safer and is worse: the password can equal a schema or
-            # workspace value a query legitimately returns (ADT #397).
-            connected = self._exchange(
-                plan.script, timeout_seconds=START_TIMEOUT_SECONDS, scrub=True
-            )
-            if _ran_without_a_session(connected):
-                # A failure to connect is a CONNECTION failure, not a
-                # configuration one; the class selects the shared database
-                # banner and its credential advice (ADT #407).
-                raise ConnectFailedError(
-                    "SQLcl did not connect: "
-                    + (connected.strip().splitlines() or ["no output"])[-1]
-                    + ". A named connection resolves only from SQLcl's own store; "
-                    "register it once with a run that has the password, or give the "
-                    "connection file one."
-                )
-            self._exchange(_SESSION_PRELUDE, timeout_seconds=START_TIMEOUT_SECONDS)
-        except BaseException:
-            self._abort()
-            raise
 
     def close(self) -> None:
         console, self._console = self._console, None
@@ -255,22 +226,9 @@ class SqlclSession:
             return
         pump.join(timeout=PUMP_JOIN_SECONDS)
 
-    def __enter__(self) -> SqlclSession:
-        self.start()
-        return self
-
     def __exit__(self, *_: object) -> None:
         self.close()
 
-    # -- the request/response protocol -------------------------------------
-
-    def run(self, body: str, *, timeout_seconds: float | None = None) -> str:
-        """Send ``body`` and return everything SQLcl printed for it."""
-        self.start()
-        return self._exchange(
-            body,
-            timeout_seconds = timeout_seconds or STATEMENT_TIMEOUT_SECONDS,
-        )
 
     def _spawn(self) -> None:
         # The terminal itself lives in `sqlcl_console`, which owns the one thing
@@ -333,7 +291,27 @@ class SqlclSession:
             f"SQLcl did not reach a prompt within {timeout:g} seconds"
         )
 
-    def _exchange(self, body: str, *, timeout_seconds: float, scrub: bool = False) -> str:
+    def _collect(
+        self,
+        body: str,
+        *,
+        timeout_seconds: float,
+        on_line: Callable[[str], None] | None = None,
+    ) -> tuple[str, str]:
+        """Send ``body``, read until the sentinel, and say how the reading ended.
+
+        Returns ``(transcript, ending)``, where ``ending`` is ``"sentinel"``,
+        ``"eof"`` or ``"timeout"``. Nothing is raised and nothing is torn down
+        here on purpose (ADT #760): both transports read the identical lines and
+        then disagree about what an early ending MEANS. A gateway statement that
+        ends the process is a broken session; a `sqlcl_request` script that ends
+        it is a script exercising its own ``WHENEVER SQLERROR EXIT``, and the
+        transcript printed before the exit is the answer its caller logs.
+
+        ``on_line`` is the live reader (ADT #434), fed each cleaned line as it
+        lands rather than at the end, so a deploy console moves while the script
+        is still running.
+        """
         self._counter += 1
         marker = _SENTINEL.format(n=self._counter)
         payload = body.rstrip()
@@ -349,28 +327,115 @@ class SqlclSession:
         drops_echo = bool(getattr(self._console, "echoes", False))
 
         collected: list[str] = []
+        ending = "sentinel"
         deadline = time.monotonic() + timeout_seconds
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                self.close()
-                raise SqlclSessionError(
-                    f"SQLcl did not answer within {timeout_seconds:g} seconds"
-                )
+                ending = "timeout"
+                break
             try:
                 line = self._lines.get(timeout=min(1.0, remaining))
             except Empty:
                 continue
             if line is None:
-                self._abort()
-                raise SqlclSessionError("SQLcl exited mid-statement")
+                ending = "eof"
+                break
             if _is_sentinel(line, marker):
                 break
             if drops_echo and line.strip() in echoed:
                 continue
-            collected.append(line)
-        text = "\n".join(_clean(collected))
+            cleaned = _clean_line(line)
+            if cleaned is None:
+                continue
+            collected.append(cleaned)
+            if on_line is not None:
+                on_line(cleaned)
+        return "\n".join(collected), ending
+
+
+class SqlclSession(DrivenSqlcl):
+    """A SQLcl process kept open, connected, and driven as ONE database session.
+
+    The process half is `DrivenSqlcl`. What this class adds is the session: it
+    connects at startup and keeps that connection, so `export_apex`'s
+    `APEX_COLLECTION` and `ut -coverage`'s profiler survive from one call to the
+    next, and a statement that ends the process is therefore a broken session
+    rather than a script exercising its own `WHENEVER SQLERROR EXIT`.
+    """
+
+    # Two calls reach one database session here, which is the whole reason this
+    # class exists. `shared/session_scope` reads it, and `ScriptSession` answers
+    # the same question with False (ADT #449).
+    holds_a_session = True
+
+    # -- lifecycle ---------------------------------------------------------
+
+    def start(self) -> None:
+        if self._console is not None:
+            return
+        plan = sqlcl_connect(
+            self.connection,
+            startup_sql       = self.startup_sql,
+            project_root      = self.project_root,
+            named_connections = self.config.get("sqlcl_named_connections") is not False,
+        )
+        self._secrets = _connect_secrets(plan.script)
+        # A retry after failed startup must not consume the EOF marker or prompt
+        # fragments left by the previous pump thread.
+        self._lines = Queue()
+        try:
+            self._spawn()
+            self._await_prompt()
+            # The connect line is the ONE exchange that can carry a credential,
+            # so it is the one whose reply is scrubbed. Scrubbing every reply
+            # looks safer and is worse: the password can equal a schema or
+            # workspace value a query legitimately returns (ADT #397).
+            connected = self._exchange(
+                plan.script, timeout_seconds=START_TIMEOUT_SECONDS, scrub=True
+            )
+            if _ran_without_a_session(connected):
+                # A failure to connect is a CONNECTION failure, not a
+                # configuration one; the class selects the shared database
+                # banner and its credential advice (ADT #407).
+                raise ConnectFailedError(
+                    "SQLcl did not connect: "
+                    + (connected.strip().splitlines() or ["no output"])[-1]
+                    + ". A named connection resolves only from SQLcl's own store; "
+                    "register it once with a run that has the password, or give the "
+                    "connection file one."
+                )
+            self._exchange(_SESSION_PRELUDE, timeout_seconds=START_TIMEOUT_SECONDS)
+        except BaseException:
+            self._abort()
+            raise
+
+    def __enter__(self) -> SqlclSession:
+        self.start()
+        return self
+
+    # -- the request/response protocol -------------------------------------
+
+    def run(self, body: str, *, timeout_seconds: float | None = None) -> str:
+        """Send ``body`` and return everything SQLcl printed for it."""
+        self.start()
+        return self._exchange(
+            body,
+            timeout_seconds = timeout_seconds or STATEMENT_TIMEOUT_SECONDS,
+        )
+
+    def _exchange(self, body: str, *, timeout_seconds: float, scrub: bool = False) -> str:
+        text, ending = self._collect(body, timeout_seconds=timeout_seconds)
+        if ending == "timeout":
+            self.close()
+            raise SqlclSessionError(
+                f"SQLcl did not answer within {timeout_seconds:g} seconds"
+            )
+        if ending == "eof":
+            self._abort()
+            raise SqlclSessionError("SQLcl exited mid-statement")
         return _scrub_secrets(text, self._secrets) if scrub else text
+
 
 
 def _is_sentinel(line: str, marker: str) -> bool:
@@ -392,17 +457,24 @@ def _is_sentinel(line: str, marker: str) -> bool:
     return marker in text and not text.lower().startswith("prompt")
 
 
+def _clean_line(line: str) -> str | None:
+    """One line with its prompt fragments off, or ``None`` for SQLcl's own noise.
+
+    Per line rather than per transcript so a live reader sees exactly what the
+    returned transcript will carry (ADT #760); a reader shown the raw line and a
+    caller handed the cleaned one is two answers to one question.
+    """
+    text = line
+    while text.lstrip().startswith(_PROMPT):
+        text = text.lstrip()[len(_PROMPT):]
+    if _NOISE.match(text.strip()):
+        return None
+    return text
+
+
 def _clean(lines: list[str]) -> list[str]:
     """Drop the prompt fragments and SQLcl's own startup noise."""
-    cleaned = []
-    for line in lines:
-        text = line
-        while text.lstrip().startswith(_PROMPT):
-            text = text.lstrip()[len(_PROMPT):]
-        if _NOISE.match(text.strip()):
-            continue
-        cleaned.append(text)
-    return cleaned
+    return [cleaned for line in lines if (cleaned := _clean_line(line)) is not None]
 
 
 def error_in(output: str) -> str | None:

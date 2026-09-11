@@ -16,6 +16,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from adt_ai.shared.path_template import DEFAULT_PATH_APP
+
 # The whole-application APEXlang tree. Not a config key, unlike `path_apex` and
 # its siblings: the exporter copies SQLcl's own layout verbatim under one root,
 # so a project renaming this would be renaming somebody else's output.
@@ -41,6 +43,17 @@ _UNSAFE_SEGMENT_RUN = re.compile(r'[/\\:*?"<>|\x00-\x1f\x7f]+')
 # `{$APP_ID}_{$APP_NAME}` it produced `100_..`, which `_clean_relative` does not
 # refuse because the traversal is not a whole segment.
 _EDGE_DOTS_OR_SPACES = (re.compile(r"^[. ]+"), re.compile(r"[. ]+$"))
+
+# Both token dialects a path template may be written in: `<schema>` for the keys
+# that carry it, and the old-ADT `{$APP_ID}` for the one key that does
+# (`shared/path_template.py` owns which is which). `apexlang_glob` reads a
+# template back rather than rendering it, so it has to see either spelling.
+_ANY_TOKEN = re.compile(r"<[^<>]*>|\{\$[^{}]*\}")
+
+# `*` runs, collapsed after substitution. Two adjacent tokens leave `**` behind,
+# which is a pattern of its own in every glob implementation, and one wildcard
+# already matches everything two of them do.
+_COLLAPSE_WILDCARDS = re.compile(r"\*{2,}")
 
 
 def app_folder_segment(value: str) -> str:
@@ -78,22 +91,66 @@ def app_folder_depth(template: str) -> int:
     return len([part for part in parts if part and part != "."])
 
 
-def apexlang_search_root(root: Path, config: Mapping[str, Any] | None) -> Path:
-    """The folder a whole-repo scan for APEXlang trees walks.
+def apexlang_glob(config: Mapping[str, Any] | None) -> str:
+    """The one shape an APEXlang export is written at, as a glob pattern.
 
-    ``path_apex`` may carry a ``<schema>`` token, which only resolves once a
-    schema is bound, and a repo-wide scan has none. Walking from the static
-    prefix before that token covers every schema at once without guessing which
-    ones exist on disk.
+    An export lands at `path_apex` / `apex_path_app` / `apexlang`, and those two
+    keys are already the project's own statement of where. Read back with every
+    token globbed, they describe exactly the folders a bare run should compile
+    and nothing else: on the shipped defaults that is `*/apex/*/apexlang`.
 
-    A missing config means the shipped default, because both callers reach here
+    **This replaces a subtraction, and the difference is the point (ADT #765).**
+    Discovery used to `rglob` the whole repository and then remove the folders
+    ADT.ai writes for itself, `patch_root` and `config/`, which is a list that
+    needs a new entry every time a folder full of copies appears; the first
+    version of it missed both and one project reported thirteen targets, twelve
+    of them patch snapshots of the thirteenth, every row `EMPTY`. A shape needs no
+    such list: a snapshot sits three levels too deep to match and
+    `config/temp/apexlang` names `temp` where the pattern names `apex`. Jan,
+    2026-09-10: "You should just match the /apex/ folder:
+    `<schema>/apex/<apex_app>/apexlang`".
+
+    **The two templates are read back differently, and deliberately.** In
+    `path_apex` a literal segment is load-bearing (`apex` is the folder Jan
+    named), so only the token inside a segment is globbed and `db_<schema>/`
+    reads back as `db_*/`. `apex_path_app` contributes its LEVEL COUNT and
+    nothing else, one bare `*` per level: the folder it writes is free text a
+    developer typed in App Builder, reduced by :func:`app_folder_segment`, so
+    reading `{$APP_ID}_{$APP_ALIAS}` back as `*_*` would pin punctuation the
+    template only happens to have today and drop every export the moment a
+    project re-spells the key. That is the same split the module already makes,
+    :func:`app_folder_depth` existing precisely because the writer renders this
+    template and the reader counts levels back off it (ADT #474).
+
+    A missing config means the shipped defaults, because both callers reach here
     before a project necessarily has one: `doctor` diagnoses setups that have no
     config at all, and `validate` treats an absent one as the defaults.
     """
-    configured = str((config or {}).get("path_apex") or "apex/")
-    prefix = configured.split("<")[0].strip("/")
-    candidate = root / prefix if prefix else root
-    return candidate if candidate.is_dir() else root
+    settings = config or {}
+    app_levels = app_folder_depth(str(settings.get("apex_path_app") or DEFAULT_PATH_APP))
+    segments = [
+        *_glob_segments(str(settings.get("path_apex") or "apex/")),
+        *["*"] * app_levels,
+        APEXLANG_DIR,
+    ]
+    return "/".join(segments)
+
+
+def _glob_segments(template: str) -> list[str]:
+    """One path template's segments, every token inside them replaced by a wildcard.
+
+    `.` and empty runs are dropped for the reason :func:`app_folder_depth` drops
+    them: `_clean_relative` drops them when the folder is built, so a pattern
+    keeping them would not match what the export wrote. Adjacent tokens collapse
+    to a single `*`, because `**` inside a segment is a pattern glob reads
+    differently and two wildcards with nothing between them match what one does.
+    """
+    parts = str(template).replace("\\", "/").split("/")
+    return [
+        _COLLAPSE_WILDCARDS.sub("*", _ANY_TOKEN.sub("*", part))
+        for part in parts
+        if part and part != "."
+    ]
 
 
 def apexlang_folders(root: Path, config: Mapping[str, Any] | None) -> list[Path]:
@@ -102,12 +159,14 @@ def apexlang_folders(root: Path, config: Mapping[str, Any] | None) -> list[Path]
     One reader for the question "does this project export APEXlang, and where":
     `validate` asks it to know what to compile, `doctor` asks it to know whether
     the SQLcl floor applies at all (ADT #723).
+
+    A tree that does not sit at :func:`apexlang_glob`'s shape is not an export,
+    whatever else it is; an explicit `-input` still reaches it.
     """
-    base = apexlang_search_root(root, config)
     return sorted(
         path
-        for path in base.rglob(APEXLANG_DIR)
-        if path.is_dir() and not under_dot_folder(path, base)
+        for path in root.glob(apexlang_glob(config))
+        if path.is_dir() and not under_dot_folder(path, root)
     )
 
 
@@ -129,7 +188,7 @@ __all__ = [
     "APEXLANG_DIR",
     "REST_SCHEMA_DEFINITION",
     "apexlang_folders",
-    "apexlang_search_root",
+    "apexlang_glob",
     "app_folder_depth",
     "app_folder_segment",
     "under_dot_folder",

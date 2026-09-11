@@ -106,8 +106,21 @@ EXPORTING APP 100/ORDERS:
 ```
 
 - Each action row repaints in place. The lines above are those repaints, one per line.
-- `-compact` replaces the per-application blocks with **one bar per schema segment**, under `EXPORTING <SCHEMA> APPS:`, keeping the overview above it. The bar is time-weighted rather than action-counted, so a full export and a REST slice each take the share of the bar they really take. It never spans schemas, and neither `-reveal` nor a report-only `-recent` draws one, since neither exports anything.
-- The label names the slice in flight, `APP 100 | SPLIT COMPONENTS`, or the action alone for schema-level work that belongs to no application.
+- `-compact` replaces the per-application blocks and their action rows with **one bar row per unit of work**, under `EXPORTING <SCHEMA> APPS:`, keeping the overview above it. A unit is an application, or a schema-level slice (`-rest`, `-files_ws`), so an export of one application plus its workspace artifacts closes on three lines:
+
+```text
+EXPORTING SANDBOX APPS:
+-----------------------
+  APP 100 ...................................................... 100%  0:00:01
+  WORKSPACE FILES .............................................. 100%  0:00:01
+  REST SERVICES ................................................ 100%  0:00:02
+```
+
+- Each row counts down **its own** budget, time-weighted rather than action-counted, so a full export and a REST slice each take the share of their own row they really take. The estimate is what that unit cost last run, read from `config/internal/apex.db`. A bar never spans schemas, and neither `-reveal` nor a report-only `-recent` draws one, since neither exports anything.
+- While a row runs, the label names the slice in flight, `APP 100 | SPLIT COMPONENTS`, or the action alone for schema-level work that belongs to no application. **A row that closes drops the slice half**, because at 100% nothing is running and the row is a result about the unit.
+- The schema-level rows still run once per schema, carried by its first application, so on a multi-application schema they sit between the first application's row and the second's.
+- **The dot track is sized against the label on the row**, so a full row always reaches the same column whichever slice names it. A shorter label buys itself a longer track, which is why the same percentage draws a different number of dots after the label changes.
+- **The percentage travels with the dots**, one space off the last of them, and the whole remainder of the track pads out behind it so the timer lands on the 78-column edge. The timer is the only field on a fixed column: a segment relabelling itself shorter hands the leader the columns the label gave up and gets back only its share of them, so the figure sits a little further left under a shorter label.
 - A multi-schema export runs schema by schema, each with its own connection block and `TIMER`, banner printed once.
 - Filtered component exports print the affected pages and components line by line instead of the dotted bar.
 
@@ -238,7 +251,7 @@ Without an explicit format, a non-reveal `-recent` is report-only: it exports no
 | `-rest`, `--rest` | No | off | Export REST services. **Schema-level**, written once per schema, and it runs even when the schema hosts no application. Runs through SQLcl on a named `ADT_…` connection, wallet included. A schema publishing no REST modules exports an empty folder and succeeds; a session that could not connect, or one whose output carries a database error anywhere in it, fails the run with the full SQLcl output attached. An export that stopped before its closing `COMMIT;`, which is what a run cut off at the deadline looks like, fails the same way. A failed export writes no module file at all, including the modules that had already printed cleanly, so the folder is never left holding half a schema. Bounded by `rest_timeout_seconds` (default 60). |
 | `-files`, `--files` | No | off | Export the static application files. |
 | `-files_ws`, `--files_ws`, `--files-ws` | No | off | Export the static workspace files. **Schema-level**, exactly like `-rest`. |
-| `-compact`, `--compact` | No | off | Replace the per-application blocks and their rows with one time-weighted progress bar per schema segment, keeping the `APEX APPLICATIONS:` overview above it. |
+| `-compact`, `--compact` | No | off | Replace the per-application blocks and their action rows with one time-weighted progress row per unit of work: one per application, one per schema-level slice. The `APEX APPLICATIONS:` overview stays above them, and a closed row names the unit without the slice it ran last. |
 | `-mirror REF`, `--mirror REF` | No | off | Commit each `-apexlang` export onto REF (for example `db/dev`) as a shared merge base, so a refused deploy ends in `git rebase REF` instead of a re-export. Requires `-apexlang`, refused without it. A bare name lands under `refs/heads/`; a full `refs/...` spelling is taken as given. HEAD, the branch, the index and the working tree are untouched, and an export that changed nothing adds no commit. |
 
 Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

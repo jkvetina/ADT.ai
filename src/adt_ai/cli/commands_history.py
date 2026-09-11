@@ -39,8 +39,32 @@ from adt_ai.rebuild.render import ConsoleRebuildReporter
 from adt_ai.shared.commit_cache import DEFAULT_COMMITS_TEMPLATE, open_store
 from adt_ai.shared.commit_window import resolve_history_floor
 from adt_ai.shared.dates import resolve_since
+from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.file_list import file_rows, nested_files, print_file_rows
 from adt_ai.shared.recent_state import is_bare_recent
+
+
+def _report_history_failure(error: Exception) -> int:
+    """Print one `calendar`/`diff`/`rebuild`/`search_repo` refusal, return its exit code.
+
+    The handlers below catch a deliberately wide tuple (`#670`), and the classes
+    in it are not one kind of failure: a config value ADT.ai cannot use is
+    something the reader fixes in a file, while a `-branch` that is not in the
+    repo or a commit store that was never built is an input that is not there
+    yet. Branching on the CLASS rather than on the message is the shape
+    `cli/context_errors.py` already uses for the configuration screens.
+    """
+    code = "CONFIGURATION INVALID" if isinstance(error, ConfigError | ValueError) else (
+        "INPUT NOT FOUND"
+    )
+    print_adt_error(code, str(error))
+    return exit_code_for(code)
+
+
+COMPARING_HEADER = "COMPARING SCHEMAS:"
+
+# What a comparison is assumed to cost before it has run. SQLcl DIFF reports no
+# progress of its own, so the bar crawls against this and holds at 99 until the
 
 
 def _run_rebuild(args: argparse.Namespace) -> int:
@@ -53,9 +77,8 @@ def _run_rebuild(args: argparse.Namespace) -> int:
         try:
             since_date = resolve_since(since_value)
         except ValueError as exc:
-            print(f"Error: {exc}")
-            print()
-            return 1
+            print_adt_error("ARGUMENT INVALID", str(exc))
+            return exit_code_for("ARGUMENT INVALID")
 
     if getattr(args, "reveal", None) is not None:
         # In reveal mode `-since` is a date filter on each branch's tip commit and
@@ -64,17 +87,15 @@ def _run_rebuild(args: argparse.Namespace) -> int:
         return _run_rebuild_reveal(args, root, since_date)
 
     if getattr(args, "switch", None) is not None:
-        print("Error: -switch only works with -reveal")
-        print()
-        return 1
+        print_adt_error("ARGUMENT INVALID", "-switch only works with -reveal")
+        return exit_code_for("ARGUMENT INVALID")
 
     if getattr(args, "verify", False):
         return _run_rebuild_verify(args, root)
 
     if since_date is not None and args.limit is not None:
-        print("Error: -since and -limit cannot be combined")
-        print()
-        return 1
+        print_adt_error("ARGUMENT INVALID", "-since and -limit cannot be combined")
+        return exit_code_for("ARGUMENT INVALID")
 
     try:
         config = ConfigLoader(
@@ -121,9 +142,7 @@ def _run_rebuild(args: argparse.Namespace) -> int:
     # in this file printed the same one-line `Error:` a missing branch does,
     # with no traceback and no `-debug` hint.
     except (RebuildError, ConfigError, ValueError, *GIT_LOOKUP_FAILURES) as exc:
-        print(f"Error: {exc}")
-        print()
-        return 1
+        return _report_history_failure(exc)
 
     return 0
 
@@ -220,9 +239,7 @@ def _run_search_repo(args: argparse.Namespace) -> int:
             )
         )
     except (SearchRepoError, ValueError) as exc:
-        print(f"Error: {exc}")
-        print()
-        return 1
+        return _report_history_failure(exc)
     nested = nested_files(config)
     folder_of = object_folder_resolver(config)
     if result.records:
@@ -287,9 +304,7 @@ def _run_calendar(args: argparse.Namespace) -> int:
             )
         )
     except (CalendarError, ValueError) as exc:
-        print(f"Error: {exc}")
-        print()
-        return 1
+        return _report_history_failure(exc)
 
     overview = f"MONTHLY OVERVIEW {result.month}"
     if jira_prefix:

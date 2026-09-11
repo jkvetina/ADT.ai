@@ -42,6 +42,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from adt_ai.shared import text_files
+from adt_ai.shared.announce import guard
 from adt_ai.shared.sqlcl_errors import (
     SqlclNotConnectedError,
     SqlclScriptError,
@@ -60,6 +61,7 @@ __all__ = [
     "SqlclScriptError",
     "SqlclTimeoutError",
     "run_sqlcl_script",
+    "write_sqlcl_script",
 ]
 
 _TEMP_GITIGNORE_ENTRY = "config/temp/"
@@ -263,6 +265,32 @@ def _sqlcl_command(script_path: Path, oci: bool) -> list[str]:
     return ["sql", *(["-L", "-oci"] if oci else []), "-S", "/nolog", f"@{script_path}"]
 
 
+def write_sqlcl_script(script: str, project_root: Path | None) -> Path:
+    """``script`` on disk as a throwaway ``.sql``, owner-only, for SQLcl to ``@``.
+
+    Its own function because a reused SQLcl process needs exactly this file and
+    none of the process handling around it (ADT #760): a pty is line disciplined
+    and an exported package body is far past ``MAX_CANON``, so the body goes to
+    SQLcl as a file there too and only its path crosses the terminal. Keeping one
+    writer also keeps one answer about where the file lands and what it is
+    chmod'ed to.
+    """
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding = "utf-8",
+        newline  = "\n",
+        suffix   = ".sql",
+        dir      = _sqlcl_temp_dir(project_root),
+        delete   = False,
+    ) as handle:
+        handle.write(script)
+        script_path = Path(handle.name)
+    # The script may embed a cleartext connect credential; pin owner-only perms
+    # even if the platform's tempfile defaults ever differ from mkstemp's 0600.
+    os.chmod(script_path, 0o600)
+    return script_path
+
+
 def run_sqlcl_script(
     script: str,
     root: Path,
@@ -285,22 +313,20 @@ def run_sqlcl_script(
     as the return value. **Without one nothing changes**: the `subprocess.run`
     pipe below is the same call `diff`, `validate` and `export_apex -rest` have
     always made, so this card cannot alter how they talk to SQLcl.
+
+    **This is the second door into a long wait, and it is guarded here (`#763`).**
+    `AnnouncedGateway` wraps the gateway, so it covers every Oracle round trip
+    and every SQLcl statement that goes through one, and it is blind to a
+    command that shells out directly. `diff` does exactly that: it holds the
+    gateway only for its two connection blocks, then blocks here for the whole
+    comparison, so it printed two version tables and nothing else for 37
+    seconds while passing a suite-wide guard. The wait is what the rule binds,
+    not the transport, so the guard belongs at both doors.
     """
+    guard("SQLcl script")
     root.mkdir(parents=True, exist_ok=True)
     secrets = _connect_secrets(script)
-    with tempfile.NamedTemporaryFile(
-        "w",
-        encoding = "utf-8",
-        newline  = "\n",
-        suffix   = ".sql",
-        dir      = _sqlcl_temp_dir(project_root),
-        delete   = False,
-    ) as handle:
-        handle.write(script)
-        script_path = Path(handle.name)
-    # The script may embed a cleartext connect credential; pin owner-only perms
-    # even if the platform's tempfile defaults ever differ from mkstemp's 0600.
-    os.chmod(script_path, 0o600)
+    script_path = write_sqlcl_script(script, project_root)
     command = _sqlcl_command(script_path, oci)
     environment = _sqlcl_environment(oci, client_lib_dir, tns_admin)
     try:

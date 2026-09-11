@@ -184,6 +184,17 @@ END;
 # had to guess. `tests/export_apex/test_export_query_signature.py` pins the
 # parameter set to the 24.1 signature so a later addition cannot silently take
 # that floor away again.
+# **Every loop below counts from 1, and that is a fix rather than a style.**
+# `GET_APPLICATION` returns an EMPTY collection when the application has nothing
+# of the requested type, and `FOR i IN l_files.FIRST .. l_files.LAST` on an empty
+# one has NULL bounds, which Oracle raises as `ORA-06502: value or conversion
+# error` from the FOR line itself. `-embedded` met that on every application
+# carrying no embedded code, reported it as `DATABASE QUERY FAILED:` and exited 1
+# where the honest answer is an export with no files (ADT #703). The collection
+# comes back dense, so `1 .. COUNT` is the same range when it is not empty and
+# runs zero times when it is. All six queries share the shape, so all six are
+# fixed: the other five reach it wherever an application has no page, no REST
+# module or no static file.
 EXPORT_FULL_QUERY = """
 DECLARE
     l_files apex_t_export_files;
@@ -206,7 +217,7 @@ BEGIN
         p_collection_name       => 'ADT_APEX_EXPORT',
         p_truncate_if_exists    => 'YES'
     );
-    FOR i IN l_files.FIRST .. l_files.LAST LOOP
+    FOR i IN 1 .. l_files.COUNT LOOP
         APEX_COLLECTION.ADD_MEMBER (
             p_collection_name   => 'ADT_APEX_EXPORT',
             p_c001              => l_files(i).name,
@@ -240,7 +251,7 @@ BEGIN
         p_collection_name       => 'ADT_APEX_EXPORT',
         p_truncate_if_exists    => 'YES'
     );
-    FOR i IN l_files.FIRST .. l_files.LAST LOOP
+    FOR i IN 1 .. l_files.COUNT LOOP
         IF (l_files(i).name LIKE '%/files/%' OR l_files(i).name LIKE '%/app_static_files/%') THEN
             CONTINUE;
         END IF;
@@ -271,7 +282,7 @@ BEGIN
         p_collection_name       => 'ADT_APEX_EXPORT',
         p_truncate_if_exists    => 'YES'
     );
-    FOR i IN l_files.FIRST .. l_files.LAST LOOP
+    FOR i IN 1 .. l_files.COUNT LOOP
         IF (l_files(i).name LIKE '%/files/%' OR l_files(i).name LIKE '%/app_static_files/%') THEN
             CONTINUE;
         END IF;
@@ -302,7 +313,7 @@ BEGIN
         p_collection_name       => 'ADT_APEX_EXPORT',
         p_truncate_if_exists    => 'YES'
     );
-    FOR i IN l_files.FIRST .. l_files.LAST LOOP
+    FOR i IN 1 .. l_files.COUNT LOOP
         IF (l_files(i).name LIKE '%/files/%' OR l_files(i).name LIKE '%/app_static_files/%') THEN
             CONTINUE;
         END IF;
@@ -328,7 +339,7 @@ BEGIN
         p_collection_name       => 'ADT_APEX_EXPORT',
         p_truncate_if_exists    => 'YES'
     );
-    FOR i IN l_files.FIRST .. l_files.LAST LOOP
+    FOR i IN 1 .. l_files.COUNT LOOP
         APEX_COLLECTION.ADD_MEMBER (
             p_collection_name   => 'ADT_APEX_EXPORT',
             p_c001              => l_files(i).name,
@@ -361,7 +372,7 @@ BEGIN
         p_collection_name       => 'ADT_APEX_EXPORT',
         p_truncate_if_exists    => 'YES'
     );
-    FOR i IN l_files.FIRST .. l_files.LAST LOOP
+    FOR i IN 1 .. l_files.COUNT LOOP
         IF (l_files(i).name LIKE 'shared-components/static-files/%'
             OR l_files(i).contents_blob IS NOT NULL) THEN
             CONTINUE;

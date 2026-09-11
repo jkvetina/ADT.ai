@@ -28,10 +28,13 @@ decisions are worth knowing before changing anything here, each measured on
   `:name` into a literal inside the SQL would have meant scanning it for string
   and comment spans, which is a scanner this module has no business owning.
 
-`sqlcl_request` deliberately does NOT go through the session. Its callers
+`sqlcl_request` deliberately does NOT go through THIS session. Its callers
 (`patch -deploy`, `diff`, `validate`, the REST export) write
 `WHENEVER SQLERROR EXIT FAILURE` and expect a process that can end; routing them
 here would let one of their scripts exit the gateway out from under the command.
+Since ADT #760 they reuse a process of their own instead,
+`shared/sqlcl_request_session.py`, which keeps the ending: a body there IS
+allowed to exit, and the transcript printed before it becomes the failure.
 """
 
 from __future__ import annotations
@@ -179,9 +182,13 @@ class SqlclGateway(OracleGateway):
         _raise_on_error(output, sql)
 
     # `sqlcl_request` is inherited unchanged and deliberately keeps its own
-    # process, see the module docstring.
+    # SQLcl process, separate from this gateway's, see the module docstring.
 
     def close(self) -> None:
+        # The base first: `sqlcl_request`'s own reused process is held there
+        # (ADT #760) and is inherited rather than owned here, so closing only
+        # `self.session` would leave a second SQLcl running past the command.
+        super().close()
         self.session.close()
 
     # -- internals ---------------------------------------------------------
