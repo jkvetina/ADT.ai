@@ -25,11 +25,10 @@ the user can open, and there is no second copy to collide with.
 
 **One copy of bytes, and no second path in git.** `os.link` gives the existing
 inode another name, so nothing is read or rewritten, measured here as a link count
-of 2 against one inode. The folder carries its own `.gitignore` holding `*`, which
-git applies to the folder's whole content including that file, so the payloads are
-reported neither as tracked nor as untracked. A nested ignore travels with the
-folder ADT.ai creates, which is what makes this work on a project that already has
-a `.gitignore` of its own: `doctor -init` will not overwrite one.
+of 2 against one inode. The repository's private `.git/info/exclude` ignores the
+linked payload folder without putting housekeeping inside the APEXLang compiler's
+input tree. That distinction is functional: a nested `.gitignore` is a regular
+payload to the compiler and would be imported as an application static file.
 
 **Hardlinks, not symlinks.** A hardlink is indistinguishable from a regular file to
 any directory walker, while Java's `Files.walk` does not descend a symlinked
@@ -66,15 +65,11 @@ PAYLOAD_DIR = ("shared-components", "static-files")
 # here any more; `drop_legacy_staging` exists to clear what already did.
 LEGACY_STAGING_DIR = (CONFIG_DIR, "temp", "apexlang")
 
-# Keeps the linked payloads out of git without touching the project's own
-# `.gitignore`. `*` covers this file too, so the folder reports as ignored rather
-# than as an untracked entry carrying one tracked line.
+# Keeps the linked payloads out of git without touching the project's tracked
+# `.gitignore` or putting a sentinel inside the compiler's input tree.
+EXCLUDE_PATTERN = "**/apexlang/shared-components/static-files/"
+# Retained for readers that must ignore or remove trees created by older builds.
 IGNORE_NAME = ".gitignore"
-IGNORE_BODY = (
-    "# Written by ADT.ai. These are hardlinks to the sibling `files/` export,\n"
-    "# which is the tracked copy. One inode, two names, nothing to commit here.\n"
-    "*\n"
-)
 
 Linker = Callable[[Path, Path], None]
 
@@ -138,7 +133,8 @@ def link_payloads(
         return PayloadLinks(target_root, 0)
 
     target_root.mkdir(parents=True, exist_ok=True)
-    _write_ignore(target_root)
+    _drop_old_ignore(target_root)
+    _ensure_git_excluded(apexlang_root)
 
     state = _LinkState(link or os.link)
     for relative, source in sorted(sources.items()):
@@ -163,11 +159,51 @@ def _sources(files_root: Path) -> dict[Path, Path]:
     }
 
 
-def _write_ignore(target_root: Path) -> None:
-    # Through the shared writer, which skips a file whose bytes have not moved, so
-    # a second run neither rewrites it nor hands Dropbox something to re-sync.
+def _drop_old_ignore(target_root: Path) -> None:
+    """Remove the pre-fix sentinel before a compiler can mistake it for payload."""
     with contextlib.suppress(OSError):
-        text_files.write_text(target_root / IGNORE_NAME, IGNORE_BODY)
+        (target_root / IGNORE_NAME).unlink()
+
+
+def _ensure_git_excluded(apexlang_root: Path) -> None:
+    """Ignore linked payloads through the repository's untracked exclude file."""
+    exclude = _git_exclude(apexlang_root)
+    if exclude is None:
+        return
+    try:
+        existing = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+        if EXCLUDE_PATTERN in {line.strip() for line in existing.splitlines()}:
+            return
+        prefix = existing + ("\n" if existing and not existing.endswith("\n") else "")
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        text_files.write_text(exclude, prefix + EXCLUDE_PATTERN + "\n")
+    except OSError:
+        # Git hygiene is best-effort; compiling the correct tree is mandatory.
+        return
+
+
+def _git_exclude(path: Path) -> Path | None:
+    """Resolve `.git/info/exclude` for a checkout or linked worktree."""
+    for root in (path, *path.parents):
+        marker = root / ".git"
+        if marker.is_dir():
+            return marker / "info" / "exclude"
+        if not marker.is_file():
+            continue
+        try:
+            label, value = marker.read_text(encoding="utf-8").strip().split(":", 1)
+            if label != "gitdir":
+                return None
+            git_dir = Path(value.strip())
+            if not git_dir.is_absolute():
+                git_dir = (root / git_dir).resolve()
+            common = git_dir / "commondir"
+            if common.is_file():
+                git_dir = (git_dir / common.read_text(encoding="utf-8").strip()).resolve()
+            return git_dir / "info" / "exclude"
+        except (OSError, ValueError):
+            return None
+    return None
 
 
 def _drop_stale(target_root: Path, keep: set[Path]) -> int:
@@ -179,7 +215,7 @@ def _drop_stale(target_root: Path, keep: set[Path]) -> int:
                 path.rmdir()
             continue
         relative = path.relative_to(target_root)
-        if relative == Path(IGNORE_NAME) or relative in keep:
+        if relative in keep:
             continue
         with contextlib.suppress(OSError):
             path.unlink()
@@ -227,7 +263,7 @@ def _same_file(source: Path, target: Path) -> bool:
 
 
 __all__ = [
-    "IGNORE_BODY",
+    "EXCLUDE_PATTERN",
     "IGNORE_NAME",
     "LEGACY_STAGING_DIR",
     "PAYLOAD_DIR",

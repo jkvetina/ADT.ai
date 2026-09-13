@@ -23,6 +23,7 @@ from adt_ai.cli.patch_build import (
     build_database_patch,
     build_flag_refusal,
     dispatch_supporting_actions,
+    install_flag_refusal,
     missing_patch_name,
     resolve_patch_name_and_folder,
     select_content_and_hash,
@@ -37,6 +38,7 @@ from adt_ai.cli.patch_inputs import (
 from adt_ai.cli.patch_no_commits import answer_without_commits
 from adt_ai.cli.patch_preview_render import print_patch_preview
 from adt_ai.patch.apex_import import resolve_target
+from adt_ai.patch.install_paths import SchemaSelectionError
 from adt_ai.patch.topup import ConsoleTopUpReporter
 from adt_ai.shared import text_files
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
@@ -50,6 +52,10 @@ def _run_patch(
     print_module_banner("PATCH")
     try:
         return _run_patch_command(args, gateway_factory)
+    except SchemaSelectionError as error:
+        # ADT #807: a mistyped `-schema` is what the user typed, not what broke.
+        print_adt_error("ARGUMENT INVALID", error.description, error.details)
+        return exit_code_for("ARGUMENT INVALID")
     except PatchError as error:
         if args.debug:
             raise
@@ -109,13 +115,16 @@ def _level_history(
     to nothing fails loudly rather than silently falling back to HEAD, which
     would hand back a patch built from the wrong branch.
 
-    The store is levelled before ANY action, including the three that return
-    without ever reaching the commit scan. `patch` reads commit NUMBERS out of
-    the branch store and writes them into a patch folder, so a store short of
-    `HEAD` hands out a window that disagrees with the repository the operator is
-    reading, and `-commit 41` means one thing on screen and another on disk
-    (ADT #367). Jan, 2026-08-15: *"before running anything it must check that
-    commits .db for requested branch is up to date"*.
+    The store is levelled before every action that reads commits. `patch` reads
+    commit NUMBERS out of the branch store and writes them into a patch folder,
+    so a store short of `HEAD` hands out a window that disagrees with the
+    repository the operator is reading, and `-commit 41` means one thing on
+    screen and another on disk (ADT #367). Jan, 2026-08-15: *"before running
+    anything it must check that commits .db for requested branch is up to
+    date"*. `-install`, `-archive` and `-drop` read no commit at all, so they
+    return before this runs (ADT #806): a store short of `HEAD` cannot make them
+    wrong, and levelling it cost `-install` a 10940-commit rebuild on a branch
+    that had no store yet.
     """
     if args.head:
         fetch_origin(root)
@@ -149,6 +158,11 @@ def _run_patch_command(
         resolve_target(args.app)
     except ValueError as error:
         raise PatchError(str(error)) from error
+    # Same reasoning, same place: `-install -branch` and a stray `-schema` read
+    # nothing but `args`, so they refuse before the config load (ADT #804).
+    misplaced = install_flag_refusal(args)
+    if misplaced is not None:
+        return _refuse(misplaced)
     root = Path(args.root).expanduser().resolve()
     cached_config: dict[str, Any] | None = None
 
@@ -180,7 +194,19 @@ def _run_patch_command(
     # After the config load, never before: `patch_root` is the project's own
     # answer since ADT #430, so a workspace minted early looks in the wrong folder.
     workspace = PatchWorkspace(root, patch_config())
-    scanned_branch = _level_history(args, root, patch_config())
+    if args.install:
+        # `-install` orders every exported object from the dependency graph, so it
+        # brings the graph level itself, exactly as `-create` does, rather than
+        # refusing with a command to retype (ADT #802). Jan, 2026-09-13, after a
+        # run rebuilt 10985 commits and then refused on a stale graph: *"in
+        # install mode you should always make sure you have correct dependencies
+        # and not slap the user in the face with extra task you can do
+        # yourself."*
+        ensure_fresh_dependency_graph(args, root, patch_config(), gateway_factory)
+    # `-install`, `-archive` and `-drop` read no commit, so they return before the
+    # commit store is levelled (ADT #806). Jan, 2026-09-13, after `-install`
+    # sat on a 10940-commit rebuild: *"Why are you building commits when you
+    # dont need them?"*
     dispatched = dispatch_supporting_actions(
         args,
         root            = root,
@@ -190,6 +216,7 @@ def _run_patch_command(
     )
     if dispatched is not None:
         return dispatched
+    scanned_branch = _level_history(args, root, patch_config())
     patch_ref: str | None = args.name or None
     unnamed = missing_patch_name(args, patch_ref)
     if unnamed is not None:

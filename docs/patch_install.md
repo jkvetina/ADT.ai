@@ -84,7 +84,7 @@ Run: adtai dependencies -refresh -schema APP
 
 Four things follow, and they are deliberate:
 
-- **`-create` refreshes rather than refusing.** A scope names a schema, so the run refreshes exactly those schemas itself, prints an `UPDATING DEPENDENCIES:` section, and continues. A graph that was never built is covered too: the schemas come from the files, not the mirror. `-install` keeps the refusal, because it orders every install target and has no narrower scope.
+- **Both refresh rather than refusing.** A scope names a schema, so the run refreshes exactly those schemas itself, prints an `UPDATING DEPENDENCIES:` section, and continues. A graph that was never built is covered too: the schemas come from the files, not the mirror. `-install` never rebuilds the commit history at all, because it reads none.
 - **The refusal survives the remedy.** A run that cannot connect, or whose refresh leaves a scope stale anyway, lands on the message above. The gate re-measures instead of trusting its own fix.
 - **A layout naming no schema is still refused**, having no owner to scope a refresh to.
 - **Read-only previews are never gated**, because they order nothing. A layout matching no exported objects reports what it searched and exits `0`.
@@ -128,22 +128,27 @@ WARNING - NO DATABASE CLOCK:
 
 ## The install script
 
-`-install` regenerates the database install script from the objects already exported into the repository. It reads the working tree rather than commits, so it needs no patch name and no database connection:
+`-install` writes one install script per exported schema from the objects already in the repository. It reads the checked-out files rather than commits, so it needs no patch name, and `-branch` is refused beside it:
 
 ```bash
 adtai patch -install
+adtai patch -install -schema APP
 ```
 
-Where the script lands follows `path_objects`, which is a path **template** rather than a literal folder. `<schema>` resolves against the schema folders that exist on disk, `<object_type>` marks the per-type level, and the install script sits above that level:
+Every script lands in one folder, under the same name on every branch, so regenerating one reads as a change:
 
 ```text
-app/database/INSTALL.sql
-core/database/INSTALL.sql
+config/install/APP.sql
+config/install/CORE.sql
 ```
 
-The `@"./…"` links inside each script are relative to that folder, so the script runs from its own directory. A layout with no placeholders still produces the single `database/INSTALL.sql`. `<schema>`, `<SCHEMA>` and `<object_type>` are the only placeholders; every other token is refused as `CONFIGURATION INVALID` before anything is written.
+`<schema>` in `path_objects` resolves against the schema folders that exist on disk, and `-schema` narrows them: repeatable, comma- or space-separated, `%` as a wildcard. A value matching no exported schema is refused as `ARGUMENT INVALID`, exit `2`, naming the schemas found. It narrows the dependency refresh too, so a schema nobody asked for is never refreshed.
 
-The console reports one segment per schema: an `OBJECTS OVERVIEW: <SCHEMA>` table counting files per object type, then an `INSTALL SCRIPT: <SCHEMA>` header with the generated path. A schema root holding no objects is skipped entirely.
+A layout with no `<schema>` placeholder writes `config/install/DATABASE.sql`. `<schema>`, `<SCHEMA>` and `<object_type>` are the only placeholders; every other token is refused as `CONFIGURATION INVALID` before anything is written.
+
+The `@"./…"` links are project-relative, so a script runs from the project root. A script left at the old `<schema>/database/INSTALL.sql` is moved into `config/install/` on the next run; when one is already there, the old copy is removed.
+
+The console reports one segment per schema: an `OBJECTS OVERVIEW FOR <SCHEMA>:` table counting files per object type, then an `INSTALL SCRIPT FOR <SCHEMA>:` header with the generated path. A schema root holding no objects is skipped entirely.
 
 <br>
 

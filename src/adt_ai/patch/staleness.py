@@ -44,6 +44,7 @@ from adt_ai.patch.graph_mirror import GRAPH_FILE
 from adt_ai.patch.graph_mirror import object_ddl_times as _object_ddl_times
 from adt_ai.patch.graph_mirror import schema_offsets as _schema_offsets
 from adt_ai.patch.graph_mirror import schema_stamps as _schema_stamps
+from adt_ai.patch.install_paths import select_install_targets
 from adt_ai.patch.layout import database_object_type, database_schema, object_layouts
 from adt_ai.shared.deploy_status import latest_deploy_status
 from adt_ai.shared.object_files import object_name_for_type
@@ -112,9 +113,17 @@ class GraphFreshness:
         return f"{REFRESH_COMMAND} -schema {','.join(schemas)}"
 
 
-def graph_freshness(root: Path, config: dict[str, Any]) -> GraphFreshness:
-    """Report whether the dependency mirror covers every object on disk."""
-    newest = _newest_objects(root, config)
+def graph_freshness(
+    root: Path,
+    config: dict[str, Any],
+    schemas: Any = None,
+) -> GraphFreshness:
+    """Report whether the dependency mirror covers every object on disk.
+
+    ``schemas`` is `patch -install -schema` as typed (ADT #804), and measures
+    only the targets it names.
+    """
+    newest = _newest_objects(root, config, schemas)
     if not newest:
         # Nothing to order, so there is nothing a graph could fail to describe.
         return GraphFreshness(graph_missing=False, stale=[])
@@ -383,7 +392,11 @@ def export_freshness(
     )
 
 
-def _newest_objects(root: Path, config: dict[str, Any]) -> dict[str, tuple[str, float]]:
+def _newest_objects(
+    root: Path,
+    config: dict[str, Any],
+    schemas: Any = None,
+) -> dict[str, tuple[str, float]]:
     """Per schema, the newest object file that ``-install`` would order.
 
     Keyed by the target's schema (empty string for a layout with no ``<schema>``
@@ -392,7 +405,7 @@ def _newest_objects(root: Path, config: dict[str, Any]) -> dict[str, tuple[str, 
     has nothing to be stale about.
     """
     newest: dict[str, tuple[str, float]] = {}
-    for target in _install_targets(root, config):
+    for target in select_install_targets(_install_targets(root, config), schemas):
         for files in _install_groups(target, config, {}).values():
             for relative in files:
                 path = target.root / relative

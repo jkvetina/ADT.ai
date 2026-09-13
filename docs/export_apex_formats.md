@@ -51,7 +51,9 @@ The folder is swept on every export, so a component deleted in App Builder leave
 
 **Static files are deliberately left out.** An APEXlang export carries the application's static files as binary payloads, and ADT.ai skips those members so the repository never holds two copies, `-files` being the single static-file channel. The metadata that references them is still exported.
 
-The tree is still directly validatable and importable. `-files` hardlinks each payload into the tree's own `shared-components/static-files/` as it writes it, one inode under two names, and the folder carries a `.gitignore` holding `*` so nothing there enters git.
+The tree is still directly validatable and importable. `-files` hardlinks each payload into the tree's own `shared-components/static-files/` as it writes it, one inode under two names.
+
+The checkout's private `.git/info/exclude` keeps those links out of git without putting an ignore sentinel inside the compiler input tree. An export also removes the retired `.gitignore` descriptor from applications affected by older ADT builds.
 
 So [`validate`](validate.md) and [`patch -deploy -app`](patch_import.md) read the folder on disk rather than a copy of it. Run `-files` alongside `-apexlang`, or `-all`, so the payloads exist to link.
 

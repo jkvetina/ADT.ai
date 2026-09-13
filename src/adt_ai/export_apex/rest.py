@@ -133,6 +133,118 @@ def _rest_module_name(module: list[str]) -> str:
         raise ValueError("Could not find ORDS module name in SQLcl REST export")
     return match.group(1)
 
+
+_REST_CALL_RE = re.compile(
+    r"^\s*ORDS\.(?P<name>DEFINE_MODULE|DEFINE_TEMPLATE|DEFINE_HANDLER|DEFINE_PARAMETER)\("
+)
+
+
+def _rest_calls(lines: list[str]) -> tuple[list[str], list[tuple[str, list[str]]]]:
+    """Split one module into its ordered ORDS calls without parsing SQL bodies."""
+    prefix: list[str] = []
+    calls: list[tuple[str, list[str]]] = []
+    current_name: str | None = None
+    current: list[str] = []
+    for line in lines:
+        match = _REST_CALL_RE.match(line)
+        if match:
+            if current_name is not None:
+                calls.append((current_name, current))
+            elif current:
+                prefix.extend(current)
+            current_name = match.group("name")
+            current = [line]
+        else:
+            current.append(line)
+    if current_name is not None:
+        calls.append((current_name, current))
+    else:
+        prefix.extend(current)
+    return prefix, calls
+
+
+def _rest_argument(lines: list[str], name: str) -> str:
+    match = re.search(
+        rf"\b{re.escape(name)}\s*=>\s*'(?P<value>(?:''|[^'])*)'",
+        "\n".join(lines),
+    )
+    return match.group("value") if match else ""
+
+
+def _stable_rest_template(calls: list[tuple[str, list[str]]]) -> list[tuple[str, list[str]]]:
+    """Sort handlers and their parameters inside one already-defined template."""
+    if not calls or calls[0][0] != "DEFINE_TEMPLATE":
+        return calls
+    handler_groups: list[list[tuple[str, list[str]]]] = []
+    current: list[tuple[str, list[str]]] = []
+    for call in calls[1:]:
+        if call[0] == "DEFINE_HANDLER":
+            if current:
+                handler_groups.append(current)
+            current = [call]
+        elif call[0] == "DEFINE_PARAMETER" and current:
+            current.append(call)
+        else:
+            return calls
+    if current:
+        handler_groups.append(current)
+
+    def handler_key(group: list[tuple[str, list[str]]]) -> tuple[str, str]:
+        handler = group[0][1]
+        return (_rest_argument(handler, "p_method"), "\n".join(handler))
+
+    normalized: list[tuple[str, list[str]]] = [calls[0]]
+    for group in sorted(handler_groups, key=handler_key):
+        normalized.append(group[0])
+        normalized.extend(
+            sorted(
+                group[1:],
+                key=lambda call: (
+                    _rest_argument(call[1], "p_name"),
+                    "\n".join(call[1]),
+                ),
+            )
+        )
+    return normalized
+
+
+def _stable_rest_module(module: list[str]) -> list[str]:
+    """Make repeated exports byte-identical when SQLcl changes dictionary row order.
+
+    ORDS requires a module before its templates and a handler before its
+    parameters. Templates are independent after the module exists, handlers are
+    independent after their template exists, and parameters are independent
+    after their handler exists. Sorting only inside those dependency boundaries
+    keeps the executable order and removes the dictionary's unstable row order.
+    """
+    prefix, calls = _rest_calls(module)
+    if not calls or calls[0][0] != "DEFINE_MODULE":
+        return module
+    leading = [calls[0]]
+    templates: list[list[tuple[str, list[str]]]] = []
+    current: list[tuple[str, list[str]]] = []
+    for call in calls[1:]:
+        if call[0] == "DEFINE_TEMPLATE":
+            if current:
+                templates.append(current)
+            current = [call]
+        elif current:
+            current.append(call)
+        else:
+            return module
+    if current:
+        templates.append(current)
+
+    templates = [_stable_rest_template(group) for group in templates]
+    templates.sort(
+        key=lambda group: (
+            _rest_argument(group[0][1], "p_pattern"),
+            "\n".join(group[0][1]),
+        )
+    )
+    ordered = [*leading, *(call for group in templates for call in group)]
+    return [*prefix, *(line for _, body in ordered for line in body)]
+
 def _schema_definition(preamble: list[str], trailer: list[str]) -> list[str]:
     """The schema-scoped half of the export: its preamble plus its trailer.
 

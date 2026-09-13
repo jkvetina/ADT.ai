@@ -38,6 +38,15 @@ comparison is on CONTENT, never on a timestamp or a database ``last_ddl_time``,
 because a stamp says when the object was touched and this asks whether the file
 would differ.
 
+**A writer that reaches disk another way keeps the churn alive on its own
+files**, so ``tests/contracts/test_artifact_writes_are_guarded.py`` scans the
+package for every raw-write shape: ``.write_text`` / ``.write_bytes`` off this
+module, a raw handle (``open(path, "w")``, which is also how ``json.dump`` and
+``csv.writer`` land bytes), ``shutil`` copies, ``os`` renames, and
+:func:`open_text` below. Each remaining call site is an entry in that file's
+``ALLOWED`` map carrying the reason it cannot compare; anything else is a defect
+(card #798).
+
 **The skip is silent, and that is the requirement** (card #594). #593 also
 counted the writes and printed `FILES: n written, m unchanged` above every run's
 timer; Jan, 2026-08-29: *"I did not asked for this, dont clutter the console
@@ -144,12 +153,14 @@ class _NormalizingWriter:
 def open_text(path: Path, mode: str = "w") -> _NormalizingWriter:
     """Open ``path`` for writing text, normalized to the configured line ending.
 
-    The streaming handle, for a caller that hands its output to somebody else's
-    writer (``yaml.dump``) or appends to a log. It writes unconditionally: the
-    unchanged-skip below needs the whole payload in hand to compare, and a
-    handle by definition does not have it. A caller that produces an artifact
-    an export rewrites every run builds its text and calls :func:`write_text`
-    or :func:`write_bytes` instead.
+    The streaming handle, for a caller that appends to a log. It writes
+    unconditionally: the unchanged-skip below needs the whole payload in hand to
+    compare, and a handle by definition does not have it. A caller that produces
+    an artifact an export rewrites every run builds its text and calls
+    :func:`write_text` or :func:`write_bytes` instead, a caller handing its
+    output to somebody else's writer included: it renders into a ``StringIO``
+    and passes the result on, which is what ``connection/runner.py`` and
+    ``shared/sqlcl_names.py`` both do with ``yaml.dump`` (card #798).
     """
     handle = path.open(mode, encoding="utf-8", newline="")
     return _NormalizingWriter(handle, _newline)

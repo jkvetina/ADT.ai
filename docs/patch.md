@@ -6,6 +6,8 @@
 
 Nothing is deployed by building a patch. What you get is a folder you can read, review and hand to whoever holds the keys to the target.
 
+Every table names an object type in Oracle's singular spelling, such as `TABLE` and `VIEW`, count tables included. It is the spelling `-type` takes.
+
 <br>
 
 ## Examples
@@ -80,7 +82,7 @@ RECENT PATCH FOLDERS:
 TIMER: 0s
 ```
 
-- `REBUILDING COMMITS:` appears only when there are commits to hash. It runs before every action, so a patch never records a commit number the store disagrees with.
+- `REBUILDING COMMITS:` appears only when there are commits to hash. It runs before every action that reads commits, so a patch never records a commit number the store disagrees with. `-install`, `-archive` and `-drop` read none and never rebuild.
 - `RECENT UNPATCHED COMMITS:` holds the work still to be addressed, so a commit already carried by a folder on disk is not listed. `-commit <n>` reaches a hidden one by number.
 - `RECENT PATCH FOLDERS:` lists the folders newest first, so the patch you just made is the top row. Its `STATUS` cell is the newest deploy log for that folder, as `<OUTCOME>/<TARGET>`.
 - Both tables are narrowed, which is what `RECENT` names: the folder listing is capped at `patch_show_patches`, and `-by`, `-my` and `-recent` cut both, so `adtai patch -my` means your commits and your patches.
@@ -160,7 +162,9 @@ All four modes, what each one costs, and which two refs `-head` reads are on [pa
 
 ## Shipping an APEX application whole
 
-`-app` ships an application whole instead of as the components that changed, and the application's own exported files pick the mode: an `apexlang/` tree ships as the tree, anything else as its `f<id>.sql`. Its optional value is where the tree lands rather than which applications ship, so `-app <id>` is a sandbox import.
+`-app` ships an application whole instead of as the components that changed. The application's own exported files pick the mode: an `apexlang/` tree ships as the tree, anything else as its `f<id>.sql`. Its optional value is where the tree lands rather than which applications ship.
+
+`-app <id>` stamps that target with the deployer and time after import, whether the id names a sandbox or the source application itself. Bare `-app` leaves the Builder audit author unchanged.
 
 Both modes, the stale export refusal and the retarget rules are on [patch_app.md](patch_app.md). The import's staging, signatures and refusals are on [patch_import.md](patch_import.md), and the loop around it on apex_round_trip.md.
 
@@ -226,12 +230,12 @@ Each application gets a receipt at `<path_apex>/logs_<ENV>/<timestamp>_apex_drop
 | `-app [ID]`, `--app [ID]` | No | off | Ship every APEX application the patch touches whole instead of as the components that changed. The application's own export format picks the mode: an `apexlang/` tree ships as the tree, anything else as its `f<id>.sql` full export with the components dropped. Bare, no application id changes; `ID` lands the tree on that application id instead, with the alias derived alongside it. One id per run. Refuses the build when a full-export application changed after the export it would ship; an APEXlang application needs no `f<id>.sql` and is never compared against one. On `-deploy` it also imports the `apexlang/` tree, refusing on target drift. |
 | `-hash [FILE]`, `--hash [FILE]` | No | off | Build the patch from what the working tree no longer matches the baseline on, instead of from commits. `FILE` names the baseline; omitted, it is `patch_hashes/baseline.<TARGET_ENV>.log`. Forces the `local` content mode. |
 | `-baseline [FILE]`, `--baseline [FILE]` | No | off | Record every current file hash as this target's deployed baseline, overwriting it whole. Builds nothing and opens no database. |
-| `-install`, `--install` | No | off | Regenerate the database install script per schema from the exported files. Needs no name and no connection. |
+| `-install`, `--install` | No | off | Write `config/install/<SCHEMA>.sql` for each exported schema from the checked-out files; `-schema` picks the schemas. Needs no name. Details on [patch_install.md](patch_install.md#the-install-script). |
 | `-archive`, `--archive` | No | none | Archive folders by ticket number or LIKE pattern; omit refs to only list. One flag takes several refs and mixes both kinds. A ref matching nothing archives nothing and still exits `0`. `-archive %` takes every folder; `\` escapes a literal `_` in a ticket-number ref, quoted. Closes with `ALL PATCH FOLDERS:`, every folder left on disk. |
 | `-drop ID [ID ...]`, `--drop` | No | none | Remove the sandbox APEX applications a `-deploy -app ID` run created. Ids only: no `-name` and no patch folder, and `-target` is required. An id is taken only when it is a derived sandbox, `<application><task>` carrying the derived `<SOURCE_ALIAS>_<task>` alias, so an application's own id refuses and names it. A sandbox drops only when its recorded creator is your `apex_account` in `config/IDENTITY.yaml`; anybody else's, or one recording no creator, needs `-force`. Every id is checked before the first one is dropped. |
 | `-local`, `--local` | No | off | Snapshot the working-tree file instead of its committed version. Mutually exclusive with `-head` and `-nosnap`. |
 | `-head`, `--head` | No | off | Snapshot the newest committed version of each file, taken from the local branch or the remote default branch, and skip the newer-commit warning. Runs `git fetch --prune origin` first, before anything reads history, best effort on an offline repository. Which ref wins is on [patch_content.md](patch_content.md). Mutually exclusive with `-local` and `-nosnap`. |
 | `-nosnap`, `--nosnap` | No | off | Write no snapshots; link each repo file where it already lives. Mutually exclusive with `-local` and `-head`. |
-| `-branch`, `--branch` | No | current branch | Scan the named branch's history instead of the checked-out one. Read-only. A name resolving to no ref fails the run. |
+| `-branch`, `--branch` | No | current branch | Scan the named branch's history instead of the checked-out one. Read-only. A name resolving to no ref fails the run. Refused beside `-install`. |
 
-Shared options (-root, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).
+Shared options (-root, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

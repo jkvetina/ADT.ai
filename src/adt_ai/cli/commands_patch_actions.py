@@ -35,7 +35,6 @@ from adt_ai.patch.preview import (
     folders_for_authors,
     folders_within_window,
 )
-from adt_ai.patch.staleness import require_fresh_dependency_graph
 from adt_ai.shared.commit_discovery import CommitRecord
 from adt_ai.shared.file_list import nested_files, print_file_rows
 from adt_ai.shared.patch_folders import PatchFolder, named_patch_refs
@@ -66,13 +65,19 @@ ARCHIVING_PATCHES_HEADER = "ARCHIVING PATCHES:"
 # which is the module that now imports THIS one.
 
 
-def run_install_script(root: Path, workspace: PatchWorkspace, config: dict[str, Any]) -> int:
-    # The install order comes from config/internal/dependencies.db, so an absent or
-    # out-of-date graph is refused before a single line is written, a
-    # plausible-looking script in the wrong order is the failure this
-    # prevents, and it only surfaces in SQLcl.
-    require_fresh_dependency_graph(root, config)
-    results = workspace.create_install_script(config)
+def run_install_script(
+    root: Path,
+    workspace: PatchWorkspace,
+    config: dict[str, Any],
+    schemas: Any = None,
+) -> int:
+    # The install order comes from config/internal/dependencies.db, and the graph
+    # is already level by the time this runs: `commands_patch._run_patch_command`
+    # refreshes the stale schemas and re-measures first (ADT #802), so a graph no
+    # refresh could fix never reaches here. The commit store is never levelled
+    # for this action, because nothing below reads a commit (ADT #806).
+    # `schemas` is `-schema` as typed (ADT #804).
+    results = workspace.create_install_script(config, schemas=schemas)
     if not results:
         # Nothing found: name the layout that was searched so the reader can
         # act on it, instead of a section header standing over an empty table.
@@ -90,6 +95,7 @@ def run_install_script(root: Path, workspace: PatchWorkspace, config: dict[str, 
         print_adt_header(f"OBJECTS OVERVIEW{suffix}:")
         print_adt_table(
             [
+                # Singular, like every object type the tool prints (`#803`).
                 {"OBJECT TYPE": object_type, "FILES": count}
                 for object_type, count in sorted(result.overview.items())
             ],

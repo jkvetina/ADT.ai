@@ -1,17 +1,21 @@
-- **`export_apex`'s `-compact` mode now prints one row per exported unit instead of one row for the whole schema**, and a finished row no longer names the slice that ran last.
-- **Every dotted progress row now reaches the right margin.** Two commands had stopped filling it.
-- **`export_apex`'s `-embedded` mode no longer fails with `ORA-06502` on an application with no embedded code.**
-- **`validate` no longer confuses a patch's own snapshot copies of an APEX export with the real export.** Several exports sharing one staging name could resolve to one directory and compile only the last, so a real application could report `EMPTY`. It now recognizes an export by its folder shape.
-- **`export_db` keeps a view's 23ai annotations, and a materialized view no longer loses them silently.**
-- **`patch` and `dependencies` commands run faster.** Where a run issues several SQLcl requests in a row — `patch -deploy` per script, `dependencies -refresh` per schema — it now reuses one SQLcl process instead of starting a fresh one each time.
+- **Breaking: `patch`'s `-install` mode writes one script per schema to `config/install/<SCHEMA>.sql`.** The name and links are the same on every branch. `-schema` picks which schemas get a script. A script at the old `<schema>/database/INSTALL.sql` location moves on the next run. The `patch_install_file` config key is removed.
+- **`patch -install -schema` naming no exported schema is refused as `ERROR - ARGUMENT INVALID:`** instead of `PATCH FAILED:`. The message names the value and the schemas that were exported, and the command exits `2`.
+- **`patch`'s `-install` mode refreshes a stale dependency graph itself** instead of stopping and asking you to run `dependencies -refresh`. It runs before the commit history rebuild, so a refusal that survives the refresh costs no rebuild.
+- **`patch`'s `-install`, `-archive` and `-drop` modes no longer rebuild the commit history first.** They read no commit, so a large repository no longer waits minutes on `REBUILDING COMMITS:` before the work starts.
+- **`patch -deploy -app <id>` stamps the application with who deployed it and when.** `LAST_UPDATED_BY` and `LAST_UPDATED_ON` are updated while the imported version is kept. Without an explicit target id, the Builder's audit author is left untouched.
+- **`export_apex` no longer writes a `.gitignore` into an APEXlang `static-files/` folder.** The APEX compiler imported that file into the application as one more static file. The ignore now lives in `.git/info/exclude`, and `export_apex`, `validate` and `patch -deploy` remove the leftover from applications already affected.
+- **`export_apex`'s `-rest` mode writes REST modules in a stable order.** SQLcl can return templates, handlers and parameters in a different order for the same service, so unchanged services showed up as changed files.
+- **Object types read singular everywhere.** The `-compact` bar of `export_db`, the `OBJECTS OVERVIEW:` tables of `export_db`, `recompile` and `patch -install` print `TABLE`, `PACKAGE BODY` and `GRANT`, the spelling `-type` takes.
+- **Registering a named SQLcl connection no longer rewrites an unchanged connection file.** When the stored name and fingerprint already match, nothing moves on disk, so a sync client sees no churn, and a file holding a password stays owner-only.
+- **The installed `adtai` command is now smoke-tested on Windows, macOS and Linux** from the built wheel, not only the Python module.
 
 ## Verification
 
 | Suite          | Passed | Failed | Unverified | Coverage | Cores | Time |
 | -------------- | -----: | -----: | ---------: | -------: | ----: | ---: |
-| Unit tests     |   7985 |        |            |     100% |    14 | 0:51 |
-| User stories   |    134 |        |          2 |          |     3 | 8:25 |
-| Security audit |     22 |        |            |          |     1 | 0:59 |
+| Unit tests     |   8166 |        |            |     100% |    14 | 1:03 |
+| User stories   |    137 |        |          2 |          |     3 | 5:02 |
+| Security audit |     22 |        |            |          |     1 | 0:15 |
 
 The 2 unverified user stories are Windows-only contracts, and every release is built on macOS.
 

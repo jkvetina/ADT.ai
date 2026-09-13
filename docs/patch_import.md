@@ -32,15 +32,15 @@ Retargeting is a flag on SQLcl's `apex import`, never an edit to the tree's `dep
 
 <br>
 
-## A sandbox is stamped with the developer who deployed it
+## A numbered target is stamped with the developer who deployed it
 
-An APEXlang import writes no audit column, so a sandbox lands owned by nobody and the Builder shows it that way. The import session therefore reads the application's own version and hands it straight back through `SET_APPLICATION_VERSION`, which is what makes APEX stamp the row.
+An APEXlang import writes no audit column. After `-app <id>` imports, the same session therefore reads the target application's version and hands it straight back through `SET_APPLICATION_VERSION`, which makes APEX stamp the row without changing the version.
 
-One call, and the value it passes is identical: the API writes the audit columns whether or not the version changed. The version text never moves. `apex_applications.last_updated_by` then names you and `last_updated_on` the moment, so your sandbox is yours on sight in the Builder's application list.
+One call, and the value it passes is identical: the API writes the audit columns whether or not the version changed. The version text never moves. `apex_applications.last_updated_by` then names you and `last_updated_on` the moment, so both a sandbox and an explicitly overwritten main application identify their deployer on sight in the Builder.
 
 The name is `apex_account` from [`IDENTITY.yaml`](config.md), else `git config user.name`. A checkout naming no developer stamps nobody and imports exactly as before.
 
-Only a retarget is stamped. A bare `-app` lands each application under its own id, and rewriting a real application's audit row would erase who last worked it in the Builder.
+Only a numbered target is stamped. Bare `-app` still lands each application under its own id without rewriting its audit row. Numbered `-app <id>` records the deployment whether `<id>` is a sandbox id or the source application's own id.
 
 `created_by` stays empty either way, because APEX exposes nothing that can write it, which is why [`patch -drop`](patch_drop.md) clears an ownerless sandbox rather than refusing one.
 

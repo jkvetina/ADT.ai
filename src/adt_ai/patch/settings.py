@@ -130,7 +130,6 @@ DEFAULTS: dict[str, Any] = {
     "patch_folder_splitter": "-",
     "patch_group_file": "#GROUP#.sql",
     "patch_harden": True,
-    "patch_install_file": "INSTALL.sql",
     "patch_postfix_after": "_after",
     "patch_postfix_before": "_before",
     "patch_root": "patch/",
@@ -404,11 +403,6 @@ def _group_script_re(config: dict[str, Any]) -> re.Pattern[str] | None:
         return None
     before, _, after = template.partition(token)
     return re.compile(f"{re.escape(before)}(?P<group>.+){re.escape(after)}")
-
-
-def install_script_name(config: dict[str, Any]) -> str:
-    """`patch_install_file`: the per-schema script `patch -create` writes."""
-    return _text(config, "patch_install_file")
 
 
 # --- what opens and closes a generated script --------------------------------

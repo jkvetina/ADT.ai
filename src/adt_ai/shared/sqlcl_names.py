@@ -18,6 +18,7 @@ re-registered on the next SQLcl call.
 from __future__ import annotations
 
 import hashlib
+import io
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -170,8 +171,18 @@ def record_sqlcl_registration(
             schema_node["db"] = db_node
         db_node["sqlcl"] = name
         db_node["sqlcl_sync"] = fingerprint
-        with text_files.open_text(path) as handle:
-            yaml.dump(data, handle)
+        # Rendered into a buffer, never streamed at the file. `open_text` writes
+        # unconditionally, since it cannot compare bytes it does not yet hold,
+        # and a re-registration usually records the name and fingerprint the
+        # document already carries, so streaming gave this file a fresh mtime
+        # for no change at all: one re-upload per run under a synced folder
+        # (ADT #798).
+        # `write_private_text` is what `connection/runner.py` uses on this same
+        # file: it skips a byte-identical rewrite and keeps a `pwd:`-bearing
+        # document owner-only from its first inode.
+        buffer = io.StringIO()
+        yaml.dump(data, buffer)
+        text_files.write_private_text(path, buffer.getvalue())
     except Exception:
         return
 

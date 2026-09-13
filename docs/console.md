@@ -229,7 +229,7 @@ A flag a command does not take is a parser error, not a flag it ignores.
 | `-root` | every command |
 | `-config-dir` | `connection`, `dependencies`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `patch`, `recompile`, `ut`, `validate` |
 | `-env` | `connection`, `dependencies`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `recompile`, `ut` |
-| `-schema` | `connection`, `dependencies`, `discovery`, `export_apex`, `export_data`, `export_db`, `recompile`, `ut` |
+| `-schema` | `connection`, `dependencies`, `discovery`, `export_apex`, `export_data`, `export_db`, `patch` (only with `-install`, default every exported schema), `recompile`, `ut` |
 | `-key` | `connection`, `dependencies`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `patch`, `recompile`, `ut` |
 | `-debug` | `connection`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `patch`, `recompile`, `ut`, `validate` |
 | `-beep` | every command |

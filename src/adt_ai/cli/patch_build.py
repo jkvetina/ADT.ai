@@ -64,7 +64,7 @@ def dispatch_supporting_actions(
     rather than beside the other two, and it names no patch at all.
     """
     if args.install:
-        return run_install_script(root, workspace, config)
+        return run_install_script(root, workspace, config, schemas=args.schema)
     if args.archive is not None:
         return run_archive_patches(args, workspace, config)
     if args.drop:
@@ -74,6 +74,25 @@ def dispatch_supporting_actions(
             config          = config,
             gateway_factory = gateway_factory,
         )
+    return None
+
+
+def install_flag_refusal(args: argparse.Namespace) -> str | None:
+    """`-branch` beside `-install`, or `-schema` without it, or ``None`` (ADT #804).
+
+    `-install` reads the checked-out files and writes `config/install/<SCHEMA>.sql`
+    under the same name on every branch. Jan, 2026-09-13, choosing that over
+    reading another branch out of git: *"you will refuse -branch attribute when
+    -install is requested"*. `-schema` narrows only `-install`, so any other mode
+    carrying it would parse a flag and do nothing with it.
+    """
+    if args.install and args.branch is not None:
+        return (
+            "-branch cannot be combined with -install: the install script is built "
+            "from the checked-out files"
+        )
+    if args.schema and not args.install:
+        return "-schema applies only to -install"
     return None
 
 

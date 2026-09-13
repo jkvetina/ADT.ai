@@ -222,6 +222,20 @@ def _venv_python(venv: Path) -> Path:
     return venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
+def _venv_console_script(venv: Path, name: str) -> Path:
+    """The installed entry point a user types, not the module the tests import.
+
+    `pyproject.toml` declares `adt` and `adtai` under `[project.scripts]`, and pip
+    writes them into the environment's script directory with a launcher stub that
+    calls `adt_ai.cli:console_main`. That stub is a different code path from
+    `python -m adt_ai`, so a package that imports cleanly can still ship a console
+    script that does not run.
+    """
+    return venv / ("Scripts" if os.name == "nt" else "bin") / (
+        f"{name}.exe" if os.name == "nt" else name
+    )
+
+
 def _run(command: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     print("+ " + " ".join(command), flush=True)
     result = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True)
@@ -281,6 +295,44 @@ def smoke_installed_artifact(dist: Path, work_root: Path) -> None:
         cwd=work_root,
         env=env,
     )
+    _verify_console_entry_point(venv, work_root=work_root, env=env)
+
+
+# The `connection.windows_import` user story, run where it can actually be run.
+#
+# The story asserts that `adtai --help` exits 0 and prints its banner, and it
+# exists because Windows has neither `pty` nor `termios`: importing either at
+# module scope takes every command down before it reaches that banner, `--help`
+# included (`#449`). `tests/tools/story_gate.py` marks a story UNVERIFIED when the
+# run host is not in its `platforms:` list, and every release is built on macOS,
+# so the contract had never been executed anywhere — while the PUBLIC repository
+# ran a `windows-latest` job on every push, for free, that did not know to look.
+#
+# It lives inside the artifact smoke rather than beside it so that it inherits
+# the clean room: the wheel under test, installed into a throwaway venv outside
+# the checkout, with `PYTHONPATH` stripped. A `--help` that passed because the
+# source tree was importable would prove nothing about what a user installs.
+#
+# The two markers are copied from the story contract itself
+# (`USER_STORIES/connection/09_windows_import.md`), so this check and the story
+# assert the same thing; `tests/contracts/test_installed_artifact_ci.py` fails if
+# either one is dropped here.
+CONSOLE_ENTRY_POINT = "adtai"
+CONSOLE_HELP_MARKERS = ("APEX DEPLOYMENT TOOL", "MODULES:")
+
+
+def _verify_console_entry_point(venv: Path, *, work_root: Path, env: dict[str, str]) -> None:
+    script = _venv_console_script(venv, CONSOLE_ENTRY_POINT)
+    if not script.exists():
+        raise ValueError(f"the wheel installed no {CONSOLE_ENTRY_POINT} console script: {script}")
+
+    helped = _run([str(script), "--help"], cwd=work_root, env=env)
+    missing = [marker for marker in CONSOLE_HELP_MARKERS if marker not in helped.stdout]
+    if missing:
+        raise ValueError(
+            f"{CONSOLE_ENTRY_POINT} --help printed no {', '.join(missing)}; "
+            "the banner is what proves the CLI reached its own entry point"
+        )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

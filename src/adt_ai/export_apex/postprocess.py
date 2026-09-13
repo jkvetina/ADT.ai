@@ -88,6 +88,8 @@ def _payload_for(
         output = _enrich_sql(payload, enrichments)
     elif action == "split" and relative.endswith(".sql"):
         output = _clean_split_sql(payload, relative, application, enrichments, config, developers)
+    elif action == "apexlang" and relative == "shared-components/static-files.apx":
+        output = _drop_adt_payload_ignore(payload)
     else:
         output = payload
     return _override_apex_release(output, release) if relative.endswith(".sql") else output
@@ -101,6 +103,26 @@ def _normalize_text_line_endings(payload: str) -> str:
     return payload.replace("\r\n", "\n").replace("\r", "\n")
 
 APEXLANG_STATIC_FILES_PREFIX = "shared-components/static-files/"
+
+
+def _drop_adt_payload_ignore(payload: str) -> str:
+    """Remove the static-file record created by ADT's retired ignore sentinel."""
+    lines = payload.splitlines(keepends=True)
+    output: list[str] = []
+    index = 0
+    while index < len(lines):
+        if re.match(r'^file\s+(?:"\.gitignore"|\.gitignore)\s*\(\s*$', lines[index].rstrip("\r\n")):
+            index += 1
+            while index < len(lines) and lines[index].strip() != ")":
+                index += 1
+            if index < len(lines):
+                index += 1
+            if index < len(lines) and not lines[index].strip():
+                index += 1
+            continue
+        output.append(lines[index])
+        index += 1
+    return "".join(output)
 
 
 def _skip_collection_file(action: str, relative: str) -> bool:

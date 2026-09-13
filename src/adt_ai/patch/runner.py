@@ -158,8 +158,12 @@ class PatchWorkspace:
     def next_folder(self, patch_code: str, *, today: date | None = None) -> Path:
         return next_patch_folder(self.patch_root, patch_code, today=today, config=self.config)
 
-    def create_install_script(self, config: dict[str, Any]) -> list[InstallScriptResult]:
-        return write_install_script(self.root, config)
+    def create_install_script(
+        self,
+        config: dict[str, Any],
+        schemas: Any = None,
+    ) -> list[InstallScriptResult]:
+        return write_install_script(self.root, config, schemas)
 
     def refresh_plan(
         self,
