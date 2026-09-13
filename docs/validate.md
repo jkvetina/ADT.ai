@@ -103,7 +103,9 @@ An `-apexlang` export deliberately omits the `shared-components/static-files/` p
 
 So the export's own tree is completed rather than copied. The payloads are **hardlinked** from the sibling `files/` export into `apexlang/shared-components/static-files/`, and kept in step with it on every export, validate and deploy. The compiler opens the folder that is committed.
 
-A hardlink is one inode with two names, so this copies no bytes. The folder carries its own `.gitignore` holding `*`, which git applies to everything inside it including that file, so the payloads are neither tracked nor reported as untracked. Nothing in your project's own `.gitignore` has to change.
+A hardlink is one inode with two names, so this copies no bytes. ADT adds the payload-folder pattern to the checkout's private `.git/info/exclude`, so the links are neither tracked nor reported as untracked and no housekeeping file enters the compiler input tree. Nothing in your project's tracked `.gitignore` changes.
+
+Reconciliation also removes the retired nested `.gitignore`; exports strip its static-file descriptor from applications affected by older ADT builds.
 
 - **`files/<X>` maps one-to-one onto `shared-components/static-files/<X>`**, same relative paths, no rename and no transform. That is what makes this a link operation rather than a translation.
 - **Hardlinks, not symlinks.** A hardlink is indistinguishable from a regular file to a directory walker, while Java's `Files.walk` will not descend a symlinked directory without `FOLLOW_LINKS`, so a symlinked tree risks the compiler skipping whole folders. A symlink is no cheaper either, being a directory entry plus its own inode. A copy is the fallback when a filesystem refuses to link.

@@ -7,8 +7,8 @@ long before the export ends and the run is readable only while it is short.
 `-compact` answers that the way `ut` already does: the overview, then one line
 that moves.
 
-**The row is labelled with the object type being pulled right now** (`TABLES`,
-`MATERIALIZED VIEWS`, `PACKAGE BODIES`), so the label moves with the export
+**The row is labelled with the object type being pulled right now** (`TABLE`,
+`MATERIALIZED VIEW`, `PACKAGE BODY`), so the label moves with the export
 rather than restating the header. `#373` shipped it blank, arguing that
 `EXPORTING 61 OBJECTS:` above already names the work and a `61 OBJECTS` label
 would print the same number twice, the shape `#372` had just deleted from five
@@ -18,17 +18,15 @@ which dont start with a text ... We need to add some text there so it does not
 look like shit"*, and, picking this shape over a count and over a bare verb,
 *"live label sounds cool"*.
 
-**The label is plural, and only the label** (`#383`). The row heads a batch, not
-one object, so `MATERIALIZED VIEW` under a bar counting thirty-eight of them
-reads as the name of the one in flight. `DatabaseObject.object_type` keeps
-Oracle's own spelling: it keys the per-type timer store, the `-type` filter and
-the export folder layout, so a plural at the source would move exported files on
-disk. Normalizing at the display layer and nowhere else is the rule
-`shared/progress.schema_label` already follows for a schema name.
+**The label is the type as Oracle spells it, singular** (Jan, `#803`). `#383`
+pluralised it on the ground that the row heads a batch, which put
+`MATERIALIZED VIEWS` on the bar between an overview and a listing that both say
+`MATERIALIZED VIEW`. The one spelling keys the per-type timer store, the `-type`
+filter and every table the tool prints.
 
 An object type is dictionary data rather than a minted string, so this mode still
 adds nothing to `tests/contracts/console_surface.txt`. The object NAME is
-deliberately not beside it: `MATERIALIZED VIEWS | <30-char name>` leaves ten
+deliberately not beside it: `MATERIALIZED VIEW | <30-char name>` leaves eleven
 dots, which is a row that has stopped being a bar.
 
 **The dot track is one constant for the whole segment**, sized from the widest
@@ -67,40 +65,18 @@ from adt_ai.shared.progress import DottedProgressBar
 # is nothing for the row to name yet.
 ROW_HEADER = ""
 
-# A type that names a quantity rather than a countable thing, so a trailing S
-# would be a second one. DATA is ADT's pseudo-type for exported table rows and
-# is plural before anything is done to it.
-UNCOUNTABLE_OBJECT_TYPES = frozenset({"DATA"})
-
-# A word ending in one of these takes ES: INDEX -> INDEXES. Three suffix rules
-# cover the whole vocabulary, so there is no table of eighteen plurals to keep in
-# step with `shared/object_types.ORACLE_OBJECT_TYPES`.
-SIBILANT_ENDINGS = ("S", "X", "Z", "CH", "SH")
-
-VOWELS = frozenset("AEIOU")
-
-
 def object_type_label(object_type: str) -> str:
-    """The plural of an Oracle type name, for the row that heads a batch of them.
+    """The Oracle type name, for the row that heads a batch of them.
 
-    Display only, exactly as `shared/progress.schema_label` is: the singular
-    keys `config/internal/recent.yaml`, answers `-type`, and names the folder
-    the files land in, so the plural exists on screen and nowhere else.
+    The same spelling keys `config/internal/recent.yaml`, answers `-type`, and
+    names every row of the overview above the bar and the listing below it.
 
-    Three rules rather than a lookup, because English is regular enough here and
-    a table of eighteen is one more thing to leave stale when a type is added.
-    A bare S is wrong on three of them (`INDEXS`, `PACKAGE BODYS`,
-    `TYPE BODYS`), which is the whole reason this is a function.
+    **Singular, like every object type the tool prints** (Jan, `#803`). `#383`
+    pluralised this label on the ground that the row heads a batch, which left
+    `MATERIALIZED VIEWS` on the bar between two tables saying `MATERIALIZED VIEW`.
     """
-    name = str(object_type or "")
-    if len(name) < 2 or name in UNCOUNTABLE_OBJECT_TYPES:
-        # Empty is `ROW_HEADER`, the frame that names no type at all.
-        return name
-    if name.endswith("Y") and name[-2] not in VOWELS:
-        return f"{name[:-1]}IES"
-    if name.endswith(SIBILANT_ENDINGS):
-        return f"{name}ES"
-    return f"{name}S"
+    # Empty is `ROW_HEADER`, the frame that names no type at all.
+    return str(object_type or "")
 
 
 class ObjectProgressBar:
@@ -152,8 +128,8 @@ class ObjectProgressBar:
         what the terminal is waiting on, and a label printed once the wait is
         over explains a wait that has already ended (`#360`).
 
-        Takes the dictionary spelling and renders the plural here, so no caller
-        has to remember to (`#383`).
+        Takes the dictionary spelling and prints it as it stands, singular like
+        every other table in the tool (`#803`, taking back `#383`'s plural).
         """
         self._label = object_type_label(object_type) or ROW_HEADER
         self._draw()

@@ -163,3 +163,48 @@ def normalize_object_type_patterns(patterns: Iterable[str]) -> list[str]:
     :func:`normalize_object_type_pattern`.
     """
     return [normalize_object_type_pattern(pattern) for pattern in join_object_type_words(patterns)]
+
+
+# Type names that are their own plural. ``DATA`` is a mass noun and ``ORDS`` is an
+# acronym that already ends in S, so the singular rule below would otherwise take
+# ``ORDS`` apart into ``ORD``.
+INVARIANT_OBJECT_TYPE_NUMBERS = frozenset({"DATA", "ORDS"})
+
+# `IES` -> `<consonant>Y`, and the sibilants that took `ES`. Ordinary English, but
+# written down so a SQLcl folder name reads back the same way wherever it is parsed.
+_SIBILANT_PLURAL_ENDINGS = ("SES", "XES", "ZES", "CHES", "SHES")
+
+
+def singular_object_type(name: str) -> str:
+    """``PACKAGE BODIES`` -> ``PACKAGE BODY``, a SQLcl folder name read as a type.
+
+    A SQLcl project export files objects under plural folder names, so this is what
+    turns a folder ADT has no entry for into a type name that reads like every
+    other one. Before `#780` that path uppercased the folder as it stood and the
+    `diff` overview printed ``JOBS`` beside ``COMMENT``: the two halves of one
+    column, inflected two ways.
+
+    **There is no plural direction.** Every table in the tool prints a type in
+    Oracle's own singular spelling, count tables included. `#780` added a plural
+    for those and Jan took it back out, `#803`: *"ALL PLURAL object types should
+    be switched to single form, everywhere we do this"*.
+
+    Only the last word inflects, so the qualifier in front of it is carried
+    through untouched (``MATERIALIZED VIEWS`` -> ``MATERIALIZED VIEW``).
+    """
+    token = name.strip().upper()
+    if not token or token in INVARIANT_OBJECT_TYPE_NUMBERS:
+        return token
+    head, _, last = token.rpartition(" ")
+    singular = _singular_word(last)
+    return f"{head} {singular}" if head else singular
+
+
+def _singular_word(word: str) -> str:
+    if word.endswith("IES") and len(word) > 3:
+        return f"{word[:-3]}Y"
+    if word.endswith(_SIBILANT_PLURAL_ENDINGS):
+        return word[:-2]
+    if word.endswith("S"):
+        return word[:-1]
+    return word

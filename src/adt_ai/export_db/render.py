@@ -200,6 +200,9 @@ class ConsoleExportDbReporter(ExportDbReporter):
         db_now: str | None = None,
         grants: bool = False,
     ) -> None:
+        # One row per object type, in Oracle's own singular spelling: the same
+        # word every `TYPE | NAME` row in the listing below prints and `-type`
+        # takes (Jan, ADT #803).
         counts = Counter(database_object.object_type for database_object in objects)
         rows = [
             {"object_type": object_type, "count": counts[object_type]}
@@ -252,7 +255,10 @@ class ConsoleExportDbReporter(ExportDbReporter):
         if rows is None:
             return
         if changed:
-            rows = [*rows, {"object_type": GRANT_OBJECT_TYPE, "count": count}]
+            rows = [
+                *rows,
+                {"object_type": GRANT_OBJECT_TYPE, "count": count},
+            ]
         if not rows:
             return
         print_adt_table(rows, columns=list(OVERVIEW_COLUMNS))

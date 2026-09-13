@@ -11,6 +11,7 @@ from typing import Any
 
 from adt_ai.dependencies.store import DependencyStore
 from adt_ai.patch import archive_paths as _archive_paths
+from adt_ai.patch import install_paths as _install_paths
 from adt_ai.patch import settings as _settings
 from adt_ai.patch.layout import (
     is_apex_static_file as _is_apex_static_file,
@@ -123,30 +124,44 @@ def next_patch_folder(
     )
 
 
-def write_install_script(root: Path, config: dict[str, Any]) -> list[InstallScriptResult]:
-    """Write one ``INSTALL.sql`` per exported schema and report what went in it.
+def write_install_script(
+    root: Path,
+    config: dict[str, Any],
+    schemas: Any = None,
+) -> list[InstallScriptResult]:
+    """Write one ``config/install/<SCHEMA>.sql`` per exported schema and report it.
 
     ``path_objects`` is a path *template* (``<schema>/database/<object_type>/``),
     never a literal folder: ``<schema>`` resolves against the schema folders that
-    actually exist on disk, and the install script sits above the per-type level,
-    so it lands at ``<schema>/database/INSTALL.sql``.
+    actually exist on disk. ``schemas`` is `-schema` as typed, and narrows them.
+
+    The script lives in one folder since ADT #804 (`patch/install_paths.py`), so
+    it no longer sits beside the objects it links: every link is project-relative
+    and the script runs from the project root.
     """
+    targets = _install_targets(root, config)
+    _install_paths.move_legacy_install_scripts(root, targets)
     edges = _dependency_edges(root)
     results: list[InstallScriptResult] = []
-    for target in _install_targets(root, config):
+    for target in _install_paths.select_install_targets(targets, schemas):
         grouped = _install_groups(target, config, edges)
         if not grouped:
             # A schema root with no exported objects gets no script and no
             # section: an empty overview table is noise, not a report.
             continue
+        prefix = target.root.relative_to(root).as_posix()
+        linked = {
+            group: [f if prefix == "." else f"{prefix}/{f}" for f in files]
+            for group, files in grouped.items()
+        }
         overview = _install_overview(grouped, config)
-        install_path = target.root / _settings.install_script_name(config)
+        install_path = _install_paths.install_script_path(root, target.schema)
         install_path.parent.mkdir(parents=True, exist_ok=True)
-        text_files.write_text(install_path, _install_payload(grouped, overview, config))
+        text_files.write_text(install_path, _install_payload(linked, overview, config))
         results.append(
             InstallScriptResult(
                 path     = install_path,
-                files    = [f for files in grouped.values() for f in files],
+                files    = [f for files in linked.values() for f in files],
                 schema   = target.schema,
                 overview = overview,
             )
@@ -359,10 +374,10 @@ def _install_groups(
             # other, so the shorter type's glob claims the longer type's files
             # by `patch_map` order (ADT #558). Longest extension wins.
             siblings = extensions_for_folder(layouts, folder) - {extension}
-            install_name = _settings.install_script_name(config).upper()
+            install_name = _install_paths.LEGACY_INSTALL_FILE.upper()
             for file_path in sorted(search_root.rglob(f"*{extension}")):
-                # The script this run is about to write is never one of its own
-                # inputs, whatever the project calls it.
+                # A pre-#804 script still sitting among the objects is never one
+                # of their inputs; the staleness gate reads this before the move.
                 if not file_path.is_file() or file_path.name.upper() == install_name:
                     continue
                 if not owns_file(extension, siblings, file_path):

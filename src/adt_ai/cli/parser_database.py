@@ -21,7 +21,8 @@ def add_database_parsers(subparsers: SubParsers) -> None:
     # called `releases/v1.2` cannot be mistaken for one.
     # Multi-pattern, the shape `recompile` and `export_db` take: `-type A B`,
     # `-type A,B` and a repeated `-type A -type B` all work. Both filters narrow
-    # the SCREEN; the artifact keeps every object SQLcl generated (`#773`).
+    # the EXPORT as well as the screen, so a filtered run compares less and its
+    # artifact holds only what was asked for (`#780`, overruling `#773`).
     # NOT "show debug info" (ADT #326), which was the one -debug row of eleven
     # that named neither what is shown nor where it comes from. `-debug` appends
     # itself to the SQLcl DIFF command (`diff/runner.py`), so the extra output is

@@ -1,4 +1,4 @@
-"""Bring the dependency mirror level with the objects `patch -create` will order.
+"""Bring the dependency mirror level with the objects `patch -create`/`-install` order.
 
 `patch/staleness.py` has refused a stale graph since `#261`, and refusing is the
 right answer to a question nobody can answer offline: the ordering it would
@@ -44,6 +44,13 @@ have fetch them without forcing user to do it!"* All three properties above hold
 unchanged, the second one in particular: the re-measure is still what decides,
 so a root that cannot reach a database lands on the same refusal, worded the
 same way.
+
+`#802` extends it to `-install`. That action kept the refusal on the reading
+that it orders every install target and so has no narrower scope, which is the
+`#569` mistake again: the stale scopes still name their schemas. Jan,
+2026-09-13, after a run rebuilt 10985 commits and then refused: *"in install
+mode you should always make sure you have correct dependencies and not slap the
+user in the face with extra task you can do yourself."*
 """
 
 from __future__ import annotations
@@ -82,13 +89,18 @@ def ensure_fresh_dependency_graph(
     config: dict[str, Any],
     gateway_factory: GatewayFactory | None = None,
 ) -> None:
-    """Refresh whatever `-create` would order from a graph that predates it.
+    """Refresh whatever `-create` or `-install` would order from a graph that predates it.
 
     A no-op on a current graph, which is the normal case and costs the same
     handful of `stat` calls the gate has always cost: nothing connects unless
     something is actually stale.
+
+    `-schema` narrows the measurement, and so the refresh, to the schemas an
+    `-install` run writes for (ADT #804): a schema nobody asked to install is
+    not a reason to connect.
     """
-    report = graph_freshness(root, config)
+    wanted = getattr(args, "schema", None)
+    report = graph_freshness(root, config, wanted)
     if report.is_fresh:
         return
     schemas = [scope.schema for scope in report.stale if scope.schema]
@@ -108,7 +120,7 @@ def ensure_fresh_dependency_graph(
     # carry, a partial failure), and a gate that trusts its own remedy is not a
     # gate. `#210` is the standing example of asserting the branch instead of
     # the premise that selects it.
-    _refuse(graph_freshness(root, config))
+    _refuse(graph_freshness(root, config, wanted))
 
 
 def _refuse(report: GraphFreshness) -> None:

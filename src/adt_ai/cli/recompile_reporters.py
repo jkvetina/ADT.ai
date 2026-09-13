@@ -283,10 +283,11 @@ def _print_recompile_overview_table(overviews: Sequence[ObjectOverview]) -> None
     if not overviews:
         return
 
-    object_width = max(
-        12,
-        *(len(overview.object_type) for overview in overviews),
-    )
+    # Oracle's own singular spelling, the word `INVALID OBJECTS:` below and every
+    # other table in the tool prints (`#803`). The width is measured on the
+    # printed word, so the column still fits `PACKAGE BODY`.
+    labels = [overview.object_type for overview in overviews]
+    object_width = max(12, *(len(label) for label in labels))
     # OBJECT TYPE, TOTAL, VALIDATED, INVALID, MISSING IDENTIFIERS, MISSING STATEMENTS.
     # VALIDATED sits immediately before INVALID so the two read as a pair: what the
     # run fixed, and what it could not (#186).
@@ -324,11 +325,11 @@ def _print_recompile_overview_table(overviews: Sequence[ObjectOverview]) -> None
         )
     )
     print(line([("-" * width) for width in widths], aligns))
-    for overview in overviews:
+    for label, overview in zip(labels, overviews, strict=True):
         print(
             line(
                 [
-                    overview.object_type,
+                    label,
                     overview.total,
                     overview.validated,
                     overview.invalid,

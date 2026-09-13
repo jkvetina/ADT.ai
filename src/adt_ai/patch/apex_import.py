@@ -197,10 +197,11 @@ def build_import_script(
     `validate.runner._build_script` already uses so the two halves of the round
     trip cannot drift on how a SQLcl script is spelled.
 
-    ``account`` is the developer `shared/identity` resolved, and a retarget
-    carrying one is followed by :data:`STAMP_BLOCK` in the same session (ADT
-    #682). An APEXlang import writes no audit column at all -- measured on APEX
-    26.1, an export taken with `p_with_audit_info` set is byte-identical to one
+    ``account`` is the developer `shared/identity` resolved, and an explicit
+    numbered target carrying one is followed by :data:`STAMP_BLOCK` in the same
+    session (ADT #682, #795). An APEXlang import writes no audit column at all
+    -- measured on APEX 26.1, an export taken with `p_with_audit_info` set is
+    byte-identical to one
     taken without it, and the tree carries no `create_flow` to hang a
     `p_created_by` on -- so a sandbox lands owned by nobody and the Builder
     shows it as such. Jan, 2026-09-04: *"MY test app looks in APEX like it was
@@ -218,9 +219,10 @@ def build_import_script(
     can write it -- which is why `apex_drop.droppable_by` clears an ownerless
     sandbox rather than refusing one.
 
-    **Only a retarget is stamped.** A bare `-app` lands each application under
-    its own id, and rewriting a real application's audit row would erase who
-    last worked it in the Builder to record a deploy instead.
+    **Only a numbered target is stamped.** A bare `-app` lands each application
+    under its own id without replacing the Builder audit author. An explicit
+    `-app <id>` records the deployer and time after import, whether the id names
+    a sandbox or the source application itself.
     """
     if target.target_id is not None and not alias:
         raise ValueError(

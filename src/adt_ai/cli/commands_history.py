@@ -11,6 +11,7 @@ from typing import Any
 # The month-grid renderer lives in the calendar package; aliased here so the
 # `_print_calendar_grid` call site and its tests keep their existing name.
 from adt_ai.calendar.render import render_calendar_grid as _print_calendar_grid
+
 from adt_ai.cli.commands_history_reveal import GIT_LOOKUP_FAILURES, _run_rebuild_reveal
 from adt_ai.cli.constants import (
     CalendarError,
@@ -59,12 +60,6 @@ def _report_history_failure(error: Exception) -> int:
     )
     print_adt_error(code, str(error))
     return exit_code_for(code)
-
-
-COMPARING_HEADER = "COMPARING SCHEMAS:"
-
-# What a comparison is assumed to cost before it has run. SQLcl DIFF reports no
-# progress of its own, so the bar crawls against this and holds at 99 until the
 
 
 def _run_rebuild(args: argparse.Namespace) -> int:

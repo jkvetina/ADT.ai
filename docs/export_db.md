@@ -92,7 +92,7 @@ TIMER: 1s
 ```
 
 - `Ctrl+C` stops the export cleanly.
-- **`GRANT` is in the overview and not in the header count.** The four grant artifacts (grants made, grants received, user privileges, directories) export like any other file, so the type belongs in the listing, but they are not schema objects and have no `USER_OBJECTS` row. Its count is the number of files the type writes, one for grants made, one per owner for grants received, and one each for privileges and directories, so it reads exactly like every row above it.
+- **`GRANT` is in the overview and not in the header count.** The four grant artifacts (grants made, grants received, user privileges, directories) export like any other file, so the type belongs in the listing, but they are not schema objects and have no `USER_OBJECTS` row. Its count is the number of files the type writes, one for grants made, one per owner for grants received, and one each for privileges and directories, so it reads exactly like every row above it. Every type in this table is spelled the way `-type` takes it, singular.
 - **The `GRANT` row prints only when a grant actually moved.** None of the four has a `LAST_DDL_TIME`, so every run re-reads all four and the comparison against what is on disk decides what the screen says. The files are rewritten either way.
 - **The whole table waits on those reads.** The header goes up first and the reads run under it. A run where neither an object nor a privilege changed prints its header and stops: no column headings over an empty table, and no `EXPORTING 0 OBJECTS:` under it.
 - A multi-schema run executes schema by schema, with its own connection block and its own `TIMER`, and prints the banner once.
@@ -258,20 +258,19 @@ What each exports as, and the two repository references that stop dangling once 
 The default screen prints a row per object, which is what you want while watching a handful. On a whole schema it is hundreds of rows, and the overview has left the scrollback long before the export ends. `-compact` keeps the overview and replaces the rows with one line that moves:
 
 ```text
-EXPORTING 6 OBJECTS:
+EXPORTING 3 OBJECTS:
 --------------------
 
    0%                                                                  0:00:01 
-  PROCEDURES  0%                                                       0:00:00 
-  PROCEDURES ........ 17%                                              0:00:00 
-  PROCEDURES ................ 33%                                      0:00:00 
-  PROCEDURES ......................... 50%                             0:00:00 
-  TABLES .................................... 67%                      0:00:00 
-  TRIGGERS ........................................... 83%             0:00:00 
-  VIEWS ........................................................ 100%  0:00:00 
+  PROCEDURE  0%                                                        0:00:00 
+  PROCEDURE ................. 33%                                      0:00:00 
+  TABLE .................. 33%                                         0:00:00 
+  TABLE ..................................... 67%                      0:00:00 
+  TRIGGER .................................... 67%                     0:00:00 
+  TRIGGER ...................................................... 100%  0:00:00 
 ```
 
-- **The row names the type in the plural**, because it heads the whole batch rather than naming the object in flight. Only the label reads that way: `-type` still takes Oracle's singular spelling, and so does the overview.
+- **The row names the type being pulled**, in the same singular spelling the overview above it prints and `-type` takes.
 - The bar advances when an object's DDL comes back, not on a clock, and the time on the right is what is left rather than what has passed. A multi-schema export draws one bar per schema.
 - **The dot track is sized against the type on the row**, so a full row always reaches the same column whichever type names it. A shorter label buys itself a longer track, which is why the same percentage draws a different number of dots after the label changes.
 - **The percentage travels with the dots**, one space off the last of them, and the whole remainder of the track pads out behind it so the timer lands on the 78-column edge. The timer is the only field on a fixed column: a row relabelling itself shorter hands the leader the columns the label gave up and gets back only its share of them, so the figure sits a little further left under a shorter type name.
@@ -311,6 +310,6 @@ A typo takes the same path, on purpose. `-type NOSUCHTYPE` used to export nothin
 | `-delete`, `--delete` | No | off | Delete existing object files before export, excluding `DATA`. |
 | `-baseline [FILE]`, `--baseline [FILE]` | No | off | Record what this environment holds as a patch baseline: every object is rendered as an export renders it, then hashed at the path it would have been written to. Nothing is written or deleted. Refused beside a narrowing flag. See [export_db_layout.md](export_db_layout.md). |
 | `-silent`, `--silent` | No | off | Suppress per-object names and progress callbacks, keeping the banner, connection block, overview, export header and timer. |
-| `-compact`, `--compact` | No | off | Replace the per-object rows with one dotted progress bar per schema, labelled with the plural of the type being pulled. `-silent` outranks it. |
+| `-compact`, `--compact` | No | off | Replace the per-object rows with one dotted progress bar per schema, labelled with the type being pulled. `-silent` outranks it. |
 
 Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

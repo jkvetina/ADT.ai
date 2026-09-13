@@ -38,6 +38,7 @@ from adt_ai.export_apex.rest import (
     _schema_block,
     _schema_definition,
     _split_rest_modules,
+    _stable_rest_module,
     rest_timeout_seconds,
 )
 from adt_ai.shared import text_files
@@ -344,7 +345,7 @@ class ApexCollectionWriterMixin:
                 continue
             target = resolver.rest_export(name)
             target.parent.mkdir(parents=True, exist_ok=True)
-            text_files.write_text(target, _plsql_block(module))
+            text_files.write_text(target, _plsql_block(_stable_rest_module(module)))
         if modules:
             target = resolver.rest_export(REST_SCHEMA_DEFINITION)
             target.parent.mkdir(parents=True, exist_ok=True)

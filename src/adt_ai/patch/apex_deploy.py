@@ -105,15 +105,16 @@ BUILDING_APP_ROW = "> BUILDING APP"
 class ApexImportItem:
     """One application's tree, resolved, staged, and read."""
 
-    app_id     : int
-    target_id  : int
-    alias      : str
-    schema     : str
-    source     : Path
-    staged     : Path
-    label      : str
-    files      : int
-    signatures : ApexSignatures
+    app_id          : int
+    target_id       : int
+    alias           : str
+    schema          : str
+    source          : Path
+    staged          : Path
+    label           : str
+    files           : int
+    signatures      : ApexSignatures
+    explicit_target : bool = False
 
     @property
     def file(self) -> str:
@@ -166,11 +167,13 @@ class ApexImportItem:
         Rebuilt per item rather than threaded through, because `-app`'s own
         target is one value for the whole run while the id an item lands on is a
         property of the item: under a bare `-app` every application gets its own
-        id back, and `build_import_script` then emits no `-id` at all.
+        id back, and `build_import_script` then emits no `-id` at all. A numbered
+        `-app <id>` remains explicit even when that id equals the source app, so
+        the import can stamp the developer and deployment time afterward.
         """
         return ApexTarget(
             selected     = True,
-            target_id    = self.target_id if self.retargeted else None,
+            target_id    = self.target_id if self.explicit_target else None,
             full_app_ids = [],
         )
 
@@ -288,15 +291,16 @@ def prepare_apex_imports(
             raise PatchError(drift_message(signatures))
         items.append(
             ApexImportItem(
-                app_id     = app_id,
-                target_id  = landing,
-                alias      = aliases.get(app_id, ""),
-                schema     = owners.get(app_id, ""),
-                source     = resolved.path,
-                staged     = resolved.path,
-                label      = resolved.label,
-                files      = _tree_files(resolved.path),
-                signatures = signatures,
+                app_id          = app_id,
+                target_id       = landing,
+                alias           = aliases.get(app_id, ""),
+                schema          = owners.get(app_id, ""),
+                source          = resolved.path,
+                staged          = resolved.path,
+                label           = resolved.label,
+                files           = _tree_files(resolved.path),
+                signatures      = signatures,
+                explicit_target = target_id is not None,
             )
         )
     return items, notes

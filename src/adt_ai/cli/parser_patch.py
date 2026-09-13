@@ -221,7 +221,19 @@ def add_patch_parser(subparsers: SubParsers) -> None:
         "--install",
         "-install",
         action="store_true",
-        help="create database install script",
+        help="write config/install/<SCHEMA>.sql for each exported schema",
+    )
+    # ADT #804. Which exported schemas `-install` writes a script for, in the
+    # `export_db` shape so a repeatable `-schema` parses the same in every module.
+    # Refused without `-install` (`patch_build.install_flag_refusal`): no other
+    # patch mode reads it, and a flag that parses and does nothing is not shipped.
+    patch.add_argument(
+        "--schema",
+        "-schema",
+        action = "append",
+        nargs  = "+",
+        help   = "with -install, schema(s) to write a script for, repeatable, "
+                 "comma- or space-separated, supports %% wildcards",
     )
     # `-contents` was withdrawn by ADT #353. Listing what a patch holds is not a
     # mode to ask for, it is what naming a patch means, so every mode prints it.
