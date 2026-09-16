@@ -137,6 +137,7 @@ DEFAULTS: dict[str, Any] = {
     "patch_scripts_snap": "patch_scripts/",
     "patch_session_directives": ["SET DEFINE OFF", "SET TIMING OFF", "SET SQLBLANKLINES ON"],
     "patch_spool_line": 'SPOOL "./{$FOLDER}/{$SCHEMA}.log" APPEND;',
+    "repo_encoding": "",
     "deploy_verify_scan": True,
     "deploy_revert_on_scan_failure": True,
     "deploy_build_status": "restore",
@@ -503,6 +504,17 @@ def harden_scripts(config: dict[str, Any]) -> bool:
     the rewrite cannot parse, turns it off and ships them verbatim.
     """
     return _flag(config, "patch_harden")
+
+
+def repo_encoding(config: dict[str, Any]) -> str:
+    """`repo_encoding`: what a repo file that is not valid UTF-8 was saved in.
+
+    Empty by default, which means there is no correct reading of such a file and
+    `patch -create` refuses it (ADT #834). The bytes cannot say which code page
+    they came from, `0xE8` is `č` in cp1250 and `è` in cp1252, so the project
+    says it once.
+    """
+    return _text(config, "repo_encoding")
 
 
 __all__ = [name for name in globals() if not name.startswith("_")]

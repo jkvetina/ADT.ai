@@ -37,6 +37,7 @@ from adt_ai.cli.context import (
     _print_connection_block,
 )
 from adt_ai.cli.context_apex import ApexScope
+from adt_ai.cli.export_apex_locate import locate_revealed_apps
 from adt_ai.cli.export_apex_messages import (
     print_apex_app_not_found,
     print_apex_owner_not_configured,
@@ -83,6 +84,7 @@ class ApexRun:
     my_name           : str | None
     my_email          : str | None
     started_at        : float
+    schema_gateway_factory: Callable[[str], QueryGateway] | None = None
     applications_by_schema: dict[str, list[ApexApplication]] = field(default_factory=dict)
 
     @property
@@ -144,10 +146,12 @@ def run_apex_reveal(run: ApexRun) -> int:
             max_app_id = args.max_app_id,
         )
         run.applications_by_schema[schema] = run.in_selection(applications)
+    # Still a read, so it runs before the first table prints (`#858`).
+    located = locate_revealed_apps(run)
     print_reveal_screen(
         ApexDiscovery(run.gateway_factory(run.connection_schema)),
         reporter,
-        run.schemas,
+        [*run.schemas, *located.owners],
         run.applications_by_schema,
         workspace            = reveal_workspace,
         configured_workspace = configured_workspace,
@@ -155,6 +159,8 @@ def run_apex_reveal(run: ApexRun) -> int:
         widen_owner_counts   = bool(args.owners),
         max_app_id           = args.max_app_id,
     )
+    print_apex_owner_not_configured(located.not_configured, reveal=True)
+    print_apex_app_not_found(located.not_found, reveal=True)
     return 0
 
 
@@ -258,10 +264,38 @@ def _route_missing_apps(run: ApexRun, schema: str) -> None:
             app_ids   = owner_app_ids,
         )
         run.schemas.append(owner_schema)
-    for app_id, owner in not_configured:
-        print_apex_owner_not_configured(app_id, owner, run.environment)
-    for app_id in not_found:
-        print_apex_app_not_found(app_id)
+    # The owner was read through this schema's connection, so it reaches the app
+    # and exports it in this segment, which has not exported yet. Jan,
+    # 2026-09-15: "I am providing a schema which can reach the app, but you are
+    # not exporting the app" (`#863`).
+    exported = _add_reached_apps(
+        run, owner_discovery, schema, [app_id for app_id, _owner in not_configured]
+    )
+    print_apex_owner_not_configured(
+        [(app_id, owner, [schema]) for app_id, owner in not_configured if app_id in exported]
+    )
+    print_apex_app_not_found(
+        [*not_found, *(app_id for app_id, _owner in not_configured if app_id not in exported)]
+    )
+
+
+def _add_reached_apps(
+    run: ApexRun, discovery: ApexDiscovery, schema: str, app_ids: list[str]
+) -> set[str]:
+    """Append the named apps this schema's connection sees to its own export list."""
+    if not app_ids:
+        return set()
+    applications = run.applications_by_schema.setdefault(schema, [])
+    exported = {str(application.app_id) for application in applications}
+    added: set[str] = set()
+    for application in discovery.applications_by_id(app_ids):
+        app_id = str(application.app_id)
+        if app_id in exported:
+            continue
+        exported.add(app_id)
+        added.add(app_id)
+        applications.append(application)
+    return added
 
 
 def _export_one_schema(run: ApexRun, schema: str, versions: dict[str, str]) -> None:

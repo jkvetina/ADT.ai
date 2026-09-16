@@ -136,7 +136,7 @@ The set is closed: a code outside it is refused, and all eleven headers are held
 
 The description is indented plain text, not a bullet list, and a nested list stays a nested list where the content genuinely is one: the searched-paths rows above are the case that shape is for.
 
-A section that says something failed is not the same thing as a refusal, and the `ERROR - ` prefix is what tells them apart. `COMPILE ERRORS:`, `INVALID OBJECTS:`, `DEPLOYMENT ERROR:` and `PATCH FAILED:` are findings inside a run that reached its work.
+A section that says something failed is not the same thing as a refusal, and the `ERROR - ` prefix is what tells them apart. `COMPILE ERRORS:`, `INVALID OBJECTS:`, `DEPLOYMENT ERROR:`, `PATCH FAILED:` and `DIFF FAILED:` are findings inside a run that reached its work.
 
 An `ERROR - ` header is the run declining to start at all, which is why those sections keep their own names rather than joining the family.
 
@@ -212,7 +212,7 @@ Eight flags mean the same thing wherever they are accepted, so they are document
 | `-root`, `--root` | No | `.` | Project root folder. Config and connection files resolve from here, and so does the Git history the history commands read. |
 | `-config-dir`, `--config-dir` | Yes | none | Folder holding project config YAML. ADT.ai loads the shipped defaults first, then overlays these instead of `<root>/config/` and `<root>/`. |
 | `-env`, `--env` | No | connection default environment | Connection environment to use, for example `DEV`. |
-| `-schema`, `--schema` | Yes (one per run on `connection` and `discovery`) | environment default schema | Schema to work on. Where it repeats, pass it several times, space-separate it (`-schema APP CORE`), use comma lists, or use `%` patterns such as `CORE%`. A literal `_` or `%` is escaped with `\`, quoted so the shell leaves it alone: `-schema 'APP\_%'`. |
+| `-schema`, `--schema` | Yes (one per run on `connection`, `diff`, `discovery` and `live_upload`) | environment default schema | Schema to work on. On `diff` it names the source schema and supplies the target's too. Where it repeats, pass it several times, space-separate it (`-schema APP CORE`), use comma lists, or use `%` patterns such as `CORE%`. A literal `_` or `%` is escaped with `\`, quoted so the shell leaves it alone: `-schema 'APP\_%'`. |
 | `-key`, `--key` | No | `ADT_KEY` or `ADT_KEY_CMD` | Encryption key value or path to a key file. Prefer a file path; a literal value is visible in shell history and the process list. |
 | `-debug`, `--debug` | No | off | Show the input parameters and the SQL behind the run, and keep Python tracebacks for troubleshooting. |
 | `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |
@@ -227,11 +227,11 @@ A flag a command does not take is a parser error, not a flag it ignores.
 | Argument | Commands that take it |
 | -------- | --------------------- |
 | `-root` | every command |
-| `-config-dir` | `connection`, `dependencies`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `patch`, `recompile`, `ut`, `validate` |
-| `-env` | `connection`, `dependencies`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `recompile`, `ut` |
-| `-schema` | `connection`, `dependencies`, `discovery`, `export_apex`, `export_data`, `export_db`, `patch` (only with `-install`, default every exported schema), `recompile`, `ut` |
-| `-key` | `connection`, `dependencies`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `patch`, `recompile`, `ut` |
-| `-debug` | `connection`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `patch`, `recompile`, `ut`, `validate` |
+| `-config-dir` | `connection`, `dependencies`, `diff`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `live_upload`, `patch`, `recompile`, `ut`, `validate` |
+| `-env` | `connection`, `dependencies`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `live_upload`, `recompile`, `ut` |
+| `-schema` | `connection`, `dependencies`, `diff`, `discovery`, `export_apex`, `export_data`, `export_db`, `live_upload`, `patch` (only with `-install`, default every exported schema), `recompile`, `ut` |
+| `-key` | `connection`, `dependencies`, `diff`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `live_upload`, `patch`, `recompile`, `ut` |
+| `-debug` | `connection`, `diff`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `live_upload`, `patch`, `recompile`, `ut`, `validate` |
 | `-beep` | every command |
 | `-nobeep` | every command |
 

@@ -117,13 +117,19 @@ COMMAND_SECTION_OVERRIDES = {
     # other two go: *"-name -type ARE optional filters! -source and -target are
     # NOT"*.
     #
-    # Which is the honest reading of the screen. A command whose required
-    # values are two environments and two schemas has nothing left for a
-    # flag to narrow; `-type` and `-name` stay below because they
+    # Which is the honest reading of the screen. A `diff` run IS these four
+    # values, two environments and two schemas, and a flag the command cannot
+    # run without narrows nothing; `-type` and `-name` stay below because they
     # are what a filter actually is, a thing you may leave out. Every dest here
     # is shared (`schema` alone is declared by six commands, where it really
     # does pick what to act on), which is why this is per-command rather than a
     # `FILTER_DESTS` move.
+    "diff": {
+        "source": "actions",
+        "schema": "actions",
+        "target": "actions",
+        "target_schema": "actions",
+    },
     "patch": {
         # `-target` and `-name` are the two things a `patch` run acts ON, so they
         # render beside the verbs that act on them. `#494` had lifted the pair
@@ -146,6 +152,9 @@ COMMAND_SECTION_OVERRIDES = {
         # reaches it. It is declared last in `parser_patch.py`'s modifier run,
         # which is what renders it at the end of the section.
         "app": "modifiers",
+        # `files_ws` is an ACTION on `export_apex`, where it selects what to
+        # export; on `patch` it widens what a build carries (ADT #812).
+        "files_ws": "modifiers",
         "hash": "hash",
         "baseline": "hash",
     },

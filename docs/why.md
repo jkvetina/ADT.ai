@@ -102,14 +102,13 @@ adtai flow -app 100 -to 50
 
 <br>
 
-### search_repo, rebuild and calendar: the history you already committed
+### search_repo and calendar: the history you already committed
 
-[`rebuild`](rebuild.md) keeps a local store of commit metadata per branch. [`search_repo`](search_repo.md) reads it to find the commit that touched a database object by name, type, path, author or date, and can bring an older version of a file back beside the current one.
+[`search_repo`](search_repo.md) reads the local store of commit metadata `rebuild` keeps per branch, to find the commit that touched a database object by name, type, path, author or date, and can bring an older version of a file back beside the current one.
 
-[`calendar`](calendar.md) draws a month of that history as a grid of tickets and commit counts. None of the three connects to Oracle.
+[`calendar`](calendar.md) draws a month of that history as a grid of tickets and commit counts. Neither of them connects to Oracle.
 
 ```bash
-adtai rebuild
 adtai search_repo -type VIEW -name MONTHLY_REPORT_V
 adtai calendar
 ```
@@ -135,12 +134,15 @@ adtai patch -target UAT -name 12 -deploy
 
 [`doctor`](doctor.md) reports which piece of the toolchain is missing or old, and it is the only command that installs or updates anything, on an explicit flag. `-init` scaffolds a project folder with the config and ignore rules already written. [`connection`](connection.md) edits the connection file for you and asks for passwords interactively, so one never lands in shell history.
 
+[`rebuild`](rebuild.md) keeps the local store of commit metadata per branch that `search_repo`, `calendar` and `patch` read, so run it after new commits or a change of branch.
+
 A stored password can be encrypted with a key kept elsewhere, replaced by a secret-manager command, or left out entirely in favour of SQLcl's own store or an Oracle wallet. How each option holds up, and the two things no credential store can protect against, is written for your security reviewer on [connection / security](connection_security.md).
 
 ```bash
 adtai doctor
 adtai doctor -init -root /path/to/project
 adtai connection -set-pwd -env DEV -schema APP -encrypt -key /secure/adt.key -go
+adtai rebuild
 ```
 
 <br>

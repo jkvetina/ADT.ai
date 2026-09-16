@@ -221,7 +221,7 @@ def _apex_recent_report_only(
     recent_days: int | float | None,
 ) -> bool:
     return (
-        not getattr(args, "reveal", False)
+        getattr(args, "reveal", None) is None
         and not any(actions.values())
         and recent_days is not None
     )

@@ -2,7 +2,7 @@
 
 A patch folder holds a copy of every file it installs, and one path can offer four different bodies: what a commit recorded, what the newest commit recorded, what a colleague pushed, and what sits unsaved in your working tree. Which one lands in `snapshots/` is a decision, so it has a flag. The command is on [patch.md](patch.md).
 
-Nothing here changes WHICH files a patch carries. The file list comes from your commit selection, every time; these flags only choose the body each of those files ships with.
+The mode flags never change WHICH files a patch carries. The file list comes from your commit selection; they only choose the body each of those files ships with. The one flag that widens the list, `-files_ws`, is at the end of this page.
 
 <br>
 
@@ -107,3 +107,21 @@ The import's own deploy log repeats it as a `DEPLOYED FROM` row beside the three
 ## Hash mode picks for you
 
 `-hash` builds a patch from what the working tree no longer agrees with the target about, so what was compared has to be what ships. It forces the `local` mode, and `-head` or `-nosnap` beside it exit `2`. Hash mode itself is on [patch_hash.md](patch_hash.md).
+
+<br>
+
+## Workspace static files
+
+A patch carries the workspace static files its commits changed, like any other file. `-files_ws` beside `-create` carries every file under `<path_apex>/<apex_workspace_dir>/<apex_path_files>/`, touched or not:
+
+```bash
+adtai patch -target DEV -name 12 -create -files_ws
+```
+
+Which files count as "every" follows the mode, so the list and the bodies agree. The default reads the tree of the newest selected commit, so an uncommitted edit or an untracked file never ships. `-head` reads `HEAD`, and `-local` and `-nosnap` read the working tree.
+
+Application static files are never widened: ship the changed ones, or the whole application with `-app`. A run that builds nothing exits `2`, and so does a `-create -deploy` whose folder is already built.
+
+Each snapshot is one self-contained PL/SQL block. Base64 rows go into a temporary CLOB, `apex_web_service.clobbase642blob` decodes it, and `create_workspace_static_file` stores it. `-deploy` runs that same script through SQLcl, so a DBA or a pipeline running it by hand gets the same result.
+
+The stored name is the path below the static-files folder, so `files/css/app.css` installs as `css/app.css`. That is the name `export_apex -files_ws` reads back and the drift guard compares.

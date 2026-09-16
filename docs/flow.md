@@ -68,19 +68,19 @@ APEX DEPLOYMENT TOOL - FLOW
 LINKS INTO APP 100 PAGE 1 (4):
 ------------------------------
 
-  FROM APPS   FROM PAGES   SRC TYPES    COMPONENTS       FLAGS
-  ---------   ----------   ----------   --------------   -----
-        100   2            BRANCH       Back to Orders   PAGE
-        100   4            BRANCH       Back to Orders   PAGE
-        100   3            BUTTON       BACK_TO_ORDERS   PAGE
-        100   shared       LIST_ENTRY   Orders           PAGE
+  FROM APP   FROM PAGE   SRC TYPE     COMPONENT        FLAG
+  --------   ---------   ----------   --------------   ----
+       100   2           BRANCH       Back to Orders   PAGE
+       100   4           BRANCH       Back to Orders   PAGE
+       100   3           BUTTON       BACK_TO_ORDERS   PAGE
+       100   shared      LIST_ENTRY   Orders           PAGE
 
 TIMER: 0s
 ```
 
 - The number in the header is how many rows follow it.
-- `-from` prints the same table with `TO APPS` and `TO PAGES` where `FROM APPS` and `FROM PAGES` stand, under a `LINKS FROM APP <id> PAGE <n>` header.
-- `FROM PAGES` reads `shared` when the source belongs to the application rather than to one page, which is where list entries, tabs and navigation-bar entries sit.
+- `-from` prints the same table with `TO APP` and `TO PAGE` where `FROM APP` and `FROM PAGE` stand, under a `LINKS FROM APP <id> PAGE <n>` header.
+- `FROM PAGE` reads `shared` when the source belongs to the application rather than to one page, which is where list entries, tabs and navigation-bar entries sit.
 - Component text is capped at 30 characters so the width stays stable, and an empty result prints `(none)` rather than nothing.
 
 Before the store exists, every mode says so and exits `1`:

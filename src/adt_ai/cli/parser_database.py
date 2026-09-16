@@ -8,25 +8,99 @@ from adt_ai.ut.limits import GATE_FROM_CONFIG
 
 
 def add_database_parsers(subparsers: SubParsers) -> None:
+    diff = subparsers.add_parser(
+        "diff",
+        description="compare two schemas and generate a SQLcl DIFF deployment artifact",
+        help="compare schemas using SQLcl DIFF",
+    )
+    diff.add_argument("--root", "-root", default=".", help="project root folder")
+    diff.add_argument(
+        "--config-dir",
+        "-config-dir",
+        action = "append",
+        help   = "folder containing config YAML",
+    )
     # Defaulted rather than required (Jan, ADT #773: *"-source ENV should default
     # to current env"*). It falls back to the connection default environment, the
     # same fallback `-env` documents on every other command, so the side you are
     # standing in is the side you compare FROM without saying so.
+    diff.add_argument(
+        "--source",
+        "-source",
+        metavar  = "ENV",
+        help     = "source environment name (defaults to the connection default)",
+    )
     # `-schema`, not `-source-schema`: the usual comparison is one schema across
     # two environments, so the name that reads as "the schema" is the one a user
     # types (Jan, ADT #763). `-target-schema` is the exception it was always
     # meant to be, and defaults to this one rather than to the environment.
+    diff.add_argument(
+        "--schema",
+        "-schema",
+        metavar = "SCHEMA",
+        help    = "source schema (defaults to environment default)",
+    )
+    diff.add_argument(
+        "--target",
+        "-target",
+        metavar  = "ENV",
+        help     = "target environment name",
+    )
+    diff.add_argument(
+        "--target-schema",
+        "-target-schema",
+        metavar = "SCHEMA",
+        help    = "target schema (defaults to -schema)",
+    )
     # A `.zip` path names the artifact, anything else is the folder it lands in
     # (`#773`). One suffix rather than "does it look like a file", so a folder
     # called `releases/v1.2` cannot be mistaken for one.
+    diff.add_argument(
+        "--out",
+        "-out",
+        metavar = "DIR|FILE",
+        help    = "output folder, or a .zip path naming the artifact "
+                  "(default: <root>/config/diff)",
+    )
     # Multi-pattern, the shape `recompile` and `export_db` take: `-type A B`,
     # `-type A,B` and a repeated `-type A -type B` all work. Both filters narrow
     # the EXPORT as well as the screen, so a filtered run compares less and its
     # artifact holds only what was asked for (`#780`, overruling `#773`).
+    diff.add_argument(
+        "--type",
+        "-type",
+        action = "append",
+        nargs  = "+",
+        help   = "object type pattern(s) to compare, repeatable, comma- or "
+                 "space-separated, supports %% wildcards; narrows the export and "
+                 "the screen",
+    )
+    diff.add_argument(
+        "--name",
+        "-name",
+        action = "append",
+        nargs  = "+",
+        help   = "object name pattern(s) to compare, repeatable, comma- or "
+                 "space-separated, supports %% wildcards; a grant matches on the "
+                 "object it grants",
+    )
+    diff.add_argument(
+        "--verbose",
+        "-verbose",
+        action = "store_true",
+        help   = "list every changed object, not just the count per object type",
+    )
     # NOT "show debug info" (ADT #326), which was the one -debug row of eleven
     # that named neither what is shown nor where it comes from. `-debug` appends
     # itself to the SQLcl DIFF command (`diff/runner.py`), so the extra output is
     # SQLcl's, not ADT.ai's; `-verbose` above is ADT.ai's own screen.
+    diff.add_argument(
+        "--debug",
+        "-debug",
+        action = "store_true",
+        help   = "show input parameters, and pass -debug to the SQLcl DIFF command",
+    )
+    add_connection_key_argument(diff)
     recompile = subparsers.add_parser(
         "recompile",
         description="recompile invalid database objects",

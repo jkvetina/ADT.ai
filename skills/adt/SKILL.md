@@ -3,8 +3,8 @@ name: adt
 description: "Lean ADT.ai command router for Oracle/APEX work. Invoke only when the user explicitly asks an agent to use the ADT skill by name; never auto-load it for repository work, general discussion, development, review, command lookup, or incidental mentions of ADT."
 metadata:
   created: "2026-06-10"
-  updated: "2026-09-13 11:40"
-  version: "2.3.0"
+  updated: "2026-09-13 15:40"
+  version: "2.4.0"
   tags: [oracle, apex, deployment, cli, database]
 ---
 # ADT.ai
@@ -59,6 +59,14 @@ adtai dependencies -scan -env DEV -app 100
 adtai dependencies -scan -env DEV -app 100 -page 12 40
 ```
 
+## diff: compare two environments or schemas
+
+Read [docs/diff.md](../../docs/diff.md). It reads both sides through SQLcl and writes a diff artifact; name the source and target explicitly.
+
+```bash
+adtai diff -source DEV -target UAT
+```
+
 ## discovery: run SELECT exploration
 
 Read [docs/discovery.md](../../docs/discovery.md). ADT.ai accepts SELECT statements and starts a read-only transaction, but a SELECT can invoke a stored function and an autonomous function can commit. Treat the SQL and called functions as executable database code, not as side-effect-proof input. `-nolog` suppresses the separate report; it does not suppress `-file` result write-back to the source file.
@@ -101,9 +109,18 @@ adtai export_db -silent -recent 7
 adtai export_db -silent -type PACKAGE% -name APP_%
 ```
 
+## live_upload: upload static files to APEX
+
+Read [docs/live_upload.md](../../docs/live_upload.md). It uploads the exported static-files folder into the application, or the workspace with `-workspace`; `-folder` picks another. Bare, it watches until Control+C, a session only a person runs. `-once` uploads every file and exits; it overwrites what APEX holds, so confirm the target.
+
+```bash
+adtai live_upload -app 100
+adtai live_upload -app 100 -workspace -once
+```
+
 ## patch: build and deploy patches from commits
 
-Read [docs/patch.md](../../docs/patch.md), then only the linked patch topic needed for content, install order, deployment, hashes, archiving, or sandbox removal. A bare filtered run previews. `-create` rewrites a patch folder, `-deploy` changes the target database/APEX application, `-archive` moves and removes patch folders, and `-drop` removes sandbox APEX applications whose recorded creator is the `apex_account` in `config/IDENTITY.yaml`, or which record no creator at all (no APEX import writes that column); somebody else's needs `-force`. A successful or failed `-drop` also writes one dictionary-verified receipt per application at `<path_apex>/logs_<ENV>/<timestamp>_apex_drop_<application-id>_<DELETED|FAILED>.log`; the folder comes from `-target` and the filename id comes from `-drop`. An APEXlang patch snapshots the pages its own commits touched, for visibility; the install script links no `.apx` and the deploy still imports the application's live `apexlang/` folder. `-deploy -app <id>` also stamps that application's `last_updated_by`/`last_updated_on` with the same `apex_account` and the current moment, whether `<id>` names a sandbox or the source application; a bare `-app` stamps nothing, and no import can write `created_by` in any format. A target already deployed is skipped only when its `logs_<ENV>/deployment.json` receipt matches the same executable inputs and target, so a partial script failure, a SQLcl error or a failed APEX verification leaves that target incomplete and it deploys again on the next run; a patch deployed before 1.0 carries no receipt and runs once more. A post-deploy APEX verification that could not complete fails the deploy instead of passing as skipped, and by default a failed scan reverts the application to a backup taken immediately before the import (`deploy_revert_on_scan_failure`). `-continue` waives that: the scan still runs and still lists every finding, but the status, the receipt and the exit code report `SUCCESS` and nothing is reverted, so it is a deliberate opt-out of the verification rather than a way to keep going past an unrelated error. By default `-deploy -app` also holds the target at build status `RUN_ONLY` from the signature read until after the scan and then restores it (`deploy_build_status`), so the application is not editable in the Builder while the deploy runs. Never guess `-target`, `-name`, commit selectors, content mode, or application id. Preview the exact selection before creation or deployment.
+Read [docs/patch.md](../../docs/patch.md), then only the linked patch topic needed for content, install order, deployment, hashes, archiving, or sandbox removal. A bare filtered run previews. `-create` rewrites a patch folder, `-deploy` changes the target database/APEX application, `-archive` moves and removes patch folders, and `-drop` removes sandbox APEX applications whose recorded creator is the `apex_account` in `config/IDENTITY.yaml`, or which record no creator at all (no APEX import writes that column); somebody else's needs `-force`. A successful or failed `-drop` also writes one dictionary-verified receipt per application at `<path_apex>/logs_<ENV>/<timestamp>_apex_drop_<application-id>_<DELETED|FAILED>.log`; the folder comes from `-target` and the filename id comes from `-drop`. An APEXlang patch snapshots the pages its own commits touched, for visibility; the install script links no `.apx` and the deploy still imports the application's live `apexlang/` folder. `-deploy -app <id>` also stamps that application's `last_updated_by`/`last_updated_on` with the same `apex_account` and the current moment, whether `<id>` names a sandbox or the source application; a bare `-app` stamps nothing, and no import can write `created_by` in any format. A target already deployed is skipped only when its `logs_<ENV>/deployment.json` receipt matches the same executable inputs and target, so a partial script failure, a SQLcl error or a failed APEX verification leaves that target incomplete and it deploys again on the next run; a patch deployed before 1.0 carries no receipt and runs once more. A post-deploy APEX verification that could not complete fails the deploy instead of passing as skipped, and by default a failed scan reverts the application to a backup taken immediately before the import (`deploy_revert_on_scan_failure`). `-continue` waives that: the scan still runs and still lists every finding, but the status, the receipt and the exit code report `SUCCESS` and nothing is reverted, so it is a deliberate opt-out of the verification rather than a way to keep going past an unrelated error. By default `-deploy -app` also holds the target at build status `RUN_ONLY` from the signature read until after the scan and then restores it (`deploy_build_status`), so the application is not editable in the Builder while the deploy runs. `-create -files_ws` carries every workspace static file, not only changed ones. Never guess `-target`, `-name`, commit selectors, content mode, or application id. Preview the exact selection before creation or deployment.
 
 ```bash
 adtai patch -target UAT -name TASK-123

@@ -279,25 +279,25 @@ def _print_flow_outgoing(store: ApexFlowStore, app_id: int, page: int) -> int:
 
 
 def _incoming_row(edge: FlowEdge) -> dict[str, object]:
-    # Keys are the column labels: print_adt_table renders each as UPPERCASE and
-    # the flow tables use the PLURAL form (matching the refresh summary's
-    # PAGES/EDGES/DIAGRAMS headers).
+    # Keys are the column labels: print_adt_table renders each as UPPERCASE.
+    # One row is one link, so the labels are singular; only count columns
+    # (the refresh summary's PAGES/EDGES/DIAGRAMS) are plural.
     return {
-        "from_apps":  edge.app_id,
-        "from_pages": _src_page_label(edge),
-        "src_types":  edge.src_type,
-        "components": _component_label(edge),
-        "flags":      edge.flag,
+        "from_app":  edge.app_id,
+        "from_page": _src_page_label(edge),
+        "src_type":  edge.src_type,
+        "component": _component_label(edge),
+        "flag":      edge.flag,
     }
 
 
 def _outgoing_row(edge: FlowEdge) -> dict[str, object]:
     return {
-        "to_apps":    edge.target_app_id,
-        "to_pages":   edge.target_page,
-        "src_types":  edge.src_type,
-        "components": _component_label(edge),
-        "flags":      edge.flag,
+        "to_app":    edge.target_app_id,
+        "to_page":   edge.target_page,
+        "src_type":  edge.src_type,
+        "component": _component_label(edge),
+        "flag":      edge.flag,
     }
 
 

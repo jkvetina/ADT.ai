@@ -18,6 +18,7 @@ from typing import Any
 
 from adt_ai.patch import settings as _settings
 from adt_ai.patch import stages
+from adt_ai.patch.content import CONTENT_MODE_COMMITTED
 from adt_ai.patch.files import (
     _apex_page_id,
     _is_apex_end_environment,
@@ -62,6 +63,7 @@ from adt_ai.patch.layout import (
     is_rest_path as _is_rest_path,
 )
 from adt_ai.patch.models import PatchFileSelection
+from adt_ai.patch.workspace_files import workspace_static_files
 from adt_ai.shared.commit_discovery import CommitRecord
 
 
@@ -99,6 +101,8 @@ def _patch_files(
     config: dict[str, Any],
     *,
     full_app_ids: list[int] | None,
+    files_ws: bool = False,
+    content_mode: str = CONTENT_MODE_COMMITTED,
 ) -> PatchFileSelection:
     # `apex_files_ignore` (#430), the why in `patch/settings.py`. APEX paths only,
     # a database file matching one of those patterns by coincidence is not what
@@ -146,12 +150,25 @@ def _patch_files(
     # (Jan, 2026-08-24: "The grants file never changed, yet they are part of each
     # patch. IT IS CONFUSING."). What that bought was a privilege re-run on every
     # deploy; what it cost was a patch whose own header did not describe it.
+    # `-files_ws` (ADT #812): every workspace static file the content mode can
+    # see, not only the changed ones. A file a selected commit already carries
+    # keeps its own version; the rest are pinned to the commit they ship from.
+    pinned: dict[str, str] = {}
+    if files_ws:
+        listed = workspace_static_files(root, records, config, content_mode=content_mode)
+        for path, ref in listed.items():
+            if path in files or not _wanted(path):
+                continue
+            files.add(path)
+            if ref is not None:
+                pinned[path] = ref
     files.update(_apex_copy_files(root, files, config, full_app_ids=full_app_ids))
     # Read once for the whole selection rather than per path: the answer is a
     # sqlite read, and `_patch_group` runs on every file in the patch.
     owners = apex_owner_schemas(root)
     return PatchFileSelection(
-        files = sorted(files, key=lambda path: _patch_sort_key(path, config, owners)),
+        files  = sorted(files, key=lambda path: _patch_sort_key(path, config, owners)),
+        pinned = pinned,
     )
 
 def _is_apex_application_path(path: str, config: dict[str, Any]) -> bool:

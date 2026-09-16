@@ -120,6 +120,16 @@ def add_admin_parsers(subparsers: SubParsers) -> None:
     )
     connection.add_argument("--sid", "-sid", help="with -create, set the db SID")
     connection.add_argument("--wallet", "-wallet", help="with -create, set the wallet name/path")
+    # Old ADT's `-thick` (ADT #833): bare or Y resolves the client through
+    # ORACLE_HOME, a folder is written to `client_lib_dir`.
+    connection.add_argument(
+        "--thick",
+        "-thick",
+        nargs   = "?",
+        const   = "Y",
+        metavar = "PATH|Y",
+        help    = "with -create or -add-env, use thick mode; PATH also sets client_lib_dir",
+    )
     connection.add_argument("--workspace", "-workspace", help="with -create, set APEX workspace")
     connection.add_argument("--app", "-app", help="with -create, set default APEX app scope")
     connection.add_argument("--prefix", "-prefix", help="with -create, set export prefix filter")

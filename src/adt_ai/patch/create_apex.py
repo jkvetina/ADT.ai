@@ -96,6 +96,7 @@ def _apex_patch_payload(
     # above every `@` line, which is what the guard is for.
     payload.extend(
         _signatures.workspace_lock_payload(
+            root, folder,
             [item for item in (workspace or []) if item.file in set(files)],
             config,
             records=records,
@@ -259,7 +260,9 @@ def _apex_component_rows(
     set_env = next((path for path in files if _is_apex_set_environment(path)), None)
     end_env = next((path for path in files if _is_apex_end_environment(path)), None)
     if set_env:
-        text = file_text(root, set_env, mode=environment_mode, records=records) or ""
+        text = file_text(
+            root, set_env, mode=environment_mode, records=records, config=config
+        ) or ""
         payload.extend(text.splitlines())
         payload.extend(queries.APEX_MODE_REPLACE_BLOCK.splitlines())
     component_files = [
@@ -295,7 +298,9 @@ def _apex_component_rows(
             link = _object_link(root, folder, path, config, mode=content_mode)
             payload.extend(_file_link_rows(path, link))
     if end_env:
-        text = file_text(root, end_env, mode=environment_mode, records=records) or ""
+        text = file_text(
+            root, end_env, mode=environment_mode, records=records, config=config
+        ) or ""
         payload.extend(text.splitlines())
     return payload
 

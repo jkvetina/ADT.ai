@@ -15,6 +15,7 @@ from adt_ai.calendar.runner import CalendarError, CalendarRequest, CalendarRunne
 from adt_ai.dependencies.queries import PLSCOPE_SESSION_STATEMENT
 from adt_ai.dependencies.runner import DependencyIndexRequest, DependencyIndexRunner
 from adt_ai.dependencies.store import DependencyStore
+from adt_ai.diff.runner import DiffRequest, DiffRunner
 from adt_ai.discovery.render import DEFAULT_ROW_LIMIT
 from adt_ai.discovery.runner import (
     DiscoveryRequest,
@@ -104,11 +105,13 @@ PUBLIC_MODULES = (
     ("calendar", "show your Git activity across all branches as a calendar", ()),
     ("connection", "edit the connection file (add env/schema, set password)", ()),
     ("dependencies", "query or refresh the index, or scan an APEX app", ()),
+    ("diff", "compare schemas using SQLcl DIFF", ()),
     ("discovery", "run read-only SELECT discovery queries", ()),
     ("doctor", "check local setup and run explicit updates", ()),
     ("export_apex", "export APEX applications", ()),
     ("export_data", "export table data", ()),
     ("export_db", "export database objects", ()),
+    ("live_upload", "upload static files to APEX as you save them", ()),
     ("patch", "build and preview deployment patches", ()),
     ("rebuild", "rebuild the git commit cache", ()),
     ("recompile", "recompile invalid database objects", ()),
@@ -290,6 +293,8 @@ __all__ = [
     "DependencyIndexRequest",
     "DependencyIndexRunner",
     "DependencyStore",
+    "DiffRequest",
+    "DiffRunner",
     "DiscoveryRequest",
     "DiscoveryRunner",
     "DoctorRequest",

@@ -11,6 +11,7 @@ from adt_ai.export_db.normalizers import (
     _matching_parenthesis_index,
     _normalize_sql_identifier,
     _replace_outside_sql_strings,
+    sql_spans,
 )
 from adt_ai.export_db.object_normalizers.table_folds import _FoldedConstraint
 
@@ -110,7 +111,26 @@ def _format_table_item(item: str, context: NormalizationContext) -> list[str] | 
         return None
     return _format_table_column(item)
 
+def _line_comments_closed(item: str) -> str:
+    """``item`` with every `--` comment rewritten as a `/* */` one (ADT #859).
+
+    A column is written on one line, and Oracle hands a DEFAULT back exactly as
+    it was typed, comment and line break included. Left as `--`, the comment ran
+    to the end of that line and swallowed what followed it: the separator comma,
+    and a `NOT NULL` behind the DEFAULT. Measured on SANDBOX, `DEFAULT 0 -- flag`
+    over `NOT NULL` exported as a file Oracle refused with `ORA-03062`. A block
+    comment keeps the text where it stood; a `*/` inside it would close the
+    comment early, so it is spaced apart.
+    """
+    return "".join(
+        f"/* {item[start + 2:end].strip().replace('*/', '* /')} */"
+        if kind == "comment" and item.startswith("--", start)
+        else item[start:end]
+        for kind, start, end in sql_spans(item, identifiers=True)
+    )
+
 def _cleanup_table_item(item: str, context: NormalizationContext) -> str:
+    item = _line_comments_closed(item)
     item = re.sub(r"\s+", " ", item.replace("\n", " ")).strip()
     item = _strip_domain_owner(item, context)
     item = re.sub(

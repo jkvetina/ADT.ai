@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.patch import settings
+from adt_ai.patch.content import decode_repo_text
 from adt_ai.patch.files import _patch_map, _patch_scripts_folder
 from adt_ai.patch.generated_helpers import (
     ALTER_HELPER_SLOT,
@@ -180,7 +181,7 @@ def collect_patch_scripts(
         # safe; a project whose scripts carry their own guards ships them
         # verbatim instead. Off means the bytes move unchanged, never a partial
         # rewrite.
-        payload = source.read_text(encoding="utf-8", errors="replace")
+        payload = decode_repo_text(source.read_bytes(), repo_path, config)
         if settings.harden_scripts(config):
             payload = harden_patch_script(payload, config, source=repo_path)
         text_files.write_text(target, payload)

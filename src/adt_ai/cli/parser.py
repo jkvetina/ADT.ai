@@ -14,6 +14,7 @@ from adt_ai.cli.parser_admin import add_admin_parsers
 from adt_ai.cli.parser_database import add_database_parsers
 from adt_ai.cli.parser_exports import add_export_parsers
 from adt_ai.cli.parser_history import add_history_parsers
+from adt_ai.cli.parser_live_upload import add_live_upload_parser
 from adt_ai.cli.parser_patch import add_patch_parser
 
 
@@ -33,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_patch_parser(subparsers)
     add_admin_parsers(subparsers)
     add_database_parsers(subparsers)
+    add_live_upload_parser(subparsers)
 
     for command, _description, _aliases in PUBLIC_MODULES:
         _add_completion_args(_command_parser(parser, command))

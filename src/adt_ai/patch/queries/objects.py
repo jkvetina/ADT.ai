@@ -367,20 +367,30 @@ end;
 # The workspace context comes from the group's own `APEX ENVIRONMENT` block,
 # `APEX_WORKSPACE_ENVIRONMENT_BLOCK` above, so this block states no workspace of
 # its own: two spellings of that lookup is how they start disagreeing.
+#
+# The payload is BASE64 rows appended to a temporary CLOB and decoded once by
+# `apex_web_service.clobbase642blob`, not the hex `g_varchar2_table` the
+# application wrapper above keeps (ADT #812, Jan's decision). This script runs
+# outside any application import, so it owes nothing to the export format, and
+# base64 is a third smaller than hex for the same bytes. It uses the APEX API
+# rather than `UTL_ENCODE` (which `export_data`'s LOB scripts use) because a
+# workspace static file cannot land on a target without APEX anyway. Rows stay
+# 200 characters, the width SQLcl already reads from the hex path.
 APEX_WORKSPACE_FILE_BLOCK = """
+DECLARE
+    l_b64 CLOB;
 BEGIN
+    DBMS_LOB.CREATETEMPORARY(l_b64, TRUE);
 {rows}
     wwv_flow_imp_shared.create_workspace_static_file(
         p_id            => wwv_flow_id.next_val,
         p_file_name     => '{file_name}',
         p_mime_type     => '{mime_type}',
         p_file_charset  => 'utf-8',
-        p_file_content  => wwv_flow_imp.varchar2_to_blob(wwv_flow_imp.g_varchar2_table));
+        p_file_content  => apex_web_service.clobbase642blob(l_b64));
+    DBMS_LOB.FREETEMPORARY(l_b64);
     COMMIT;
 END;
 /
 """.strip()
-APEX_WORKSPACE_FILE_HEADER = (
-    "    wwv_flow_imp.g_varchar2_table := wwv_flow_imp.empty_varchar2_table;"
-)
-APEX_WORKSPACE_FILE_ROW = "    wwv_flow_imp.g_varchar2_table({index}) := '{row}';"
+APEX_WORKSPACE_FILE_ROW = "    DBMS_LOB.WRITEAPPEND(l_b64, {length}, '{row}');"

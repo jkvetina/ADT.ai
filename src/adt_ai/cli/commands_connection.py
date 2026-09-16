@@ -105,6 +105,7 @@ def _connection_request(
         app         = args.app,
         prefix      = args.prefix,
         ignore      = args.ignore,
+        thick       = args.thick,
         like        = args.like,
         default     = args.default,
         apply       = apply,

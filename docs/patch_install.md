@@ -61,6 +61,14 @@ They take the database route rather than the APEX application route, because wha
 
 <br>
 
+## Exported table data
+
+A table exported by [`export_data`](export_data.md) installs through its MERGE, `data/<table>.sql`, and only that file is linked.
+
+The CSV beside it and a LOB table's `data/<table>/` folder, with one file per value and one script loading each, are copied into the snapshot and never run on their own: the MERGE calls those scripts itself with `@@`, which resolves beside the MERGE's snapshot. A folder counts as a table's value folder when a `<table>.csv` sits next to it.
+
+<br>
+
 ## The graph gate
 
 Both order objects from `config/internal/dependencies.db`, and a graph that is absent, unreadable, or stale produces a script that looks fine and fails in SQLcl. When a refresh cannot run, nothing is written and the message names the fix:
@@ -135,7 +143,7 @@ adtai patch -install
 adtai patch -install -schema APP
 ```
 
-Every script lands in one folder, under the same name on every branch, so regenerating one reads as a change:
+Every script lands in one folder, under the same name on every branch, so regenerating one reads as a diff:
 
 ```text
 config/install/APP.sql

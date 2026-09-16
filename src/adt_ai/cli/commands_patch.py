@@ -23,6 +23,7 @@ from adt_ai.cli.patch_build import (
     build_database_patch,
     build_flag_refusal,
     dispatch_supporting_actions,
+    files_ws_flag_refusal,
     install_flag_refusal,
     missing_patch_name,
     resolve_patch_name_and_folder,
@@ -160,7 +161,7 @@ def _run_patch_command(
         raise PatchError(str(error)) from error
     # Same reasoning, same place: `-install -branch` and a stray `-schema` read
     # nothing but `args`, so they refuse before the config load (ADT #804).
-    misplaced = install_flag_refusal(args)
+    misplaced = install_flag_refusal(args) or files_ws_flag_refusal(args)
     if misplaced is not None:
         return _refuse(misplaced)
     root = Path(args.root).expanduser().resolve()
@@ -222,6 +223,10 @@ def _run_patch_command(
     if unnamed is not None:
         return _refuse(unnamed)
     selection = resolve_patch_name_and_folder(args, workspace, patch_config(), patch_ref)
+    # A `-create -deploy` naming a folder already on disk builds nothing (ADT #812).
+    unbuilt = files_ws_flag_refusal(args, selection.create_requested)
+    if unbuilt is not None:
+        return _refuse(unbuilt)
 
     def run_deploy() -> int:
         return run_patch_deploy(

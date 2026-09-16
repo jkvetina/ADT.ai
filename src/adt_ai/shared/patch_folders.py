@@ -170,6 +170,17 @@ def discover_patch_folders(
     return folders
 
 
+# The driver `-create` writes beside two or more install scripts (ADT #850). It
+# links install scripts rather than objects, so it is never one itself and its
+# `@` lines are never files the patch carries.
+DEPLOY_DRIVER = "DEPLOY.sql"
+
+
+def install_scripts(path: Path) -> list[Path]:
+    """Every install script in a patch folder, by name, the deploy driver left out."""
+    return sorted(sql for sql in path.glob("*.sql") if sql.name != DEPLOY_DRIVER)
+
+
 def parse_patch_folder(path: Path, folder_re: re.Pattern[str] | None = None) -> PatchFolder:
     """Read a patch folder back from the only artifact that gets deployed.
 
@@ -185,7 +196,7 @@ def parse_patch_folder(path: Path, folder_re: re.Pattern[str] | None = None) -> 
     """
     match = (folder_re or PATCH_FOLDER_RE).match(path.name)
     patch_code = match.group("code") if match else path.name
-    sql_files = sorted(path.glob("*.sql"))
+    sql_files = install_scripts(path)
     # Both halves are needed and neither is a superset: a DELETED file is named
     # in the header but has no `@` line to link, and a file injected without a
     # commit behind it (a grant script) is linked but carries no change status.

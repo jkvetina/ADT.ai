@@ -32,6 +32,7 @@ from adt_ai.patch.create import (
     _write_generated_patch_scripts,
     _write_patch_files,
 )
+from adt_ai.patch.deploy_driver import write_deploy_driver
 from adt_ai.patch.files import _reject_unresolved_merges, _snapshot_link
 from adt_ai.patch.full_app import require_fresh_full_app_exports, resolve_full_app_ids
 from adt_ai.patch.hashes import write_patch_hashes
@@ -62,6 +63,8 @@ def build_database_patch(
     hash_commits: Mapping[str, int] | None = None,
     hash_previous: Mapping[str, str] | None = None,
     gateway_factory: Callable[[str], Any] | None = None,
+    files_ws: bool = False,
+    hash_tables: Mapping[str, str] | None = None,
 ) -> DatabasePatchResult:
     """Write ``folder`` and report what went into it.
 
@@ -92,8 +95,16 @@ def build_database_patch(
     if force:
         # A refresh rebuilds the scripts too since ADT #508; see that function.
         reset_patch_scripts(root, folder, config, patch_code=patch_code)
-    selection = _patch_files(root, records, config, full_app_ids=full_app_ids)
+    selection = _patch_files(
+        root, records, config,
+        full_app_ids = full_app_ids,
+        files_ws     = files_ws,
+        content_mode = content_mode,
+    )
     files = selection.files
+    # `-files_ws` files no selected commit touched, and the commit each ships from
+    # in the committed mode (ADT #812). Every reader of bytes below is handed it.
+    pinned = selection.pinned
     _reject_unresolved_merges(root, files)
     # A file the database has already moved past is snapshotted as-is, and
     # deploying it reverts the live object (ADT #261). Read here rather than in
@@ -106,7 +117,10 @@ def build_database_patch(
     # the answer in hand rather than stopping on it.
     freshness = export_freshness(root, config, files)
     present_files = {
-        path: file_present(root, path, config, mode=content_mode, records=records)
+        path: file_present(
+            root, path, config, mode=content_mode, records=records,
+            pinned_ref=pinned.get(path),
+        )
         for path in files
     }
     _reset_generated_artifacts(folder, config)
@@ -127,6 +141,9 @@ def build_database_patch(
         # over with it because that is where the recorded version is looked up,
         # by content hash rather than by commit number.
         hash_previous = hash_previous,
+        # The tables the baseline stored (ADT #857): the version the target
+        # holds even when no commit ever did, which is a hand hotfix.
+        hash_tables   = hash_tables,
         window        = window,
         # The ALTER half asks Oracle what changed (ADT #753). One connection per
         # schema, opened only if a table in it actually has two versions to
@@ -157,6 +174,9 @@ def build_database_patch(
         content_mode = content_mode,
         present_files = present_files,
     )
+    # After every install script is on disk, so it sees exactly what the folder
+    # holds; a re-create keeps a person's order unless `-force` (ADT #850).
+    deploy_file = write_deploy_driver(folder, config, force=force)
     _write_snapshots(
         root,
         folder,
@@ -165,6 +185,7 @@ def build_database_patch(
         patch_code   = patch_code,
         content_mode = content_mode,
         records      = records,
+        pinned       = pinned,
     )
     # Written LAST and only for a hash-built patch (ADT #447). Two jobs: the
     # folder says what it carried, and its presence is the marker `-deploy` reads
@@ -183,6 +204,7 @@ def build_database_patch(
     return DatabasePatchResult(
         folder            = folder,
         sql_files         = sql_files,
+        deploy_file       = deploy_file,
         files             = files,
         scripts           = scripts,
         unresolved_tables = generated.unresolved_tables,

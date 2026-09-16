@@ -1,6 +1,6 @@
 # ADT.ai Documentation
 
-This is the public documentation index for ADT.ai `1.2.2`.
+This is the public documentation index for ADT.ai `1.3.0`.
 
 <br>
 
@@ -16,11 +16,13 @@ This is the public documentation index for ADT.ai `1.2.2`.
 | [connection / where the password lives](connection_passwords.md) | The stored format, the vault and no-password modes, masking, and changing the key. |
 | [connection / security](connection_security.md) | How a stored password is protected, written to hand to a security reviewer. |
 | [dependencies](dependencies.md) | Query or refresh the dependency mirror. |
+| [diff](diff.md) | Compare two Oracle environments or schemas. |
 | [discovery](discovery.md) | Run read-only SELECT discovery queries. |
 | [export_apex](export_apex.md) | Reveal and export APEX workspaces and applications. |
 | [export_apex / the formats](export_apex_formats.md) | What each format flag writes, the APEX version gates, and the schema-level shapes. |
 | [export_data](export_data.md) | Export table data as CSV plus generated MERGE SQL. |
 | [flow](flow.md) | Map APEX page navigation into a queryable flow store. |
+| [live_upload](live_upload.md) | Watch a static files folder and upload every save into the application or the workspace. |
 | [patch](patch.md) | Build and deploy release patches from committed repo changes. |
 | [patch / what goes in](patch_install.md) | Which files a patch picks up, their order, the two gates, and the project SQL around them. |
 | [patch / which version ships](patch_content.md) | Committed, newest, local and live source choices for the selected files. |

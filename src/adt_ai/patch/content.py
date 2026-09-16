@@ -26,10 +26,13 @@ given the mode the fetch; this is what the fetch is for.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from adt_ai.patch import settings as _settings
 from adt_ai.patch.layout import is_apex_static_file, is_apexlang_path
+from adt_ai.patch.models import PatchError
 from adt_ai.shared.commit_discovery import CommitRecord
 from adt_ai.shared.git_files import (
     git_blob_exists,
@@ -117,6 +120,7 @@ def file_text(
     *,
     mode: str,
     records: list[CommitRecord],
+    config: Mapping[str, Any] | None = None,
 ) -> str | None:
     """The text this patch should snapshot for ``path``, or ``None`` if it is gone.
 
@@ -128,7 +132,41 @@ def file_text(
     and never takes that fallback.
     """
     payload = file_bytes(root, path, mode=mode, records=records)
-    return payload.decode("utf-8", errors="replace") if payload is not None else None
+    return decode_repo_text(payload, path, config) if payload is not None else None
+
+
+def decode_repo_text(payload: bytes, path: object, config: Mapping[str, Any] | None) -> str:
+    """``payload`` as text, with every national character intact, or a refusal.
+
+    UTF-8 first, since that is what a patch is written in. A file that is not
+    valid UTF-8 is read in the project's `repo_encoding` and nothing else: the
+    `errors="replace"` this replaced (ADT #334) turned `č` into U+FFFD and
+    deployed that, which is the damage ADT #834 exists to stop. With no
+    `repo_encoding`, or bytes that do not fit it either, the file is named and
+    the run stops, because a patch cannot guess what the author meant.
+    """
+    try:
+        return payload.decode("utf-8")
+    except UnicodeDecodeError as error:
+        where = f"byte 0x{payload[error.start]:02X} at offset {error.start}"
+    encoding = _settings.repo_encoding(dict(config or {}))
+    if not encoding:
+        raise PatchError(
+            f"{path} is not valid UTF-8 ({where}). Save it as UTF-8, or set "
+            "repo_encoding in config.yaml to the encoding it uses, e.g. cp1250."
+        )
+    try:
+        return payload.decode(encoding)
+    except LookupError:
+        raise PatchError(
+            f"repo_encoding: {encoding} is not an encoding Python knows; "
+            f"{path} is not valid UTF-8 and needs it."
+        ) from None
+    except UnicodeDecodeError as error:
+        raise PatchError(
+            f"{path} is neither UTF-8 ({where}) nor {encoding} "
+            f"(byte 0x{payload[error.start]:02X} at offset {error.start})."
+        ) from None
 
 
 def file_bytes(
@@ -137,6 +175,7 @@ def file_bytes(
     *,
     mode: str,
     records: list[CommitRecord],
+    pinned_ref: str | None = None,
 ) -> bytes | None:
     """``file_text`` for a payload that is not text, an APEX static file.
 
@@ -144,7 +183,7 @@ def file_bytes(
     asset committed weeks ago and edited locally would otherwise be the one file
     in a `committed` patch that still shipped the working-tree version.
     """
-    blob = _blob_ref(root, path, mode=mode, records=records)
+    blob = _blob_ref(root, path, mode=mode, records=records, pinned_ref=pinned_ref)
     if blob is not None:
         content = git_show(root, blob, path)
         if content is not None:
@@ -168,6 +207,7 @@ def file_present(
     *,
     mode: str,
     records: list[CommitRecord],
+    pinned_ref: str | None = None,
 ) -> bool:
     """Whether the selected source carries a file the patch can actually ship.
 
@@ -188,7 +228,7 @@ def file_present(
             return False
         if (root / path).is_file():
             return True
-    blob = _blob_ref(root, path, mode=mode, records=records)
+    blob = _blob_ref(root, path, mode=mode, records=records, pinned_ref=pinned_ref)
     if blob is not None:
         if git_blob_exists(root, blob, path):
             return True
@@ -203,14 +243,20 @@ def _blob_ref(
     *,
     mode: str,
     records: list[CommitRecord],
+    pinned_ref: str | None = None,
 ) -> str | None:
-    """The git ref whose version of ``path`` this mode wants, or ``None`` for disk."""
+    """The git ref whose version of ``path`` this mode wants, or ``None`` for disk.
+
+    ``pinned_ref`` answers for a file no selected commit touched but the patch
+    carries anyway, a `-files_ws` workspace file (ADT #812): without it the
+    committed mode would fall back to the working tree for exactly those files.
+    """
     if mode == CONTENT_MODE_LOCAL:
         return None
     if mode == CONTENT_MODE_HEAD:
         return _newest_head_ref(root, path)
     record = authoritative_commit(path, records, include_deleted=True)
-    return record.commit_hash if record else None
+    return record.commit_hash if record else pinned_ref
 
 
 def _newest_head_ref(root: Path, path: str) -> str:

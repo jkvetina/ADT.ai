@@ -38,12 +38,18 @@ def merge_sql_from_csv(
     null_safe_key: bool = False,
     column_types: dict[str, str] | None = None,
     identity_columns: set[str] | None = None,
+    primary_key_columns: set[str] | None = None,
 ) -> str:
     """`column_types` types the CSV cells; `identity_columns` are the unwritable ones.
 
     Both arrive from the table's own inventory (`#670`). Without them every cell
     is rendered as a text literal and no column is excluded, which is the shape
     a caller with no inventory in hand gets.
+
+    `primary_key_columns` are never updated. They were the join until `#811`, so
+    the rule held without saying; a MERGE joined on a UNIQUE key would otherwise
+    set the target's primary key to the source's number and orphan every row
+    pointing at it.
     """
     columns, batches = _csv_select_batches(path, config, column_types)
     if not columns:
@@ -56,10 +62,11 @@ def merge_sql_from_csv(
     # An ALWAYS identity column is exported and may be the key, but Oracle
     # refuses an INSERT that names it (ORA-32795) and an UPDATE that sets it.
     identity = identity_columns or set()
+    never_updated = set(lower_primary) | identity | (primary_key_columns or set())
     update_columns = [
         column
         for column in lower_columns
-        if column not in lower_primary and column not in identity
+        if column not in never_updated
     ]
     insert_columns = [column for column in lower_columns if column not in identity]
     table_merge_config = merge_config(config, table_name)
