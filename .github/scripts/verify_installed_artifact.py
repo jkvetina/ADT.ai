@@ -23,6 +23,12 @@ PATCH_TEMPLATE_FILES = (
     "config/patch_template/db_end/80_jobs.sql",
     "config/patch_template/db_end/90_checks.sql",
     "config/patch_template/db_init/00_init.sql",
+    "config/patch_template/locks/check_files_ws.sql",
+    "config/patch_template/locks/check_objects.sql",
+    "config/patch_template/locks/check_objects_all.sql",
+    "config/patch_template/locks/check_rest.sql",
+    "config/patch_template/locks/lock_objects.sql",
+    "config/patch_template/locks/unlock_objects.sql",
 )
 SCAFFOLD_FILES = (
     ".gitattributes",

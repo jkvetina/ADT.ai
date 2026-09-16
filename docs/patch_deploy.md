@@ -27,6 +27,44 @@ What a deploy does write, besides its logs, is the baseline, and only for a patc
 
 A patch lists what it will overwrite and asks the target about each one before writing a line, so a colleague's work cannot be buried by a build that predates it. CORE_LOCKS where it is installed, `last_ddl_time` where it is not, and `updated_on` for the REST modules and workspace files `user_objects` never held. Full rules on [patch_signatures.md](patch_signatures.md).
 
+The SQL itself lives in shared scripts under `config/patch_template/locks/`, which the install script links.
+
+<br>
+
+## The deploy order and DEPLOY.sql
+
+A patch folder holding two or more install scripts also gets `DEPLOY.sql`, one line per script in the order `-deploy` runs them:
+
+```sql
+-- DEPLOY ORDER
+--
+-- patch -deploy runs the install scripts below in the order of these @ lines.
+-- Reorder the lines to change it. Every install script in this folder must
+-- appear exactly once, and a line naming no script here refuses the deploy.
+--
+
+@"./APP.sql"
+@"./CORE.sql"
+@"./APP.100.init.sql"
+@"./APP.100.end.sql"
+```
+
+The order `-create` writes is the default one: schema scripts first, then each application's `init` half, then its `end` half. Run by hand in SQLcl, the file deploys the whole patch in that order too. A patch with a single install script gets none.
+
+**Reorder the lines to change the order.** `-deploy` runs the `@` lines as they stand, and the APEX import still follows its application's `init` half wherever you moved it. `@./APP.sql` without quotes and a trailing `;` are read the same; blank lines and `--` comments are ignored.
+
+**A re-create keeps your order.** Scripts no longer generated lose their line, new ones are added at the end in the default order, and `-create -force` writes the default order again.
+
+**A driver that disagrees with the folder refuses the deploy before any script runs**: a script in the folder it does not list, a line naming a script that is not there, a script listed twice, or a line that is not a script link. The refusal names each one:
+
+```text
+PATCH FAILED:
+-------------
+DEPLOY.sql does not match patch folder 260914-1-12: not listed: CORE.sql - fix its @ lines, or rebuild it with -create -force
+```
+
+`DEPLOY.sql` is never an install script itself, so it gets no row under `DEPLOYING PATCH:` and adds nothing to `PATCH CONTENTS:`.
+
 <br>
 
 ## The processing report
@@ -91,6 +129,8 @@ PATCH FILES:
   - patch/260822-1-12/SANDBOX.sql
 ```
 
+A patch with two or more install scripts lists its `DEPLOY.sql` last, the file that sets their deploy order.
+
 <br>
 
 ## Grants
@@ -134,7 +174,7 @@ DEPLOYING PATCH: 260822-1-12
   SANDBOX.sql   SANDBOX      2/2      4s   SUCCESS
 ```
 
-- **Schema scripts run first**, then each application's `<SCHEMA>.<APP>.init.sql`, the import, `.end.sql` ([patch_import.md](patch_import.md)).
+- **Schema scripts run first**, then each application's `<SCHEMA>.<APP>.init.sql`, the import, `.end.sql` ([patch_import.md](patch_import.md)), unless `DEPLOY.sql` orders them otherwise.
 - **The table is written as the deploy runs, not after it.** The header and the rule print before the first script; `FILE` and `SCHEMA` appear when that script starts, `BLOCKS`, `TIMER` and `STATUS` when it finishes.
 - **On a terminal the open row is repainted** rather than left half-written. It opens on `0/n` and `IN PROGRESS`, the total being read off the install script before SQLcl launches, and the timer ticks once a second.
 - **`BLOCKS` counts linked blocks finished**, so it reaches `n/n` only when the script returns. The count comes from the `PROMPT -- FILE:` markers SQLcl echoes, and a marker echoes just before its block runs.

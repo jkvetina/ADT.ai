@@ -43,6 +43,8 @@ Two consequences worth knowing before you rely on either:
 
 ADT.ai ships a reference scaffold in its own checkout. It is not read from there: copy it into your project and edit it. Read `db_end/` before you keep it, since those files refresh every materialized view, gather schema stats and run every enabled daily job.
 
+One folder beside the slots is not a slot. `locks/` holds the six shared scripts that guard a patch against overwriting a colleague's work, and nothing in it is injected by folder: ADT links each one by name, under `patch_core_locks` and `patch_signatures` rather than `patch_add_templates` ([patch_signatures.md](patch_signatures.md)).
+
 <br>
 
 ## Per-patch scripts move into the patch
@@ -129,6 +131,10 @@ So the coverage is Oracle's own: columns added, dropped and retyped, `NOT NULL` 
 A generated ALTER runs **ahead of** its own table file in the patch script, because a table with an ALTER already exists on the target: its exported file then contributes a no-op `CREATE TABLE IF NOT EXISTS` plus `COMMENT ON COLUMN` lines describing the shape the ALTER just produced. Hand-written scripts you put in `tables_after/` still run after the files.
 
 If the target database refuses one of the two versions, no comparison happens and `-create` says so under `WARNING - NO TABLE DIFF:`, with Oracle's own error under the file. The patch still builds; the table simply carries no ALTER, and that is the one case where a green deploy would otherwise change nothing.
+
+One refusal is repaired rather than reported: the earlier version, the one your target already stands at. When Oracle refuses it, `-create` rebuilds it from the columns and constraints it declares and tries once more, comparing only if Oracle builds the rebuilt statement. Otherwise the warning quotes Oracle about the file as committed.
+
+The rebuild leaves out comments, the empty items an extra comma leaves, and everything after the column list, such as a partition clause. A line that starts a new column or constraint starts a new item even when the comma before it is missing. Your patch's own version is never rebuilt, because it deploys exactly as committed.
 
 Whitespace inside SQL string literals is part of the value. Generated ADD and MODIFY statements preserve it, including quoted defaults; changing only that whitespace still produces a column change.
 

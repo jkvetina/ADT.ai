@@ -32,6 +32,7 @@ from adt_ai.cli.export_apex_owners import (
 )
 from adt_ai.cli.export_db_baseline import (
     measured_hashes,
+    measured_tables,
     narrowing_flags,
     refusal,
     write_measured_baseline,
@@ -138,6 +139,8 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
 
     runner = ExportDbRunner(cached_gateway_factory)
     measured: dict[str, str] = {}
+    # Each table as the export renders it, stored beside the log (ADT #857).
+    measured_bodies: dict[str, str] = {}
 
     def run_one(schema: str) -> int:
         _print_connection_block(
@@ -167,6 +170,7 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
         )
         if measuring:
             measured.update(measured_hashes(plans, root))
+            measured_bodies.update(measured_tables(plans, root, config))
         return 0
 
     try:
@@ -179,7 +183,9 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
         return exit_code_for("ARGUMENT INVALID")
     if measuring and exit_code == 0:
         write_measured_baseline(
-            root, config, environment, schemas, measured, override=args.baseline
+            root, config, environment, schemas, measured,
+            override = args.baseline,
+            tables   = measured_bodies,
         )
     return exit_code
 
@@ -194,6 +200,13 @@ def _run_export_apex(
     config = startup.config
     connections = startup.connections
     environment = args.env or connections.default_environment
+    # `-reveal 430 431` names applications exactly as `-app 430 431 -reveal`
+    # does (`#858`), so the ids join `-app` once and nothing below reads two
+    # sources. A bare `-reveal` is `[]`, which is why every mode test below is
+    # `is not None` rather than truthiness.
+    reveal = args.reveal is not None
+    if args.reveal:
+        args.app = [*(args.app or []), args.reveal]
     try:
         app_selection = _parse_apex_app_selection(_flatten_arg_groups(args.app))
         page_selection, component_filters = _parse_apex_export_filter_groups(
@@ -212,7 +225,7 @@ def _run_export_apex(
             _flatten_arg_groups(args.schema), environment=environment
         )
         connection_schema = schemas[0]
-    elif args.reveal:
+    elif reveal:
         schemas = connections.schema_names(environment)
         connection_schema = apex_lookup_schema(connections, environment, schemas)
     else:
@@ -260,7 +273,7 @@ def _run_export_apex(
     )
     if args.debug:
         _print_startup_debug(startup)
-    if not args.reveal and not any(actions.values()) and not recent_report_only:
+    if not reveal and not any(actions.values()) and not recent_report_only:
         _print_missing_apex_format_guidance()
         return 2
     # Checked here rather than in the parser because `-all` selects `apexlang`
@@ -281,7 +294,7 @@ def _run_export_apex(
     def export_apex_gateway_factory(schema: str) -> QueryGateway:
         # `-reveal` is one cross-schema screen read over one connection, so every
         # schema it lists resolves to the same gateway.
-        return schema_gateway(connection_schema if args.reveal else schema)
+        return schema_gateway(connection_schema if reveal else schema)
 
     # Everything above resolved ONE set of inputs; the two things this command
     # does with them share nothing else, so each is its own function and the
@@ -307,8 +320,11 @@ def _run_export_apex(
         my_name            = my_name,
         my_email           = my_email,
         started_at         = handler_started_at,
+        # The one factory that opens each schema's OWN connection, which the
+        # reveal's id search walks one schema at a time (`#858`).
+        schema_gateway_factory = schema_gateway,
     )
-    return run_apex_reveal(run) if args.reveal else run_apex_export(run)
+    return run_apex_reveal(run) if reveal else run_apex_export(run)
 
 
 def _print_missing_apex_format_guidance() -> None:

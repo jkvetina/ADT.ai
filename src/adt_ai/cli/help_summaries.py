@@ -63,6 +63,14 @@ COMMAND_SUMMARIES = {
         "It also scans an APEX application on demand and names every component that "
         "no longer compiles.",
     ),
+    "diff": (
+        "Reports how two Oracle environments or schemas differ.",
+        "Use it before a deployment, when you need to know exactly how far the target "
+        "has drifted from the source instead of assuming the two still match.",
+        "The result is something you can read, review and share: a record of what "
+        "the difference was at the moment you asked, rather than a screen that scrolls "
+        "past and is gone.",
+    ),
     "discovery": (
         "Answers questions about a database, writes down what it found, and only "
         "ever reads.",
@@ -102,6 +110,15 @@ COMMAND_SUMMARIES = {
         "reconstructed from memory.",
         "You can take a whole schema or only what has moved recently, and what comes out "
         "is written to be read by a person, not just replayed by a tool.",
+    ),
+    "live_upload": (
+        "Puts a change to a stylesheet or a script into APEX the moment you save it.",
+        "Use it while you are working on how an application looks or behaves, so the "
+        "editor you actually want is the one you edit in, and the change is already in "
+        "the builder by the time you switch back to it.",
+        "It watches the folder your static files are exported to, so nothing has to be "
+        "zipped, imported, or dragged anywhere. It keeps watching until you stop it, or "
+        "pushes the whole folder a single time and exits.",
     ),
     "patch": (
         "Packages finished work into something you can deploy to another environment.",

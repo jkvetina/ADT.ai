@@ -203,7 +203,7 @@ An empty result still prints a header-only table, so the report is visibly prese
 
 ## Stripping trailing whitespace
 
-`-trailing` fixes the version-control noise the export creates: `export_db` strips trailing whitespace from every line it writes, so an untouched package still differs from the database's stored source on every export, and this repairs the *source* side once per schema. What it rewrites, the separate path a view takes, and what the sweep guarantees are on [recompile_trailing.md](recompile_trailing.md).
+`-trailing` fixes the diff noise the export creates: `export_db` strips trailing whitespace from every line it writes, so an untouched package still differs from the database's stored source on every export, and this repairs the *source* side once per schema. What it rewrites, the separate path a view takes, and what the sweep guarantees are on [recompile_trailing.md](recompile_trailing.md).
 
 <br>
 

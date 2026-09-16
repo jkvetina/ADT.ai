@@ -69,7 +69,45 @@ The wallet password has the same key on the wallet block as `wallet_pwd_cmd:`, a
 pwd_cmd: op read op://Engineering/DEV_APP/password
 pwd_cmd: vault kv get -field=password secret/oracle/dev/app
 pwd_cmd: pass show oracle/dev/app
+pwd_cmd: security find-generic-password -s adtai -a DEV.APP -w
 ```
+
+<br>
+
+### The macOS Keychain
+
+Nothing to install: `security` ships with macOS. Store each secret once. With `-w` last and no value after it, `security` prompts for the password twice, so the value never reaches shell history or the process list:
+
+```bash
+security add-generic-password -U -s adtai -a DEV.APP -w
+security add-generic-password -U -s adtai -a DEV.WALLET -w
+security add-generic-password -U -s adtai -a ADT_KEY -w
+```
+
+`-s` is the service and `-a` the account. Any names work, as long as the read asks for the same pair. `-U` updates an entry that already exists.
+
+Then point each secret at its entry. A block that used to store its password drops `pwd`, `pwd!` and `pwd_key` in the same edit, because a secret has exactly one source:
+
+```yaml
+DEV:
+  wallet:
+    wallet_pwd_cmd: security find-generic-password -s adtai -a DEV.WALLET -w
+  schemas:
+    APP:
+      db:
+        user: APP
+        pwd_cmd: security find-generic-password -s adtai -a DEV.APP -w
+```
+
+The encryption key reads the same way, from your shell startup file:
+
+```bash
+export ADT_KEY_CMD="security find-generic-password -s adtai -a ADT_KEY -w"
+```
+
+Set it in place of `ADT_KEY`, never beside it. A file whose every secret comes from a command needs no key at all, so the key entry matters only while some value is still encrypted.
+
+If macOS opens a dialog asking whether `security` may use the item, **Always Allow** stops it asking again. A dialog is fine here: the command finishes on its own once it is answered, which a prompt typed into the terminal would not.
 
 <br>
 

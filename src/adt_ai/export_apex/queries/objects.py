@@ -43,6 +43,30 @@ ORDER BY
     a.application_id
 """.strip()
 
+# Where the ids named on `-reveal` live, whoever owns them (`#858`). No owner,
+# workspace or group predicate, and no security context set first: a session
+# sees in `apex_applications` the applications of every workspace its own schema
+# is mapped to, which is how an application owned by a schema missing from the
+# connection file is reached at all. What one connection cannot see another
+# connection may, so the caller asks each configured schema in turn.
+APPLICATIONS_BY_ID_QUERY = """
+SELECT
+    a.owner,
+    a.workspace,
+    a.workspace_id,
+    a.application_group     AS app_group,
+    a.application_id        AS app_id,
+    a.alias                 AS app_alias,
+    a.application_name      AS app_name,
+    a.pages,
+    TO_CHAR(a.last_updated_on, 'YYYY-MM-DD HH24:MI') AS updated_at
+FROM apex_applications a
+WHERE 1 = 1
+    AND '|' || :app_id || '|' LIKE '%|' || a.application_id || '|%'
+ORDER BY
+    a.application_id
+""".strip()
+
 APPLICATION_OWNER_QUERY = """
 SELECT
     a.owner

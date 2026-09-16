@@ -16,6 +16,7 @@ See what is there before exporting anything:
 adtai export_apex -reveal
 adtai export_apex -reveal -owners -max_app_id 10000
 adtai export_apex -ws HUB -group CORE -app 100 200 -reveal
+adtai export_apex -reveal 430 431
 ```
 
 Export one application, or a whole range, in the formats you name:
@@ -130,6 +131,12 @@ EXPORTING SANDBOX APPS:
 
 `-reveal` scans every schema configured in the environment unless `-schema` narrows it, keeping one APEX connection open rather than reconnecting per schema. Names match case-insensitively.
 
+`-reveal 430 431` also finds applications whose owner is not in the connection file. An id the configured owners did not list is looked up through each configured schema's connection in turn, which sees every application in that schema's workspaces. A range searches nothing.
+
+The search stops once every id has a configured owner. An id whose owner is not configured is looked up through every connection.
+
+An unconfigured owner is named under `WARNING - SCHEMA NOT CONFIGURED:`, with every configured schema that reached the app on the next line, sorted, as `APP 430 is reachable through APEX_DEPLOYMENT, DA`; an id nobody sees is under `WARNING - APP NOT FOUND:`.
+
 Application group and application id scope come from each schema's own `apex:` block unless the command line overrides them. Workspace scope does too, except under `-reveal`, which lists the whole instance and narrows only to `-ws`.
 
 For a normal export by application id, with no `-schema` and no `-reveal`, ADT.ai first reads the cached `config/internal/apex.db`. When an application's recorded owner differs from the default APEX schema, the run connects straight to that owner and skips the wasted default connection. Several ids that map to different owners each connect to their own.
@@ -139,6 +146,8 @@ An application not yet recorded, a missing cache, or an explicit `-schema` or `-
 What the cache holds, table by table, is on [storage_apex.md](storage_apex.md).
 
 When `-app` names an application whose owner is not among the requested schemas, that lookup runs once inside the last requested schema's segment, and the owner it finds becomes its own appended segment.
+
+An owner the connection file does not name gets no segment, because there is no connection for it. The schema whose connection found the owner exports the application in its own segment, into that schema's folder, and `WARNING - SCHEMA NOT CONFIGURED:` says so as `APP 430 is owned by WEBCRM, exported through APEX_DEPLOYMENT`.
 
 <br>
 
@@ -240,7 +249,7 @@ Without an explicit format, a non-reveal `-recent` is report-only: it exports no
 | `-by`, `--by` | No | none | Filter the recent report and export set by exact APEX developer username. |
 | `-my`, `--my` | No | off | Filter them to the current git user, resolving author aliases from the cache and the discovered workspace developers. |
 | `-release`, `--release` | No | none | Override `p_release` values in the exported SQL. |
-| `-reveal`, `--reveal` | No | off | Show the matching workspaces and applications, exporting nothing. |
+| `-reveal [APP ...]`, `--reveal [APP ...]` | No | off | Show the matching workspaces and applications, exporting nothing. Ids after it act as `-app` and are searched for beyond the configured owners. |
 | `-owners`, `--owners` | No | off | In reveal mode, count applications for all APEX owners rather than only the configured schemas. It widens the counts, never the list. |
 | `-all`, `--all` | No | off | Export every supported format. |
 | `-full`, `--full` | No | off | Export the full application SQL. |

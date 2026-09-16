@@ -53,6 +53,21 @@ _EDIT_SECRET_FIELDS: tuple[ConnectionEditSecretField, ...] = (
 )
 
 
+def _thick_keys(value: str | None) -> dict[str, str]:
+    """The `db` keys one `-thick` writes (ADT #833).
+
+    Bare or `Y` means old ADT's auto-resolve, thick mode with the client found
+    through `ORACLE_HOME`, so no folder is written. Anything else is the client
+    folder itself and is written to the key the driver already reads.
+    """
+    if value is None:
+        return {}
+    text = str(value).strip()
+    if not text or text.upper() == "Y":
+        return {"thick": "Y"}
+    return {"thick": "Y", "client_lib_dir": text}
+
+
 @dataclass(frozen=True)
 class ConnectionEditRequest:
     path        : Path
@@ -71,6 +86,7 @@ class ConnectionEditRequest:
     app         : str | None = None
     prefix      : str | None = None
     ignore      : str | None = None
+    thick       : str | None = None
     like        : str | None = None
     default     : bool = False
     apply       : bool = False
@@ -277,6 +293,7 @@ class ConnectionEditor:
             db["service"] = request.service
         if request.sid:
             db["sid"] = request.sid
+        db.update(_thick_keys(request.thick))
         return {"db": db, "defaults": {}, "schemas": {}}
 
     def _create_connection(
@@ -321,6 +338,7 @@ class ConnectionEditor:
             ("port", request.port if request.port is not None else DEFAULT_PORT),
             ("service", request.service),
             ("sid", request.sid),
+            *_thick_keys(request.thick).items(),
         ):
             if value not in (None, "") and key not in db:
                 db[key] = value
@@ -394,6 +412,7 @@ class ConnectionEditor:
             db["port"] = request.port
         if request.service:
             db["service"] = request.service
+        db.update(_thick_keys(request.thick))
         new_env["defaults"] = {}
         new_env["schemas"] = {}
         return new_env

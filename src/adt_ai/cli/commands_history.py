@@ -12,6 +12,8 @@ from typing import Any
 # `_print_calendar_grid` call site and its tests keep their existing name.
 from adt_ai.calendar.render import render_calendar_grid as _print_calendar_grid
 
+# `diff` moved to its own module at the 24 KB context cap (`#780`); re-exported
+# so `runtime.py` and the announce tests keep the import they have always had.
 from adt_ai.cli.commands_history_reveal import GIT_LOOKUP_FAILURES, _run_rebuild_reveal
 from adt_ai.cli.constants import (
     CalendarError,

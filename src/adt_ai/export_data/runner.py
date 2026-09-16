@@ -215,6 +215,7 @@ class ExportDataRunner:
                 null_safe_key   = not _has_primary_key(table, csv_columns),
                 column_types    = column_types,
                 identity_columns = _always_identity_columns(columns),
+                primary_key_columns = _primary_key_columns(columns),
             )
             if merge_sql:
                 text_files.write_text(
@@ -430,31 +431,59 @@ def _merge_where(target: dict[str, Any], source: dict[str, Any]) -> None:
 
 
 def _key_columns(table: DataTable, columns: list[str]) -> list[str]:
-    primary = sorted(
-        (column.pk, column.name)
+    """The columns a row is known by: its sidecar names, LOB UPDATE and MERGE join.
+
+    A primary key comes first, unless one of its columns is an identity column.
+    An identity value is numbered by the environment the row was inserted in, so
+    the same row is `7` on DEV and `12` on PROD, and a key built on it names its
+    files differently per environment and matches the wrong row on replay. A
+    UNIQUE key is the business key in that case and wins; an identity primary
+    key is still used when the table has nothing else (`#811`).
+    """
+    primary = [
+        name
+        for _, name, _ in sorted(
+            (column.pk, column.name, column.identity)
+            for column in table.columns
+            if column.pk is not None and column.name in columns
+        )
+    ]
+    primary_is_identity = any(
+        column.identity.strip()
         for column in table.columns
-        if column.pk is not None and column.name in columns
+        if column.name in primary
     )
-    if primary:
-        return [name for _, name in primary]
+    if primary and not primary_is_identity:
+        return primary
     unique = sorted(
         (column.uq, column.name)
         for column in table.columns
         if column.uq is not None and column.name in columns
     )
-    return [name for _, name in unique]
+    return [name for _, name in unique] or primary
 
 
 def _has_primary_key(table: DataTable, columns: list[str]) -> bool:
-    """Whether `_key_columns` answered with a primary key rather than the UQ fallback.
+    """Whether `_key_columns` answered with a primary key rather than a UNIQUE key.
 
     A UNIQUE constraint permits NULLs and a primary key does not, which is what
     decides whether the MERGE join has to be NULL-safe (`#670`).
     """
-    return any(
-        column.pk is not None and column.name in columns
+    key = _key_columns(table, columns)
+    return bool(key) and all(
+        column.pk is not None
         for column in table.columns
+        if column.name in key
     )
+
+
+def _primary_key_columns(columns: list[DataColumn]) -> set[str]:
+    """The lower-cased primary key columns, which a MERGE never updates (`#811`)."""
+    return {
+        column.name.lower()
+        for column in columns
+        if column.pk is not None
+    }
 
 
 # One resolver with its own validation, lifted out of this module by `#684`

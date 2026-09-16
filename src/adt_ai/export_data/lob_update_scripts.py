@@ -1,3 +1,16 @@
+"""The per-row script that puts one LOB value back: base64 in the file, decoded by Oracle.
+
+**Why `UTL_ENCODE` and not `apex_web_service.clobbase642blob`.** APEX ships a
+one-call base64-to-BLOB converter, and it was the obvious candidate. It was not
+picked because it makes a data reload depend on APEX being installed in the
+target database, and `export_data` exports plain tables: a schema with no APEX,
+or one whose APEX is a different release, still has to take these scripts. The
+decode here uses only `UTL_ENCODE`, `UTL_RAW`, `UTL_I18N` and `DBMS_LOB`, which
+every Oracle database carries. The price is the chunk loop below, since a RAW
+holds 32767 bytes and a payload does not fit one. Keep it that way unless ADT
+decides to require APEX on every target (`#811`).
+"""
+
 from __future__ import annotations
 
 import base64
@@ -11,6 +24,8 @@ from adt_ai.shared.row_values import row_value
 from adt_ai.shared.sql_identifiers import safe_identifier, safe_qualified_identifier
 
 _BASE64_CHUNK_SIZE = 30000
+#: The bytes one chunk decodes to, which is what has to fit `v_raw RAW(32767)`.
+_DECODED_CHUNK_BYTES = _BASE64_CHUNK_SIZE // 4 * 3
 _TEXT_DATA_TYPES = {"CLOB", "JSON", "XMLTYPE"}
 
 
@@ -53,11 +68,18 @@ def lob_update_sql(
 
 
 def include_update_scripts(paths: list[str]) -> str:
+    """The MERGE's calls to its per-row LOB scripts, relative to the MERGE itself.
+
+    `@@` rather than `@"./..."` (`#811`): a plain `@` resolves against SQLcl's
+    working directory, so the MERGE only found its LOB scripts when it was run
+    from its own folder, and a patch deploying it from a snapshot looked for them
+    beside the patch instead.
+    """
     if not paths:
         return ""
     lines: list[str] = []
     for path in paths:
-        lines.extend(["--", f"PROMPT {path}", f'@"./{path}";'])
+        lines.extend(["--", f"PROMPT {path}", f'@@"{path}";'])
     return "\n".join(lines) + "\n"
 
 
@@ -109,7 +131,7 @@ def _text_update_sql(
         f"    {_raw_decode_line(chunk)}\n"
         "    v_text := UTL_I18N.RAW_TO_CHAR(v_raw, 'AL32UTF8');\n"
         "    DBMS_LOB.WRITEAPPEND(v_clob, LENGTH(v_text), v_text);"
-        for chunk in _base64_chunks(payload)
+        for chunk in _text_base64_chunks(payload)
     )
     return f"""DECLARE
     v_clob  CLOB;
@@ -148,6 +170,27 @@ def _base64_chunks(payload: str | bytes) -> list[str]:
         encoded[index:index + _BASE64_CHUNK_SIZE]
         for index in range(0, len(encoded), _BASE64_CHUNK_SIZE)
     ] or [""]
+
+
+def _text_base64_chunks(payload: str | bytes) -> list[str]:
+    """Base64 chunks that each decode to whole UTF-8 characters (`#811`).
+
+    The text script decodes every chunk on its own with `UTL_I18N.RAW_TO_CHAR`,
+    so a cut through a multi-byte character handed Oracle two halves that are
+    each invalid, and the reload stored replacement glyphs where the letter was.
+    The cut moves back off any continuation byte instead, which keeps every
+    chunk within the same RAW limit and never splits a character.
+    """
+    data = payload.encode("utf-8") if isinstance(payload, str) else bytes(payload)
+    chunks: list[str] = []
+    start = 0
+    while start < len(data):
+        end = min(start + _DECODED_CHUNK_BYTES, len(data))
+        while start < end < len(data) and data[end] & 0xC0 == 0x80:
+            end -= 1
+        chunks.append(base64.b64encode(data[start:end]).decode("ascii"))
+        start = end
+    return chunks or [""]
 
 
 def _where_clause(row: dict[str, Any], key_columns: list[str]) -> str:

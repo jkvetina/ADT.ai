@@ -12,7 +12,9 @@ this writes them.
 
 from __future__ import annotations
 
+import base64
 import re
+from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -27,6 +29,9 @@ from adt_ai.patch.content import (
 )
 from adt_ai.patch.files import _is_apex_page
 from adt_ai.patch.layout import (
+    apex_static_file_name as _apex_static_file_name,
+)
+from adt_ai.patch.layout import (
     database_object_type as _database_object_type,
 )
 from adt_ai.patch.layout import (
@@ -35,6 +40,7 @@ from adt_ai.patch.layout import (
 from adt_ai.patch.layout import (
     is_apex_workspace_static_file as _is_apex_workspace_static_file,
 )
+from adt_ai.patch.sql_literal import escape_literal
 from adt_ai.shared import text_files
 from adt_ai.shared.commit_discovery import CommitRecord
 from adt_ai.shared.mime import guess_mime_type
@@ -49,6 +55,7 @@ def _write_snapshots(
     patch_code: str,
     content_mode: str = CONTENT_MODE_COMMITTED,
     records: list[CommitRecord] | None = None,
+    pinned: Mapping[str, str] | None = None,
 ) -> None:
     """Copy each file into the patch, in the version ``content_mode`` selects.
 
@@ -82,14 +89,26 @@ def _write_snapshots(
             continue
         target = folder / _settings.snapshots_folder(config) / path
         if static:
-            payload = file_bytes(root, path, mode=content_mode, records=records)
+            payload = file_bytes(
+                root, path, mode=content_mode, records=records,
+                pinned_ref=(pinned or {}).get(path),
+            )
             if payload is None:
                 continue
             target = target.with_suffix(target.suffix + ".sql")
             target.parent.mkdir(parents=True, exist_ok=True)
             text_files.write_text(target, _apex_static_file_sql(path, payload, config))
             continue
-        text = file_text(root, path, mode=content_mode, records=records)
+        if path.endswith(".bin"):
+            # A BLOB sidecar from `export_data` is data, never text: it ships as
+            # the repo's exact bytes and `repo_encoding` does not apply (ADT #834).
+            payload = file_bytes(root, path, mode=content_mode, records=records)
+            if payload is None:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            text_files.write_bytes(target, payload)
+            continue
+        text = file_text(root, path, mode=content_mode, records=records, config=config)
         if text is None:
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -121,28 +140,36 @@ def _snapshot_content(text: str, path: str, config: dict[str, Any], patch_code: 
     return text
 
 
+_ROW_WIDTH = 200
+
+
+def _chunks(text: str) -> list[str]:
+    return [text[index:index + _ROW_WIDTH] for index in range(0, len(text), _ROW_WIDTH)]
+
+
 def _apex_static_file_sql(path: str, content: bytes, config: dict[str, Any]) -> str:
-    file_name = Path(path).name
+    # The name APEX stores is the path BELOW the static-files folder, so
+    # `files/css/app.css` installs as `css/app.css`, which is what
+    # `export_apex` read it back as and what `#724`'s guard compares. `.name`
+    # flattened every subfolder away (ADT #812).
+    stored_name = _apex_static_file_name(path, config)
+    file_name = escape_literal(stored_name)
     # `application/octet-stream` for an unrecognised extension is the one
     # fallback that keeps an unknown static file downloadable; a browser
     # already refuses to run/apply it, so guessing wrong here costs nothing
     # (#670 -- CSS/JS/SVG/font/PDF static files used to get this fallback too,
     # which a browser refuses to apply/execute at all).
-    mime_type = guess_mime_type(file_name, default="application/octet-stream")
-    hex_payload = content.hex().upper()
-    hex_rows = [hex_payload[index:index + 200] for index in range(0, len(hex_payload), 200)]
+    mime_type = guess_mime_type(Path(stored_name).name, default="application/octet-stream")
     if _is_apex_workspace_static_file(path, config):
-        rows = "\n".join([
-            queries.APEX_WORKSPACE_FILE_HEADER,
-            *[
-                queries.APEX_WORKSPACE_FILE_ROW.format(index=index, row=row)
-                for index, row in enumerate(hex_rows, start=1)
-            ],
-        ])
+        rows = "\n".join(
+            queries.APEX_WORKSPACE_FILE_ROW.format(length=len(row), row=row)
+            for row in _chunks(base64.b64encode(content).decode("ascii"))
+        )
         block = queries.APEX_WORKSPACE_FILE_BLOCK.format(
             rows=rows, file_name=file_name, mime_type=mime_type
         )
         return f"{block}\n"
+    hex_rows = _chunks(content.hex().upper())
     footer = queries.APEX_STATIC_FILE_FOOTER.format(file_name=file_name, mime_type=mime_type)
     payload = [
         queries.APEX_STATIC_FILE_HEADER,

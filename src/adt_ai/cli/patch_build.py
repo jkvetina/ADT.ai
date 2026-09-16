@@ -41,6 +41,7 @@ from adt_ai.cli.patch_hash_mode import HashSelection, apply_hash_mode, hash_mode
 from adt_ai.cli.patch_preview_render import _content_mode, _selected_content_modes
 from adt_ai.patch import settings as patch_settings
 from adt_ai.patch.apex_import import resolve_target
+from adt_ai.patch.baseline_tables import read_baseline_tables
 from adt_ai.patch.content import CONTENT_MODE_FLAGS
 from adt_ai.shared.patch_folders import PatchFolder
 
@@ -94,6 +95,24 @@ def install_flag_refusal(args: argparse.Namespace) -> str | None:
     if args.schema and not args.install:
         return "-schema applies only to -install"
     return None
+
+
+def files_ws_flag_refusal(
+    args: argparse.Namespace,
+    create_requested: bool | None = None,
+) -> str | None:
+    """`-files_ws` on a run that builds nothing, or ``None`` (ADT #812).
+
+    The flag widens what `-create` carries, so a preview, a deploy, `-install`,
+    `-archive` and `-drop` would parse it and do nothing. Asked twice: off `args`
+    before anything runs, then with the resolved ``create_requested``, because a
+    `-create -deploy` naming a folder already on disk ships that folder rather
+    than building one.
+    """
+    if not getattr(args, "files_ws", False):
+        return None
+    building = args.create if create_requested is None else create_requested
+    return None if building else "-files_ws applies only to -create"
 
 
 def missing_patch_name(args: argparse.Namespace, patch_ref: str | None) -> str | None:
@@ -309,6 +328,11 @@ def build_database_patch(
         hash_previous = (
             hash_selection.diff.baseline.hashes if hash_selection else None
         ),
+        # And the table files the baseline stored beside it (ADT #857), the
+        # only version of a table somebody fixed on the target by hand.
+        hash_tables = (
+            read_baseline_tables(hash_selection.diff.baseline) if hash_selection else None
+        ),
         # `-force` earns a meaning on this side of the command with ADT #366: it
         # is what lets a build rewrite a folder that has already been deployed,
         # as a refresh that keeps its logs. Since ADT #508 that refresh also
@@ -316,6 +340,8 @@ def build_database_patch(
         # rather than a record of one.
         force      = args.force,
         gateway_factory = gateway_factory,
+        # Every workspace static file rather than only the changed ones (ADT #812).
+        files_ws   = bool(getattr(args, "files_ws", False)),
     )
     print_create_screen(workspace, config, result, records, root)
 

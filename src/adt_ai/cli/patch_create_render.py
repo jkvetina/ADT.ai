@@ -196,10 +196,13 @@ def print_create_screen(
     # schema. That path IS the answer here, so it stays on one line and `#415`'s
     # shape comes back exactly. `nested=False` is the renderer's own flag, so this
     # is an argument at the call site and not a second way to build a row.
-    print_file_rows(
-        [_project_relative(path, root) for path in result.sql_files.values()],
-        nested = False,
-    )
+    #
+    # `DEPLOY.sql` closes the list when the patch has one (ADT #850): it is the
+    # file a person edits to change the order the scripts above deploy in.
+    driving = list(result.sql_files.values())
+    if result.deploy_file is not None:
+        driving.append(result.deploy_file)
+    print_file_rows([_project_relative(path, root) for path in driving], nested=False)
     print()
 
 

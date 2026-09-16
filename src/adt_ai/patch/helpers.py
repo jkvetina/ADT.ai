@@ -85,6 +85,7 @@ def _write_generated_patch_scripts(
     hash_previous: Mapping[str, str] | None = None,
     window: list[CommitRecord] | None = None,
     gateway_factory: Callable[[str], Any] | None = None,
+    hash_tables: Mapping[str, str] | None = None,
 ) -> GeneratedScripts:
     """Write the one-off SQL, and report what was written.
 
@@ -124,6 +125,7 @@ def _write_generated_patch_scripts(
             hash_previous,
             gateways,
             refused,
+            hash_tables or {},
         )
     gateways.close()
     return GeneratedScripts(
@@ -188,6 +190,7 @@ def _write_hash_table_diff_helpers(
     previous_hashes: Mapping[str, str],
     gateways: _SchemaGateways,
     refused: list[tuple[str, str]],
+    stored_tables: Mapping[str, str],
 ) -> tuple[list[AlterHelper], list[str]]:
     """One ALTER step per table: what the target holds, to what this patch ships.
 
@@ -207,6 +210,11 @@ def _write_hash_table_diff_helpers(
     ships is the whole statement. A table whose recorded version is no longer in
     the scanned history is REPORTED, because that is a comparison ADT cannot
     make and a missing `ALTER` would fail the deploy silently.
+
+    ``stored_tables`` is asked first (ADT #857): the table the baseline itself
+    stored, already checked against its log line. It is the only answer for a
+    target somebody fixed by hand, whose table no commit ever held, and the
+    history lookup stays the fallback for a baseline recorded before tables were.
     """
     table_files = {
         file
@@ -219,7 +227,9 @@ def _write_hash_table_diff_helpers(
         baseline_hash = previous_hashes.get(file)
         if not baseline_hash:
             continue
-        previous = _body_at_content_hash(root, file, window, baseline_hash)
+        previous = stored_tables.get(file) or _body_at_content_hash(
+            root, file, window, baseline_hash
+        )
         if previous is None:
             unresolved.append(file)
             continue

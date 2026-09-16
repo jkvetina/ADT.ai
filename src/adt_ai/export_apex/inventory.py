@@ -44,9 +44,20 @@ class ApexDiscovery:
     OWNER_APP_COUNTS_QUERY  = queries.OWNER_APP_COUNTS_QUERY
     WORKSPACES_QUERY        = queries.WORKSPACES_QUERY
     WORKSPACES_FROM_APPLICATIONS_QUERY = queries.WORKSPACES_FROM_APPLICATIONS_QUERY
+    APPLICATIONS_BY_ID_QUERY = queries.APPLICATIONS_BY_ID_QUERY
 
     def __init__(self, gateway: QueryGateway) -> None:
         self.gateway = gateway
+
+    def applications_by_id(self, app_ids: Iterable[str | int]) -> list[ApexApplication]:
+        """The named applications this connection can see, any owner (`#858`)."""
+        rows = self.gateway.fetch_all(
+            self.APPLICATIONS_BY_ID_QUERY,
+            {
+                "app_id": _pipe_list(app_ids),
+            },
+        )
+        return [_application_from_row(row) for row in rows]
 
     def owner_app_counts(
         self,

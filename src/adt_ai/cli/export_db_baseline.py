@@ -43,7 +43,7 @@ again; replacing everything would wipe the APEX entries `export_db` never sees.
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
 
@@ -52,8 +52,9 @@ from adt_ai.cli.context import _flatten_arg_groups, _project_relative
 from adt_ai.cli.patch_hash_mode import BASELINE_STAMP_FORMAT, print_baseline_stats
 from adt_ai.cli.patch_preview_render import patch_scan_commits
 from adt_ai.export_db.files import ObjectWritePlan
+from adt_ai.patch.baseline_tables import write_baseline_tables
 from adt_ai.patch.hashes import replace_measured_scope, resolve_baseline_path
-from adt_ai.patch.layout import database_schema, is_database_path
+from adt_ai.patch.layout import database_object_type, database_schema, is_database_path
 from adt_ai.shared.commit_discovery import GitCommitCache
 from adt_ai.shared.file_list import print_file_rows
 
@@ -112,6 +113,29 @@ def measured_hashes(plans: list[ObjectWritePlan], root: Path) -> dict[str, str]:
     return hashes
 
 
+def measured_tables(
+    plans: list[ObjectWritePlan], root: Path, config: dict[str, object]
+) -> dict[str, str]:
+    """Each table this run read, as the text it would have been written as (ADT #857).
+
+    Keyed like `measured_hashes`, so the stored file and its log line name the
+    same path. Only tables: every other object is replaced whole by its own
+    file, so nothing ever diffs against its previous shape.
+    """
+    tables: dict[str, str] = {}
+    for plan in plans:
+        rendered = getattr(plan, "rendered", None)
+        if rendered is None:
+            continue
+        try:
+            relative = Path(plan.path).resolve().relative_to(root.resolve()).as_posix()
+        except (OSError, ValueError):
+            continue
+        if database_object_type(relative, config) == "TABLE":
+            tables[relative] = rendered
+    return tables
+
+
 def write_measured_baseline(
     root: Path,
     config: dict[str, object],
@@ -120,8 +144,13 @@ def write_measured_baseline(
     measured: dict[str, str],
     *,
     override: str | None,
+    tables: Mapping[str, str] | None = None,
 ) -> None:
-    """Fold what this run READ into the environment's baseline."""
+    """Fold what this run READ into the environment's baseline.
+
+    ``tables`` lands beside the log under the same scope rule (ADT #857): a
+    table this run's schemas no longer hold loses its stored file too.
+    """
     target_env = environment or "-"
     path = resolve_baseline_path(root, config, target_env, override)
     covered_schemas = {schema.upper() for schema in schemas}
@@ -140,6 +169,8 @@ def write_measured_baseline(
         target_env = target_env,
         stamp      = datetime.now().strftime(BASELINE_STAMP_FORMAT),
     )
+    if tables is not None:
+        write_baseline_tables(written, tables, covered=covered)
     print_adt_header("WRITING BASELINE:")
     # One row, and flat: a baseline file is named rather than listed (ADT #504).
     print_file_rows([_project_relative(written, root)], nested=False)
@@ -178,6 +209,7 @@ def commits_at_hashes(
 __all__ = [
     "commits_at_hashes",
     "measured_hashes",
+    "measured_tables",
     "narrowing_flags",
     "refusal",
     "write_measured_baseline",

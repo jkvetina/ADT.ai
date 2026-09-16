@@ -21,6 +21,12 @@ Nothing here is active until you do. `patch_add_templates: False` in `config.yam
 
 Files inside a slot are injected in filename order, which is what the numeric prefixes are for. A `<group>_before` / `<group>_after` folder is named after a `patch_map` group, `tables_before/`, `objects_after/` and so on.
 
+## The locks folder is not a slot
+
+`locks/` holds the six shared scripts that stop a deploy from overwriting a colleague's work: `lock_objects.sql`, `check_objects.sql`, `check_objects_all.sql` and `unlock_objects.sql` for database objects, `check_rest.sql` and `check_files_ws.sql` for REST modules and workspace files. Nothing in it is injected by folder. `patch -create` links each script by name, under `patch_core_locks` and `patch_signatures`, after setting the binds it reads (`:objects`, `:built_at`, `:rest_modules`, `:ws_files`). `patch_add_templates: False` does not switch them off.
+
+Keep the file names. A script `patch -create` wants but cannot find is not linked; the install script carries `PROMPT -- LOCK FILE MISSING: <path>` in its place, and that guard does not run. The scripts use `APEX_STRING.SPLIT`, so the target needs APEX.
+
 ## Environment-specific files
 
 `name.[ENV].sql` is injected only when `-target ENV` matches; an untagged file runs against every environment. Name a file `95_release.[PROD].sql` and it lands in a `-target PROD` patch and nowhere else.

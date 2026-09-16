@@ -140,19 +140,38 @@ def _configured_sql_payload(
             continue
         if keep is not None and not keep(path.name):
             continue
-        source = (origin / path.name) if origin is not None else path
-        relative = source.relative_to(root).as_posix()
-        link = Path(os.path.relpath(path, patch_folder)).as_posix()
-        # One empty line above each pair (ADT `#456`, Jan 2026-08-21: *"in patch
-        # itself, create empty line above each PROMPT -- TEMPLATE:"*). The
-        # `PROMPT` and its `@` are one unit, and a run linking several of them
-        # ran them together into a wall where the group headers around them are
-        # already spaced. It is a blank line between two complete SQLcl
-        # commands, so nothing is buffered across it.
-        rows.append("")
-        rows.append(f"PROMPT -- {label}: {relative}")
-        rows.append(_install_file_link(link, config))
+        rows.extend(linked_file_rows(
+            root, patch_folder, path, config,
+            label  = label,
+            source = (origin / path.name) if origin is not None else None,
+        ))
     return rows
+
+def linked_file_rows(
+    root: Path,
+    patch_folder: Path,
+    path: Path,
+    config: dict[str, Any],
+    *,
+    label: str = "TEMPLATE",
+    source: Path | None = None,
+) -> list[str]:
+    """One `PROMPT -- <LABEL>: <project path>` + `@` pair, linking ``path`` in place.
+
+    ``source`` is where the `PROMPT` says the file came from when that differs
+    from where the `@` finds it (a moved per-patch script); a template and a
+    shared lock script (ADT #850) pass none. The link is relative to the patch
+    folder, derived from where that folder sits rather than assuming a depth.
+
+    One empty line above each pair (ADT `#456`, Jan 2026-08-21: *"in patch
+    itself, create empty line above each PROMPT -- TEMPLATE:"*). The `PROMPT`
+    and its `@` are one unit, and a run linking several ran them together into a
+    wall. It is a blank line between two complete SQLcl commands, so nothing is
+    buffered across it.
+    """
+    relative = (source or path).relative_to(root).as_posix()
+    link = Path(os.path.relpath(path, patch_folder)).as_posix()
+    return ["", f"PROMPT -- {label}: {relative}", _install_file_link(link, config)]
 
 def _cached_apex_workspace(root: Path, app_id: int) -> str:
     """The workspace `export_apex` recorded for this app, or "" if it never did.

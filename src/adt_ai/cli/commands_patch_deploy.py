@@ -55,6 +55,7 @@ from adt_ai.cli.patch_preview_render import (
     patch_scan_commits,
 )
 from adt_ai.patch.apex_import import resolve_target
+from adt_ai.patch.baseline_tables import working_tree_tables, write_baseline_tables
 from adt_ai.patch.create import install_script_name
 from adt_ai.patch.hashes import (
     merge_into_baseline,
@@ -245,6 +246,12 @@ def advance_baseline(
         {file: number for file, number in commits.items() if file in advancing},
         target_env = args.target or "-",
         stamp      = datetime.now().strftime(BASELINE_STAMP_FORMAT),
+    )
+    # The tables this deploy landed move with their lines (ADT #857), read off
+    # the working tree only where it still holds the bytes that shipped. A
+    # scope claiming nothing, because a deploy advances and never removes.
+    write_baseline_tables(
+        path, working_tree_tables(root, config, advancing), covered=lambda file: False
     )
     total = len(read_baseline(path))
     print_adt_header("UPDATING BASELINE:")

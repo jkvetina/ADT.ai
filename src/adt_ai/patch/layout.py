@@ -326,6 +326,25 @@ def is_apex_static_file(path: str, config: dict[str, Any]) -> bool:
     return contains_run(Path(path).parts[len(head):-1], Path(configured).parts)
 
 
+def apex_static_file_name(path: str, config: dict[str, Any]) -> str:
+    """The name APEX stores a static file under: its path below `apex_path_files`.
+
+    Inverts `export_apex/files.py::application_file` and `workspace_file`, which
+    write `<root>/<apex_path_files>/<FILENAME>` with the stored name's own
+    separators kept, so `css/app.css` sits one folder deep (ADT #812). The FIRST
+    run of the configured folder under the APEX head is the static-files folder;
+    a subfolder that happens to share its name sits below it.
+    """
+    parts = Path(path).parts
+    head = apex_head_for(path, config) or ()
+    configured = Path(str(config.get("apex_path_files") or "files/").strip("/")).parts
+    width = len(configured)
+    for index in range(len(head), len(parts) - width):
+        if parts[index:index + width] == configured:
+            return "/".join(parts[index + width:])
+    return Path(path).name
+
+
 def _apex_app_depth(config: dict[str, Any]) -> int:
     # Through the shared count, which is the one `export_apex/files.py` renders
     # against: the writer refuses a template whose segments do not all render, so

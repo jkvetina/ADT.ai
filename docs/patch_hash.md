@@ -47,11 +47,22 @@ patch_hashes/
   baseline.PROD.log
 ```
 
-The environment is on the file rather than on a folder above it, so a baseline stays self-describing when it is copied, attached to a mail, or read in a review. `{$TARGET_ENV}` and `#TARGET_ENV#` still resolve inside `patch_hashes` for a project that configured a per-environment folder.
+The environment is on the file rather than on a folder above it, so a baseline stays self-describing when it is copied, attached to a mail, or read in a diff. `{$TARGET_ENV}` and `#TARGET_ENV#` still resolve inside `patch_hashes` for a project that configured a per-environment folder.
 
-**It belongs in version control.** It is a record of what an environment holds, and a single file overwritten in place is a record you can read: the lines that moved are the files that deployed.
+**It belongs in version control.** It is a record of what an environment holds, and a single file overwritten in place is a diff you can read: the lines that moved are the files that deployed.
 
-`-baseline` means one thing, hash everything. It reads every file the layout resolves out of the working tree, needs no database and no patch name, and overwrites the file whole.
+**Tables are stored beside it.** A hash says a table changed and nothing about its shape, so every table file is also kept under a folder named after the log, at its repo path, as plain DDL:
+
+```text
+patch_hashes/
+  baseline.PROD.log
+  baseline.PROD/
+    app/database/tables/app_import.sql
+```
+
+A stored table is used only while it hashes to the value its log line records, so a stale or hand-edited one is ignored rather than trusted.
+
+`-baseline` means one thing, hash everything. It reads every file the layout resolves out of the working tree, stores every table, needs no database and no patch name, and overwrites the file and the folder whole.
 
 The commit column is filled from the commit store the run has already levelled, so a file whose newest commit sits outside `patch_scan_commits` records a blank commit rather than a guessed one.
 
@@ -151,9 +162,13 @@ A relative value resolves against the project root and an absolute one stands. N
 
 ## Table changes
 
-An ALTER helper needs the version the target database holds, and hash mode has no commit range to walk for it. The baseline answers directly: the recorded hash names a content, and the previous body is read from the newest commit in the scanned history carrying exactly that hash.
+An ALTER helper needs the version the target database holds, and hash mode has no commit range to walk for it. The baseline answers directly: the table stored beside the log is that version, and the ALTER is Oracle's answer from it to the working tree.
 
-A table absent from the baseline earns no ALTER, correctly, since the `CREATE TABLE` shipping in the patch is the whole statement. A table whose recorded version is no longer in the scanned history earns none either, and that one is reported:
+That is what covers a hotfix. Somebody changes a table on PROD by hand, `export_db -env PROD -baseline` stores the table as PROD holds it, and the next `-create -hash` generates the ALTER from that shape to yours, although no commit ever held it.
+
+A baseline recorded before tables were stored has no table beside it, and then the previous body is read from the newest commit in the scanned history carrying exactly the recorded hash.
+
+A table absent from the baseline earns no ALTER, correctly, since the `CREATE TABLE` shipping in the patch is the whole statement. A table with no stored version and no commit carrying its hash earns none either, and that one is reported:
 
 ```text
 WARNING - NO TABLE BASELINE:
@@ -163,7 +178,7 @@ WARNING - NO TABLE BASELINE:
     - app_import.sql
 ```
 
-Read it when it appears. The patch will ship a `CREATE TABLE` against a table that already exists, and the column change is yours to write into `patch_scripts/`.
+Read it when it appears. The patch will ship a `CREATE TABLE` against a table that already exists: record the baseline again so the table is stored, or write the column change into `patch_scripts/`.
 
 `WARNING - NO TABLE DIFF:` is the same silence one step later, and hash mode reaches it exactly as the commit walk does: the two versions were both found, and the target database refused one of them, so `DBMS_METADATA_DIFF` was never asked. Oracle's own error prints under the file. See [patch_templates.md](patch_templates.md) for how the comparison is made.
 
@@ -191,6 +206,7 @@ UPDATING BASELINE:
 - **Only the files that patch shipped move.** Work done between `-create` and `-deploy` stays pending, which a re-read of the working tree could not have managed.
 - **Only the files whose own install script succeeded.** Under `-continue` a run can land one schema and fail another, and advancing the whole patch there would mark the failed schema's objects live.
 - **`SKIPPED` and `ERROR` advance nothing.**
+- **A shipped table moves its stored file too**, read off the working tree where it still holds the bytes that shipped. A table edited since `-create` keeps its old file, which the log line no longer agrees with, so the next patch falls back to the history lookup instead of trusting it.
 
 Handing the patch to a DBA instead? Then nothing here runs, and the baseline is yours to advance: run `-baseline` once the patch is known to be in.
 

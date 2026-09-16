@@ -53,6 +53,10 @@ class ObjectWritePlan:
     #: bytes this object WOULD have been written as, so a baseline can be
     #: measured off a live database without touching the working tree.
     content_hash: str | None = None
+    #: The text that hash was taken over, also set only by `hash_one`, so a
+    #: measured baseline can store a table exactly as an export writes it
+    #: (ADT #857) without rendering it a second time.
+    rendered: str | None = None
 
 
 class ObjectFileResolver:
@@ -461,13 +465,13 @@ class ObjectFileWriter:
             path = under_root(self.resolver.root, path, role="database object path")
         except UnsafePathError as error:
             raise ObjectFileError(str(error)) from error
+        rendered = self._closed(request.content)
         return ObjectWritePlan(
             object       = request.object,
             path         = path,
             action       = "hashed",
-            content_hash = file_payload_hash(
-                text_files.rendered_bytes(self._closed(request.content))
-            ),
+            content_hash = file_payload_hash(text_files.rendered_bytes(rendered)),
+            rendered     = rendered,
         )
 
 

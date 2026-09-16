@@ -74,7 +74,17 @@ sandbox/database/data/adt_anno_ticket.csv
 sandbox/database/data/adt_fixture_ddl_log.csv
 ```
 
-Beside each CSV, `<table>.sql` holds the generated MERGE. **It is written only when the table has key columns to match rows on**, a primary key first and a unique constraint otherwise. A table with neither gets its CSV alone, because a MERGE with nothing to join on would have no way to tell an update from an insert.
+Beside each CSV, `<table>.sql` holds the generated MERGE. **It is written only when the table has key columns to match rows on.** A table with neither a primary key nor a unique constraint gets its CSV alone, because a MERGE with nothing to join on would have no way to tell an update from an insert.
+
+The key is picked in this order, and the same key names the sidecar files, targets each LOB UPDATE and joins the MERGE:
+
+1. a primary key with no identity column in it;
+2. a unique constraint;
+3. a primary key built on an identity column, when the table has nothing else.
+
+An identity value is numbered by the environment the row was inserted in, so the same row can be `7` on DEV and `12` on PROD. A key built on it would name the files differently in each environment and match the wrong row on replay, which is why a unique constraint outranks it.
+
+A primary key column is never in the MERGE's UPDATE SET, so matching on a unique key cannot renumber the target's row.
 
 Each MERGE statement covers at most `merge_batch_size` rows (project `config.yaml`, default `10000`); a larger export becomes consecutive MERGE statements in the same file.
 
@@ -164,7 +174,13 @@ BLOB, CLOB, XMLTYPE and JSON columns are never dropped and never squeezed into a
 | XMLTYPE | `.xml` |
 | JSON | `.json` |
 
-A null or empty value writes no file. Every non-empty payload also gets a SQL-only import script beside it, `<key>.<column>.sql`, which stores the value as base64 and decodes it in Oracle, so a payload imports with no Python helper in the loop. The table MERGE prints `PROMPT <filename>` before calling each one with `@"./<filename>";`.
+A null or empty value writes no file. Every non-empty payload also gets a SQL-only import script beside it, `<key>.<column>.sql`, which stores the value as base64 and decodes it in Oracle, so a payload imports with no Python helper in the loop.
+
+The table MERGE prints `PROMPT <table>/<filename>` before calling each one with `@@"<table>/<filename>";`. `@@` resolves beside the MERGE itself, so the file runs the same from the repository and from a patch snapshot. A patch links only the MERGE: the CSV, the value files and the per-row scripts travel in its snapshot and are never run on their own.
+
+The decode uses `UTL_ENCODE`, `UTL_RAW`, `UTL_I18N` and `DBMS_LOB`, which every Oracle database has. `apex_web_service.clobbase642blob` would do it in one call, but it needs APEX installed in the target, and a data reload must not.
+
+A text payload is cut into chunks on whole characters, so an accented letter or an emoji at a chunk boundary reloads intact.
 
 `<row-key>` keeps the letters the key actually holds, accents included: a row keyed `Plzeň` writes `Plzeň.body.txt`, not `Plzen.body.txt`. Only a character a filename cannot carry folds to `_`.
 

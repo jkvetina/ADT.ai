@@ -32,6 +32,7 @@ from adt_ai.patch.table_diff import (
     shadow_ddl,
     shadow_table_names,
 )
+from adt_ai.patch.table_rebuild import rebuild_table
 from adt_ai.shared.sql_identifiers import safe_identifier
 
 #: Only the owner of the object being altered. A `REFERENCES "OTHER"."T"` keeps
@@ -175,16 +176,38 @@ def _build_shadows(
 
     The caller's `finally` drops whatever this left standing, so the refusal
     carries only the reason: which side failed, and what Oracle said about it.
+
+    The target's version gets one second attempt, rebuilt from the columns and
+    constraints it declares (ADT #859, which widened the one comma `#855` put
+    back into every comma, and past a partition clause, see `table_rebuild.py`).
+    It is history: the target already stands at it, and the commit that fixed
+    the file is usually the one being patched, so refusing it leaves nothing to
+    correct and ships no ALTER for the change. This patch's version never gets
+    one, because it deploys as written and a `CREATE` Oracle refuses here is a
+    `CREATE` the deploy refuses. When the rebuild does not help either, the
+    refusal still quotes Oracle about the file as committed rather than about a
+    text nobody wrote.
     """
     sides = (
-        (previous, SOURCE_MARKER, "the target's version"),
-        (current, TARGET_MARKER, "this patch's version"),
+        (previous, SOURCE_MARKER, "the target's version", True),
+        (current, TARGET_MARKER, "this patch's version", False),
     )
-    for version, marker, side in sides:
+    for version, marker, side, repairable in sides:
         try:
             gateway.execute(shadow_ddl(version).replace(SHADOW_MARKER, marker))
         except Exception as error:
-            raise TableDiffRefused(table_name, f"{side} would not build: {error}") from error
+            rebuilt = rebuild_table(version) if repairable else None
+            if rebuilt is None or not _built(gateway, rebuilt, marker):
+                raise TableDiffRefused(table_name, f"{side} would not build: {error}") from error
+
+
+def _built(gateway: Any, version: str, marker: str) -> bool:
+    """Whether ``version`` builds as the ``marker`` shadow table."""
+    try:
+        gateway.execute(shadow_ddl(version).replace(SHADOW_MARKER, marker))
+    except Exception:
+        return False
+    return True
 
 
 __all__ = ["TableDiffRefused", "render_alter_statements", "table_alter_sql"]

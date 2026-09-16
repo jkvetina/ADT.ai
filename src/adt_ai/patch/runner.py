@@ -42,6 +42,7 @@ from adt_ai.patch.deploy import (
     _write_deployment_log,
     reset_deployment_spool,
 )
+from adt_ai.patch.deploy_driver import deploy_order, install_scripts
 from adt_ai.patch.deploy_progress import (
     _countable_file_total,
     _countable_references,
@@ -209,7 +210,7 @@ class PatchWorkspace:
         if folder is None:
             return []
         groups: list[PatchContentsGroup] = []
-        for sql_path in sorted(folder.path.glob("*.sql")):
+        for sql_path in install_scripts(folder.path):
             try:
                 text = sql_path.read_text(encoding="utf-8", errors="replace")
             # defensive: `discover()` above already read every file in this same folder through
@@ -279,10 +280,11 @@ class PatchWorkspace:
         # 2026-09-07: *"schema driving files must be executed BEFORE the app
         # files!"*. Within an application `init` precedes `end`, with the
         # `apex import` slotted between them by the deploy loop.
-        scripts = sorted(
-            folder.path.glob("*.sql"),
-            key = lambda sql_path: _deployment_order_key(sql_path.name, config),
-        )
+        #
+        # A folder carrying `DEPLOY.sql` runs in its order instead, and one whose
+        # driver disagrees with the folder is refused here, before anything
+        # connects (ADT #850).
+        scripts = deploy_order(folder.path, config)
         plan = [
             DeploymentPlanItem(
                 order   = index,
@@ -365,6 +367,8 @@ class PatchWorkspace:
         hash_commits: Mapping[str, int] | None = None,
         hash_previous: Mapping[str, str] | None = None,
         gateway_factory: Callable[[str], Any] | None = None,
+        files_ws: bool = False,
+        hash_tables: Mapping[str, str] | None = None,
     ) -> DatabasePatchResult:
         """Build the patch folder and report what went into it.
 
@@ -391,7 +395,9 @@ class PatchWorkspace:
             hash_shipped  = hash_shipped,
             hash_commits  = hash_commits,
             hash_previous = hash_previous,
+            hash_tables   = hash_tables,
             gateway_factory = gateway_factory,
+            files_ws      = files_ws,
         )
 
 __all__ = [

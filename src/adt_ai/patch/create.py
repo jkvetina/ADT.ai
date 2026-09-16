@@ -187,10 +187,11 @@ def _database_patch_payload(
     # refuses on object 10 of 10 leaves nine already overwritten.
     carried = set(files)
     guarded = [item for item in signatures if item.file in carried]
-    payload.extend(_signatures.lock_payload(guarded, config, records=records))
+    payload.extend(_signatures.lock_payload(root, folder, guarded, config, records=records))
     payload.extend(
         _signatures.workspace_lock_payload(
-            [item for item in workspace if item.file in carried], config, records=records
+            root, folder,
+            [item for item in workspace if item.file in carried], config, records=records,
         )
     )
     deleted_cache: dict[tuple[str, ...], set[tuple[str, str, str]]] = {}
@@ -246,7 +247,7 @@ def _database_patch_payload(
                 present=present_files[path],
             ):
                 payload.append(f"PROMPT -- [DELETED] {path}")
-            elif present_files[path]:
+            elif present_files[path] and not _is_data_companion(root, path):
                 link = _object_link(root, folder, path, config, mode=content_mode)
                 payload.extend(_file_link_rows(path, link))
         payload.extend(after)
@@ -258,7 +259,7 @@ def _database_patch_payload(
     # The other half of the pair, after every object is in and before SUCCESS:
     # holding the objects for the rest of the lock's 20 minutes would block the
     # colleague the lock was taken to protect, for no remaining reason.
-    payload.extend(_signatures.unlock_payload(guarded, config))
+    payload.extend(_signatures.unlock_payload(root, folder, guarded, config))
     payload.extend(["", "PROMPT --;", "PROMPT -- SUCCESS", "PROMPT --;"])
     if config.get("patch_spooling", True):
         payload.append(queries.SPOOL_OFF_DIRECTIVE)
@@ -287,6 +288,21 @@ def _payload_groups(files: list[str], config: dict[str, Any]) -> list[str]:
         if group not in groups:  # pragma: no cover
             groups.append(group)
     return groups
+
+
+def _is_data_companion(root: Path, path: str) -> bool:
+    """A file `export_data` wrote beside a table's MERGE, which the MERGE runs itself.
+
+    The CSV is the MERGE's input, not a script, and a `data/<table>/` folder
+    (recognised by the `<table>.csv` beside it) holds one file per LOB value plus
+    the per-row script that loads it, which the MERGE calls with `@@`. Linking any
+    of them made SQLcl run a PNG as SQL and every LOB script twice (`#811`). They
+    stay in the selection, so the snapshot still carries the scripts `@@` names.
+    """
+    relative = Path(path)
+    if relative.suffix.lower() == ".csv":
+        return True
+    return (root / relative.parent).with_suffix(".csv").is_file()
 
 
 def _database_patch_group(path: str, config: dict[str, Any]) -> str:

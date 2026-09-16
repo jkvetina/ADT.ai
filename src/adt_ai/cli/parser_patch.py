@@ -215,7 +215,7 @@ def add_patch_parser(subparsers: SubParsers) -> None:
         const   = "",
         default = None,
         metavar = "FILE",
-        help    = "record every current file hash as the deployed baseline, optional FILE",
+        help    = "record every file hash and table as the deployed baseline, optional FILE",
     )
     patch.add_argument(
         "--install",
@@ -373,6 +373,21 @@ def add_patch_parser(subparsers: SubParsers) -> None:
         "-nosnap",
         action = "store_true",
         help   = "write no snapshots; link each repo file where it already lives",
+    )
+    # ADT #812. The `export_apex -files_ws` shape, so one flag name parses one way
+    # across modules (`tests/contracts/test_shared_argument_semantics.py`). A bare
+    # patch still carries only the workspace static files its commits changed;
+    # this carries every one of them, in the version the content mode selects.
+    # Application static files are deliberately not widened. `-files` itself stays
+    # withdrawn (ADT #353), and a build is the only run it changes, so anything
+    # without `-create` refuses it (`patch_build.files_ws_flag_refusal`).
+    patch.add_argument(
+        "--files-ws",
+        "--files_ws",
+        "-files_ws",
+        action = "store_true",
+        dest   = "files_ws",
+        help   = "with -create, carry every workspace static file, not only the changed ones",
     )
     # `-fullapp` folded into `-app` (ADT #592, Jan 2026-08-29). The two flags
     # answered one question between them: `-fullapp` said WHICH applications ship

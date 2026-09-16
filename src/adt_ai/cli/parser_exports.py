@@ -134,7 +134,7 @@ def add_export_parsers(subparsers: SubParsers) -> None:
         default = None,
         metavar = "FILE",
         help    = "record what this environment holds as a patch baseline, "
-                  "hashing every object instead of writing it; optional FILE",
+                  "hashing every object and storing each table; optional FILE",
     )
     add_connection_key_argument(export_db)
 
@@ -289,8 +289,11 @@ def add_export_parsers(subparsers: SubParsers) -> None:
     export_apex.add_argument(
         "--reveal",
         "-reveal",
-        action = "store_true",
-        help   = "show matching APEX workspaces and applications",
+        nargs   = "*",
+        default = None,
+        metavar = "APP",
+        help    = "show matching APEX workspaces and applications; APP ids are also "
+                  "searched for in every workspace the connections reach",
     )
     export_apex.add_argument(
         "--owners",

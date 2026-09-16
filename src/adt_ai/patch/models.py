@@ -221,6 +221,9 @@ class PatchFileSelection:
     """
 
     files: list[str]
+    #: `-files_ws` files no selected commit touched, mapped to the commit whose
+    #: blob they ship from in the committed mode (ADT #812). Empty otherwise.
+    pinned: dict[str, str] = field(default_factory=dict)
 
 @dataclass(frozen=True)
 class DatabasePatchResult:
@@ -249,6 +252,9 @@ class DatabasePatchResult:
     # Owners whose mirrored DDL times carry no recorded database UTC offset, so
     # the comparison above could not be made for them at all (ADT #394, #468).
     unclocked_schemas: list[str] = field(default_factory=list)
+    # `DEPLOY.sql`, written when the folder holds two or more install scripts,
+    # or None (ADT #850). `PATCH FILES:` lists it after the scripts it orders.
+    deploy_file: Path | None = None
 
 @dataclass(frozen=True)
 class DeploymentPlanItem:

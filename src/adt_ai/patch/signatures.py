@@ -9,26 +9,21 @@ compiles into the same shared DEV schema. Nothing in ADT saw that: `-create`'s
 dependency mirror at BUILD time and says nothing about the window after it.
 
 **This is not `-hash` mode and does not touch it.** Jan: *"Dont confuse this with
-the -hash mode!"* That mode selects WHICH files a patch carries by comparing the
-working tree against `patch_hashes/baseline.<ENV>.log`, never asks a database, and
-is opt-in per run. This is a deploy-time safety check that rides whatever patch
-was built, however it was built.
+the -hash mode!"* That mode selects WHICH files a patch carries; this is a
+deploy-time safety check that rides whatever patch was built.
 
-## What this module records, and what it deliberately does not
+## What this module writes, and what it deliberately does not
 
-One row per guarded object the patch overwrites (its type and its name), plus
-the moment the patch was built. That is the whole payload of both generated
-blocks, and `-create` still opens no connection.
+One `NAME:TYPE` row per guarded object the patch overwrites, the moment the patch
+was built, and the links to the shared scripts under
+`<patch_template_dir>/locks/` that compare them (ADT #850,
+`queries/signatures.py`). `-create` still opens no connection, and no hash is
+computed here or in the patch: CORE_LOCKS owns source hashing, and
+`core_lock.create_lock` runs that comparison on every lock it takes.
 
-**No hash is computed here and none is computed in the patch.** Jan, 2026-09-02:
-*"If you have core_locks, you use that to calculate the hash. If you dont have the
-core_locks, you calculate the hash from user_objects view or any other oracle
-views so it does not cost much."* CORE_LOCKS already owns source hashing, down to
-the normalization that makes two clients' compiles of one file agree, and
-`core_lock.create_lock` runs that comparison on every lock it takes. A second
-hash in the install script was 224 lines re-deriving an answer the database was
-already able to give; the rule and the arithmetic now live in exactly one place
-(`queries/signatures.py` §Where the hashing went).
+The lock scripts are owned by `patch_core_locks` and `patch_signatures`, not by
+`patch_add_templates`: that switch turns off the project's own slot templates,
+and turning it off must not quietly turn off the guard too.
 
 ## Which objects are guarded
 
@@ -39,14 +34,10 @@ through a generated `tables_after/` ALTER rather than a replace.
 ## And the two kinds that are not objects at all
 
 `-rest` and `-files_ws` export artifacts belonging to a SCHEMA rather than to an
-application, which left them unguarded from both ends (ADT #724): the object
-block walks `user_objects`, where an ORDS module and a workspace static file
-never appear, and `#592`'s checksum gate walks an application, which neither
-belongs to. They get the same drift comparison over their own dictionaries,
-keyed on `updated_on`, and nothing else: there is no lock half, because
-CORE_LOCKS hashes source out of `user_objects` and has nothing to say about
-either. An APPLICATION static file is deliberately left out, its application's
-checksum covering it already.
+application, so neither `user_objects` nor `#592`'s application checksum covers
+them (ADT #724). They get the same drift comparison over their own dictionaries,
+keyed on `updated_on`, and no lock half. An APPLICATION static file is left out,
+its application's checksum covering it already.
 """
 
 from __future__ import annotations
@@ -58,20 +49,27 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.patch.layout import apex_head_for
+from adt_ai.patch.models import PatchError
 from adt_ai.patch.object_identity import _object_identity
 from adt_ai.patch.queries.signatures import (
-    CLOCK_COLUMN,
-    CORE_LOCKS_COLUMN,
-    DRIFT_BRANCH,
-    LOCK_BLOCK,
-    LOCK_BRANCH,
-    OBJECT_ROW,
-    UNLOCK_BLOCK,
+    BUILT_AT_BIND,
+    BUILT_AT_BIND_TYPE,
+    CHECK_OBJECTS,
+    CHECK_OBJECTS_ALL,
+    LIST_BIND_BYTES,
+    LIST_BIND_TYPE,
+    LIST_SEPARATOR,
+    LOCK_HEADING,
+    LOCK_OBJECTS,
+    LOCKS_FOLDER,
+    MISSING_LOCK_FILE,
+    OBJECTS_BIND,
+    UNLOCK_HEADING,
+    UNLOCK_OBJECTS,
     WORKSPACE_GUARDS,
-    WORKSPACE_LOCK_BLOCK,
-    WORKSPACE_ROW,
 )
 from adt_ai.patch.sql_literal import escape_literal
+from adt_ai.patch.templates import linked_file_rows
 from adt_ai.shared.apex_paths import REST_SCHEMA_DEFINITION
 from adt_ai.shared.commit_discovery import CommitRecord
 
@@ -87,25 +85,23 @@ SIGNED_TYPES = (
     "VIEW",
 )
 
-# How Oracle reads the timestamp the drift branch compares against. It is a UTC
-# instant and carries no offset, because the branch converts the database's own
-# reading to UTC before comparing (`queries/signatures.py` §The two clocks).
+# How Oracle reads the `:built_at` bind. It is a UTC instant and carries no
+# offset, because the check converts the database's own reading to UTC first.
 BUILT_AT_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 # There is deliberately no `signatures.log` sidecar. The install script carries
-# every value inline, in the block that asserts it, so a second file would only be
-# a copy that can disagree; `tests/patch/test_install_script_parity` pins the patch
+# every value inline, in the block that sets it, so a second file would only be a
+# copy that can disagree; `tests/patch/test_install_script_parity` pins the patch
 # folder's contents exactly and is right to.
 
 
 @dataclass(frozen=True)
 class PatchObject:
-    """One object the patch overwrites, as both generated blocks name it.
+    """One object the patch overwrites, as the `:objects` bind names it.
 
     **The verdict itself lives in the SQL and nowhere else.** A Python twin of
-    that rule would be a second reader of one rule (`tests/contracts/shared_readers.txt`
-    is the standing objection), and worse, one nothing runs: the comparison
-    happens on the target, inside the block, with no ADT present.
+    that rule would be a second reader of one rule, and one nothing runs: the
+    comparison happens on the target, with no ADT present.
     """
 
     schema: str
@@ -152,23 +148,17 @@ def collect_signatures(
 
 
 def built_at(records: list[CommitRecord]) -> str:
-    """The moment the patch was built, as the drift branch compares against it.
+    """The moment the patch was built, as the drift checks compare against it.
 
     The NEWEST commit in the window rather than the oldest: everything this patch
     ships was committed by then, so an object the target compiled after it is a
-    change the patch never saw. Anchoring on the base commit instead would flag
-    every object the deploying developer compiled while building the patch, which
-    on a shared DEV schema is most of them.
+    change the patch never saw.
 
-    **In UTC, converted rather than truncated (ADT #700).** A commit stamp is
-    `git log --format=%aI`, the AUTHOR's instant with the AUTHOR's offset on it
-    (`shared/commit_store.authored_stamp`), and `strftime` does not convert such a
-    value: it prints the digits and discards the offset, so a build committed at
-    10:00 +02:00 was written into the patch as 10:00 when the instant it names is
-    08:00 UTC. The drift branch resolves the database's own reading to UTC on the
-    target, so this side answers in UTC too and the two are comparable at all;
-    where a repository already commits at +00:00 the conversion is the identity
-    and nothing about its patches moves.
+    **In UTC, converted rather than truncated (ADT #700).** A commit stamp is the
+    AUTHOR's instant with the AUTHOR's offset on it, and `strftime` does not
+    convert such a value: a build committed at 10:00 +02:00 was written as 10:00
+    when the instant it names is 08:00 UTC. The check resolves the database's own
+    reading to UTC on the target, so this side answers in UTC too.
 
     A stamp carrying no offset is read on THIS host's clock, which is the only
     meaning it has here, and converting rather than skipping it is also what keeps
@@ -182,33 +172,72 @@ def built_at(records: list[CommitRecord]) -> str:
 
 
 def _utc(moment: datetime) -> datetime:
-    """One instant as a naive UTC reading, whichever spelling it arrived in.
-
-    Naive goes through `astimezone()` with no argument, which reads it on this
-    host's zone exactly as `dates._on_the_client_clock` does for the same case.
-    """
+    """One instant as a naive UTC reading, whichever spelling it arrived in."""
     return moment.astimezone(UTC).replace(tzinfo=None)
 
 
-def object_rows(objects: list[PatchObject]) -> str:
-    """The `('TYPE', 'NAME')` rows of the cursor's own IN list.
+def _heading(title: str) -> list[str]:
+    return ["", "PROMPT --;", f"PROMPT -- {title}", "PROMPT --;"]
 
-    ``object_type`` and ``object_name`` are escaped before they land in the
-    single-quoted literal: an object called e.g. `IT'S_PKG` would otherwise end
-    that literal one character early and take the rest of the block with it
-    (`#670`, the same defect `harden.py::_literal` closed for the hardening
-    templates on `#554`).
+
+def _listed(bind: str, items: list[str]) -> list[str]:
+    """The items a list bind can carry, or a build-time refusal naming why not.
+
+    A comma cannot be split back out of the list, and a list past the bind's
+    width would be cut short on the target, guarding less than it says.
     """
-    return ",\n".join(
-        OBJECT_ROW.format(
-            object_type = escape_literal(item.object_type),
-            object_name = escape_literal(item.object_name),
+    odd = [item for item in items if LIST_SEPARATOR in item]
+    if odd:
+        raise PatchError(
+            f"cannot guard {odd[0]!r}: a name carrying a comma cannot be listed in :{bind}"
         )
-        for item in objects
-    )
+    size = sum(len(item.encode("utf-8")) + len(LIST_SEPARATOR) for item in items)
+    if size > LIST_BIND_BYTES:
+        raise PatchError(
+            f":{bind} would hold {size} bytes, over the {LIST_BIND_BYTES} a VARCHAR2 bind "
+            "holds - split the patch into smaller ones"
+        )
+    return items
+
+
+def _bind_block(title: str, bind: str, items: list[str], stamp: str | None) -> list[str]:
+    """The heading, the `VARIABLE` declarations and the one block that sets them.
+
+    One row per item, NAME first, each ending on the separator, so the last row
+    is shaped like every other and only its `;` closes the statement.
+    """
+    declared = {bind: LIST_BIND_TYPE}
+    if stamp is not None:
+        declared[BUILT_AT_BIND] = BUILT_AT_BIND_TYPE
+    width = max(len(name) for name in declared)
+    rows = [
+        f"        '{escape_literal(item)}{LIST_SEPARATOR}'" for item in _listed(bind, items)
+    ]
+    lines = [
+        *_heading(title),
+        *(f"VARIABLE {name.ljust(width)} {kind}" for name, kind in declared.items()),
+        "BEGIN",
+        f"    :{bind} :=",
+        *(f"{row} ||" for row in rows[:-1]),
+        f"{rows[-1]};",
+    ]
+    if stamp is not None:
+        lines.append(f"    :{BUILT_AT_BIND} := '{stamp}';")
+    return [*lines, "END;", "/"]
+
+
+def _lock_link(root: Path, folder: Path, config: dict[str, Any], script: str) -> list[str]:
+    """Link one shared lock script, or say which one the project does not have."""
+    template_dir = str(config.get("patch_template_dir") or "config/patch_template")
+    path = root / template_dir / LOCKS_FOLDER / script
+    if not path.is_file():
+        return ["", MISSING_LOCK_FILE.format(path=path.relative_to(root).as_posix())]
+    return linked_file_rows(root, folder, path, config)
 
 
 def lock_payload(
+    root: Path,
+    folder: Path,
     objects: list[PatchObject],
     config: dict[str, Any],
     *,
@@ -216,32 +245,44 @@ def lock_payload(
 ) -> list[str]:
     """The guard, at the top, before the first object is written.
 
-    Two config keys, two branches, either of which can be off on its own:
-    `patch_core_locks` owns the lock CORE_LOCKS takes (and the signature check it
-    runs on the way), `patch_signatures` owns the `last_ddl_time` fallback for a
-    schema that has no CORE_LOCKS to ask. Both off and there is no block at all.
+    `patch_core_locks` links `lock_objects.sql`, `patch_signatures` links the
+    `last_ddl_time` check and sets the `:built_at` it reads. Both off and there is
+    no block at all.
+
+    Which check is Jan's rule (2026-09-14): CORE_LOCKS guards a schema only where
+    it is installed AND `patch_core_locks` is on, everywhere else the drift check
+    does. So with locking on, `check_objects.sql` steps aside for a CORE_LOCKS
+    schema; with it off, `check_objects_all.sql` checks every schema.
     """
     locking = bool(config.get("patch_core_locks", True))
     drifting = bool(config.get("patch_signatures", True))
     if not objects or not (locking or drifting):
         return []
-    branches = []
-    if locking:
-        branches.append(LOCK_BRANCH)
-    if drifting:
-        branches.append(
-            DRIFT_BRANCH.format(
-                keyword  = "ELSIF" if locking else "IF",
-                built_at = built_at(records or []),
-            )
-        )
-    block = LOCK_BLOCK.format(
-        clock   = CLOCK_COLUMN if drifting else "",
-        columns = CORE_LOCKS_COLUMN if locking else "",
-        rows    = object_rows(objects),
-        guard   = "\n            --\n".join(branches),
+    lines = _bind_block(
+        LOCK_HEADING,
+        OBJECTS_BIND,
+        [f"{item.object_name}:{item.object_type}" for item in objects],
+        built_at(records or []) if drifting else None,
     )
-    return ["", *block.splitlines()]
+    if locking:
+        lines.extend(_lock_link(root, folder, config, LOCK_OBJECTS))
+    if drifting:
+        lines.extend(
+            _lock_link(root, folder, config, CHECK_OBJECTS if locking else CHECK_OBJECTS_ALL)
+        )
+    return lines
+
+
+def unlock_payload(
+    root: Path,
+    folder: Path,
+    objects: list[PatchObject],
+    config: dict[str, Any],
+) -> list[str]:
+    """Its pair, at the bottom, reading the `:objects` the top of the file set."""
+    if not objects or not config.get("patch_core_locks", True):
+        return []
+    return [*_heading(UNLOCK_HEADING), *_lock_link(root, folder, config, UNLOCK_OBJECTS)]
 
 
 @dataclass(frozen=True)
@@ -249,13 +290,9 @@ class WorkspaceArtifact:
     """One schema-level export artifact the patch overwrites (ADT #724).
 
     ``kind`` is the export action that wrote it (`rest`, `files_ws`), which is
-    also the key into `WORKSPACE_GUARDS`: the dictionary to ask and the column to
-    ask about follow from what wrote the file, not from where it landed.
-
-    ``name`` is what the TARGET calls the row, which is the module name for a
-    REST export and the file name for a workspace file. It is never upper-cased,
-    unlike `PatchObject`: `user_ords_modules.name` and `wwv_flow_files.filename`
-    both store whatever was typed, so folding the case would guard nothing.
+    also the key into `WORKSPACE_GUARDS`. ``name`` is what the TARGET calls the
+    row, never upper-cased: `user_ords_modules.name` and `wwv_flow_files.filename`
+    both store whatever was typed.
     """
 
     kind: str
@@ -266,15 +303,9 @@ class WorkspaceArtifact:
 def _workspace_identity(path: str, config: dict[str, Any]) -> tuple[str, str] | None:
     """``(kind, name)`` for a schema-level artifact, or None for anything else.
 
-    Inverts the two writers in `export_apex/files.py`: `rest_export` writes
-    `<apex head>/<apex_path_rest>/<module>.sql` and `workspace_file` writes
-    `<apex head>/<apex_workspace_dir>/<apex_path_files>/<name>`. Both remainders
-    are read whole rather than by base name, because both names carry separators:
-    the REST fixture publishes `adt_fixture/status`, which lands two folders deep
-    and whose base name alone names no module at all.
-
-    An APPLICATION static file falls through, its remainder starting at the
-    application's own folder rather than at the workspace's.
+    Inverts the two writers in `export_apex/files.py`. Both remainders are read
+    whole rather than by base name, because both names carry separators: the
+    REST fixture publishes `adt_fixture/status`, two folders deep.
     """
     head = apex_head_for(path, config)
     if head is None:
@@ -312,12 +343,7 @@ def collect_workspace_signatures(
     *,
     present_files: Mapping[str, bool] | None = None,
 ) -> list[WorkspaceArtifact]:
-    """One row per schema-level artifact the patch overwrites, read out of paths.
-
-    The same walk `collect_signatures` makes over database objects, and the same
-    presence rule: a file the patch carries out of git is guarded even when the
-    working tree no longer holds it, and a deletion is guarded by nobody.
-    """
+    """One row per schema-level artifact the patch overwrites, read out of paths."""
     artifacts: list[WorkspaceArtifact] = []
     for relative in sorted(files):
         identity = _workspace_identity(relative, config)
@@ -336,6 +362,8 @@ def collect_workspace_signatures(
 
 
 def workspace_lock_payload(
+    root: Path,
+    folder: Path,
     artifacts: list[WorkspaceArtifact],
     config: dict[str, Any],
     *,
@@ -343,47 +371,20 @@ def workspace_lock_payload(
 ) -> list[str]:
     """One block per artifact kind the patch carries, beside the object guard.
 
-    A block per kind rather than one over both: the two dictionaries share no
-    column, so a single cursor would have to union two selects that agree on
-    nothing but the shape of the answer.
-
-    `patch_signatures` owns it, the same key that owns the object guard's drift
-    branch, because it IS that comparison over a different table.
-    `patch_core_locks` is not read at all and moves nothing here.
+    `patch_signatures` owns it, being the same comparison over a different
+    table; `patch_core_locks` is not read at all.
     """
     if not artifacts or not config.get("patch_signatures", True):
         return []
     stamp = built_at(records or [])
     lines: list[str] = []
     for kind, guard in WORKSPACE_GUARDS.items():
-        named = [item for item in artifacts if item.kind == kind]
-        if not named:
+        names = [item.name for item in artifacts if item.kind == kind]
+        if not names:
             continue
-        block = WORKSPACE_LOCK_BLOCK.format(
-            **guard,
-            rows     = artifact_rows(named),
-            built_at = stamp,
-        )
-        lines.extend(["", *block.splitlines()])
+        lines.extend(_bind_block(guard["heading"], guard["bind"], names, stamp))
+        lines.extend(_lock_link(root, folder, config, guard["script"]))
     return lines
-
-
-def artifact_rows(artifacts: list[WorkspaceArtifact]) -> str:
-    """The quoted names of the cursor's own IN list, escaped like every other."""
-    return ",\n".join(
-        WORKSPACE_ROW.format(name=escape_literal(item.name)) for item in artifacts
-    )
-
-
-def unlock_payload(
-    objects: list[PatchObject],
-    config: dict[str, Any],
-) -> list[str]:
-    """Its pair, at the bottom, releasing exactly what the top of the file took."""
-    if not objects or not config.get("patch_core_locks", True):
-        return []
-    block = UNLOCK_BLOCK.format(rows=object_rows(objects))
-    return ["", *block.splitlines()]
 
 
 __all__ = [name for name in globals() if not name.startswith("_")]

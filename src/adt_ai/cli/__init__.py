@@ -35,6 +35,7 @@ from adt_ai.cli.startup import print_startup_failure as _print_startup_failure
 
 try:
     from adt_ai.cli import commands_dependencies as _commands_dependencies
+    from adt_ai.cli import commands_diff as _commands_diff
     from adt_ai.cli import commands_export_data as _commands_export_data
     from adt_ai.cli import commands_exports as _commands_exports
     from adt_ai.cli import commands_flow as _commands_flow
@@ -67,6 +68,7 @@ else:
         _constants,
         _parser,
         _context,
+        _commands_diff,
         _commands_history,
         _commands_recompile,
         _commands_patch,
@@ -81,6 +83,7 @@ else:
     _PATCH_MODULES = (*_PATCH_MODULES, _context_connection, _context_errors)
     _PATCHABLE_NAMES = (
         "CalendarRunner",
+        "DiffRunner",
         "DoctorRunner",
         "DROPBOX_PATH_RE",
         "PatchRunner",

@@ -189,6 +189,7 @@ Exactly one action flag is required, and each names the further arguments it nee
 | `-service`, `--service` | No | none | With `-create` or `-add-env`, set the service. |
 | `-sid`, `--sid` | No | none | With `-create`, set the SID when no service is used. |
 | `-wallet`, `--wallet` | No | none | With `-create`, set the environment's wallet name or path. |
+| `-thick`, `--thick` | No | off | With `-create` or `-add-env`, use thick mode. Bare or `Y` writes `thick: Y` and finds the client through `ORACLE_HOME`; a folder also writes `client_lib_dir`. Fills missing keys and never overwrites one. |
 | `-workspace`, `--workspace` | No | none | With `-create`, set the schema's APEX workspace. |
 | `-app`, `--app` | No | none | With `-create`, set the schema's APEX application scope. |
 | `-prefix`, `--prefix` | No | none | With `-create`, set the export prefix filter, which exports only matching names. |

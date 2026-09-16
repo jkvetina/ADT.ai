@@ -6,7 +6,7 @@ What `-trailing` rewrites and why, which object types it covers, the separate pa
 
 ## What it fixes
 
-`-trailing` fixes the version-control noise the export creates. `export_db` strips trailing whitespace from every line it writes, so an untouched 10k-line package still differs from the database's stored source on every export. `-trailing` repairs the *source* side once per schema.
+`-trailing` fixes the diff noise the export creates. `export_db` strips trailing whitespace from every line it writes, so an untouched 10k-line package still differs from the database's stored source on every export. `-trailing` repairs the *source* side once per schema.
 
 There is no preview mode and no second flag to confirm with: asking for `-trailing` is asking for the fix. It lists each rewritten object as it goes under an `UPDATED <n> OBJECTS:` header, in the shared object listing ([console](console.md)), and a clean schema prints `UPDATED 0 OBJECTS:`, the proof the pass ran.
 

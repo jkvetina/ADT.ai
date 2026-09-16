@@ -8,7 +8,7 @@ What an exported file looks like, the folder tree it lands in, how to reorganize
 
 ## What the exported DDL looks like
 
-Normalization is where the export earns a readable comparison. Bodies are preserved; only the parts old ADT rewrote are rewritten:
+Normalization is where the export earns a readable diff. Bodies are preserved; only the parts old ADT rewrote are rewritten:
 
 - **Definition lines** for `PACKAGE`, `PACKAGE BODY`, `PROCEDURE`, `FUNCTION`, `TRIGGER`, `TYPE`, `TYPE BODY` and `SYNONYM` lose the owner qualifier, a simple quoted uppercase name is unquoted and lowercased, and the terminator is cleaned. Body text is never touched.
 - **Views** drop the metadata header's column list and default collation, and format quoted select-list items lowercased, one per line, preserving expression text and layout from `FROM` onward. A select list carrying a comment is left exactly as the database returned it.
@@ -218,7 +218,7 @@ The file it writes is the one [patch_hash.md](patch_hash.md) already reads, so n
 ## What the measured baseline will not do
 
 - **It is full by construction.** `-recent`, `-name`, `-type`, `-by`, `-my` and `-delete` are refused, naming the flag, exit `2`. A narrowed run would write a partial baseline that reads on disk exactly like a complete one.
-- **It writes nothing and deletes nothing**: no object files, no `.fix` sidecars, no `auto_delete` sweep. It never reports deleted objects either, because a file the target lacks is a difference for a hash patch to decide about.
+- **It writes no object file and deletes none**: no `.fix` sidecars, no `auto_delete` sweep. The one thing it writes besides the log is each table, rendered as an export renders it, under `patch_hashes/baseline.<ENV>/`, which is the version a hash patch diffs from. It never reports deleted objects either, because a file the target lacks is a difference for a hash patch to decide about.
 - **It advances no stored state.** Neither the `-recent` watermark nor the job signatures move, because both record what an export *wrote*.
 
 It records one `file | commit | hash` line per object, and a `measured` token on the header. That token is the difference between a reading and a belief: `snapshot` means the working tree was assumed, `deployed` means a deploy advanced it, `measured` means somebody asked the database.
@@ -229,4 +229,4 @@ A run replaces every database-path entry for the schemas it exported and leaves 
 
 APEX is that gap, and measuring it needs the same flag on `export_apex`, which does not exist yet.
 
-**The sharp edge.** Against a measured baseline, `DELETED` means the target holds an object your repository does not, and a hash patch generates a DROP helper for it. A hotfix applied straight to the target, or an object another developer owns, is a DROP in your next hash patch. Read the `CHANGED FILES:` table before building.
+**The sharp edge.** Against a measured baseline, `DELETED` means the target holds an object your repository does not, and a hash patch generates a DROP helper for it. A hotfix applied straight to the target, or an object another developer owns, is a DROP in your next hash patch. Read the `CHANGED FILES:` table before building. A hotfix that changed a table the repository also holds is the opposite case: it reads `MODIFIED`, and the stored table makes the ALTER from the hotfixed shape to yours.

@@ -23,6 +23,7 @@ from typing import Any
 from adt_ai.cli.constants import PatchError, print_adt_header, print_adt_table
 from adt_ai.cli.context import _project_relative
 from adt_ai.cli.patch_preview_render import _hash_changed_rows
+from adt_ai.patch.baseline_tables import working_tree_tables, write_baseline_tables
 from adt_ai.patch.content import authoritative_commit
 from adt_ai.patch.hashes import (
     Baseline,
@@ -122,6 +123,10 @@ def run_baseline(
         commits,
         target_env = target_env,
         stamp      = datetime.now().strftime(BASELINE_STAMP_FORMAT),
+    )
+    # Every table beside the log, replaced whole like the log is (ADT #857).
+    write_baseline_tables(
+        path, working_tree_tables(root, config, current), covered=lambda file: True
     )
     print_adt_header("WRITING BASELINE:")
     # One row, and flat: a baseline file is named rather than listed (ADT #504).

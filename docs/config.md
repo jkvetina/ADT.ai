@@ -83,7 +83,7 @@ rest_timeout_seconds    : 60
 
 `connect_timeout_seconds` bounds only the connection attempt, reconnecting to a different schema included. `query_timeout_seconds` bounds each query round trip once connected, so a slow query keeps its own budget and is never aborted early because the connect timeout is short.
 
-Those two bound the Python driver. SQLcl is a separate child process and is deliberately left unbounded, so a command that drives a long script through it runs for as long as the work takes.
+Those two bound the Python driver. SQLcl is a separate child process and is deliberately left unbounded, so `patch -deploy` and `diff` run for as long as the work takes.
 
 The one exception is `rest_timeout_seconds`, which bounds `export_apex -rest`, whose SQLcl call could otherwise sit for many minutes showing nothing but a crawling bar. Past the budget SQLcl is killed and the run reports the timeout with whatever it printed first.
 
@@ -107,7 +107,7 @@ Pick it by how the deployment targets a schema. Leave it `false` where the conne
 
 Turn it `true` where the deploying user is not the owner and installs into several schemas in one session, so each statement carries its own target and nothing depends on session state.
 
-Flipping the key rewrites the definition line of every object on the next export, so it is a one-time whole-repository change rather than a per-object choice. Directories are the one object type that carried the owner before this key existed and now follow it like everything else.
+Flipping the key rewrites the definition line of every object on the next export, so it is a one-time whole-repository diff rather than a per-object choice. Directories are the one object type that carried the owner before this key existed and now follow it like everything else.
 
 <br>
 
@@ -159,7 +159,7 @@ The key covers `VIEW` and `MATERIALIZED VIEW` together. It changes only the head
 
 ## Line endings
 
-Every generated text file, exported DDL, CSVs, merge scripts, patch files, logs and caches, is written with **LF line endings on every platform** by default, so one export produces identical bytes on macOS, Linux and Windows and never shows a whole-file line-ending change. Set `file_crlf` to write CRLF everywhere instead, typically to match a CRLF working tree:
+Every generated text file, exported DDL, CSVs, merge scripts, patch files, logs and caches, is written with **LF line endings on every platform** by default, so one export produces identical bytes on macOS, Linux and Windows and never shows a whole-file line-ending diff. Set `file_crlf` to write CRLF everywhere instead, typically to match a CRLF working tree:
 
 ```yaml
 file_crlf               : False
