@@ -14,10 +14,10 @@ from __future__ import annotations
 
 from adt_ai.shared.queries.sqlite_store import META_TABLE_DDL
 
-# Bump when any table definition changes. A file at version 3 is lifted in
-# place on open (ADT #642); anything older is wiped by a refresh and refused by
-# a query mode, the same split the fold-on-refresh already draws.
-SCHEMA_VERSION = "4"
+# Bump when any table definition changes. A file at version 3 or 4 is lifted in
+# place on open (ADT #642, #873); anything older is wiped by a refresh and
+# refused by a query mode, the same split the fold-on-refresh already draws.
+SCHEMA_VERSION = "5"
 
 # Tables removed from the schema that must be dropped on every open() (no version bump needed).
 LEGACY_TABLES: tuple[str, ...] = ("ALL_USERS",)
@@ -59,7 +59,6 @@ _TABLE_DEFS: dict[str, tuple[tuple[tuple[str, str], ...], tuple[str, ...]]] = {
         (
             ("OWNER", "TEXT NOT NULL"),
             ("CONSTRAINT_NAME", "TEXT NOT NULL"),
-            ("TABLE_NAME", "TEXT NOT NULL"),
             ("COLUMN_NAME", "TEXT NOT NULL"),
             ("POSITION", "INTEGER"),
         ),
@@ -72,7 +71,6 @@ _TABLE_DEFS: dict[str, tuple[tuple[tuple[str, str], ...], tuple[str, ...]]] = {
             ("OBJECT_TYPE", "TEXT NOT NULL"),
             ("NAME", "TEXT"),
             ("TYPE", "TEXT"),
-            ("USAGE", "TEXT"),
             ("USAGE_ID", "INTEGER"),
             ("USAGE_CONTEXT_ID", "INTEGER"),
         ),
@@ -115,25 +113,6 @@ _TABLE_DEFS: dict[str, tuple[tuple[tuple[str, str], ...], tuple[str, ...]]] = {
         ),
         ("APPLICATION_ID", "USED_DB_OBJECT_ID", "COMPONENT_ID", "PROPERTY_ID"),
     ),
-    "APEX_USED_DB_OBJ_DEPENDENCIES": (
-        (
-            ("APPLICATION_ID", "INTEGER NOT NULL"),
-            ("USED_DB_OBJECT_ID", "INTEGER NOT NULL"),
-            ("USED_DB_OBJECT_OWNER", "TEXT"),
-            ("USED_DB_OBJECT_NAME", "TEXT"),
-            ("USED_DB_OBJECT_TYPE", "TEXT"),
-            ("REFERENCED_OBJECT_OWNER", "TEXT"),
-            ("REFERENCED_OBJECT_NAME", "TEXT"),
-            ("REFERENCED_OBJECT_TYPE", "TEXT"),
-        ),
-        (
-            "APPLICATION_ID",
-            "USED_DB_OBJECT_ID",
-            "REFERENCED_OBJECT_OWNER",
-            "REFERENCED_OBJECT_TYPE",
-            "REFERENCED_OBJECT_NAME",
-        ),
-    ),
 }
 
 _INDEX_DEFS: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -151,7 +130,6 @@ _INDEX_DEFS: dict[str, tuple[str, tuple[str, ...]]] = {
         "USER_CONSTRAINTS",
         ("R_OWNER", "R_CONSTRAINT_NAME"),
     ),
-    "ix_user_cons_columns_table": ("USER_CONS_COLUMNS", ("OWNER", "TABLE_NAME")),
     "ix_user_objects_type_owner": ("USER_OBJECTS", ("OBJECT_TYPE", "OWNER")),
     "ix_apex_used_db_objects_lookup": (
         "APEX_USED_DB_OBJECTS",
@@ -161,11 +139,19 @@ _INDEX_DEFS: dict[str, tuple[str, tuple[str, ...]]] = {
         "APEX_USED_DB_OBJECT_COMP_PROPS",
         ("USED_DB_OBJECT_NAME", "APPLICATION_ID"),
     ),
-    "ix_apex_used_db_obj_dependencies_lookup": (
-        "APEX_USED_DB_OBJ_DEPENDENCIES",
-        ("USED_DB_OBJECT_OWNER", "USED_DB_OBJECT_NAME"),
-    ),
 }
+
+#: What version 5 dropped because nothing read it back (ADT #873): the table,
+#: the columns, and the indexes that named them.
+RETIRED_TABLES: tuple[str, ...] = ("APEX_USED_DB_OBJ_DEPENDENCIES",)
+RETIRED_COLUMNS: dict[str, tuple[str, ...]] = {
+    "USER_CONS_COLUMNS": ("TABLE_NAME",),
+    "USER_IDENTIFIERS": ("USAGE",),
+}
+RETIRED_INDEXES: tuple[str, ...] = (
+    "ix_user_cons_columns_table",
+    "ix_apex_used_db_obj_dependencies_lookup",
+)
 
 # USER_* tables are refreshed per schema; APEX_* per app.
 USER_TABLES: tuple[str, ...] = (
@@ -179,7 +165,6 @@ USER_TABLES: tuple[str, ...] = (
 APEX_TABLES: tuple[str, ...] = (
     "APEX_USED_DB_OBJECTS",
     "APEX_USED_DB_OBJECT_COMP_PROPS",
-    "APEX_USED_DB_OBJ_DEPENDENCIES",
 )
 
 TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
@@ -222,14 +207,22 @@ CREATE TABLE IF NOT EXISTS refreshes (
 
 #: The index names version 3 used, dropped on the lift; the schema recreates
 #: each under its `ix_<table>_` name.
-LEGACY_INDEXES: tuple[str, ...] = tuple(f"idx_{name[3:]}" for name in _INDEX_DEFS)
+LEGACY_INDEXES: tuple[str, ...] = tuple(
+    f"idx_{name[3:]}" for name in (*_INDEX_DEFS, *RETIRED_INDEXES)
+)
 
 DROP_SCHEMA: str = "\n".join(
     [
-        *(f"DROP TABLE IF EXISTS {name};" for name in reversed(list(_TABLE_DEFS))),
+        *(
+            f"DROP TABLE IF EXISTS {name};"
+            for name in (*reversed(list(_TABLE_DEFS)), *RETIRED_TABLES)
+        ),
         "DROP TABLE IF EXISTS refreshes;",
         "DROP TABLE IF EXISTS _meta;",
-        *(f"DROP INDEX IF EXISTS {name};" for name in (*_INDEX_DEFS, *LEGACY_INDEXES)),
+        *(
+            f"DROP INDEX IF EXISTS {name};"
+            for name in (*_INDEX_DEFS, *RETIRED_INDEXES, *LEGACY_INDEXES)
+        ),
     ]
 )
 

@@ -22,7 +22,9 @@ import re
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from adt_ai.shared.commit_file_classes import below_patch_root
 from adt_ai.shared.dates import within_recent_window
+from adt_ai.shared.patch_folders import PATCH_FOLDER_RE
 from adt_ai.shared.sql_like import matches_sql_like
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle, annotations only
@@ -42,8 +44,77 @@ def _within_window(commit_date: str, recent_days: int | float) -> bool:
     return within_recent_window(moment, recent_days)
 
 
+def recent_patch_marker(
+    records: list[CommitRecord],
+    request: PatchRequest,
+) -> tuple[int, str] | None:
+    """The newest commit that shipped a folder of this patch code, and that folder.
+
+    Old ADT's `patch_recent` (`ADT--OLD/patch.py:951-962`), ported by ADT #851:
+    the folder's date and sequence are set aside and its CODE compared, so every
+    patch ever built for a code counts, whether its folder is still on disk or
+    `-archive` took it. Asked of the whole scan, never of a filtered list, since
+    the commit that shipped the folder rarely passes `-my` or the subject filter.
+
+    ``None`` whenever the patch code is not what selects the commits, which is the
+    same three exemptions the subject filter below makes, plus `-force`
+    (``include_patched``), plus a folder shape carrying no code. The folder the
+    run NAMED is never its own marker: a listing or a refresh of a patch is about
+    the commits that patch shipped (`#424`). The code is matched without case,
+    because a folder's is minted upper case from whatever `-name` was typed.
+    """
+    if (
+        not request.patch_code
+        or request.include_patched
+        or request.search_terms
+        or request.commit_refs
+        or request.hash_mode
+    ):
+        return None
+    folder_re = request.patch_folder_re or PATCH_FOLDER_RE
+    if "code" not in folder_re.groupindex:
+        return None
+    code = request.patch_code.upper()
+    found: tuple[int, str] | None = None
+    for record in records:
+        for folder in record.patches:
+            match = folder_re.match(folder)
+            if (
+                folder != request.patch_folder
+                and match
+                and match.group("code").upper() == code
+                and (found is None or record.number > found[0])
+            ):
+                found = (record.number, folder)
+    return found
+
+
+def _ships_only_patches(record: CommitRecord, patch_root: str) -> bool:
+    """Did this commit touch nothing outside the patch root?
+
+    Such a commit is a patch being shipped, logged or archived, and carries no
+    work for the next one. Old ADT kept the shipping commit itself
+    (`commit_id < patch_recent`), and its subject names the code, so a code with
+    nothing new still selected that one commit and built from it. A commit that
+    also changed an object stays: the object need not be in the patch it shipped.
+    """
+    paths = [*record.files, *record.deleted]
+    return bool(paths) and all(below_patch_root(path, patch_root) for path in paths)
+
+
 def _filter_records(records: list[CommitRecord], request: PatchRequest) -> list[CommitRecord]:
     filtered = records
+    marker = recent_patch_marker(records, request)
+    if marker is not None:
+        # `patch.py:1100`, which exempted a commit named with `-commit`; here a
+        # `-commit` switches the cutoff off altogether in `recent_patch_marker`,
+        # the same way it switches off the subject filter.
+        filtered = [
+            record
+            for record in filtered
+            if record.number >= marker[0]
+            and not _ships_only_patches(record, request.patch_root)
+        ]
     if request.ignore_commits:
         ignored = {value.lower() for value in request.ignore_commits}
         filtered = [

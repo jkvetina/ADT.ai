@@ -129,6 +129,13 @@ class ExportDbReporter:
     def finish_export(self, schema: str) -> None:
         pass
 
+    def job_arguments_not_exported(self, schema: str, names: list[str]) -> None:
+        pass
+
+#: `#861`, spelled by Jan picking it. The jobs whose arguments had no CREATE_JOB
+#: block to be written into, listed once the schema's export is done.
+JOB_ARGUMENTS_NOT_EXPORTED_HEADER = "WARNING - JOB ARGUMENTS NOT EXPORTED:"
+
 # The overview table's two columns, named once so every render of it agrees.
 # It used to exist so a run discovering nothing still printed its column
 # headers; `#442` retired that reading, and a table with no rows in it now
@@ -431,6 +438,20 @@ class ConsoleExportDbReporter(ExportDbReporter):
             return
         self._bar.close()
         self._bar = None
+
+    def job_arguments_not_exported(self, schema: str, names: list[str]) -> None:
+        """Jobs exported without their arguments, under one header per schema.
+
+        After the export rather than inside it (`#861`): the bare `Warning:` line
+        this replaced landed in the middle of the object table, between the job's
+        own row and the next one. Printed under `-silent` too, as that line was,
+        since a job that deploys without its arguments is not progress chatter.
+        Rows are database objects, so they go through `shared/object_list.py`.
+        """
+        if not names:
+            return
+        print_adt_header(JOB_ARGUMENTS_NOT_EXPORTED_HEADER)
+        print_object_rows(("JOB", name) for name in names)
 
 def _overview_header(
     names: list[str] | None,

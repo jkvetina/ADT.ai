@@ -1,6 +1,9 @@
--- `SET DEFINE OFF`, the workspace and the keep-sessions call all used to sit
--- here behind a hand-edited <APEX_WORKSPACE> placeholder. `patch -create`
--- emits every one of them itself now, with the workspace resolved from
--- `config/apex_apps.yaml` (ADT #298), and it emits them BEFORE this file so
--- anything you put here still wins.
 SET SERVEROUTPUT OFF
+
+-- install or upgrade supporting objects during the import
+/*
+BEGIN
+    APEX_APPLICATION_INSTALL.SET_AUTO_INSTALL_SUP_OBJ(p_auto_install_sup_obj => TRUE);
+END;
+/
+*/

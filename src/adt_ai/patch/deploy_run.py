@@ -43,6 +43,7 @@ from adt_ai.patch.deploy_progress import (
 )
 from adt_ai.patch.deploy_receipt import (
     _include_closure,
+    _runs_sql,
     deployment_complete,
     deployment_fingerprint,
     write_deploy_receipt,
@@ -488,12 +489,8 @@ def _installed_app_id(
         text = path.read_text(encoding="utf-8", errors="replace")
         if environment:
             text = text.replace(environment, "")
-        for line in text.splitlines():
-            value = line.strip().upper()
-            if value and not value.startswith(
-                ("--", "PROMPT ", "SET ", "WHENEVER ", "SPOOL ", "@", "START ")
-            ):
-                return item.app_id
+        if _runs_sql(text):
+            return item.app_id
     return None
 
 

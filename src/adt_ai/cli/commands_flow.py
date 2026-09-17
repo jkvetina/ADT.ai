@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import re
-import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 from adt_ai.cli.constants import (
@@ -29,11 +29,20 @@ from adt_ai.cli.context import (
     _parse_apex_app_selection,
     _print_connection_block,
 )
+from adt_ai.cli.export_apex_messages import (
+    APP_NOT_FOUND_HEADER,
+    SCHEMA_NOT_CONFIGURED_HEADER,
+    print_apex_app_not_found,
+)
 from adt_ai.cli.export_apex_owners import apex_lookup_schema, listed_applications
 from adt_ai.cli.gateways import build_gateway, cached_schema_gateway_factory
 from adt_ai.shared.connections import Connection
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.internal_paths import internal_path
+from adt_ai.shared.progress import schema_label
+
+#: `#861`, spelled by Jan picking it over reusing `APP NOT FOUND`.
+APP_NOT_LOADED_HEADER = "WARNING - APP NOT LOADED:"
 
 _NO_FLOW_DB_MESSAGE = "No APEX flow database found."
 _NO_FLOW_DB_REMEDY = "Run `adtai flow -app N -refresh` to build it."
@@ -110,17 +119,19 @@ def _run_flow(
         if args.to_page is None and args.from_page is None:
             _print_flow_hint()
             return 2
-        any_error = False
+        not_loaded = [app_id for app_id in app_ids if not store.has_app(app_id)]
+        _print_not_loaded(
+            f"APP {app_id} is not loaded, run adtai flow -app {app_id} -refresh first"
+            for app_id in not_loaded
+        )
         for app_id in app_ids:
-            if not store.has_app(app_id):
-                print(_app_not_loaded_message(app_id), file=sys.stderr)
-                any_error = True
+            if app_id in not_loaded:
                 continue
             if args.to_page is not None:
                 _print_flow_incoming(store, app_id, args.to_page)
             elif args.from_page is not None:
                 _print_flow_outgoing(store, app_id, args.from_page)
-        return 1 if any_error else 0
+        return 1 if not_loaded else 0
 
 
 def _selection_to_store_ids(store: ApexFlowStore, selection: ApexAppSelection) -> list[int]:
@@ -192,6 +203,8 @@ def _refresh_flow(
     # finished table with the screen saying nothing. Up here they run under the
     # module banner, which is still the newest thing on the terminal.
     owner_schemas: dict[int, str] = {}
+    not_found: list[str] = []
+    not_configured: list[str] = []
     for app_id in app_ids:
         try:
             owner_schemas[app_id] = resolve_configured_apex_owner_schema(
@@ -200,8 +213,18 @@ def _refresh_flow(
                 configured_schemas=configured_schemas,
             ).schema
         except ApexOwnerResolutionError as error:
-            print(str(error), file=sys.stderr)
+            if error.owner is None:
+                not_found.append(str(app_id))
+            else:
+                not_configured.append(
+                    f"APP {app_id} is owned by {error.owner}, "
+                    "add it to your connections to refresh it"
+                )
             any_error = True
+    # Under the two headers `export_apex` names these same cases with (`#858`),
+    # rather than the resolver's bare sentences on stderr (`#861`).
+    _print_warning(SCHEMA_NOT_CONFIGURED_HEADER, not_configured)
+    print_apex_app_not_found(not_found)
 
     with ApexFlowStore.open(db_path) as store:
         for app_id in app_ids:
@@ -226,8 +249,12 @@ def _refresh_flow(
                 result = ApexFlowRefreshRunner(flow_gateway_factory).refresh(
                     ApexFlowRefreshRequest(app_id=app_id, schema=schema, store=store)
                 )
-            except ApexFlowError as error:
-                print(str(error), file=sys.stderr)
+            except ApexFlowError:
+                # The owner answered and the application read came back empty.
+                _print_warning(
+                    APP_NOT_FOUND_HEADER,
+                    [f"APP {app_id} is not in its owner schema {schema_label(schema)}"],
+                )
                 any_error = True
                 continue
 
@@ -248,14 +275,35 @@ def _refresh_flow(
 
 
 def _delete_flow_apps(store: ApexFlowStore, app_ids: list[int]) -> int:
-    any_error = False
+    not_loaded: list[int] = []
     for app_id in app_ids:
         if store.remove_app(app_id):
             print_adt_header(f"DELETED APP {app_id}:")
         else:
-            print(f"Application {app_id} was not loaded; nothing to delete.", file=sys.stderr)
-            any_error = True
-    return 1 if any_error else 0
+            not_loaded.append(app_id)
+    _print_not_loaded(f"APP {app_id} is not loaded, nothing to delete" for app_id in not_loaded)
+    return 1 if not_loaded else 0
+
+
+def _print_not_loaded(rows: Iterable[str]) -> None:
+    """Applications the flow store does not hold, under one header (`#861`).
+
+    Jan picked `APP NOT LOADED` over reusing `APP NOT FOUND`, which already means
+    missing from APEX itself: an app named here is in APEX and simply was never
+    refreshed into the local store. These were bare stderr lines, one per app,
+    and the remedy named `adt flow`, the old CLI.
+    """
+    _print_warning(APP_NOT_LOADED_HEADER, list(rows))
+
+
+def _print_warning(header: str, rows: list[str]) -> None:
+    """One warning section of sentence rows, the shape `export_apex_messages` prints."""
+    if not rows:
+        return
+    print_adt_header(header)
+    for row in rows:
+        print(f"  {row}")
+    print()
 
 
 def _print_flow_incoming(store: ApexFlowStore, app_id: int, page: int) -> int:
@@ -322,10 +370,6 @@ def _invalid_report_column_component(component: str) -> bool:
 
 def _report_column_fallback(edge: FlowEdge) -> str:
     return f"COL_{edge.component_id}" if edge.component_id else ""
-
-
-def _app_not_loaded_message(app_id: int) -> str:
-    return f"Application {app_id} is not loaded. Run 'adt flow -app {app_id} -refresh' first."
 
 
 def _print_flow_hint() -> None:

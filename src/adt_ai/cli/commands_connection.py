@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import sys
+import warnings
 from pathlib import Path
 
 from adt_ai.cli.constants import (
     ConfigLoader,
     ConnectionLoader,
+    print_adt_header,
     print_module_banner,
 )
 from adt_ai.cli.context import (
@@ -29,6 +32,11 @@ from adt_ai.shared import crypto
 from adt_ai.shared.connections import ConnectionNotFoundError
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.secret import Secret
+
+#: `#861`, spelled by Jan picking it. Named once above a password prompt that
+#: has no terminal to hide the typing on. The name avoids the word bandit reads
+#: as a hardcoded credential (B105).
+ECHOED_INPUT_HEADER = "WARNING - PASSWORD MAY BE ECHOED:"
 
 _CONNECTION_ACTIONS = (
     ("create", "create"),
@@ -116,8 +124,8 @@ def _connection_request(
     )
 
 
-def _prompt_password(prompt: str) -> str | None:
-    """One hidden password, or None when stdin has nothing left to give.
+class _PasswordPrompt:
+    """Hidden password prompts for one action, each answer or None at end of stdin.
 
     With no usable terminal `getpass` falls back to reading a line off stdin,
     and that read raises `EOFError` the moment the stream is closed or spent,
@@ -127,14 +135,50 @@ def _prompt_password(prompt: str) -> str | None:
     below decide what an exhausted stdin means for their own action; here it is
     only reported, never guessed at.
 
+    **That fallback also announced itself in Python's words**, a `GetPassWarning`
+    with its source line and a bare `Warning: Password input may be echoed.`,
+    above every prompt. Jan picked the header that replaces them (`#861`). The
+    warning is raised rather than printed, which stops `getpass` before its own
+    line and before it reads, and the read it would have made is made here. One
+    instance per action, so a create asking for two passwords names it once.
+
     `KeyboardInterrupt` deliberately passes through. Ctrl-C is an abort rather
     than an empty answer, and the runtime already ends on 130 and a one-line
     "Interrupted by user."
     """
-    try:
-        return getpass.getpass(prompt)
-    except EOFError:
+
+    def __init__(self) -> None:
+        self._echo_named = False
+
+    def __call__(self, prompt: str) -> str | None:
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", getpass.GetPassWarning)
+                return getpass.getpass(prompt)
+        except getpass.GetPassWarning:
+            self._name_the_echo()
+            return _read_visible_line(prompt)
+        except EOFError:
+            return None
+
+    def _name_the_echo(self) -> None:
+        if self._echo_named:
+            return
+        self._echo_named = True
+        # stderr, where the prompt itself is written, so the two stay in order.
+        print_adt_header(ECHOED_INPUT_HEADER, file=sys.stderr)
+        print("  no terminal, the password is read from stdin", file=sys.stderr)
+        print(file=sys.stderr)
+
+
+def _read_visible_line(prompt: str) -> str | None:
+    """`getpass`'s own no-terminal read, minus its warning line."""
+    sys.stderr.write(prompt)
+    sys.stderr.flush()
+    line = sys.stdin.readline()
+    if not line:
         return None
+    return line[:-1] if line.endswith("\n") else line
 
 
 def _no_password_available(action: str) -> str:
@@ -152,17 +196,18 @@ def _collect_connection_password(
     action: str, args: argparse.Namespace
 ) -> tuple[str | None, str | None]:
     label = args.env if action == "set-wallet-pwd" else f"{args.env}.{args.schema}"
+    prompt_password = _PasswordPrompt()
     if action in {"set-pwd", "set-wallet-pwd"}:
         # These two write a password by definition, so a blank is already a
         # refusal and an exhausted stdin cannot be read as one either way. It
         # takes its own message: "did not match" would name the wrong problem,
         # and a confirmation that never ran matched nothing.
-        first = _prompt_password(f"New password for {label}: ")
+        first = prompt_password(f"New password for {label}: ")
         if first is None:
             return None, _no_password_available(action)
         if not first:
             return None, f"a password is required for -{action}"
-        confirmation = _prompt_password("Confirm password: ")
+        confirmation = prompt_password("Confirm password: ")
         if confirmation is None:
             return None, _no_password_available(action)
         if first != confirmation:
@@ -170,11 +215,12 @@ def _collect_connection_password(
         return first, None
     # add-schema: a password is optional; a blank entry skips writing pwd, and
     # so does a stdin with nothing on it.
-    return _prompt_password(f"Password for {label} (leave blank to skip): ") or None, None
+    return prompt_password(f"Password for {label} (leave blank to skip): ") or None, None
 
 
 def _collect_create_passwords(args: argparse.Namespace) -> tuple[str | None, str | None]:
-    schema_password = _prompt_password(
+    prompt_password = _PasswordPrompt()
+    schema_password = prompt_password(
         f"Password for {args.env}.{args.schema} (leave blank to skip): "
     )
     wallet_password = None
@@ -182,7 +228,7 @@ def _collect_create_passwords(args: argparse.Namespace) -> tuple[str | None, str
     # exhausted stdin does not, so the second prompt is skipped rather than
     # printed at a reader with no way to answer it.
     if args.wallet and schema_password is not None:
-        wallet_password = _prompt_password(
+        wallet_password = prompt_password(
             f"Wallet password for {args.env} (leave blank to skip): "
         )
     return (schema_password or None), (wallet_password or None)

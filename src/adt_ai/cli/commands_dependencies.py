@@ -377,7 +377,6 @@ def _stored_apex_applications(root: Path, apps: list[int]) -> list[ApexApplicati
         ApexApplication(
             owner        = str(row.get("owner") or ""),
             workspace    = str(row.get("workspace") or ""),
-            workspace_id = None,
             app_group    = str(row.get("app_group") or ""),
             app_id       = app,
             app_alias    = str(row.get("app_alias") or ""),

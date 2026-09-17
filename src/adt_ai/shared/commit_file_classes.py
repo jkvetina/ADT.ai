@@ -14,7 +14,7 @@ which is `patch/layout.py`'s job and needs the whole `object_types` map.
 from __future__ import annotations
 
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 def classify_file(
@@ -41,6 +41,21 @@ def classify_file(
     if len(parts) >= 2 and parts[0].lower() == "patch":
         return f"patch:{parts[1]}"
     return "file"
+
+
+def below_patch_root(path: str, patch_root: str) -> tuple[str, ...] | None:
+    """The segments of ``path`` under the project's `patch_root`, or ``None`` (ADT #851).
+
+    Matched without case, the way `classify_file` has always matched `patch`. Two
+    readers ask it, and they must agree on what "inside the patch root" means:
+    `commit_discovery._detected_patches`, for the folder a commit shipped, and
+    `commit_selection`, for a commit that touched nothing else.
+    """
+    root = tuple(part.lower() for part in PurePosixPath(patch_root.strip("/")).parts)
+    parts = PurePosixPath(path).parts
+    if len(parts) <= len(root) or tuple(part.lower() for part in parts[: len(root)]) != root:
+        return None
+    return parts[len(root):]
 
 
 def _apex_segment_index(

@@ -36,6 +36,18 @@ META_VERSION_UPSERT = (
     "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
 )
 
+def table_columns_query(table: str) -> str:
+    return f'PRAGMA table_info("{table}")'
+
+
+def drop_index_statement(index: str) -> str:
+    return f'DROP INDEX IF EXISTS "{index}"'
+
+
+def drop_column_statement(table: str, column: str) -> str:
+    return f'ALTER TABLE "{table}" DROP COLUMN "{column}"'
+
+
 __all__ = [
     "FOREIGN_KEYS_ON",
     "FOREIGN_KEYS_QUERY",
@@ -45,4 +57,7 @@ __all__ = [
     "TABLE_COUNT_QUERY",
     "TABLE_EXISTS_QUERY",
     "annotations",
+    "drop_column_statement",
+    "drop_index_statement",
+    "table_columns_query",
 ]

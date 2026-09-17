@@ -30,7 +30,6 @@ independently, or a file naming only an account would silently lose its email.
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
@@ -38,6 +37,7 @@ from typing import Any
 import yaml
 
 from adt_ai.shared.git_files import git_config_value
+from adt_ai.shared.yaml_io import print_unreadable_yaml
 
 IDENTITY_FILENAME = "IDENTITY.yaml"
 
@@ -54,7 +54,8 @@ def load_identity(search_paths: Iterable[str | Path]) -> dict[str, Any]:
             try:
                 data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
             except yaml.YAMLError as error:
-                print(f"Warning: ignoring unreadable {path}: {error}", file=sys.stderr)
+                # The section every YAML reader prints (`#861`), not a line of its own.
+                print_unreadable_yaml(path, error)
                 continue
             if isinstance(data, dict):
                 return data

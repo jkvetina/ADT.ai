@@ -1,26 +1,35 @@
 from __future__ import annotations
 
+import math
 import subprocess
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from adt_ai.patch.layout import database_object_name, database_object_type
 from adt_ai.rebuild.runner import REVEAL_DEFAULT_LIMIT
 from adt_ai.shared import text_files
+from adt_ai.shared.author_aliases import author_aliases, canonical_author
 from adt_ai.shared.commit_cache import (
     DEFAULT_COMMITS_TEMPLATE,
     current_branch,
     open_store,
 )
 from adt_ai.shared.commit_discovery import commit_ref_matches
+from adt_ai.shared.commit_store import AuthorClause, CommitFilter, CommitStore, StoredCommit
 from adt_ai.shared.dates import within_recent_window
 from adt_ai.shared.git_files import run_git, run_git_bytes
 from adt_ai.shared.identity import resolve_commit_email
 from adt_ai.shared.sql_like import matches_sql_like
 
 FIELD_SEPARATOR = "\x1f"
+
+#: Commits read per page. A page is narrowed in SQL first, so a search that
+#: matches early stops after one read and one that matches rarely walks pages
+#: rather than loading the branch.
+PAGE_SIZE = 200
 
 
 class SearchRepoError(Exception):
@@ -97,14 +106,14 @@ class _Commit:
 class SearchRepoRunner:
     def run(self, request: SearchRepoRequest) -> SearchRepoResult:
         root = request.root.resolve()
-        records = [
-            record
-            for commit in self._commits(request, root)
-            if (record := self._matching_record(request, root, commit)) is not None
-        ]
-        records.sort(key=lambda record: record.number, reverse=True)
-        if request.commit_limit is not None:
-            records = records[:request.commit_limit]
+        records: list[SearchRepoRecord] = []
+        for commit in self._commits(request, root):
+            record = self._matching_record(request, root, commit)
+            if record is None:
+                continue
+            records.append(record)
+            if request.commit_limit is not None and len(records) >= request.commit_limit:
+                break
         restored_files: list[Path] = []
         failed_restores: list[str] = []
         if request.restore:
@@ -115,43 +124,33 @@ class SearchRepoRunner:
             failed_restores = failed_restores,
         )
 
-    def _commits(self, request: SearchRepoRequest, root: Path) -> list[_Commit]:
+    def _commits(self, request: SearchRepoRequest, root: Path) -> Iterator[_Commit]:
+        """The branch's commits newest first, narrowed in SQL, one page at a time.
+
+        It used to load the whole branch and filter in Python, which on a
+        10,000-commit repository was the whole cost of the command. The SQL
+        filter only ever keeps too much, never too little: `_matching_record`
+        still decides every commit, so a filter SQLite cannot state exactly
+        (a regex, an object type, a non-ASCII term) is simply left to it.
+        """
         branch = request.branch or current_branch(root)
+        aliases = author_aliases(request.config)
         with open_store(root, branch, request.cache_file_template) as store:
-            records = store.records(branch)
-        if not records:
-            raise SearchRepoError(
-                f"commit store not found or empty for branch '{branch}', run adtai rebuild first"
-            )
-        existing_paths: set[str] = set()
-        commits: list[_Commit] = []
-        for record in records:
-            files = [path for path in record.files if path]
-            deleted = [path for path in record.deleted if path]
-            # Git's own letters, which the store carries because `rebuild` no
-            # longer throws them away. A store written by an early SQLite build
-            # may still have NULL statuses; there A and M are genuinely
-            # indistinguishable, so the old approximation is the honest answer.
-            file_statuses = {path: status for path, status in record.statuses.items() if path}
-            for path in files:
-                file_statuses.setdefault(path, "M" if path in existing_paths else "A")
-            for path in deleted:
-                file_statuses[path] = "D"
-            commits.append(
-                _Commit(
-                    number        = record.number,
-                    id            = record.id,
-                    author        = record.author,
-                    date          = record.date,
-                    summary       = record.summary,
-                    files         = files,
-                    deleted       = deleted,
-                    file_statuses = file_statuses,
+            if store.ceiling() is None:
+                raise SearchRepoError(
+                    f"commit store not found or empty for branch '{branch}', "
+                    "run adtai rebuild first"
                 )
-            )
-            existing_paths.difference_update(deleted)
-            existing_paths.update(files)
-        return commits
+            criteria = _sql_filter(request, aliases)
+            page = max(request.commit_limit or 0, PAGE_SIZE)
+            below: int | None = None
+            while True:
+                stored = store.search(criteria, limit=page, below=below)
+                for record in stored:
+                    yield _as_commit(store, record, aliases)
+                if len(stored) < page:
+                    return
+                below = stored[-1].number
 
     def _matching_record(
         self,
@@ -166,11 +165,19 @@ class SearchRepoRunner:
         # `resolve_commit_email` since ADT #469, so `-my` here means what it means
         # in every other command: `IDENTITY.yaml`'s `email` when the project
         # states one, `git config user.email` when it does not.
-        if request.my and resolve_commit_email(root=request.root) != commit.author:
+        # The stored author is already mapped through `repo_authors` (ADT #831),
+        # so the identity and the `-by` patterns are mapped the same way.
+        aliases = author_aliases(request.config) if request.my or request.authors else {}
+        if request.my and (
+            canonical_author(resolve_commit_email(root=request.root), aliases)
+            != commit.author
+        ):
             return None
         if not _contains_all(commit.summary, request.summary_terms):
             return None
-        if request.authors and not _matches_any_pattern(commit.author, request.authors):
+        if request.authors and not _matches_any_pattern(
+            commit.author, [canonical_author(p, aliases) for p in request.authors]
+        ):
             return None
 
         files: list[str] = []
@@ -247,6 +254,77 @@ class SearchRepoRunner:
                     staged_paths.add(file_path)
                     run_git(root, ["add", file_path])
         return restored, failed
+
+
+def _as_commit(store: CommitStore, record: StoredCommit, aliases: Mapping[str, str]) -> _Commit:
+    files = [path for path in record.files if path]
+    deleted = [path for path in record.deleted if path]
+    # Git's own letters, which the store carries because `rebuild` no longer
+    # throws them away. A store written by an early SQLite build may still have
+    # NULL statuses; there A and M are genuinely indistinguishable, so the old
+    # approximation is the honest answer: M when the path's newest older row
+    # left it in the tree, A otherwise.
+    file_statuses = {path: status for path, status in record.statuses.items() if path}
+    for path in files:
+        if path not in file_statuses:
+            prior = store.prior_status(path, record.number)
+            file_statuses[path] = "M" if prior not in (None, "D") else "A"
+    for path in deleted:
+        file_statuses[path] = "D"
+    return _Commit(
+        number        = record.number,
+        id            = record.id,
+        author        = canonical_author(record.author, aliases),
+        date          = record.date,
+        summary       = record.summary,
+        files         = files,
+        deleted       = deleted,
+        file_statuses = file_statuses,
+    )
+
+
+def _sql_filter(request: SearchRepoRequest, aliases: Mapping[str, str]) -> CommitFilter:
+    """The part of the request SQLite can narrow by without dropping a match.
+
+    SQLite folds case for ASCII only, so a term or pattern carrying anything
+    else stays with the Python check alone. `-recent` is widened by a day on
+    each side of the author's clock and still decided exactly afterwards.
+    """
+    since = date.fromisoformat(request.since).isoformat() if request.since else None
+    if request.recent:
+        loose = date.today() - timedelta(days=math.ceil(request.recent) + 1)
+        since = max(since or "", loose.isoformat())
+    until = date.fromisoformat(request.until).isoformat() if request.until else None
+    authors: list[AuthorClause] = []
+    keys_ascii = all(key.isascii() for key in aliases)
+    if request.authors and keys_ascii:
+        patterns = [canonical_author(str(p), aliases) for p in request.authors]
+        if all(pattern.isascii() for pattern in patterns):
+            authors.append(AuthorClause(
+                likes     = tuple(patterns),
+                addresses = tuple(
+                    key for key, company in aliases.items()
+                    if _matches_any_pattern(company, patterns)
+                ),
+            ))
+    if request.my and keys_ascii:
+        identity = canonical_author(resolve_commit_email(root=request.root), aliases)
+        if identity.isascii():
+            authors.append(AuthorClause(
+                exacts    = (identity,),
+                addresses = tuple(key for key, company in aliases.items() if company == identity),
+            ))
+    return CommitFilter(
+        since         = since,
+        until         = until,
+        summary_terms = _ascii_terms(request.summary_terms),
+        path_terms    = _ascii_terms(request.file_terms),
+        authors       = tuple(authors),
+    )
+
+
+def _ascii_terms(terms: list[str] | None) -> tuple[str, ...]:
+    return tuple(str(term).lower() for term in terms or [] if str(term).isascii())
 
 
 def _matches_refs(

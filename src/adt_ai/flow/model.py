@@ -22,14 +22,14 @@ class FlowPage:
 @dataclass(frozen=True)
 class FlowEdge:
     app_id: int
-    workspace: str
     src_type: str
     src_page: int | None
     component_id: str | None
     component: str | None
     raw_target: str | None
-    target_app: str | None
     target_app_id: int | None
     target_page: int | None
     flag: str
-    working_copy_id: int = 0
+    # The link's own application token, read by the JSON dump of a refresh.
+    # Not stored (ADT #873), so an edge read back from `flow.db` carries None.
+    target_app: str | None = None

@@ -88,12 +88,27 @@ Before the store exists, every mode says so and exits `1`:
 ```text
 APEX DEPLOYMENT TOOL - FLOW
 ---------------------------
-No APEX flow database found. Run 'adt flow -app N -refresh' to build it.
+
+
+ERROR - INPUT NOT FOUND:
+------------------------
+  No APEX flow database found.
+
+  Run `adtai flow -app N -refresh` to build it.
+
 
 TIMER: 0s
 ```
 
-- An application missing from an existing store reports `Application N is not loaded` and exits `1`.
+An application missing from an existing store is named before the links of the ones that are there, and the run exits `1`. `-delete` names it the same way, as `nothing to delete`:
+
+```text
+WARNING - APP NOT LOADED:
+-------------------------
+  APP 999999 is not loaded, run adtai flow -app 999999 -refresh first
+```
+
+- `-refresh` names an application no configured schema can see under `WARNING - APP NOT FOUND:`, and one owned by a schema your connection file does not list under `WARNING - SCHEMA NOT CONFIGURED:`, both before connecting. Either exits `1`, and the rest still refresh.
 - With a store present and no action flag, the run prints a short hint and exits `2`.
 - Each refreshed application scans under its own `APP <id>, REFRESHING:` header, printed before the reads rather than after them, so the wait never sits on a blank screen. The owner lookup for every requested application runs once, up front, under the banner.
 

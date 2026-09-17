@@ -64,14 +64,16 @@ from adt_ai.patch.object_identity import (  # noqa: F401 (re-exported for existi
 # answer with ADT #753: `table_alter.py` parsed the two `CREATE TABLE` texts and
 # covered columns only, so a PK, UNIQUE, FK, CHECK or index change generated
 # nothing at all. `table_diff_runner.table_alter_sql` asks Oracle instead.
+from adt_ai.patch.sequence_alter import write_sequence_alter_helpers
 from adt_ai.patch.table_diff_runner import TableDiffRefused, table_alter_sql
 from adt_ai.patch.table_versions import (  # noqa: F401 (re-exported for existing importers)
+    _body_at_content_hash,
     _table_baseline,
     _table_versions,
 )
 from adt_ai.shared import text_files
 from adt_ai.shared.commit_discovery import CommitRecord
-from adt_ai.shared.git_files import git_show
+from adt_ai.shared.git_files import git_show  # noqa: F401 (re-exported for existing importers)
 from adt_ai.shared.sql_identifiers import safe_identifier, safe_object_type
 
 
@@ -128,6 +130,16 @@ def _write_generated_patch_scripts(
             hash_tables or {},
         )
     gateways.close()
+    # A sequence is never re-created, so its change ships as an ALTER beside the
+    # table ALTERs, compared in Python rather than by Oracle (ADT #830).
+    alters = [
+        *alters,
+        *write_sequence_alter_helpers(
+            root, script_root, files, records, config,
+            hash_previous = hash_previous,
+            window        = window,
+        ),
+    ]
     return GeneratedScripts(
         alters            = alters,
         paths             = [*drops, *(helper.path for helper in alters)],
@@ -269,27 +281,6 @@ def _write_hash_table_diff_helpers(
             )
         )
     return written, unresolved
-
-def _body_at_content_hash(
-    root: Path,
-    file: str,
-    window: list[CommitRecord],
-    content_hash: str,
-) -> str | None:
-    """``file`` as it looked when its content hashed to ``content_hash``.
-
-    Searched newest first, because the same content can appear at several
-    commits and the newest is the one whose blob is cheapest to reach and
-    likeliest still present. `None` when no scanned commit recorded that hash,
-    which is the case the caller reports rather than guesses at.
-    """
-    for record in sorted(window, key=lambda item: item.number, reverse=True):
-        if record.files.get(file) != content_hash or not record.commit_hash:
-            continue
-        content = git_show(root, record.commit_hash, file)
-        if content is not None:
-            return content.decode("utf-8")
-    return None
 
 def _write_drop_helpers(
     root: Path,

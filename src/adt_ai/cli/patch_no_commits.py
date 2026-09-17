@@ -36,7 +36,7 @@ from adt_ai.cli.patch_preview_render import (
     patch_show_patches,
 )
 from adt_ai.shared.commit_discovery import CommitRecord, PatchRequest, _filter_records
-from adt_ai.shared.commit_selection import _like_pattern
+from adt_ai.shared.commit_selection import _like_pattern, recent_patch_marker
 from adt_ai.shared.patch_folders import PatchFolder
 
 
@@ -142,6 +142,20 @@ def answer_without_commits(
     #
     # So the run asks its own scan which failure this is instead of assuming.
     scan = window or []
+    shipped = recent_patch_marker(scan, request)
+    if shipped is not None and _filter_records(scan, replace(request, include_patched=True)):
+        # The code DID match commits, and an earlier patch of it had shipped them
+        # all (ADT #851). Without this the branch below said no subject carried
+        # the name, which is the one thing that was not true. Jan chose this
+        # screen on chips, 2026-09-16, over a one-line refusal.
+        number, folder = shipped
+        raise PatchError(
+            f'NO NEW COMMITS FOR "{patch_ref}".\n\n'
+            f"Patch {folder} was committed in commit {number},\n"
+            "so every older commit carrying it has already shipped.\n\n"
+            "  1) -force                     include the commits that patch shipped\n"
+            "  2) -commit N [-ignore N]      select them by number, hash or range"
+        )
     candidates = (
         _candidates_without_the_name(workspace, request, scan, selected_folder)
         if scan and name_is_the_commit_filter(request)

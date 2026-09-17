@@ -135,7 +135,7 @@ This is a live hazard in existing repositories too. A tree whose `shared-compone
 Targets are collected in this order, and `-input` and `-app` can be combined:
 
 - `-input PATH`, an explicit folder, a zip, or a single `.apx` file, passed to SQLcl untouched. This mode reads no project config at all.
-- `-app ID`, resolved offline: `config/internal/apex.db` gives the owner and alias, which locate `apex/<owner>/<id>_<alias>/apexlang/` under the configured `path_apex`. An application with no export on disk produces a `NOTES:` row naming the path where one was expected, never a traceback.
+- `-app ID`, resolved offline: `config/internal/apex.db` ([storage_apex.md](storage_apex.md)) gives the owner and alias, which locate `apex/<owner>/<id>_<alias>/apexlang/` under the configured `path_apex`. An application with no export on disk produces a `NOTES:` row naming the path where one was expected, never a traceback.
 - Neither, in which case every `apexlang/` folder sitting at the project's own export shape is validated, sorted, hidden folders skipped. That is what makes a bare `adtai validate` after an `-all` export one obvious command.
 
 **A bare run matches a shape, it does not search.** An export lands at `path_apex` / `apex_path_app` / `apexlang`, and those two config keys are already the project's statement of where. Read back with their tokens globbed they give one pattern, `*/apex/*/apexlang` on the shipped defaults, and only a folder at that pattern is an export.

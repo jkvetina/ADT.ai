@@ -12,6 +12,9 @@ Version 3 (ADT #725) records what an APEXlang export was BASED ON beside the
 checksum that identifies it: `base_commit`, the commit the repository sat at, and
 `mirror_ref`, the ref `-mirror` shares that commit on. A checksum says whether
 the target moved; these two say what to rebase onto when it did.
+
+Version 4 (ADT #873) drops `applications.workspace_id`, which every export
+fetched and stored and nothing read back.
 """
 
 from __future__ import annotations
@@ -33,7 +36,6 @@ CREATE TABLE IF NOT EXISTS applications (
     app_id       INTEGER PRIMARY KEY,
     owner        TEXT,
     workspace    TEXT,
-    workspace_id TEXT,
     app_group    TEXT,
     app_alias    TEXT,
     app_name     TEXT,

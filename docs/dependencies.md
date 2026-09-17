@@ -229,7 +229,9 @@ When the APEX mirror has been refreshed with `-app`, `-impact` also appends an `
 
 Where PL/Scope can trace an impacted column through a view and the component property references that view column, the caller row carries the rendered column and its source `TABLE.COLUMN`. The same data appears under `apex:` in yaml and `## APEX callers` in md.
 
-APEX refresh reads the release from the connection block before choosing its dictionary path. Releases before APEX 24.2 report that dependency scanning is unavailable and skip the app refresh. Supported releases run the APEX dependency scan silently, then drop the helper procedures it generates so scan internals never reach the console or an export.
+APEX refresh reads the release from the connection block before choosing its dictionary path. Releases before APEX 24.2 skip the app refresh and list every skipped application under `WARNING - APEX TOO OLD, SKIPPED:`, as `APP 100 needs APEX 24.2 or newer`.
+
+Supported releases run the APEX dependency scan silently, then drop the helper procedures it generates so scan internals never reach the console or an export.
 
 <br>
 

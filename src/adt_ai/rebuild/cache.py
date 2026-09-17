@@ -27,11 +27,7 @@ from adt_ai.shared.commit_cache import (
     open_store,
     store_path,
 )
-from adt_ai.shared.commit_discovery import (
-    FIELD_SEPARATOR,
-    CommitRecord,
-    _detected_patch,
-)
+from adt_ai.shared.commit_discovery import FIELD_SEPARATOR
 from adt_ai.shared.commit_store import CommitStore, StoredCommit
 from adt_ai.shared.commit_window import position_of
 from adt_ai.shared.git_files import changed_files, git_is_ancestor, git_ref_exists, run_git
@@ -72,7 +68,7 @@ def _build_records(
     request: RebuildRequest,
     branches: list[str],
     reporter: RebuildReporter,
-) -> tuple[dict[str, dict[int, CommitRecord]], dict[str, Path]]:
+) -> tuple[dict[str, int], dict[str, Path]]:
     stores: dict[str, CommitStore] = {}
     try:
         return _build_records_with_stores(request, branches, reporter, stores)
@@ -89,7 +85,7 @@ def _build_records_with_stores(
     branches: list[str],
     reporter: RebuildReporter,
     stores: dict[str, CommitStore],
-) -> tuple[dict[str, dict[int, CommitRecord]], dict[str, Path]]:
+) -> tuple[dict[str, int], dict[str, Path]]:
     # Phase 1, cheap counting pass: read commit metadata per branch (git log
     # only, no content hashing). Each branch keeps its own oldest-first commit
     # order; the unique set drives the progress total and dedupes hashing work.
@@ -139,7 +135,7 @@ def _build_records_with_stores(
         # history reserves everything below it for a backfill.
         seeds[branch] = (
             position_of(request.root, lines[0][0])
-            if lines and not store.numbers(branch)
+            if lines and store.ceiling() is None
             else 1
         )
         for commit_hash, _author, _date, _summary in lines:
@@ -186,15 +182,15 @@ def _build_records_with_stores(
         # progress bar at an instant 100% so the module matches the export style.
         reporter.on_commit(0, 0)
 
-    # Hand each branch's scan to its store and read the numbered result back.
-    # Nothing here computes a number: `allocate` mints above the tip, `backfill`
-    # mints below the floor, and a commit that already has one keeps it.
-    branch_records: dict[str, dict[int, CommitRecord]] = {}
+    # Hand each branch's scan to its store. Nothing here computes a number:
+    # `allocate` mints above the tip, `backfill` mints below the floor, and a
+    # commit that already has one keeps it. The count is all the caller reports,
+    # so it is read off the key rather than by loading the branch back.
+    record_counts: dict[str, int] = {}
     for branch, lines in branch_lines.items():
         store = stores[branch]
         _allocate(
             store,
-            branch,
             [
                 StoredCommit(
                     id       = commit_hash,
@@ -204,22 +200,17 @@ def _build_records_with_stores(
                     files    = file_data[commit_hash].files,
                     deleted  = file_data[commit_hash].deleted,
                     statuses = file_data[commit_hash].statuses,
-                    patch    = file_data[commit_hash].patch,
                 )
                 for commit_hash, author, date, summary in lines
             ],
             seeds[branch],
         )
-        branch_records[branch] = {
-            stored.number: _as_commit_record(stored) for stored in store.records(branch)
-        }
+        record_counts[branch] = store.count()
 
-    return branch_records, store_paths
+    return record_counts, store_paths
 
 
-def _allocate(
-    store: CommitStore, branch: str, records: list[StoredCommit], seed: int
-) -> None:
+def _allocate(store: CommitStore, records: list[StoredCommit], seed: int) -> None:
     """Give every scanned commit a number, each one exactly once.
 
     The walk is oldest first, so an unknown commit that sits BEFORE the first
@@ -231,10 +222,11 @@ def _allocate(
     """
     if not records:
         return
-    existing = store.numbers(branch)
-    if not existing:
-        store.allocate(branch, records, seed=seed)
+    if store.ceiling() is None:
+        store.allocate(records, seed=seed)
         return
+    # Only the scanned window is looked up, never the branch's whole id map.
+    existing = store.numbers_for(record.id for record in records)
     first_known = next(
         (index for index, record in enumerate(records) if record.id in existing), None
     )
@@ -242,25 +234,11 @@ def _allocate(
         # The window overlaps nothing stored, so there is no floor to sit under.
         # These are newer commits (a bounded scan that outran the stored tip),
         # and appending is the only reading that cannot renumber.
-        store.allocate(branch, records)
+        store.allocate(records)
         return
     if first_known:
-        store.backfill(branch, records[:first_known])
-    store.allocate(branch, records[first_known:])
-
-
-def _as_commit_record(stored: StoredCommit) -> CommitRecord:
-    return CommitRecord(
-        number   = stored.number,
-        id       = stored.id,
-        summary  = stored.summary,
-        author   = stored.author,
-        date     = stored.date,
-        files    = stored.files,
-        deleted  = stored.deleted,
-        patch    = stored.patch,
-        statuses = stored.statuses,
-    )
+        store.backfill(records[:first_known])
+    store.allocate(records[first_known:])
 
 
 @dataclass(frozen=True)
@@ -268,7 +246,6 @@ class _CommitFiles:
     files: dict[str, str]
     deleted: list[str]
     statuses: dict[str, str]
-    patch: str | None
 
 def _commit_files(request: RebuildRequest, commit_hash: str) -> _CommitFiles:
     changed = changed_files(request.root, commit_hash)
@@ -278,14 +255,16 @@ def _commit_files(request: RebuildRequest, commit_hash: str) -> _CommitFiles:
         # and a store that dropped `apex/<app>/f<id>.sql` at write time could
         # never serve the run that wanted it: nothing ever set the flag, so
         # the reading run lost those files silently. Store the data,
-        # classify at read time, where the policy is actually known.
-        files    = {i.path: i.content_hash for i in changed if i.content_hash is not None},
+        # classify at read time, where the policy is actually known. The patch
+        # folder a commit shipped is the same kind of reading since ADT #851: it
+        # depends on the project's `patch_root`, so `patch` takes it off these
+        # rows rather than off a column written here under a hardcoded `patch/`.
+        files    ={i.path: i.content_hash for i in changed if i.content_hash is not None},
         deleted  = [i.path for i in changed if i.status == "D"],
         # Git's own status letter per file, which the YAML payload never carried.
         # `patch/summary.py` needs it to split NEW/DELETED/MODIFIED, and
         # `search_repo` was guessing it from whether a path had been seen before.
         statuses = {i.path: i.status for i in changed},
-        patch    = _detected_patch(changed),
     )
 
 def _history_floor_date(bottom_days: int | None) -> str | None:
@@ -305,11 +284,11 @@ def _resume_point(request: RebuildRequest, store: CommitStore, branch: str) -> s
     # it is the only honest answer to a force-push.
     if not request.update_only:
         return None
-    tip = store.tip(branch)
+    tip = store.tip()
     if tip is None:
         return None
     if not _commit_in_history(request.root, branch, tip.id):
-        store.reset(branch)
+        store.reset()
         return None
     return tip.id
 

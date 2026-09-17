@@ -18,6 +18,7 @@ from typing import Any
 from adt_ai.cli.context import _config_search_paths, _repo_root
 from adt_ai.cli.context_apex import _flatten_arg_groups
 from adt_ai.cli.patch_preview_render import patch_scan_commits
+from adt_ai.patch import settings as patch_settings
 from adt_ai.patch.apex_import import resolve_target
 from adt_ai.patch.layout import apex_head_variants
 from adt_ai.patch.topup import ConsoleTopUpReporter
@@ -105,6 +106,12 @@ def build_patch_request(
             config.get("repo_commits_file") or DEFAULT_COMMITS_TEMPLATE
         ),
         history_bottom_days  = resolve_history_floor(config),
+        # Old ADT's `patch_recent` cutoff (ADT #851): where a patch folder counts,
+        # how its code is read, which folder this run named, and `-force`.
+        patch_root           = patch_settings.patch_root(root, config).relative_to(root).as_posix(),
+        patch_folder_re      = patch_settings.patch_folder_re(config),
+        patch_folder         = selected_folder.folder if selected_folder else None,
+        include_patched      = bool(getattr(args, "force", False)),
     )
 
 

@@ -48,4 +48,29 @@ def _table_baseline(root: Path, file: str, records: list[CommitRecord]) -> str |
     return None if content is None else content.decode("utf-8")
 
 
-__all__ = ["_table_baseline", "_table_versions"]
+def _body_at_content_hash(
+    root: Path,
+    file: str,
+    window: list[CommitRecord],
+    content_hash: str,
+) -> str | None:
+    """``file`` as it looked when its content hashed to ``content_hash``.
+
+    Searched newest first, because the same content can appear at several
+    commits and the newest is the one whose blob is cheapest to reach and
+    likeliest still present. `None` when no scanned commit recorded that hash,
+    which is the case the caller reports rather than guesses at.
+
+    Moved here from `helpers.py` by ADT #830, whose sequence ALTER reads the
+    hash-mode base the same way the table ALTER does.
+    """
+    for record in sorted(window, key=lambda item: item.number, reverse=True):
+        if record.files.get(file) != content_hash or not record.commit_hash:
+            continue
+        content = git_show(root, record.commit_hash, file)
+        if content is not None:
+            return content.decode("utf-8")
+    return None
+
+
+__all__ = ["_body_at_content_hash", "_table_baseline", "_table_versions"]

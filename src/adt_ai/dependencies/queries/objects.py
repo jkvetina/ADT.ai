@@ -12,7 +12,7 @@ resolving.
 
 from __future__ import annotations
 
-from adt_ai.dependencies.schema import LEGACY_INDEXES, REFRESHES_DDL
+from adt_ai.dependencies.schema import LEGACY_INDEXES, REFRESHES_DDL, RETIRED_TABLES
 from adt_ai.shared.queries.sqlite_store import META_TABLE_DDL
 
 # ------------------------------------------------------------- refresh stamps
@@ -78,6 +78,10 @@ MIRROR_LIFT_3_SCRIPT = "\n".join(
         "COMMIT;",
     ]
 )
+
+# Version 4 to 5, the table half (ADT #873): its index goes with it. The
+# columns are dropped by inspection in `store.py`.
+MIRROR_LIFT_4_SCRIPT = "\n".join(f"DROP TABLE IF EXISTS {name};" for name in RETIRED_TABLES)
 
 # The dictionary's own LAST_DDL_TIME per object, mirrored on every
 # `dependencies -refresh`. `patch -create` reads it to prove the exported files

@@ -36,6 +36,7 @@ from adt_ai.patch.deploy_driver import write_deploy_driver
 from adt_ai.patch.files import _reject_unresolved_merges, _snapshot_link
 from adt_ai.patch.full_app import require_fresh_full_app_exports, resolve_full_app_ids
 from adt_ai.patch.hashes import write_patch_hashes
+from adt_ai.patch.immutables import never_recreated
 from adt_ai.patch.layout import ensure_deploy_log_folder
 from adt_ai.patch.models import DatabasePatchResult
 from adt_ai.patch.report import build_reports
@@ -173,6 +174,13 @@ def build_database_patch(
         target_env   = target_env,
         content_mode = content_mode,
         present_files = present_files,
+        # A table or sequence the target already holds is never created again
+        # (ADT #830); the same two bases the ALTER writers compared against.
+        never_recreated = never_recreated(
+            root, files, records, config,
+            content_mode  = content_mode,
+            hash_previous = hash_previous,
+        ),
     )
     # After every install script is on disk, so it sees exactly what the folder
     # holds; a re-create keeps a person's order unless `-force` (ADT #850).

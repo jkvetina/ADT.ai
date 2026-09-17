@@ -47,6 +47,8 @@ adtai search_repo -since 2026-08-01 -until 2026-08-20
 adtai search_repo -recent 7
 ```
 
+A commit made under a personal address listed in `repo_authors` (`config/config.yaml`, `personal_address: company_address`) shows the company address, and `-by` and `-my` match it under either one.
+
 Restore the historical version of a file beside the current one:
 
 ```bash

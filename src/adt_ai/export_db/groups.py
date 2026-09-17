@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import sys
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from adt_ai.shared.file_list import print_file_rows
 
 # `owns_file` and `object_name_from_file` were written here for ADT #412 and
 # moved to `shared/` for ADT #471, where `patch` and `search_repo` can reach them
@@ -12,8 +13,13 @@ from typing import TYPE_CHECKING
 from adt_ai.shared.object_files import extensions_by_folder as extensions_by_folder
 from adt_ai.shared.object_files import object_name_from_file as object_name_from_file
 from adt_ai.shared.object_files import owns_file as owns_file
+from adt_ai.shared.progress import print_adt_header
 from adt_ai.shared.safe_paths import simple_component
 from adt_ai.shared.yaml_io import load_yaml_mapping, store_yaml_mapping
+
+#: `#861`, spelled by Jan picking it. The state leads and what ADT did about it
+#: trails, the shape `WARNING - NOT COMMITTED SCRIPTS, IGNORED:` already has.
+EMPTY_GROUP_RULES_HEADER = "WARNING - EMPTY GROUP RULES, IGNORED:"
 
 if TYPE_CHECKING:
     # Both import this module at runtime (`files` for `GroupRules` and
@@ -65,15 +71,12 @@ class GroupRules:
         """
         global_rules: dict[str, str] = {}
         type_rules: dict[str, dict[str, str]] = {}
+        empty: list[str] = []
         for raw_key, raw_group in (mapping or {}).items():
             key = str(raw_key).strip()
             group = str(raw_group).strip()
             if not key or not group:
-                print(
-                    f"Warning: groups.yaml: ignoring entry {raw_key!r}: {raw_group!r}, "
-                    "empty key or group value",
-                    file=sys.stderr,
-                )
+                empty.append(f"{raw_key!r}: {raw_group!r}")
                 continue
             if "/" in key:
                 object_type, _, prefix = key.partition("/")
@@ -83,6 +86,11 @@ class GroupRules:
                     type_rules.setdefault(object_type, {})[prefix] = group
             else:
                 global_rules[key.upper()] = group
+        if empty:
+            # One section for the whole file rather than a bare `Warning:` line
+            # per entry (`#861`). Rows are the entries as the file spells them.
+            print_adt_header(EMPTY_GROUP_RULES_HEADER)
+            print_file_rows(empty, nested=False)
         return cls(global_rules=global_rules, type_rules=type_rules)
 
     def to_mapping(self) -> dict[str, str]:

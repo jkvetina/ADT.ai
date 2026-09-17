@@ -144,3 +144,18 @@ def write_deploy_receipt(log_folder: Path, target: str, fingerprint: str, status
             "version": 1, "target": target, "fingerprint": fingerprint, "status": status,
         }) + "\n",
     )
+
+
+# a `/* */` block, never a `/*+` optimizer hint
+BLOCK_COMMENT = re.compile(r"/\*(?!\+).*?\*/", re.DOTALL)
+
+
+def _runs_sql(text: str) -> bool:
+    """Whether a carrier holds anything beyond comments and SQLcl directives."""
+    for line in BLOCK_COMMENT.sub("", text).splitlines():
+        value = line.strip().upper()
+        if value and not value.startswith(
+            ("--", "PROMPT ", "SET ", "WHENEVER ", "SPOOL ", "@", "START ")
+        ):
+            return True
+    return False
