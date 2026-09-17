@@ -10,6 +10,8 @@ changed path IS into `commit_file_classes.py`, re-exported for the same reason.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,6 +22,7 @@ from adt_ai.shared.commit_cache import (
     open_store,
 )
 from adt_ai.shared.commit_file_classes import (  # noqa: F401  (re-exported)
+    below_patch_root,
     classify_file,
 )
 from adt_ai.shared.commit_file_classes import (  # noqa: F401  (re-exported)
@@ -138,6 +141,17 @@ class PatchRequest:
     # `patch_history_bottom_days`, forwarded to the top-up so the store `patch`
     # builds on first use is bounded the same way `rebuild` would build it.
     history_bottom_days: int | None = None
+    # Old ADT's `patch_recent` (ADT #851). A commit that committed a folder of
+    # this patch code hides every older commit of it, so a second patch of one
+    # code stops re-shipping the first. `patch_root` says where a folder counts,
+    # `patch_folder_re` reads its code (`None` is the default shape), and
+    # `patch_folder` is the folder the run NAMED, whose own commit never hides
+    # what a listing or a refresh of it is about. `include_patched` is `-force`,
+    # old ADT's only reader of that flag in `patch.py` (:956).
+    patch_root: str = "patch/"
+    patch_folder_re: re.Pattern[str] | None = None
+    patch_folder: str | None = None
+    include_patched: bool = False
 
 
 @dataclass(frozen=True)
@@ -149,7 +163,10 @@ class CommitRecord:
     date: str
     files: dict[str, str]
     deleted: list[str]
-    patch: str | None = None
+    # The patch folders this commit shipped (ADT #851), read off its file rows
+    # with the run's `patch_root` by `_detected_patches`. A tuple, because one
+    # commit can carry several folders, where old ADT kept the last one it saw.
+    patches: tuple[str, ...] = ()
     # Git's per-file status letter for this commit (`A`/`M`/`D`/...), kept so the
     # install script can split its file list into NEW / DELETED / MODIFIED the way
     # old ADT did (patch.py:1766-1780). The text cache could not carry it, which
@@ -172,10 +189,6 @@ class CommitRecord:
     @property
     def deleted_files(self) -> list[str]:
         return self.deleted
-
-    @property
-    def detected_patch(self) -> str | None:
-        return self.patch
 
     @property
     def file_classes(self) -> dict[str, str]:
@@ -241,7 +254,7 @@ class GitCommitCache:
             # the branch: reading forty rows off the end of an 85,000-commit
             # history is the query this store exists for. Reversed here because
             # every consumer downstream expects oldest first.
-            stored = store.recent(branch, request.commit_limit)
+            stored = store.recent(request.commit_limit)
         return [_as_record(item, request) for item in reversed(stored)]
 
     @staticmethod
@@ -299,17 +312,33 @@ def _as_record(stored: StoredCommit, request: PatchRequest) -> CommitRecord:
             ) is not None
         },
         deleted  = stored.deleted,
-        patch    = stored.patch,
+        patches  = _detected_patches(stored.files, request.patch_root),
         statuses = stored.statuses,
     )
 
 
-def _detected_patch(changed_files: list[ChangedFile]) -> str | None:
-    for changed_file in changed_files:
-        parts = Path(changed_file.path).parts
-        if len(parts) >= 2 and parts[0].lower() == "patch":
-            return parts[1]
-    return None
+def _detected_patches(paths: Iterable[str], patch_root: str = "patch/") -> tuple[str, ...]:
+    """The patch folders a commit shipped: a `.sql` directly in `<patch_root>/<folder>/`.
+
+    Old ADT's own test, `^[^/]+/([^/]+)/[^/]+.sql$` under `patch/`
+    (`ADT--OLD/patch.py:870-881`), which is the install scripts and nothing else.
+    Anything deeper is not the patch being shipped: `logs_<ENV>/` lands under the
+    folder after a deploy and is committed whenever somebody gets to it, and a
+    marker on that commit would hide everything made between the build and the
+    log. ``paths`` are the files the commit ADDED or CHANGED, so the commit that
+    archives a folder by deleting it ships nothing either.
+
+    ``patch_root`` is the project's (`patch/settings.py` `patch_root`), matched
+    without case the way the hardcoded `patch` it replaces was.
+    """
+    folders = {
+        below[0]
+        for path in paths
+        if (below := below_patch_root(path, patch_root))
+        and len(below) == 2
+        and below[1].lower().endswith(".sql")
+    }
+    return tuple(sorted(folders))
 
 # The selection half moved to `commit_selection.py` when ADT #467 pushed this
 # module past the 20 KB context guard. Re-exported so every existing importer,
@@ -336,7 +365,7 @@ __all__ = [
     "Path",
     "StoredCommit",
     "TYPE_CHECKING",
-    "_detected_patch",
+    "_detected_patches",
     "_filter_records",
     "annotations",
     "classify_file",

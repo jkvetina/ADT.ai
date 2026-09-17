@@ -1,22 +1,20 @@
-- **New command: `diff` compares two schemas and writes a reviewable release artifact.** `-source` and `-target` name the environments and `-schema` the schema; `-type` and `-name` narrow the comparison. The screen lists changed objects and grants by which side is missing what.
-- **`live_upload` ships in the public build.** `live_upload -once` uploads every file in a folder and exits, into the application or with `-workspace` into the workspace, and keeps subfolder names.
-- **`patch -create -files_ws` carries every workspace static file**, and a static file in a subfolder installs under its relative name, such as `css/app.css`.
-- **Breaking: `patch -create` stops on a file that is not valid UTF-8 unless the new `repo_encoding` config key names its code page**, for example `repo_encoding: cp1250`. It used to ship the file with its national characters replaced.
-- **`patch` install scripts link six shared lock scripts from `config/patch_template/locks/`**, and a patch with two or more install scripts writes `DEPLOY.sql` in deploy order, which `-deploy` follows.
-- **`patch -create` generates the ALTER when Oracle refuses a table's previous version**, such as one with a lost or doubled comma, by rebuilding it from its columns and constraints. A hash baseline stores every table, so a table changed by hand on the target still gets its ALTER.
-- **`export_db` writes a `--` comment inside a column DEFAULT as a `/* */` comment**, so the exported table file builds again.
-- **`export_apex` exports an application through the configured schema that reaches it**, even when its owner is not in the connection file. `export_apex -reveal 430 431` says where those applications live and lists every schema that reaches each one.
-- **`export_data` keys rows by a unique key ahead of an identity primary key**, so file names and the MERGE match across environments. A long text LOB reloads without broken characters, and a patch now deploys an exported LOB table.
-- **`connection` sets thick mode on an environment with `-thick [PATH|Y]`**, together with `-create` or `-add-env`. The connection docs show the macOS Keychain as a password source.
-- **`flow` heads its `-to` and `-from` table columns in the singular.**
+- **`patch` never drops or re-creates a table or a sequence.** A deleted file's drop is linked commented out, and a changed sequence ships an `ALTER SEQUENCE` for each changed clause. The new `immutables` key in `config/config.yaml` lists the protected types; `immutables: []` turns it off.
+- **`export_db` writes a sequence without the `/` after its `;`**, so a patch carrying a new sequence no longer fails on `ORA-00955`. Exported sequence files lose that line on their next export.
+- **`patch -create` skips commits an earlier patch of the same code already shipped.** The newest commit adding that patch folder marks the older commits as shipped. `-force` keeps them, and a build left with nothing stops with `NO NEW COMMITS FOR "<CODE>"`.
+- **The `patch` template scaffold ships APEX examples switched off inside `/* */`** for installing supporting objects, switching the authentication scheme and setting the application version. Delete a block's `/*` and `*/` lines to use it.
+- **`flow`'s `-refresh` mode stores a link target with the real application id** in place of `&APP_ID.`, so `f?p=&APP_ID.:7` in application 100 is stored as `f?p=100:7`.
+- **The commit store is about half the size and faster to write**, and `rebuild`, `calendar` and `search_repo` read only what they need. An existing store is upgraded in place with every commit number kept.
+- **The local stores drop columns nothing read back**, such as the application workspace id `export_apex` and `validate` carried and the run timestamp and line counts `ut` stored. Existing files are upgraded in place.
+- **`repo_authors` in `config/config.yaml` maps a personal commit address to the company one**, so `calendar` and `search_repo` show one person, and `-by` and `-my` match either address.
+- **Every warning prints under a `WARNING - <SUBJECT>:` header**, among them empty group rules and job arguments not exported in `export_db`, applications too old for `dependencies`, and a password `connection` may echo. Exit codes are unchanged.
 
 ## Verification
 
 | Suite          | Passed | Failed | Unverified | Coverage | Cores | Time |
 | -------------- | -----: | -----: | ---------: | -------: | ----: | ---: |
-| Unit tests     |   8368 |        |            |     100% |    14 | 1:15 |
-| User stories   |    147 |        |          2 |          |     3 | 1:43 |
-| Security audit |     23 |        |            |          |     1 | 0:16 |
+| Unit tests     |   8491 |        |            |     100% |    14 | 0:56 |
+| User stories   |    151 |        |          2 |          |     3 | 1:35 |
+| Security audit |     23 |        |            |          |     1 | 0:15 |
 
 The 2 unverified user stories are Windows-only contracts, and every release is built on macOS.
 

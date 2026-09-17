@@ -14,7 +14,7 @@ Normalization is where the export earns a readable diff. Bodies are preserved; o
 - **Views** drop the metadata header's column list and default collation, and format quoted select-list items lowercased, one per line, preserving expression text and layout from `FROM` onward. A select list carrying a comment is left exactly as the database returned it.
 - **Tables** render constraints as `--`-separated blocks (CHECK, PK, UNIQUE, FK), strip only the exported owner, keep FK `ON DELETE` actions, `INTERVAL` alignment and trailing `INMEMORY`, and drop generated `ENABLE` / `USING INDEX`.
 - **Indexes** use `CREATE INDEX IF NOT EXISTS`, unquote simple identifiers and reflow multi-column lists, preserving string literals inside expression indexes.
-- **Recycle-bin objects** (`BIN$...`) are ignored everywhere, scheduler job arguments are preserved, and an explicit sequence `MAXVALUE` is never stripped as noise.
+- **Recycle-bin objects** (`BIN$...`) are ignored everywhere, scheduler job arguments are preserved, and an explicit sequence `MAXVALUE` is never stripped as noise. A job whose DDL has no `CREATE_JOB` block to carry its arguments is listed after the schema's export under `WARNING - JOB ARGUMENTS NOT EXPORTED:`.
 
 A trigger's status arrives as an `ALTER TRIGGER` appended inside the `CREATE TRIGGER` block. The `ENABLE` form is dropped as the default state and the `DISABLE` form is moved below the block's `/`, so a disabled trigger exports as a runnable file:
 
@@ -158,6 +158,8 @@ Add `-force` and the same run moves those files and reports `Moved <n> file(s).`
 
 **`-force GROUP` puts every prefix you named into that one folder.** By default each prefix gets a folder of its own, so `-groups INV_BILLING ORD -force` writes `packages/INV_BILLING/` beside `packages/ORD/`; adding a name writes one folder holding both, across every object type the prefixes reach.
 
+An export routes files through the groups recorded in `config/groups.yaml`. An entry there with an empty prefix or an empty group routes nothing, so it is skipped and listed under `WARNING - EMPTY GROUP RULES, IGNORED:`.
+
 It renames the prefixes you listed and nothing else, so `-force GROUP` beside a bare auto-detecting `-groups` is refused, exit `2`: folding a whole detected layout into a single folder is not a layout.
 
 The standalone preview cannot show the merged folder, the name arriving only on the flag that applies, so the run that applies prints its own `PLANNED MOVES:` with the merged name above the move.
@@ -229,4 +231,4 @@ A run replaces every database-path entry for the schemas it exported and leaves 
 
 APEX is that gap, and measuring it needs the same flag on `export_apex`, which does not exist yet.
 
-**The sharp edge.** Against a measured baseline, `DELETED` means the target holds an object your repository does not, and a hash patch generates a DROP helper for it. A hotfix applied straight to the target, or an object another developer owns, is a DROP in your next hash patch. Read the `CHANGED FILES:` table before building. A hotfix that changed a table the repository also holds is the opposite case: it reads `MODIFIED`, and the stored table makes the ALTER from the hotfixed shape to yours.
+**The sharp edge.** Against a measured baseline, `DELETED` means the target holds an object your repository does not, and a hash patch generates a DROP helper for it. A hotfix applied straight to the target, or an object another developer owns, is a DROP in your next hash patch, one that runs unless its type is in `immutables` (tables and sequences, as shipped). Read the `CHANGED FILES:` table before building. A hotfix that changed a table the repository also holds is the opposite case: it reads `MODIFIED`, and the stored table makes the ALTER from the hotfixed shape to yours.

@@ -119,6 +119,7 @@ RELEVANT COMMITS FOR "%report%":
 - `-commit` and `-ignore` take a number, a hash prefix, or a range (`12`, `12+`, `12-40`). An all-digit ref shorter than seven characters is a number, never a hash prefix, so `-ignore 1` cannot also drop a commit whose hash opens on `1`. A commit you name is an instruction and is never filtered out.
 - `patch_commit_pattern` in `config.yaml` keeps commits whose subject does not match that shape out of every patch. An explicit `-search` or `-commit` overrides it.
 - **A `-create` whose name matches no commit subject stops with `NO COMMITS MATCHED "<CODE>"`**, quoting the pattern it ran, counting the commits that passed every other filter, and offering two options: `-search PATTERN` to select them by a different term, or `-commit N` and `-ignore N` to select them by number, hash prefix or range. It closes on the habit that avoids the screen altogether, **putting the patch name in the commit message**: the name is matched against subjects, so a repository that writes its ticket number into the subject is found by `-name` alone. `NO COMMITS FOUND ... commits scanned` is the other failure and a different fix, the scan reached nothing at all, so raise `patch_scan_commits`.
+- **A commit that committed a patch folder hides the older commits of its code.** The newest commit adding a `.sql` directly in `<patch_root>/<folder>/` for that code marks everything older as shipped, folder on disk or archived, and a commit touching nothing but patch folders goes too. `-force` keeps them, `-commit` names one, and the folder `-name` resolves to never hides its own. With nothing left, `-create` stops with `NO NEW COMMITS FOR "<CODE>"`.
 - The commits come from the per-branch store `rebuild` maintains, at `repo_commits_file`. There is one store, shared with `search_repo` and `calendar`, and `patch` tops it up rather than keeping a copy. Use `adtai rebuild` to rebuild one from scratch.
 
 <br>
@@ -187,6 +188,16 @@ PROMPT -- SCRIPT: patch_scripts/PATCH309/objects_after/drop.package_body.core_lo
 @"./patch_scripts/objects_after/drop.package_body.core_lock.sql";
 ```
 
+**A table or a sequence is never dropped by a patch.** Both are listed in `immutables` in `config.yaml`, so their DROP script is still written but linked commented out, and dropping stays an edit you make on purpose:
+
+```text
+PROMPT -- SCRIPT: patch_scripts/PATCH830/objects_after/drop.table.app_orders.sql
+-- [!] IMMUTABLE TABLE, NEVER DROPPED BY A PATCH
+--@"./patch_scripts/objects_after/drop.table.app_orders.sql";
+```
+
+Nor is either created a second time. When the target already holds the object and its changed file does not say `IF NOT EXISTS`, the file's link is commented out the same way, marked `NEVER RE-CREATED BY A PATCH`, and a changed sequence ships an `ALTER SEQUENCE` under `tables_after/` instead, described on [patch_templates.md](patch_templates.md). `immutables: []` turns all of this off.
+
 Three deletions earn nothing, and each is a different question:
 
 | The window | Why no `DROP` |
@@ -225,7 +236,7 @@ Each application gets a receipt at `<path_apex>/logs_<ENV>/<timestamp>_apex_drop
 | `-target`, `--target` | No | connection file default environment | Environment to deploy into. An omitted flag uses the connection file's default. |
 | `-create`, `--create` | No | off | Build the patch named by `-name`, which is mandatory beside it. An existing folder is rewritten; a well-formed folder name that exists nowhere is refused. |
 | `-deploy`, `--deploy` | No | off | Deploy the patch named by `-name`, mandatory beside it, exactly as it stands on disk. Beside `-create`, only a name with no folder is built first. |
-| `-force`, `--force` | No | off | Proceed on a patch already deployed to this target. With `-deploy`, re-run a completed deployment of the same payload, otherwise reported `SKIPPED`. With `-create`, rebuild a folder carrying a deploy log: logs are kept and generated artifacts follow the new commit window. With `-drop`, remove a sandbox somebody else created. |
+| `-force`, `--force` | No | off | Proceed on a patch already deployed to this target. With `-deploy`, re-run a completed deployment of the same payload, otherwise reported `SKIPPED`. With `-create`, rebuild a folder carrying a deploy log: logs are kept and generated artifacts follow the new commit window. With `-drop`, remove a sandbox somebody else created. With `-name`, keep the commits an earlier patch of that code already shipped. |
 | `-continue`, `--continue` | No | off | With `-deploy`, keep running the remaining install scripts after one fails, instead of stopping and rolling back. A failing `deploy_verify_scan` verdict also becomes advisory: the row still prints, the run still ends `SUCCESS`, and nothing is reverted. A failed install script still ends the run `ERROR`. It does not resume an interrupted run. |
 | `-by`, `--by` | Yes | none | Limit commits and patch folders to an author, as a case-insensitive substring of the commit author email. |
 | `-my`, `--my` | No | off | Limit commits and patch folders to you, matched against `IDENTITY.yaml` or `git config user.email`. |

@@ -60,13 +60,19 @@ def add_patch_parser(subparsers: SubParsers) -> None:
     # (a sandbox somebody else created, or one recording no creator) and never
     # the rail (a derived sandbox id is the only kind that drops at all). Jan,
     # 2026-09-01: *"drop only the app created by me ... Unless there is -force"*.
+    #
+    # A fourth since ADT #851, and the oldest: in old ADT's `patch.py` the flag's
+    # only reader was the `patch_recent` cutoff (:956). With a named patch it keeps
+    # the commits an earlier patch of that code already shipped, which
+    # `commit_selection.recent_patch_marker` otherwise hides. Jan, on chips,
+    # 2026-09-16: port it.
     patch.add_argument(
         "--force",
         "-force",
         action = "store_true",
-        help   = "proceed on a patch already deployed to this target: with -deploy "
-                 "re-run it, with -create refresh it keeping its logs; with -drop "
-                 "remove a sandbox somebody else created",
+        help   = "proceed on a patch already deployed here: with -deploy re-run it, "
+                 "with -create refresh it keeping its logs; with -drop remove a "
+                 "sandbox somebody else created; with -name keep shipped commits",
     )
     # `-deldiff` was withdrawn by ADT #356. Dropping the `%$1`/`%$2` leftovers is
     # not a thing to remember: the SQLcl DIFF run that writes them now clears

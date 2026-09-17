@@ -29,7 +29,6 @@ class ApexOwnerCount:
 class ApexApplication:
     owner       : str
     workspace   : str
-    workspace_id: int | None
     app_group   : str
     app_id      : int
     app_alias   : str
@@ -215,7 +214,6 @@ def _application_from_row(row: dict[str, Any]) -> ApexApplication:
     return ApexApplication(
         owner        = str(row_value(row, "OWNER") or ""),
         workspace    = str(row_value(row, "WORKSPACE") or ""),
-        workspace_id = _int_or_none(row_value(row, "WORKSPACE_ID")),
         app_group    = str(row_value(row, "APP_GROUP") or ""),
         app_id       = int(row_value(row, "APP_ID") or 0),
         app_alias    = str(row_value(row, "APP_ALIAS") or ""),

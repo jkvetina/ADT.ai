@@ -45,6 +45,8 @@ Each store page opens on a Mermaid diagram of its tables, then one column table 
 
 A contract test builds every store in memory from the shipped DDL and compares it with these pages, so a schema change that skips its page fails the suite.
 
+A `sqlite_` table is SQLite's own and on no page. `sqlite_sequence` appears beside an `AUTOINCREMENT` key, the navigation store's `edges` and the run history's `runs`, and holds the highest id handed out so a deleted row's id is never reused. ADT.ai never reads or writes it.
+
 <br>
 
 ## Conventions
@@ -65,7 +67,7 @@ The stores were written at different times, and until version bumps across all f
 
 ## What an older file goes through
 
-Every store lifts what it can in place. The commit store, the APEX cache and the run history keep every row; the dictionary mirror keeps every row of a version 3 file and wipes anything older on a refresh; the navigation store is a cache and drops its pre-version tables for the next refresh to refill. Each page says which.
+Every store lifts what it can in place. The commit store, the APEX cache, the run history and the navigation store keep every row; the dictionary mirror keeps every row from version 3 on and wipes anything older on a refresh; a pre-version navigation file is a cache, dropped for the next refresh to refill. Each page says which.
 
 <br>
 

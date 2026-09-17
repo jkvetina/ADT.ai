@@ -99,6 +99,23 @@ On a matching `-target` the install script closes with `APEX_UTIL.SET_APP_BUILD_
 
 <br>
 
+## APEX examples you switch on
+
+Three things old ADT did to an application through config keys ship in the scaffold as examples instead. Each is a PL/SQL block inside `/* */`, so none of them runs until you delete its `/*` and `*/` lines:
+
+| Example                                         | File                    | Call                                               |
+| ----------------------------------------------- | ----------------------- | -------------------------------------------------- |
+| install or upgrade supporting objects on import | `apex_init/00_init.sql` | `APEX_APPLICATION_INSTALL.SET_AUTO_INSTALL_SUP_OBJ` |
+| switch the authentication scheme                | `apex_end/00_end.sql`   | `APEX_APPLICATION_ADMIN.SET_AUTHENTICATION_SCHEME`  |
+| set the application version                     | `apex_end/00_end.sql`   | `APEX_APPLICATION_ADMIN.SET_APPLICATION_VERSION`    |
+
+- **Supporting objects are an install setting**, read by the import that runs after `apex_init/`.
+- **The scheme and the version change the installed application**, so they run in `apex_end/`, after the import.
+- **Both `apex_end/` blocks name their applications in `IN (...)`**, because nothing in a template is substituted. An id the workspace does not have is skipped, and a sandbox id from `-deploy -app <id>` changes only if you list it.
+- **A setting for one environment only** goes into its own `name.[ENV].sql` file.
+
+<br>
+
 ## Helpers create generates for you
 
 Two kinds of one-off are written into `patch_scripts_dir` (default `patch_scripts/{$PATCH_CODE}/`) and then move into the patch like any other script:
@@ -106,13 +123,19 @@ Two kinds of one-off are written into `patch_scripts_dir` (default `patch_script
 | Written to       | When                                                                          |
 | ---------------- | ----------------------------------------------------------------------------- |
 | `objects_after/` | the patch window **deleted** an object file, as a `drop.<type>.<name>.sql` |
-| `tables_after/`  | a table file that changed, as the `ALTER TABLE` Oracle itself writes, per version step   |
+| `tables_after/`  | a table file that changed, as the `ALTER TABLE` Oracle itself writes, per version step; a sequence file that changed, as its `ALTER SEQUENCE` |
 
-The DROP helper is written for any object your `path_objects` layout resolves. It is a helper, not an automatic destructive action: review it before deploying, and delete it if the deletion was a repository-side move rather than a real drop.
+The DROP helper is written for any object your `path_objects` layout resolves, and it runs on deploy, so review it first and delete it if the deletion was a repository-side move rather than a real drop.
+
+A type listed in `immutables`, `TABLE` and `SEQUENCE` as shipped, is the exception: its helper is linked commented out and never runs. Uncomment that line in the patch script when the drop is real.
 
 The type and the name come out of `object_types`, whole. Where two types share a folder, the longest configured extension a file ends with owns it, so `packages/core.spec.sql` is `PACKAGE CORE` and `packages/core.sql` is `PACKAGE BODY CORE`. Stripping only the last suffix would leave a name that is not an Oracle identifier at all.
 
 The ALTER helper compares each version of a table file against the one before it, including the version standing before the patch opens, which is read from the parent of the first selected commit that touches the file. A table the window **creates** earns no ALTER: the `CREATE TABLE` shipping in the patch is the whole statement needed.
+
+A sequence is compared by ADT.ai itself, clause by clause, since no database is needed to read one statement. Every clause `ALTER SEQUENCE` can change that differs is written, and a clause the new version no longer states goes back to Oracle's default, which is why the export left it out.
+
+`START WITH` is never compared: the export strips it and `ALTER` cannot set it. The helper is written only while `SEQUENCE` is in `immutables`; otherwise the patch runs the sequence's `CREATE` as before.
 
 <br>
 
@@ -129,6 +152,8 @@ So the coverage is Oracle's own: columns added, dropped and retyped, `NOT NULL` 
 - **A `DEFAULT` cannot be removed by the comparison.** Oracle answers `ORA-39267: Cannot remove default from table column.` and no statement; ADT.ai ships that sentence as a comment, so it reaches your deploy log where the missing statement would have run.
 
 A generated ALTER runs **ahead of** its own table file in the patch script, because a table with an ALTER already exists on the target: its exported file then contributes a no-op `CREATE TABLE IF NOT EXISTS` plus `COMMENT ON COLUMN` lines describing the shape the ALTER just produced. Hand-written scripts you put in `tables_after/` still run after the files.
+
+A table file without `IF NOT EXISTS` is linked commented out instead, because running it on a target that holds the table would stop the deploy on `ORA-00955`.
 
 If the target database refuses one of the two versions, no comparison happens and `-create` says so under `WARNING - NO TABLE DIFF:`, with Oracle's own error under the file. The patch still builds; the table simply carries no ALTER, and that is the one case where a green deploy would otherwise change nothing.
 

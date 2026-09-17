@@ -51,7 +51,7 @@ def _build_records(
     request: RebuildRequest,
     branches: list[str],
     reporter: RebuildReporter,
-) -> tuple[dict[str, dict[int, CommitRecord]], dict[str, Path]]:
+) -> tuple[dict[str, int], dict[str, Path]]:
     original_commit_files = _cache._commit_files
     _cache._commit_files = _commit_files
     try:
@@ -70,11 +70,11 @@ class RebuildRunner:
         # Scanning and writing are one step now: the store IS the write, because
         # a number is assigned by inserting the row, never computed and then
         # serialized.
-        branch_records, cache_paths = _build_records(request, branches, _reporter)
+        record_counts, cache_paths = _build_records(request, branches, _reporter)
         return RebuildResult(
             cache_paths   = cache_paths,
             branches      = branches,
-            record_counts = {branch: len(records) for branch, records in branch_records.items()},
+            record_counts = record_counts,
         )
 
 

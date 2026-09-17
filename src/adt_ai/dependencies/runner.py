@@ -37,6 +37,9 @@ from adt_ai.shared.progress import (
 )
 from adt_ai.shared.recent_state import is_bare_recent, recent_days
 
+#: `#861`, spelled by Jan picking it: the state leads and what the run did about
+#: it trails, the shape `WARNING - NOT COMMITTED SCRIPTS, IGNORED:` already has.
+APEX_TOO_OLD_HEADER = "WARNING - APEX TOO OLD, SKIPPED:"
 
 @dataclass(frozen=True)
 class DependencyIndexRequest:
@@ -257,15 +260,14 @@ class DependencyIndexRunner:
                     )
                 store.record_refresh("schema", schema, refreshed_at, db_offset=db_offset)
 
+            # One version per run: every app is read through `app_schema`, so the
+            # floor answers for all of them at once and names them in one section.
+            apex_version = (request.apex_versions or {}).get(app_schema) if app_schema else None
+            if apps and app_schema and not queries.supports_apex_used_views(apex_version):
+                _print_apex_too_old(apps, request.app_labels or {})
+                apps = []
             for app in apps:
                 if app_schema is None:
-                    continue
-                apex_version = (request.apex_versions or {}).get(app_schema)
-                if not queries.supports_apex_used_views(apex_version):
-                    progress.line(
-                        "  APEX dependency scan requires APEX 24.2 or newer; "
-                        f"skipping APEX app {app}."
-                    )
                     continue
                 label = (request.app_labels or {}).get(app, str(app))
                 print_adt_header(f"APP {label}, REFRESHING:")
@@ -412,3 +414,15 @@ def _progress_reporter(progress: Any) -> DependencyProgress:
     # Anything else is a reporter the caller built itself, the console
     # `FixedWidthProgressPrinter` above all; it is taken at its word.
     return cast(DependencyProgress, progress)
+
+
+def _print_apex_too_old(apps: list[int], labels: dict[int, str]) -> None:
+    """The apps whose component scan the APEX release cannot run (`#861`).
+
+    It was a bare progress line per app, `APEX dependency scan requires APEX 24.2
+    or newer; skipping APEX app N.`, sitting under whatever section came before.
+    """
+    print_adt_header(APEX_TOO_OLD_HEADER)
+    for app in apps:
+        print(f"  APP {labels.get(app, str(app))} needs APEX 24.2 or newer")
+    print()

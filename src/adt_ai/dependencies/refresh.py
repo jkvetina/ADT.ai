@@ -26,13 +26,6 @@ _APEX_PRIMARY_KEYS = {
         "COMPONENT_ID",
         "PROPERTY_ID",
     ),
-    "APEX_USED_DB_OBJ_DEPENDENCIES": (
-        "APPLICATION_ID",
-        "USED_DB_OBJECT_ID",
-        "REFERENCED_OBJECT_OWNER",
-        "REFERENCED_OBJECT_TYPE",
-        "REFERENCED_OBJECT_NAME",
-    ),
 }
 
 

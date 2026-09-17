@@ -134,6 +134,29 @@ def has_table(connection: sqlite3.Connection, name: str) -> bool:
     return _scalar(connection, queries.TABLE_EXISTS_QUERY, (name,)) is not None
 
 
+def drop_columns(
+    connection: sqlite3.Connection,
+    table: str,
+    columns: Iterable[str],
+    *,
+    indexes: Iterable[str] = (),
+) -> None:
+    """Drop ``columns`` from ``table``, as far as the file still has them (ADT #873).
+
+    ``indexes`` go first: SQLite refuses to drop a column an index names, and
+    the schema script recreates any the store still declares. By inspection, so
+    a step also lifts a file an older step left without the table.
+    """
+    for index in indexes:
+        connection.execute(queries.drop_index_statement(index))
+    cursor = connection.cursor()
+    cursor.row_factory = None
+    present = {row[1] for row in cursor.execute(queries.table_columns_query(table))}
+    for column in columns:
+        if column in present:
+            connection.execute(queries.drop_column_statement(table, column))
+
+
 def _connect(db_path: str | Path) -> sqlite3.Connection:
     # The timeout is spelled on both branches rather than on the one that can
     # contend: one opener means one reading, and a second spelling here is how
@@ -183,6 +206,7 @@ __all__ = [
     "Migration",
     "StoreVersionError",
     "Version",
+    "drop_columns",
     "has_table",
     "open_store",
     "stored_version",

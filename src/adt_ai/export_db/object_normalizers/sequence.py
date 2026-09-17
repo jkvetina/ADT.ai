@@ -25,9 +25,13 @@ def normalize_sequence(lines: list[str], context: NormalizationContext) -> list[
     line = re.sub(r"\s+", " ", line).replace(" ;", ";").strip()
     line = line.replace(" MINVALUE", "\n    MINVALUE")
     line = re.sub(r"\s+;", ";", line)
+    # No `/` after the `;`. SQLcl runs a statement at its `;` and runs the buffer
+    # again at a following `/`, so the file created the sequence and then failed
+    # on `ORA-00955`, which rolled back every patch shipping a new sequence
+    # (measured on SANDBOX, ADT #830). Old ADT appended the same `/` to every
+    # type but TABLE and INDEX (export_db.py:458) and had the same failure.
     return [
         f"-- DROP SEQUENCE {qualified(context.display_name, context)};",
         line,
-        "/",
         "",
     ]

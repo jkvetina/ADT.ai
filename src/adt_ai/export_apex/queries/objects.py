@@ -21,7 +21,6 @@ APPLICATIONS_QUERY = """
 SELECT
     a.owner,
     a.workspace,
-    a.workspace_id,
     a.application_group     AS app_group,
     a.application_id        AS app_id,
     a.alias                 AS app_alias,
@@ -53,7 +52,6 @@ APPLICATIONS_BY_ID_QUERY = """
 SELECT
     a.owner,
     a.workspace,
-    a.workspace_id,
     a.application_group     AS app_group,
     a.application_id        AS app_id,
     a.alias                 AS app_alias,

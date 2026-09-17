@@ -26,6 +26,7 @@ from adt_ai.export_db.content import (
     _has_column_comments,
     _has_comments,
     _ignored_comment_columns,
+    _job_arguments_dropped,
     _render_directories,
     _render_grants_made,
     _render_grants_received,
@@ -329,6 +330,7 @@ class ExportDbRunner:
             keep_view_column_names = is_enabled(
                 request.config.get("keep_view_column_names", False)
             )
+            dropped_job_arguments: list[str] = []
             for index, database_object in enumerate(database_objects):
                 if reports_objects:
                     # A filename sitting in more than one place under the type
@@ -380,11 +382,10 @@ class ExportDbRunner:
                     else None
                 )
                 if database_object.object_type == "JOB":
-                    content = _append_job_arguments(
-                        content,
-                        discovery.job_arguments(database_object),
-                        database_object.name,
-                    )
+                    arguments = discovery.job_arguments(database_object)
+                    if _job_arguments_dropped(content, arguments):
+                        dropped_job_arguments.append(database_object.name)
+                    content = _append_job_arguments(content, arguments)
                 content = _append_comments(
                     content,
                     database_object,
@@ -417,6 +418,7 @@ class ExportDbRunner:
             # One bar per schema, never a grand total across them, the same split
             # the shared per-schema section helper applies to every other output.
             reporter.finish_export(schema)
+            reporter.job_arguments_not_exported(schema, dropped_job_arguments)
             # What this segment cost, folded into the rates the next run prices
             # itself from. Reached only on a completed segment, for the same
             # reason the watermark below is: a run that raised half way through

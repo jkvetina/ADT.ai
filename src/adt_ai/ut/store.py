@@ -47,21 +47,21 @@ from __future__ import annotations
 import contextlib
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 
 from adt_ai.shared.internal_paths import internal_path
-from adt_ai.shared.sqlite_store import Migration, open_store
+from adt_ai.shared.sqlite_store import Migration, drop_columns, open_store
 from adt_ai.ut import queries
 from adt_ai.ut.inventory import PackageCoverage, SuitePackage
 
 #: The store's filename under ``config/internal/``.
 STORE_NAME = "ut.db"
 
-#: The first version the file carries (ADT #642). A file from before it has no
-#: `_meta`, an index with no prefix, an ISO stamp with a `T`, and possibly no
+#: Version 1 (ADT #642) is the first the file carries. A file from before it has
+#: no `_meta`, an index with no prefix, an ISO stamp with a `T`, and possibly no
 #: `variant` column; :func:`_lift_legacy` fixes all four, history intact.
-SCHEMA_VERSION = "1"
+#: Version 2 (ADT #873) drops the columns no comparison reads.
+SCHEMA_VERSION = "2"
 
 #: What this store was called while the command was ``ut3`` (ADT #390).
 #:
@@ -99,9 +99,8 @@ class RunSnapshot:
     the test :func:`baseline_percents` walks back on.
     """
 
-    run_id      : int
-    recorded_at : str
-    percents    : dict[str, float]
+    run_id   : int
+    percents : dict[str, float]
 
 
 @dataclass(frozen=True)
@@ -172,9 +171,8 @@ def run_history(
             runs = connection.execute(queries.RUNS_QUERY, (_key(schema), variant)).fetchall()
             return tuple(
                 RunSnapshot(
-                    run_id      = int(run_id),
-                    recorded_at = str(recorded_at),
-                    percents    = {
+                    run_id   = int(run_id),
+                    percents = {
                         str(package): float(percent)
                         for package, percent in connection.execute(
                             queries.RUN_PERCENTS_QUERY,
@@ -182,7 +180,7 @@ def run_history(
                         )
                     },
                 )
-                for run_id, recorded_at in runs
+                for (run_id,) in runs
             )
     except sqlite3.Error:
         return ()
@@ -253,11 +251,7 @@ def record_run(
         with contextlib.closing(_connect(path)) as connection, connection:
             cursor = connection.execute(
                 queries.INSERT_RUN_STATEMENT,
-                (
-                    _key(schema),
-                    datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
-                    variant,
-                ),
+                (_key(schema), variant),
             )
             run_id = cursor.lastrowid
             if run_id is None:  # pragma: no cover - sqlite sets it on an INSERT
@@ -265,14 +259,7 @@ def record_run(
             connection.executemany(
                 queries.INSERT_PACKAGE_STATEMENT,
                 [
-                    (
-                        run_id,
-                        package.name.upper(),
-                        int(package.lines),
-                        int(package.blocks_total),
-                        int(package.blocks_covered),
-                        package.percent,
-                    )
+                    (run_id, package.name.upper(), package.percent)
                     for package in packages
                 ],
             )
@@ -360,7 +347,7 @@ def coverage_changes(
 
 
 def _connect(path: Path) -> sqlite3.Connection:
-    """The file at version 1, through the shared opener; plain tuple rows."""
+    """The file at the shipped version, through the shared opener; plain tuple rows."""
     return open_store(
         path,
         schema      = queries.STORE_SCHEMA_SCRIPT,
@@ -385,7 +372,15 @@ def _lift_legacy(connection: sqlite3.Connection) -> None:
     connection.execute(queries.LIFT_RECORDED_AT_STATEMENT)
 
 
-MIGRATIONS: tuple[Migration, ...] = (Migration(None, "1", _lift_legacy),)
+def _lift_1(connection: sqlite3.Connection) -> None:
+    for table, columns in queries.LIFT_1_DROPPED_COLUMNS.items():
+        drop_columns(connection, table, columns)
+
+
+MIGRATIONS: tuple[Migration, ...] = (
+    Migration(None, "1", _lift_legacy),
+    Migration("1", "2", _lift_1),
+)
 
 
 def _key(schema: str) -> str:

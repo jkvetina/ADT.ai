@@ -59,7 +59,19 @@ patch_apex_build_status:
   PROD: RUN_ONLY
 ```
 
-The application **version** old ADT stamped alongside the workspace is deliberately not emitted.
+The application **version** old ADT stamped alongside the workspace is deliberately not emitted; `apex_end/00_end.sql` carries it as an example instead.
+
+## APEX examples, commented out
+
+Three old ADT settings ship here as examples you switch on, never as defaults. Each is a block inside `/* */` and runs nothing until you delete its `/*` and `*/` lines:
+
+| Example                                         | File                    |
+| ----------------------------------------------- | ----------------------- |
+| install or upgrade supporting objects on import | `apex_init/00_init.sql` |
+| switch the authentication scheme                | `apex_end/00_end.sql`   |
+| set the application version                     | `apex_end/00_end.sql`   |
+
+The two `apex_end/` blocks run after the import and name their applications in `IN (...)`, because nothing here is substituted.
 
 ## A note on the db_end slot
 

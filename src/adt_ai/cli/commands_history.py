@@ -39,7 +39,9 @@ from adt_ai.cli.context import (
 from adt_ai.patch.object_folders import object_folder_resolver
 from adt_ai.rebuild.models import RebuildError
 from adt_ai.rebuild.render import ConsoleRebuildReporter
+from adt_ai.shared.author_aliases import author_aliases
 from adt_ai.shared.commit_cache import DEFAULT_COMMITS_TEMPLATE, open_store
+from adt_ai.shared.commit_store import problems_in
 from adt_ai.shared.commit_window import resolve_history_floor
 from adt_ai.shared.dates import resolve_since
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
@@ -172,10 +174,10 @@ def _run_rebuild_verify(args: argparse.Namespace, root: Path) -> int:
     print_adt_header("COMMIT STORES:")
     print()
     for branch in branches:
+        # One aggregate over the key answers the row and the verdict both.
         with open_store(root, branch, template) as store:
-            found = store.verify(branch)
-            floor, ceiling = store.floor(branch), store.ceiling(branch)
-            count = len(store.numbers(branch))
+            floor, ceiling, count = span = store.span()
+        found = problems_in(span, branch)
         label = f"{branch[:VERIFY_BRANCH_WIDTH]:<{VERIFY_BRANCH_WIDTH}}"
         if count == 0:
             print(f"  {label} EMPTY"[:VERIFY_LINE_WIDTH])
@@ -298,6 +300,7 @@ def _run_calendar(args: argparse.Namespace) -> int:
                 authors             = args.by or [],
                 jira_prefix         = jira_prefix,
                 cache_file_template = cache_file_template,
+                author_aliases      = author_aliases(config),
             )
         )
     except (CalendarError, ValueError) as exc:

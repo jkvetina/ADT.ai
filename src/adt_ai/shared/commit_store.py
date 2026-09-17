@@ -29,25 +29,40 @@ SQLite rather than a text file because the corpus is large: measured on a real
 resident) before it can answer "the newest 40 commits", which is all `patch`
 ever needs, while the same question here is an indexed lookup.
 
+**One file is one branch** (ADT #873). `commit_cache.open_store` binds the file
+to its branch before any read and `_meta.branch_name` records which, so no
+method takes a branch and no row repeats one. Every read is bounded: by a
+limit, by a list of ids, by a month, or by an aggregate over the key. Nothing
+here reads the whole branch, because a 10,000-commit repository made that the
+slowest thing any command did.
+
 The file follows the store convention since ADT #642 (`docs/storage.md`): the
 version lives in `_meta`, the author date in `authored_at` as
 `YYYY-MM-DD HH:MM:SS+HH:MM`, git's own instant with the author's offset kept
 because it is the one stamp ADT reads off somebody else's clock, and the
-opener is the shared one. A version 1 file is lifted in place on open.
+opener is the shared one. Older files are lifted in place on open.
 """
 
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from adt_ai.shared import queries
 from adt_ai.shared.sqlite_store import Migration, open_store
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "4"
+
+#: How many ids one `IN` list carries. Well under SQLite's variable limit on
+#: every build ADT runs on, and large enough that a scan window is one query.
+IN_CHUNK = 900
+
+#: The `number < ?` bound of a search that starts at the tip.
+ABOVE_EVERY_NUMBER = 2**62
+
 
 #: Version 1 to 2 (ADT #642): `meta` to `_meta`, `date` to `authored_at`, and
 #: the foreign key `commit_files` always kept by hand declared with a cascade.
@@ -57,8 +72,31 @@ def _lift_1(connection: sqlite3.Connection) -> None:
     connection.executescript(queries.COMMIT_STORE_LIFT_1)
 
 
+#: Version 2 to 3 (ADT #851): `commits.patch` goes. It was decided at write time
+#: under a hardcoded `patch/` and read by nothing; the marker is a reading of the
+#: file rows with the project's `patch_root`, taken by `commit_discovery`.
+def _lift_2(connection: sqlite3.Connection) -> None:
+    connection.executescript(queries.COMMIT_STORE_LIFT_2)
+
+
+#: Version 3 to 4 (ADT #873): `branch` goes from both tables. A file holding
+#: two branches cannot be flattened into one, so it is refused before anything
+#: moves, with the message `claim_branch` always gave that case.
+def _lift_3(connection: sqlite3.Connection) -> None:
+    branches = [str(row[0]) for row in connection.execute(queries.COMMIT_V3_BRANCHES_QUERY)]
+    if len(branches) > 1:
+        raise ValueError(f"commit store already contains multiple branches: {branches}")
+    connection.executescript(queries.COMMIT_STORE_LIFT_3)
+    # The rebuild frees every page the old tables held, and SQLite keeps them.
+    # Measured on a real 8,790-commit store: 71 MB before the lift, 87 MB after
+    # it without this, so the file would only ever have grown.
+    connection.execute(queries.COMMIT_STORE_VACUUM)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(None, "2", _lift_1),
+    Migration("2", "3", _lift_2),
+    Migration("3", "4", _lift_3),
 )
 
 
@@ -86,11 +124,46 @@ class StoredCommit:
     files: dict[str, str] = field(default_factory=dict)
     deleted: list[str] = field(default_factory=list)
     statuses: dict[str, str] = field(default_factory=dict)
-    patch: str | None = None
 
     @property
     def commit_hash(self) -> str:
         return self.id
+
+
+class Span(NamedTuple):
+    floor: int | None
+    ceiling: int | None
+    size: int
+
+
+@dataclass(frozen=True)
+class AuthorClause:
+    """One author test, as alternatives any of which admits a commit.
+
+    ``likes`` are SQL LIKE patterns, ``exacts`` exact addresses, ``addresses``
+    lower-cased addresses matched after trimming, which is how `repo_authors`
+    keys its personal addresses.
+    """
+
+    likes: tuple[str, ...] = ()
+    exacts: tuple[str, ...] = ()
+    addresses: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CommitFilter:
+    """What a search can narrow in SQL. Every field left empty narrows nothing.
+
+    ``since``/``until`` are `YYYY-MM-DD` on the author's clock. ``summary_terms``
+    and ``path_terms`` are lower-cased substrings, every one required. Each
+    author clause is required, and inside one any alternative admits.
+    """
+
+    since: str | None = None
+    until: str | None = None
+    summary_terms: tuple[str, ...] = ()
+    path_terms: tuple[str, ...] = ()
+    authors: tuple[AuthorClause, ...] = ()
 
 
 def authored_stamp(value: str) -> str:
@@ -108,7 +181,7 @@ def authored_stamp(value: str) -> str:
 
 
 class CommitStore:
-    """Query and write API over one branch-scoped commit database."""
+    """Query and write API over one branch's commit database."""
 
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
@@ -131,20 +204,17 @@ class CommitStore:
     def close(self) -> None:
         self.connection.close()
 
+    def branch_name(self) -> str | None:
+        row = self.connection.execute(queries.META_BRANCH_QUERY).fetchone()
+        return str(row[0]) if row else None
+
     def claim_branch(self, branch: str) -> None:
         """Bind this file to one branch, rejecting a filename collision."""
-        row = self.connection.execute(queries.META_BRANCH_QUERY).fetchone()
-        recorded = str(row[0]) if row else ""
-        if not recorded:
-            existing = [
-                str(item[0])
-                for item in self.connection.execute(queries.COMMIT_BRANCHES_QUERY)
-            ]
-            if len(existing) > 1:
-                raise ValueError(f"commit store already contains multiple branches: {existing}")
-            recorded = existing[0] if existing else branch
-            self.connection.execute(queries.META_BRANCH_INSERT, (recorded,))
+        recorded = self.branch_name()
+        if recorded is None:
+            self.connection.execute(queries.META_BRANCH_INSERT, (branch,))
             self.connection.commit()
+            return
         if recorded != branch:
             raise ValueError(
                 f"branch {branch!r} maps to a commit store already owned by {recorded!r}; "
@@ -159,80 +229,117 @@ class CommitStore:
 
     # -- reads -------------------------------------------------------------
 
-    def floor(self, branch: str) -> int | None:
-        lowest: int | None = self.connection.execute(
-            queries.COMMIT_FLOOR_QUERY, (branch,)
-        ).fetchone()[0]
-        return lowest
+    def span(self) -> Span:
+        low, high, count = self.connection.execute(queries.COMMIT_SPAN_QUERY).fetchone()
+        return Span(low, high, count)
 
-    def ceiling(self, branch: str) -> int | None:
-        highest: int | None = self.connection.execute(
-            queries.COMMIT_CEILING_QUERY, (branch,)
-        ).fetchone()[0]
-        return highest
+    def floor(self) -> int | None:
+        return self.span().floor
 
-    def numbers(self, branch: str) -> dict[str, int]:
-        """Every stored commit hash mapped to its number."""
-        return {
-            row[0]: row[1]
-            for row in self.connection.execute(queries.COMMIT_NUMBERS_QUERY, (branch,))
-        }
+    def ceiling(self) -> int | None:
+        return self.span().ceiling
 
-    def tip(self, branch: str) -> StoredCommit | None:
-        found = self.recent(branch, 1)
+    def count(self) -> int:
+        return self.span().size
+
+    def numbers_for(self, ids: Iterable[str]) -> dict[str, int]:
+        """The numbers of the given commit hashes that are stored, and no others."""
+        wanted = list(dict.fromkeys(ids))
+        found: dict[str, int] = {}
+        for start in range(0, len(wanted), IN_CHUNK):
+            chunk = wanted[start:start + IN_CHUNK]
+            sql = queries.COMMIT_NUMBERS_FOR_IDS_TEMPLATE.format(
+                placeholders=",".join("?" for _ in chunk)
+            )
+            found.update({row[0]: row[1] for row in self.connection.execute(sql, chunk)})
+        return found
+
+    def tip(self) -> StoredCommit | None:
+        found = self.recent(1)
         return found[0] if found else None
 
-    def recent(self, branch: str, limit: int) -> list[StoredCommit]:
+    def recent(self, limit: int) -> list[StoredCommit]:
         """The newest ``limit`` commits, newest first.
 
         This is the query `patch` runs, and it never materialises the branch:
         that is the difference between a bounded index scan and parsing a
         gigabyte of text to read forty rows off the end of it.
         """
-        rows = self.connection.execute(queries.COMMIT_RECENT_QUERY, (branch, limit)).fetchall()
-        return self._with_files(branch, rows)
+        rows = self.connection.execute(queries.COMMIT_RECENT_QUERY, (limit,)).fetchall()
+        return self._with_files(rows)
 
-    def records(self, branch: str) -> list[StoredCommit]:
-        """Every commit on the branch, oldest first."""
-        rows = self.connection.execute(queries.COMMIT_RECORDS_QUERY, (branch,)).fetchall()
-        return self._with_files(branch, rows)
+    def month(self, month: str) -> list[StoredCommit]:
+        """The commits authored in ``month`` (`YYYY-MM`), oldest first, without files."""
+        rows = self.connection.execute(queries.COMMIT_MONTH_QUERY, (month,)).fetchall()
+        return [_commit(row) for row in rows]
 
-    def by_path(self, branch: str, path: str) -> list[int]:
-        """Commit numbers that touched ``path``, newest first."""
-        return [
-            row[0]
-            for row in self.connection.execute(queries.COMMIT_BY_PATH_QUERY, (branch, path))
-        ]
+    def search(
+        self,
+        criteria: CommitFilter,
+        *,
+        limit: int,
+        below: int | None = None,
+    ) -> list[StoredCommit]:
+        """A page of commits matching ``criteria``, newest first, below ``below``."""
+        conditions: list[str] = []
+        params: list[Any] = [ABOVE_EVERY_NUMBER if below is None else below]
+        if criteria.since:
+            conditions.append(queries.COMMIT_SEARCH_SINCE)
+            params.append(criteria.since)
+        if criteria.until:
+            conditions.append(queries.COMMIT_SEARCH_UNTIL)
+            params.append(criteria.until)
+        for term in criteria.summary_terms:
+            conditions.append(queries.COMMIT_SEARCH_SUMMARY)
+            params.append(term)
+        for term in criteria.path_terms:
+            conditions.append(queries.COMMIT_SEARCH_PATH)
+            params.append(term)
+        for clause in criteria.authors:
+            alternatives, values = _author_alternatives(clause)
+            conditions.append(f"({' OR '.join(alternatives)})")
+            params.extend(values)
+        params.append(limit)
+        sql = queries.COMMIT_SEARCH_TEMPLATE.format(
+            conditions="".join(f"\n  AND {condition}" for condition in conditions)
+        )
+        return self._with_files(self.connection.execute(sql, params).fetchall())
 
-    def _with_files(self, branch: str, rows: list[tuple[Any, ...]]) -> list[StoredCommit]:
+    def prior_status(self, path: str, number: int) -> str | None:
+        """The status ``path`` had in its newest commit below ``number``, if any.
+
+        A file row an early store wrote without a letter reads as a modify.
+        """
+        row = self.connection.execute(
+            queries.COMMIT_FILE_PRIOR_STATUS_QUERY, (path, number)
+        ).fetchone()
+        return str(row[0]) if row else None
+
+    def _with_files(self, rows: Sequence[tuple[Any, ...]]) -> list[StoredCommit]:
         if not rows:
             return []
-        numbers = [row[1] for row in rows]
-        placeholders = ",".join("?" for _ in numbers)
+        numbers = [row[0] for row in rows]
         files: dict[int, dict[str, str]] = {number: {} for number in numbers}
         statuses: dict[int, dict[str, str]] = {number: {} for number in numbers}
         deleted: dict[int, list[str]] = {number: [] for number in numbers}
-        for number, path, hash_, status in self.connection.execute(
-            queries.COMMIT_FILES_FOR_NUMBERS_TEMPLATE.format(placeholders=placeholders),
-            (branch, *numbers),
-        ):
-            if status == "D":
-                deleted[number].append(path)
-            else:
-                files[number][path] = hash_
-            if status:
-                statuses[number][path] = status
+        for start in range(0, len(numbers), IN_CHUNK):
+            chunk = numbers[start:start + IN_CHUNK]
+            sql = queries.COMMIT_FILES_FOR_NUMBERS_TEMPLATE.format(
+                placeholders=",".join("?" for _ in chunk)
+            )
+            for number, path, hash_, status in self.connection.execute(sql, chunk):
+                if status == "D":
+                    deleted[number].append(path)
+                else:
+                    files[number][path] = hash_
+                if status:
+                    statuses[number][path] = status
         return [
-            StoredCommit(
-                number   = row[1],
-                id       = row[2],
-                summary  = row[3] or "",
-                author   = row[4] or "",
-                date     = row[5] or "",
-                files    = files[row[1]],
-                deleted  = sorted(deleted[row[1]]),
-                statuses = statuses[row[1]],
-                patch    = row[6],
+            _commit(
+                row,
+                files    = files[row[0]],
+                deleted  = sorted(deleted[row[0]]),
+                statuses = statuses[row[0]],
             )
             for row in rows
         ]
@@ -241,7 +348,6 @@ class CommitStore:
 
     def allocate(
         self,
-        branch: str,
         records: Iterable[StoredCommit],
         *,
         seed: int | None = None,
@@ -253,24 +359,14 @@ class CommitStore:
         ``seed`` is honoured only while the branch is empty.
         """
         ordered = list(records)
-        existing = self.numbers(branch)
-        ceiling = self.ceiling(branch)
+        existing = self.numbers_for(item.id for item in ordered)
+        ceiling = self.ceiling()
         # The seed is read only while the branch is empty. Re-seeding a branch
         # that already has commits is the same mistake as re-deriving a number.
         next_number = (seed if seed is not None else 1) if ceiling is None else ceiling + 1
-        assigned: list[int] = []
-        fresh: list[tuple[int, StoredCommit]] = []
-        for item in ordered:
-            if item.id in existing:
-                assigned.append(existing[item.id])
-                continue
-            assigned.append(next_number)
-            fresh.append((next_number, item))
-            next_number += 1
-        self._write(branch, fresh)
-        return assigned
+        return self._assign(ordered, existing, next_number)
 
-    def backfill(self, branch: str, records: Iterable[StoredCommit]) -> list[int]:
+    def backfill(self, records: Iterable[StoredCommit]) -> list[int]:
         """Number ``records`` (oldest first) below the current floor.
 
         This is the `patch_history_bottom_days` path: raising the window pulls
@@ -282,20 +378,34 @@ class CommitStore:
         ordered = list(records)
         if not ordered:
             return []
-        existing = self.numbers(branch)
-        wanted = [item for item in ordered if item.id not in existing]
-        floor = self.floor(branch)
+        floor = self.floor()
         if floor is None:
-            return self.allocate(branch, ordered)
+            return self.allocate(ordered)
+        existing = self.numbers_for(item.id for item in ordered)
+        wanted = [item for item in ordered if item.id not in existing]
         first = floor - len(wanted)
         if first < 1:
             raise ValueError(
                 f"backfilling {len(wanted)} commit(s) below floor {floor} would run "
                 f"below 1; the store cannot hold them without renumbering"
             )
-        fresh: list[tuple[int, StoredCommit]] = []
-        next_number = first
+        return self._assign(ordered, existing, first)
+
+    def reset(self) -> None:
+        """Forget every commit.
+
+        The one legitimate caller is rewritten history: after a rebase or a
+        force-push the stored numbers point at commits the branch no longer
+        has, so they describe nothing. Any other use is a renumbering.
+        """
+        self.connection.execute(queries.COMMIT_DELETE_ALL)
+        self.connection.commit()
+
+    def _assign(
+        self, ordered: list[StoredCommit], existing: dict[str, int], next_number: int
+    ) -> list[int]:
         assigned: list[int] = []
+        fresh: list[tuple[int, StoredCommit]] = []
         for item in ordered:
             if item.id in existing:
                 assigned.append(existing[item.id])
@@ -303,32 +413,16 @@ class CommitStore:
             assigned.append(next_number)
             fresh.append((next_number, item))
             next_number += 1
-        self._write(branch, fresh)
+        self._write(fresh)
         return assigned
 
-    def reset(self, branch: str) -> None:
-        """Forget everything on ``branch``.
-
-        The one legitimate caller is rewritten history: after a rebase or a
-        force-push the stored numbers point at commits the branch no longer
-        has, so they describe nothing. Any other use is a renumbering.
-        """
-        self.connection.execute(queries.COMMIT_DELETE_BRANCH, (branch,))
-        self.connection.commit()
-
-    def _all_numbers(self, branch: str) -> list[int]:
-        return list(self.numbers(branch).values())
-
-    def _write(self, branch: str, fresh: list[tuple[int, StoredCommit]]) -> None:
+    def _write(self, fresh: list[tuple[int, StoredCommit]]) -> None:
         if not fresh:
             return
         self.connection.executemany(
             queries.COMMIT_INSERT,
             [
-                (
-                    branch, number, item.id, item.summary, item.author,
-                    authored_stamp(item.date), item.patch,
-                )
+                (number, item.id, item.summary, item.author, authored_stamp(item.date))
                 for number, item in fresh
             ],
         )
@@ -338,32 +432,73 @@ class CommitStore:
                 # NULL, not a default letter: a caller that has no status does
                 # not know whether a file was added or modified, and writing
                 # "M" would be a guess indistinguishable from git's own answer.
-                rows.append((branch, number, path, hash_, item.statuses.get(path)))
+                rows.append((number, path, hash_, item.statuses.get(path)))
             for path in item.deleted:
-                rows.append((branch, number, path, None, "D"))
+                rows.append((number, path, None, "D"))
         if rows:
             self.connection.executemany(queries.COMMIT_FILE_INSERT, rows)
         self.connection.commit()
 
     # -- verification ------------------------------------------------------
 
-    def verify(self, branch: str) -> list[str]:
-        """Problems with the branch's numbering, empty when it is sound.
+    def verify(self) -> list[str]:
+        """Problems with the numbering, empty when it is sound."""
+        return problems_in(self.span(), self.branch_name() or "store")
 
-        Contiguity is checkable because allocation is additive: floor to ceiling
-        with no gap is the only shape allocate/backfill can produce, so a gap
-        means something outside this module wrote the store.
-        """
-        low, high, count = self.connection.execute(
-            queries.COMMIT_SPAN_QUERY, (branch,)
-        ).fetchone()
-        if count == 0:
-            return []
-        problems: list[str] = []
-        expected = high - low + 1
-        if expected != count:
-            problems.append(
-                f"hole in {branch}: numbers {low} to {high} span {expected} slots "
-                f"but only {count} commits are stored"
+
+def problems_in(span: Span, label: str) -> list[str]:
+    """What a span says is wrong with a store's numbering.
+
+    Contiguity is checkable because allocation is additive: floor to ceiling
+    with no gap is the only shape allocate/backfill can produce, so a gap
+    means something outside this module wrote the store.
+    """
+    if span.size == 0 or span.floor is None or span.ceiling is None:
+        return []
+    expected = span.ceiling - span.floor + 1
+    if expected == span.size:
+        return []
+    return [
+        f"hole in {label}: numbers {span.floor} to {span.ceiling} span {expected} slots "
+        f"but only {span.size} commits are stored"
+    ]
+
+
+def _commit(
+    row: tuple[Any, ...],
+    *,
+    files: dict[str, str] | None = None,
+    deleted: list[str] | None = None,
+    statuses: dict[str, str] | None = None,
+) -> StoredCommit:
+    return StoredCommit(
+        number   = row[0],
+        id       = row[1],
+        summary  = row[2] or "",
+        author   = row[3] or "",
+        date     = row[4] or "",
+        files    = files or {},
+        deleted  = deleted or [],
+        statuses = statuses or {},
+    )
+
+
+def _author_alternatives(clause: AuthorClause) -> tuple[list[str], list[str]]:
+    alternatives: list[str] = []
+    values: list[str] = []
+    for pattern in clause.likes:
+        alternatives.append(queries.COMMIT_SEARCH_AUTHOR_LIKE)
+        values.append(pattern)
+    for address in clause.exacts:
+        alternatives.append(queries.COMMIT_SEARCH_AUTHOR_EXACT)
+        values.append(address)
+    if clause.addresses:
+        alternatives.append(
+            queries.COMMIT_SEARCH_AUTHOR_ADDRESSES_TEMPLATE.format(
+                placeholders=",".join("?" for _ in clause.addresses)
             )
-        return problems
+        )
+        values.extend(clause.addresses)
+    if not alternatives:
+        raise ValueError("an author clause needs at least one alternative")
+    return alternatives, values

@@ -87,7 +87,7 @@ A password is collected interactively, with hidden input, at apply time only. An
 
 ### With no terminal attached
 
-A CI job, a deployment script and an agent session all run with no terminal, and there the prompt reads stdin instead. An empty stdin reaches its end straight away, and that counts as a blank answer.
+A CI job, a deployment script and an agent session all run with no terminal, and there the prompt reads stdin instead. An empty stdin reaches its end straight away, and that counts as a blank answer. The first prompt says so under `WARNING - PASSWORD MAY BE ECHOED:`, once per command, since nothing can hide what arrives that way.
 
 So `-create -go` and `-add-schema -go` write their file with no password, which is what not supplying one asked for. `-set-pwd` and `-set-wallet-pwd` write a password by definition, so they refuse instead and say to run the command from a terminal.
 

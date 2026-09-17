@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -35,6 +36,16 @@ class ApexFlowRefreshResult:
     @property
     def edge_count(self) -> int:
         return len(self.edges)
+
+
+_APP_ID_SUBSTITUTION = re.compile(r"&APP_ID\.", re.IGNORECASE)
+
+
+def _resolve_raw_target(raw_target: str | None, app_id: int) -> str | None:
+    """Swap the `&APP_ID.` substitution for the id the link was scraped from."""
+    if raw_target is None:
+        return None
+    return _APP_ID_SUBSTITUTION.sub(str(app_id), raw_target)
 
 
 def _resolve_target_app_id(flag: str, app_id: int, target_app: str | None) -> int | None:
@@ -100,14 +111,13 @@ class ApexFlowRefreshRunner:
             edges.append(
                 FlowEdge(
                     app_id        = app.app_id,
-                    workspace     = app.workspace,
                     src_type      = row["SRC_TYPE"],
                     src_page      = row["SRC_PAGE"],
                     component_id  = (
                         str(row["COMPONENT_ID"]) if row["COMPONENT_ID"] is not None else None
                     ),
                     component     = row["COMPONENT"],
-                    raw_target    = row["RAW_TARGET"],
+                    raw_target    = _resolve_raw_target(row["RAW_TARGET"], app.app_id),
                     target_app    = target_app,
                     target_app_id = _resolve_target_app_id(flag, app.app_id, target_app),
                     target_page   = row["TARGET_PAGE"],

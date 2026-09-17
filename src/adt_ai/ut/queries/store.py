@@ -8,7 +8,9 @@ and ``shared/queries/commit_store`` are the same shape for their stores.
 
 The store keeps one row per run per schema plus one row per package that run
 measured. Version 1 (ADT #642) is the first the file carries; a file from
-before it is lifted in place, history intact, on the way past.
+before it is lifted in place, history intact, on the way past. Version 2
+(ADT #873) keeps only what a comparison reads: the run's stamp and each
+package's line and block counts are dropped.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from adt_ai.shared.queries.sqlite_store import META_TABLE_DDL
 
 #: Both tables plus the lookup index, run as one script on every open.
 #:
-#: ``percent`` is nullable on purpose: ``blocks_total = 0`` is Oracle collecting
+#: ``percent`` is nullable on purpose: a package with no blocks is Oracle collecting
 #: nothing rather than a package scoring zero, and a NULL is the only value that
 #: cannot be mistaken for a measurement later.
 #:
@@ -31,16 +33,12 @@ STORE_SCHEMA_SCRIPT = META_TABLE_DDL + """
 CREATE TABLE IF NOT EXISTS runs (
     run_id      INTEGER PRIMARY KEY AUTOINCREMENT,
     schema_name TEXT NOT NULL,
-    recorded_at TEXT NOT NULL,
     variant     TEXT
 );
 CREATE TABLE IF NOT EXISTS package_coverage (
-    run_id         INTEGER NOT NULL REFERENCES runs (run_id) ON DELETE CASCADE,
-    package        TEXT NOT NULL,
-    lines          INTEGER NOT NULL DEFAULT 0,
-    blocks_total   INTEGER NOT NULL DEFAULT 0,
-    blocks_covered INTEGER NOT NULL DEFAULT 0,
-    percent        REAL,
+    run_id  INTEGER NOT NULL REFERENCES runs (run_id) ON DELETE CASCADE,
+    package TEXT NOT NULL,
+    percent REAL,
     PRIMARY KEY (run_id, package)
 );
 CREATE INDEX IF NOT EXISTS ix_runs_schema ON runs (schema_name, run_id);
@@ -77,7 +75,7 @@ LIFT_RECORDED_AT_STATEMENT = (
 #: identical to the one before it, and "the previous run" made the table empty
 #: on every one of those (`#436`).
 RUNS_QUERY = (
-    "SELECT run_id, recorded_at FROM runs "
+    "SELECT run_id FROM runs "
     "WHERE schema_name = ? AND variant = ? ORDER BY run_id DESC"
 )
 
@@ -90,15 +88,17 @@ RUN_PERCENTS_QUERY = (
 
 RUN_COUNT_QUERY = "SELECT COUNT(*) FROM runs WHERE schema_name = ?"
 
-INSERT_RUN_STATEMENT = (
-    "INSERT INTO runs (schema_name, recorded_at, variant) VALUES (?, ?, ?)"
-)
+INSERT_RUN_STATEMENT = "INSERT INTO runs (schema_name, variant) VALUES (?, ?)"
 
 INSERT_PACKAGE_STATEMENT = (
-    "INSERT INTO package_coverage "
-    "(run_id, package, lines, blocks_total, blocks_covered, percent) "
-    "VALUES (?, ?, ?, ?, ?, ?)"
+    "INSERT INTO package_coverage (run_id, package, percent) VALUES (?, ?, ?)"
 )
+
+#: What version 2 drops, table by table (ADT #873).
+LIFT_1_DROPPED_COLUMNS: dict[str, tuple[str, ...]] = {
+    "runs": ("recorded_at",),
+    "package_coverage": ("lines", "blocks_total", "blocks_covered"),
+}
 
 #: Every run for this schema older than the newest ``?`` of them. ``LIMIT -1``
 #: is SQLite's "no limit", which is what makes a bare ``OFFSET`` legal.
@@ -119,6 +119,7 @@ __all__ = [
     "EXPIRED_RUNS_QUERY",
     "INSERT_PACKAGE_STATEMENT",
     "INSERT_RUN_STATEMENT",
+    "LIFT_1_DROPPED_COLUMNS",
     "LIFT_RECORDED_AT_STATEMENT",
     "META_TABLE_DDL",
     "RUNS_QUERY",

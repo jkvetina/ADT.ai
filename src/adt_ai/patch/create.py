@@ -30,6 +30,7 @@ from adt_ai.patch.helpers import (  # noqa: F401  (re-exported for existing impo
     _write_table_diff_helpers,
     table_alter_sql,
 )
+from adt_ai.patch.immutables import NEVER_RECREATED, disabled_link
 from adt_ai.patch.install_links import _file_link_rows, _object_link
 from adt_ai.patch.layout import (
     database_object_type as _database_object_type,
@@ -80,6 +81,7 @@ def _write_patch_files(
     target_env: str | None,
     content_mode: str = CONTENT_MODE_COMMITTED,
     present_files: Mapping[str, bool],
+    never_recreated: Mapping[str, str] | None = None,
 ) -> dict[str, Path]:
     sql_files: dict[str, Path] = {}
     # One store read for the whole write, the same reason `_patch_files` reads it
@@ -141,6 +143,7 @@ def _write_patch_files(
                     signatures=signatures,
                     workspace=workspace,
                     present_files=present_files,
+                    never_recreated=never_recreated,
                 )
             }
         for script_group, payload in payloads.items():
@@ -163,9 +166,11 @@ def _database_patch_payload(
     signatures: list[_signatures.PatchObject] | None = None,
     workspace: list[_signatures.WorkspaceArtifact] | None = None,
     present_files: Mapping[str, bool],
+    never_recreated: Mapping[str, str] | None = None,
 ) -> str:
     signatures = signatures or []
     workspace = workspace or []
+    never_recreated = never_recreated or {}
     payload = [
         "PROMPT --;",
         f"PROMPT -- PATCH {patch_code}",
@@ -249,7 +254,12 @@ def _database_patch_payload(
                 payload.append(f"PROMPT -- [DELETED] {path}")
             elif present_files[path] and not _is_data_companion(root, path):
                 link = _object_link(root, folder, path, config, mode=content_mode)
-                payload.extend(_file_link_rows(path, link))
+                rows = _file_link_rows(path, link)
+                # The target holds this object and the file would create it
+                # again, which `immutables` forbids (ADT #830).
+                if path in never_recreated:
+                    rows = disabled_link(rows, never_recreated[path], NEVER_RECREATED)
+                payload.extend(rows)
         payload.extend(after)
     # No `PROMPT -- COMMITS` block here: the commit list is written ONCE, in the
     # `--` comment header above (`_change_summary_comment`), exactly as old ADT

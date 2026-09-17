@@ -41,7 +41,6 @@ erDiagram
     USER_CONS_COLUMNS {
         OWNER TEXT PK
         CONSTRAINT_NAME TEXT PK
-        TABLE_NAME TEXT
         COLUMN_NAME TEXT PK
         POSITION INTEGER
     }
@@ -51,7 +50,6 @@ erDiagram
         OBJECT_TYPE TEXT PK
         NAME TEXT
         TYPE TEXT
-        USAGE TEXT
         USAGE_ID INTEGER PK
         USAGE_CONTEXT_ID INTEGER
     }
@@ -134,7 +132,6 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | --------------- | ------- | -------- | --- | -------------------------------------------- |
 | OWNER           | TEXT    | No       | PK  | The schema.                                  |
 | CONSTRAINT_NAME | TEXT    | No       | PK  | The constraint.                              |
-| TABLE_NAME      | TEXT    | No       |     | The table.                                   |
 | COLUMN_NAME     | TEXT    | No       | PK  | One column the constraint covers.            |
 | POSITION        | INTEGER | Yes      |     | The column's position within the constraint. |
 
@@ -149,7 +146,6 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | OBJECT_TYPE      | TEXT    | No       | PK  | The unit's type.                                                                       |
 | NAME             | TEXT    | Yes      |     | The identifier.                                                                        |
 | TYPE             | TEXT    | Yes      |     | `VARIABLE`, `FUNCTION`, `COLUMN`, `TABLE` and the rest of PL/Scope's identifier types. |
-| USAGE            | TEXT    | Yes      |     | `DECLARATION`, `DEFINITION`, `REFERENCE`, `CALL` or `ASSIGNMENT`.                      |
 | USAGE_ID         | INTEGER | No       | PK  | The usage's number, unique within the unit.                                            |
 | USAGE_CONTEXT_ID | INTEGER | Yes      |     | The `USAGE_ID` of the enclosing usage.                                                 |
 
@@ -178,12 +174,13 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | ix_user_dependencies_source          | USER_DEPENDENCIES | TYPE, NAME                                         | No     |
 | ix_user_constraints_table            | USER_CONSTRAINTS  | TABLE_NAME, OWNER                                  | No     |
 | ix_user_constraints_referenced       | USER_CONSTRAINTS  | R_OWNER, R_CONSTRAINT_NAME                         | No     |
-| ix_user_cons_columns_table           | USER_CONS_COLUMNS | OWNER, TABLE_NAME                                  | No     |
 
 <br>
 
 ## Version and lifetime
 
-The file is at version 4. A version 3 file, which kept its refresh stamps as `_meta` rows and named its indexes `idx_`, is lifted in place on either path with every row kept. A file older than that is wiped and rebuilt by a refresh and refused by a query mode, so nothing destructive can happen mid-report.
+The file is at version 5. A version 3 file, which kept its refresh stamps as `_meta` rows and named its indexes `idx_`, is lifted in place on either path with every row kept.
+
+A version 4 file is lifted the same way and loses what nothing read back: `USER_CONS_COLUMNS.TABLE_NAME` with its index, `USER_IDENTIFIERS.USAGE`, and the `APEX_USED_DB_OBJ_DEPENDENCIES` table. A file older than that is wiped and rebuilt by a refresh and refused by a query mode, so nothing destructive can happen mid-report.
 
 A refresh replaces the rows of the scope it covers, a schema or an application, and writes that scope's `refreshes` row. `-force` deletes the scope first, and bare `-recent` patches per object instead of replacing. A table the schema no longer has, `ALL_USERS`, is dropped on every open.

@@ -85,6 +85,15 @@ Leave `jira_prefix` empty to count every commit you authored across all branches
 
 The default author is your own `git config user.email`, and activity is sourced from the stored commits you wrote. `-by` replaces that with an email substring, and it is repeatable, so several people can share one grid.
 
+If you commit under a personal address as well as the company one, map it in `config/config.yaml` and both land on one row:
+
+```yaml
+repo_authors:
+    me@personal.example : me@company.example
+```
+
+The mapped address is what the report shows and what the default author and `-by` match, so `-by me@personal.example` finds the same row.
+
 <br>
 
 ## Arguments

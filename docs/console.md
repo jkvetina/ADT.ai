@@ -81,11 +81,21 @@ EXPORTING 6 OBJECTS:
                      |
 ```
 
-It is one renderer, not a convention. Six sections call it: `EXPORTING <n> OBJECTS:` and `DELETED OBJECTS:` in `export_db`, `UPDATED <n> OBJECTS:` in `recompile`, and `DELETED OBJECTS:`, `WARNING - OBJECTS CHANGED:` plus `INVALID OBJECTS:` in `patch`. A second hand-rolled version of the row fails the suite.
+It is one renderer, not a convention. Seven sections call it: `EXPORTING <n> OBJECTS:`, `DELETED OBJECTS:` and `WARNING - JOB ARGUMENTS NOT EXPORTED:` in `export_db`, `UPDATED <n> OBJECTS:` in `recompile`, and `DELETED OBJECTS:`, `WARNING - OBJECTS CHANGED:` plus `INVALID OBJECTS:` in `patch`. A second hand-rolled version of the row fails the suite.
 
 **The unit is the object, never the file that holds it.** A file moved between folders is the same object, so a listing keyed on paths reports a move as a deletion.
 
 A listing built in one go sorts by type and then by name. One printed as the work happens keeps the order its source returned, and closes its last group when the caller knows there is no next object; the bytes are the same either way.
+
+<br>
+
+### Warnings
+
+**A warning is a section of its own**, never a bare line: `WARNING - <SUBJECT>:`, its dashed rule, and the files, objects or applications it is about. The run carries on past it.
+
+A corrupt `IDENTITY.yaml` or cache under `config/internal/` is named under `WARNING - UNREADABLE FILES:`, with the parser's reason and position under the file, and the run reads on as if it were absent.
+
+Warnings print on stdout with the rest of the report. The one on stderr is `connection`'s `WARNING - PASSWORD MAY BE ECHOED:`, because the prompt it warns about is written there.
 
 <br>
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
@@ -169,32 +168,33 @@ def _column_comment_width(
         return None
     return max((len(column_name) // 4) * 4 + 5 for column_name in column_names)
 
-def _append_job_arguments(
-    content: str, rows: list[dict[str, Any]], object_name: str = ""
-) -> str:
+# Anchored on the END of the CREATE_JOB call rather than on whatever follows it.
+# It used to anchor on `DBMS_SCHEDULER.SET_ATTRIBUTE`, which only ever worked
+# because the template emitted a hardcoded JOB_PRIORITY row for every job; ADT
+# #414 removed that invention (PROCOBJ emits no priority attribute at a default
+# priority), and with it the anchor. The close of CREATE_JOB is always there,
+# and it is also the right place: arguments have to be set before the ENABLE.
+_JOB_ARGUMENTS_ANCHOR = "    );\n    --\n"
+
+
+def _append_job_arguments(content: str, rows: list[dict[str, Any]]) -> str:
     argument_lines = _render_job_arguments(rows)
-    if not argument_lines:
+    if not argument_lines or _JOB_ARGUMENTS_ANCHOR not in content:
         return content
-    # Anchored on the END of the CREATE_JOB call rather than on whatever follows it.
-    # It used to anchor on `DBMS_SCHEDULER.SET_ATTRIBUTE`, which only ever worked
-    # because the template emitted a hardcoded JOB_PRIORITY row for every job; ADT
-    # #414 removed that invention (PROCOBJ emits no priority attribute at a default
-    # priority), and with it the anchor. The close of CREATE_JOB is always there,
-    # and it is also the right place: arguments have to be set before the ENABLE.
-    marker = "    );\n    --\n"
-    replacement = f"    );\n    --\n{argument_lines}\n    --\n"
-    if marker not in content:
-        # The job HAS arguments but the DDL didn't render the expected
-        # CREATE_JOB block to anchor them, dropping them silently would
-        # export a job that deploys without its arguments.
-        label = f" for job {object_name}" if object_name else ""
-        print(
-            f"Warning: job arguments{label} not exported: "
-            "no DBMS_SCHEDULER.CREATE_JOB block found in the DDL",
-            file=sys.stderr,
-        )
-        return content
-    return content.replace(marker, replacement, 1)
+    replacement = f"{_JOB_ARGUMENTS_ANCHOR}{argument_lines}\n    --\n"
+    return content.replace(_JOB_ARGUMENTS_ANCHOR, replacement, 1)
+
+
+def _job_arguments_dropped(content: str, rows: list[dict[str, Any]]) -> bool:
+    """The job HAS arguments and the DDL has no CREATE_JOB block to carry them.
+
+    Dropping them silently would export a job that deploys without its
+    arguments, so the runner hands the job to the reporter, which lists every one
+    under `WARNING - JOB ARGUMENTS NOT EXPORTED:` once the export is done
+    (`#861`). It used to be a bare `Warning:` line on stderr, printed in the
+    middle of the object table the job's own row belonged to.
+    """
+    return bool(_render_job_arguments(rows)) and _JOB_ARGUMENTS_ANCHOR not in content
 
 def _render_job_arguments(rows: list[dict[str, Any]]) -> str:
     lines: list[str] = []

@@ -18,7 +18,6 @@ def _store_application_metadata(root: Path, applications: list[ApexApplication])
             {
                 "owner": application.owner,
                 "workspace": application.workspace,
-                "workspace_id": application.workspace_id,
                 "app_group": application.app_group,
                 "app_id": application.app_id,
                 "app_alias": application.app_alias,

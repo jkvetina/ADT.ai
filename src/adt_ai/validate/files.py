@@ -132,7 +132,6 @@ def _application(entry: Mapping[str, Any], raw_id: str) -> ApexApplication:
     return ApexApplication(
         owner        = str(entry.get("owner") or ""),
         workspace    = str(entry.get("workspace") or ""),
-        workspace_id = entry.get("workspace_id"),
         app_group    = str(entry.get("app_group") or ""),
         app_id       = int(entry.get("app_id") or raw_id),
         app_alias    = str(entry.get("app_alias") or ""),

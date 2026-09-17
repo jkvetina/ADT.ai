@@ -18,6 +18,7 @@ from typing import NamedTuple
 PYTHON_FLOOR = ">=3.14"
 PATCH_TEMPLATE_FILES = (
     "config/patch_template/README.md",
+    "config/patch_template/apex_end/00_end.sql",
     "config/patch_template/apex_init/00_init.sql",
     "config/patch_template/db_end/70_mviews.sql",
     "config/patch_template/db_end/80_jobs.sql",

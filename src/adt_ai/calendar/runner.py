@@ -8,6 +8,7 @@ from pathlib import Path
 
 from adt_ai.rebuild.models import RebuildRequest
 from adt_ai.rebuild.runner import RebuildRunner
+from adt_ai.shared.author_aliases import canonical_author
 from adt_ai.shared.commit_cache import DEFAULT_COMMITS_TEMPLATE, open_store
 from adt_ai.shared.commit_store import StoredCommit
 from adt_ai.shared.git_files import default_branch_ref, fetch_origin, run_git
@@ -33,6 +34,9 @@ class CalendarRequest:
     # reads commit metadata from this cache instead of re-walking every branch
     # live, and tops it up for the default + prefix branches before reading.
     cache_file_template: str = DEFAULT_COMMITS_TEMPLATE
+    # `repo_authors` (ADT #831): a personal commit address mapped onto the
+    # company one, applied to stored authors and `-by` terms alike.
+    author_aliases: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -76,7 +80,12 @@ class CalendarRunner:
         prefix = (request.jira_prefix or "").strip() or None
         # Default author is the configured git user, "my commits" is the baseline,
         # so the calendar shows your own activity unless `-by` overrides it.
-        terms = [t for t in (request.authors or [resolve_commit_email(root=root)]) if t]
+        aliases = request.author_aliases
+        terms = [
+            canonical_author(t, aliases)
+            for t in (request.authors or [resolve_commit_email(root=root)])
+            if t
+        ]
 
         # Source commits from the rebuild module's commit cache instead of walking
         # every branch live. Only the default branch and the prefix-named branches
@@ -85,7 +94,7 @@ class CalendarRunner:
         selected = _select_branches(refs, default_short, prefix)
         _ensure_cache(root, selected, request.cache_file_template)
         commits = _commits_from_cache(
-            root, selected, default_ref, default_short, request.cache_file_template
+            root, selected, default_ref, default_short, request.cache_file_template, month
         )
 
         by_author: dict[str, dict[str, dict[str, int]]] = defaultdict(
@@ -96,11 +105,11 @@ class CalendarRunner:
         pr_sets: dict[str, set[int]] = defaultdict(set)
 
         for sha, commit in commits.items():
+            commit.email = canonical_author(commit.email, aliases)
             if not _contains_any(f"{commit.name} {commit.email}", terms):
                 continue
+            # Already this month's commits: the store selected them by month.
             commit_date = _calendar_date(commit.date)
-            if commit_date.strftime("%Y-%m") != month:
-                continue
 
             ticket = extract_ticket(commit.summary, prefix)
             pr = extract_pr(commit.summary)
@@ -177,19 +186,27 @@ def _commits_from_cache(
     default_ref: str,
     default_short: str,
     template: str,
+    month: str,
 ) -> dict[str, _Commit]:
     # Reconstruct the `default..feature` attribution from the cache: a commit that
     # is already on the default branch belongs to the default branch, not to the
     # feature branch that inherited it. Build the default's commit set first, then
     # skip those shas when reading the feature branches.
+    #
+    # One month is all any of it is read for. The weekend fold in `_calendar_date`
+    # never moves a commit across a month boundary, so the author's own `YYYY-MM`
+    # selects exactly the commits the grid can show, and a commit shared with the
+    # default branch carries the same date on both.
     default_shas: set[str] = set()
     if default_ref:
-        default_shas = {record.id for record in _branch_records(root, default_ref, template)}
+        default_shas = {
+            record.id for record in _branch_records(root, default_ref, template, month)
+        }
 
     commits: dict[str, _Commit] = {}
     for short, ref in selected:
         is_default = short == default_short and ref == default_ref
-        for record in _branch_records(root, ref, template):
+        for record in _branch_records(root, ref, template, month):
             if not is_default and record.id in default_shas:
                 continue
             commit = commits.get(record.id)
@@ -207,9 +224,9 @@ def _commits_from_cache(
     return commits
 
 
-def _branch_records(root: Path, branch: str, template: str) -> list[StoredCommit]:
+def _branch_records(root: Path, branch: str, template: str, month: str) -> list[StoredCommit]:
     with open_store(root, branch, template) as store:
-        return store.records(branch)
+        return store.month(month)
 
 
 def extract_ticket(text: str, prefix: str | None) -> str | None:

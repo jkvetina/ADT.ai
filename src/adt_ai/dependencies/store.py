@@ -16,12 +16,19 @@ from typing import Any
 from adt_ai.dependencies import queries, refresh
 from adt_ai.dependencies.db import dict_factory
 from adt_ai.dependencies.owner_case import fold_owner_case, normalize_owner
-from adt_ai.dependencies.schema import DROP_SCHEMA, LEGACY_TABLES, SCHEMA, SCHEMA_VERSION
+from adt_ai.dependencies.schema import (
+    DROP_SCHEMA,
+    LEGACY_TABLES,
+    RETIRED_COLUMNS,
+    RETIRED_INDEXES,
+    SCHEMA,
+    SCHEMA_VERSION,
+)
 from adt_ai.dependencies.store_reads import (  # noqa: F401  (re-exported for existing importers)
     DEFAULT_MAX_DEPTH,
     DependencyQueries,
 )
-from adt_ai.shared.sqlite_store import Migration, open_store
+from adt_ai.shared.sqlite_store import Migration, drop_columns, open_store
 
 _LAST_REFRESH_PREFIX = "last_refresh"
 
@@ -48,7 +55,14 @@ def _lift_3(connection: Any) -> None:
     connection.execute(queries.LEGACY_STAMP_DELETE)
 
 
-MIGRATIONS: tuple[Migration, ...] = (Migration("3", "4", _lift_3),)
+def _lift_4(connection: Any) -> None:
+    """Version 4 to 5: drop what the mirror stored and nothing read (ADT #873)."""
+    connection.executescript(queries.MIRROR_LIFT_4_SCRIPT)
+    for table, columns in RETIRED_COLUMNS.items():
+        drop_columns(connection, table, columns, indexes=RETIRED_INDEXES)
+
+
+MIGRATIONS: tuple[Migration, ...] = (Migration("3", "4", _lift_3), Migration("4", "5", _lift_4))
 
 
 def build_db(db_path: str | Path) -> DependencyStore:
@@ -68,7 +82,7 @@ class DependencyStore(DependencyQueries):
     def open(cls, db_path: str | Path, *, rebuild: bool = False) -> DependencyStore:
         """Open, creating the schema when absent and lifting an older file.
 
-        A file the migrations know (version 3) is lifted in place on either
+        A file the migrations know (version 3 or 4) is lifted in place on either
         path. One they do not is wiped and recreated with ``rebuild=True``
         (refresh path only) and refused with a ``StoreVersionError`` otherwise,
         so a version mismatch never silently destroys data mid-query.

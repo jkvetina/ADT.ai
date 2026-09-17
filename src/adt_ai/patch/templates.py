@@ -20,6 +20,8 @@ from typing import Any
 
 from adt_ai.patch import queries, settings
 from adt_ai.patch.files import _install_file_link, _patch_scripts_folder
+from adt_ai.patch.generated_helpers import DROP_HELPER_SLOT
+from adt_ai.patch.immutables import NEVER_DROPPED, disabled_link, immutable_drop_helper_type
 from adt_ai.shared.apex_store import ApexStore
 
 # `name.[ENV].sql` restricts a template or script to one target environment (old
@@ -140,11 +142,21 @@ def _configured_sql_payload(
             continue
         if keep is not None and not keep(path.name):
             continue
-        rows.extend(linked_file_rows(
+        linked = linked_file_rows(
             root, patch_folder, path, config,
             label  = label,
             source = (origin / path.name) if origin is not None else None,
-        ))
+        )
+        # A generated DROP for an immutable object is linked commented out, never
+        # run (ADT #830). Name AND slot, as every helper test pairs them.
+        immutable = (
+            immutable_drop_helper_type(path.name, config)
+            if origin is not None and folder.name == DROP_HELPER_SLOT
+            else None
+        )
+        if immutable is not None:
+            linked = disabled_link(linked, immutable, NEVER_DROPPED)
+        rows.extend(linked)
     return rows
 
 def linked_file_rows(

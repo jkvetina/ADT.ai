@@ -185,14 +185,14 @@ WHERE cc.constraint_name IN (
 # PLSCOPE_SETTINGS='IDENTIFIERS:ALL'. The refresh prerequisite recompiles
 # VALID-but-missing-scope objects first; an empty result is still valid.
 USER_IDENTIFIERS_QUERY = """
-SELECT object_name, object_type, name, type, usage,
+SELECT object_name, object_type, name, type,
        usage_id, usage_context_id
 FROM user_identifiers
 """.strip()
 
 USER_IDENTIFIERS_SCOPED_QUERY = f"""
 {_OBJECT_NAME_FILTER_CTE}
-SELECT i.object_name, i.object_type, i.name, i.type, i.usage,
+SELECT i.object_name, i.object_type, i.name, i.type,
        i.usage_id, i.usage_context_id
 FROM user_identifiers i
 WHERE EXISTS (
@@ -436,36 +436,11 @@ LEFT JOIN apex_used_db_objects obj
 WHERE cp.application_id = :app_id
 """.strip()
 
-APEX_USED_DB_OBJ_DEPENDENCIES_24_2_QUERY = """
-SELECT dep.application_id,
-       dep.used_db_object_id,
-       obj.referenced_owner AS used_db_object_owner,
-       obj.referenced_name AS used_db_object_name,
-       obj.referenced_type AS used_db_object_type,
-       dep.referenced_owner AS referenced_object_owner,
-       dep.referenced_name AS referenced_object_name,
-       dep.referenced_type AS referenced_object_type
-FROM apex_used_db_obj_dependencies dep
-LEFT JOIN apex_used_db_objects obj
-  ON obj.application_id = dep.application_id
- AND obj.id = dep.used_db_object_id
-WHERE dep.application_id = :app_id
-""".strip()
-
-APEX_USED_DB_OBJ_DEPENDENCIES_QUERY = """
-SELECT application_id, used_db_object_id, used_db_object_owner,
-       used_db_object_name, used_db_object_type, referenced_object_owner,
-       referenced_object_name, referenced_object_type
-FROM apex_used_db_obj_dependencies
-WHERE application_id = :app_id
-""".strip()
-
 # Store table name -> dictionary SELECT, in refresh order; each filtered by
 # ``:app_id`` and handed to ``store.refresh_app``.
 APEX_TABLE_QUERIES: dict[str, str] = {
     "APEX_USED_DB_OBJECTS": APEX_USED_DB_OBJECTS_QUERY,
     "APEX_USED_DB_OBJECT_COMP_PROPS": APEX_USED_DB_OBJECT_COMP_PROPS_QUERY,
-    "APEX_USED_DB_OBJ_DEPENDENCIES": APEX_USED_DB_OBJ_DEPENDENCIES_QUERY,
 }
 
 
@@ -475,9 +450,6 @@ def apex_table_queries(apex_version: str | None = None) -> dict[str, str]:
         table_queries["APEX_USED_DB_OBJECTS"] = APEX_USED_DB_OBJECTS_24_2_QUERY
         table_queries["APEX_USED_DB_OBJECT_COMP_PROPS"] = (
             APEX_USED_DB_OBJECT_COMP_PROPS_24_2_QUERY
-        )
-        table_queries["APEX_USED_DB_OBJ_DEPENDENCIES"] = (
-            APEX_USED_DB_OBJ_DEPENDENCIES_24_2_QUERY
         )
     return table_queries
 

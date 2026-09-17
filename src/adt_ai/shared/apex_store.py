@@ -39,7 +39,7 @@ from typing import Any
 
 from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.queries import apex_store as queries
-from adt_ai.shared.sqlite_store import Migration, open_store
+from adt_ai.shared.sqlite_store import Migration, drop_columns, open_store
 from adt_ai.shared.yaml_io import load_yaml_mapping, store_yaml_mapping
 
 APEX_DB = "apex.db"
@@ -56,14 +56,18 @@ LEGACY_APEX_FILES: tuple[str, ...] = (
 #: The `recent.yaml` key whose watermarks belong here.
 RECENT_MODULE = "export_apex"
 
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
+
+_RETIRED = ("workspace_id",)
 
 #: Version 1 to 2 (ADT #642): `watermarks.app_id` becomes the INTEGER every
 #: other table keys by, and `_meta.value` becomes NOT NULL like every store's.
 #: Version 2 to 3 (ADT #725): `applications` gains the export's merge base.
+#: Version 3 to 4 (ADT #873): `applications` loses the unread `workspace_id`.
 MIGRATIONS: tuple[Migration, ...] = (
     Migration("1", "2", lambda connection: connection.executescript(queries.APEX_STORE_LIFT_1)),
     Migration("2", "3", lambda connection: connection.executescript(queries.APEX_STORE_LIFT_2)),
+    Migration("3", "4", lambda connection: drop_columns(connection, "applications", _RETIRED)),
 )
 
 #: The application columns, in the order a row is written and read back. This
@@ -72,7 +76,6 @@ MIGRATIONS: tuple[Migration, ...] = (
 APPLICATION_FIELDS: tuple[str, ...] = (
     "owner",
     "workspace",
-    "workspace_id",
     "app_group",
     "app_alias",
     "app_name",
