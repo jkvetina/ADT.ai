@@ -74,14 +74,31 @@ MAX_LINE = 78
 #: short, fixed vocabulary, and a trimmed one would be a guess rather than a
 #: shortened fact.
 _FLEXIBLE = ("object_name", "owner", "grantee")
-_LAST_RESORT = ("object_type",)
+_LAST_RESORT = ("object_type", "table_name")
 
 #: What a trimmed cell ends on, so a shortened name can never be mistaken for a
 #: real one.
 _ELLIPSIS = "..."
 
 
-def report_summary(summary: DiffSummary | None, *, verbose: bool = False) -> None:
+#: The line under `NO DIFFERENCES:` for each kind of comparison. The object
+#: comparison leaves an artifact behind and says it is empty; `-rest` writes
+#: none, so its line must not mention one (ADT #878).
+IN_SYNC_OBJECTS = "the two schemas already match, the artifact carries no changes"
+IN_SYNC_REST = "the two schemas publish the same REST modules, privileges and roles"
+IN_SYNC_DATA = "the compared tables hold the same rows on both sides"
+
+#: The section the modes that replace the object comparison open on, and the
+#: first section of the `diff -data -out` file (`#886`).
+COMPARING_HEADER = "COMPARING SCHEMAS:"
+
+
+def report_summary(
+    summary: DiffSummary | None,
+    *,
+    verbose: bool = False,
+    in_sync_note: str = IN_SYNC_OBJECTS,
+) -> None:
     """Print what differs between the two schemas, or say that nothing does.
 
     Two screens, and the flag picks (Jan, ADT #763): *"Without -verbose I want
@@ -96,7 +113,7 @@ def report_summary(summary: DiffSummary | None, *, verbose: bool = False) -> Non
         return
     if summary.in_sync:
         print_adt_header(IN_SYNC_HEADER)
-        print("  the two schemas already match, the artifact carries no changes")
+        print(f"  {in_sync_note}")
         print()
         return
     # A filter that matched nothing is NOT two matching schemas (`#773`). The

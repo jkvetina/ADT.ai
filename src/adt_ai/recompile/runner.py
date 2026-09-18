@@ -46,7 +46,9 @@ from adt_ai.recompile.queries import (
 )
 from adt_ai.recompile.results import enrich_invalid, with_validated
 from adt_ai.recompile.root_causes import rank_for_run
+from adt_ai.recompile.vpd import SourceProvider, read_vpd
 from adt_ai.shared.db import QueryGateway
+from adt_ai.shared.scan_helpers import drop_stray_scan_helpers
 
 
 class _ObjectScope(TypedDict):
@@ -86,6 +88,9 @@ class RecompileRunner:
         # for the same reason: the runner must not know about SQLite, and a caller
         # with no mirror gets the error-evidence ranking rather than an error.
         self.dependents_for: DependentsProvider = lambda _nodes: {}
+        # The policy functions' source text, from the export_db files (#884).
+        # Injected like dependents_for, so this module never touches the repo.
+        self.vpd_sources: SourceProvider = lambda _wanted: {}
 
     def run(self, request: RecompileRequest) -> RecompileResult:
         scope: _ObjectScope = {
@@ -134,6 +139,14 @@ class RecompileRunner:
             jobs = discovery.scheduler_jobs(**name_scope)
             return RecompileResult(jobs=jobs, success=True)
 
+        # -vpd is report-only as well, and like -disabled takes the full scope:
+        # -type picks whether -name matches the TABLE, the POLICY or the FUNCTION.
+        if request.vpd:
+            report = read_vpd(
+                gateway, **scope, column=request.vpd_column, sources=self.vpd_sources
+            )
+            return RecompileResult(vpd=report, success=True)
+
         # -trailing is a source-hygiene run: skip the invalid-object recompile, the
         # OBJECTS OVERVIEW, and the lock pass. It rewrites each flagged object in
         # place so the stored source matches what export_db writes, which is what
@@ -142,6 +155,7 @@ class RecompileRunner:
         # object with nothing to strip is never touched (build_trailing_source_ddl
         # returns None), and stripping trailing whitespace cannot change behaviour.
         if request.trailing:
+            drop_stray_scan_helpers(gateway)
             candidates = discovery.trailing_objects(**scope) + self._trailing_view_candidates(
                 discovery, scope
             )
@@ -195,6 +209,11 @@ class RecompileRunner:
                 success       = not unresolved_mviews,
             )
 
+        # APEX scan helpers (`DEPSCAN$<n>#<n>`) are generated scratch, never objects
+        # to compile or count, so a run that acts on the schema removes the ones
+        # it finds first, silently, as `dependencies` and `patch` do after their
+        # own scan (ADT #888). The report-only runs above never change the schema.
+        drop_stray_scan_helpers(gateway)
         overview = discovery.overview(**scope)
         # Pass the compile modifiers so a modifier-combined -force narrows the sweep to
         # objects whose settings drift from the requested target state (#146). The

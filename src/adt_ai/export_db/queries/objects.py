@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+from adt_ai.shared.queries.scan_helpers import not_a_scan_helper
+
 # Audit source/columns are SQL identifiers interpolated into the query, not binds
 # (Oracle cannot bind a table or column name), so each is validated against this
 # pattern before interpolation to keep the configured audit view from becoming an
@@ -75,7 +77,7 @@ GROUP BY object_name
 """.strip()
 
 
-OBJECTS_QUERY = """
+OBJECTS_QUERY = f"""
 WITH requested_types AS (
     SELECT /*+ MATERIALIZE CARDINALITY(t 10) */
         t.column_value AS object_like
@@ -97,7 +99,7 @@ AND object_name NOT LIKE 'ST%='
 AND object_name NOT LIKE 'BIN$%'
 AND object_name NOT LIKE 'MLOG$%'
 AND NOT (object_type = 'TABLE' AND object_name IN (SELECT mview_name FROM user_mviews))
-AND NOT REGEXP_LIKE(object_name, '^DEPSCAN\\$[[:digit:]]+#[[:digit:]]+$')
+AND {not_a_scan_helper("object_name")}
 AND NOT (
     object_type = 'SYNONYM'
     AND object_name != UPPER(object_name)
@@ -113,7 +115,7 @@ AND NOT (
 ORDER BY object_type, object_name
 """.strip()
 
-EXACT_OBJECTS_QUERY = """
+EXACT_OBJECTS_QUERY = f"""
 SELECT object_type, object_name
 FROM user_objects
 WHERE (:schema IS NOT NULL)
@@ -129,7 +131,7 @@ AND object_name NOT LIKE 'ST%='
 AND object_name NOT LIKE 'BIN$%'
 AND object_name NOT LIKE 'MLOG$%'
 AND NOT (object_type = 'TABLE' AND object_name IN (SELECT mview_name FROM user_mviews))
-AND NOT REGEXP_LIKE(object_name, '^DEPSCAN\\$[[:digit:]]+#[[:digit:]]+$')
+AND {not_a_scan_helper("object_name")}
 AND NOT (
     object_type = 'SYNONYM'
     AND object_name != UPPER(object_name)

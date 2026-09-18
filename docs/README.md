@@ -1,6 +1,6 @@
 # ADT.ai Documentation
 
-This is the public documentation index for ADT.ai `1.3.1`.
+This is the public documentation index for ADT.ai `1.3.2`.
 
 <br>
 

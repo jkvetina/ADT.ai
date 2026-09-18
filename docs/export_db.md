@@ -188,6 +188,8 @@ The patterns are matched by the discovery query, so ignored objects are never li
 
 That is what makes this the right tool for runtime-generated objects: an application creating one scheduler job per request otherwise adds one file to the repository forever. `export_data` reads the same block.
 
+One kind of generated object needs no pattern: the `DEPSCAN$<n>#<n>` procedures APEX's dependency scan leaves on a schema. They are scratch, never part of the application, so the discovery query skips them and no file is written for one. `recompile` removes any it finds.
+
 <br>
 
 ## What the privileges file records

@@ -54,13 +54,15 @@ def add_database_parsers(subparsers: SubParsers) -> None:
     )
     # A `.zip` path names the artifact, anything else is the folder it lands in
     # (`#773`). One suffix rather than "does it look like a file", so a folder
-    # called `releases/v1.2` cannot be mistaken for one.
+    # called `releases/v1.2` cannot be mistaken for one. Under `-data` it names
+    # the file the untrimmed rows go to, `.log`/`.txt` or a folder (`#886`).
     diff.add_argument(
         "--out",
         "-out",
         metavar = "DIR|FILE",
         help    = "output folder, or a .zip path naming the artifact "
-                  "(default: <root>/config/diff)",
+                  "(default: <root>/config/diff); with -data, write every "
+                  "differing row untrimmed to a .log/.txt file or into DIR",
     )
     # Multi-pattern, the shape `recompile` and `export_db` take: `-type A B`,
     # `-type A,B` and a repeated `-type A -type B` all work. Both filters narrow
@@ -88,7 +90,50 @@ def add_database_parsers(subparsers: SubParsers) -> None:
         "--verbose",
         "-verbose",
         action = "store_true",
-        help   = "list every changed object, not just the count per object type",
+        help   = "list every changed object, not just the count per object type; "
+                 "with -data, each table's differing rows and values",
+    )
+    # Jan's spelling and scope, asked with chips (ADT #878): `-rest` compares the
+    # REST modules, privileges and roles both schemas publish INSTEAD of the
+    # schema objects. Same `store_true` shape as `export_apex -rest`, the flag it
+    # reuses the export of.
+    diff.add_argument(
+        "--rest",
+        "-rest",
+        action = "store_true",
+        help   = "compare the REST modules, privileges and roles both schemas "
+                 "publish, instead of the schema objects",
+    )
+    # Jan's spelling and scope, asked with chips (ADT #877): `-data` compares the
+    # rows of the tables `export_data` exports, database against database,
+    # INSTEAD of the schema objects. `store_true`, the `-rest` shape beside it.
+    diff.add_argument(
+        "--data",
+        "-data",
+        action = "store_true",
+        help   = "compare the rows of the tables export_data exports, instead of "
+                 "the schema objects",
+    )
+    # Jan, ADT #883, with chips: audit columns left out on demand, beside the
+    # `ignored_columns` config and the identity columns `-data` always skips.
+    # The `patch -ignore` shape, so a pattern list reads the same everywhere.
+    diff.add_argument(
+        "--ignore",
+        "-ignore",
+        action = "append",
+        nargs  = "+",
+        help   = "with -data, column pattern(s) to leave out on both sides, "
+                 "repeatable, comma- or space-separated, supports %% wildcards",
+    )
+    # Jan, ADT #883: *"-limit # to limit number of rows as a shortloop"*. A
+    # table stops after N differing rows.
+    diff.add_argument(
+        "--limit",
+        "-limit",
+        type    = int,
+        default = None,
+        metavar = "N",
+        help    = "with -data, stop each table after N differing rows (0 = all)",
     )
     # NOT "show debug info" (ADT #326), which was the one -debug row of eleven
     # that named neither what is shown nor where it comes from. `-debug` appends
@@ -219,6 +264,17 @@ def add_database_parsers(subparsers: SubParsers) -> None:
         action = "store_true",
         help   = "report-only: show today's scheduler job runs (scoped by -name); skips "
                  "the object recompile entirely",
+    )
+    recompile.add_argument(
+        "--vpd",
+        "-vpd",
+        nargs   = "?",
+        const   = "",
+        default = None,
+        metavar = "COLUMN",
+        help    = "report-only: VPD policies, their tables, and how many tables have "
+                  "none; with COLUMN, also the tables having it but no policy (scoped "
+                  "by -name, and by -type to TABLE/POLICY/FUNCTION)",
     )
     recompile.add_argument(
         "--trailing",

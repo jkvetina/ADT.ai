@@ -4,7 +4,7 @@
 
 `recompile` gets a schema back to a working state after something has broken it. It recompiles invalid PL/SQL, views, synonyms and materialized views in dependency-safe passes, then reports what stayed broken, why, and which failures are the real cause rather than a consequence.
 
-It also carries a set of read-only health reports (materialized views, synonyms, disabled objects, scheduler jobs) and one repair action that is not a recompile at all (`-trailing`). Each of those replaces the ordinary pass rather than adding to it.
+It also carries a set of read-only health reports (materialized views, synonyms, disabled objects, scheduler jobs, VPD policies) and one repair action that is not a recompile at all (`-trailing`). Each of those replaces the ordinary pass rather than adding to it.
 
 <br>
 
@@ -43,6 +43,13 @@ adtai recompile -env DEV -mviews
 adtai recompile -env DEV -synonyms
 adtai recompile -env DEV -disabled
 adtai recompile -env DEV -jobs
+adtai recompile -env DEV -vpd
+```
+
+Hunt for tables that carry a tenant column but no VPD policy:
+
+```bash
+adtai recompile -env DEV -vpd TENANT_ID
 ```
 
 <br>
@@ -50,6 +57,8 @@ adtai recompile -env DEV -jobs
 ## Output
 
 A run reads the overview, recompiles, retries whatever failed on a fresh connection, then re-checks.
+
+First it drops any stray `DEPSCAN$<n>#<n>` procedures, silently. APEX's dependency scan generates these helpers, and `dependencies` and `patch` already remove them after their own scan. They are never compiled, counted or rewritten, here or under `-trailing`, and `export_db` never writes one. The report-only modes leave them alone.
 
 The retry runs in reverse order, and repeats for as long as each pass compiles something new. Reversing alone is enough when the dependencies run with the alphabet, and not enough when they criss-cross.
 
@@ -188,16 +197,45 @@ Each of these opts into exactly one object class, so it takes no name pattern of
 | Flag | What it does | Acts on the database |
 | ---- | ------------ | -------------------- |
 | `-mviews` | `MATERIALIZED VIEWS` table, then `COMPILE` invalid views and `REFRESH` stale ones | yes |
-| `-synonyms` | one `SYNONYMS TO SCHEMA <OWNER>:` table per target owner | no |
+| `-synonyms` | `SYNONYMS:`, then one `SYNONYMS TO SCHEMA <OWNER>:` table per target owner | no |
 | `-disabled` | `DISABLED CONSTRAINTS:`, `DISABLED INDEXES:` and `DISABLED TRIGGERS:` | no |
 | `-jobs` | today's scheduler runs, one compact table per status | no |
+| `-vpd` | `VPD FUNCTIONS:`, one `VPD POLICIES - <FUNCTION>:` per function, and `VPD COVERAGE:`, plus `VPD MISSING - <COLUMN>:` given a column | no |
 | `-trailing` | rewrites stored source without trailing whitespace | yes |
 
 An empty result still prints a header-only table, so the report is visibly present.
 
+Every report prints its first header before it reads anything, so while the database works the screen already names the report, never the connection block above it. The rows fill in under that header once the read returns.
+
 **`-mviews`** renders a live stream: each view's name prints first, its `COMPILE` or `REFRESH` runs at that point, and only then does the rest of the row print, so the pause attaches to the view being worked on. `TYPE` is derived from the view's **configured** refresh method, never the volatile last-refresh type, and a `FORCE` method resolves to `F` when a usable log backs it or `C` when none does, which is what the `LOG` column reports. `TIMER` is Oracle's own recorded duration rather than a tool-measured clock, rounded up, so a genuinely sub-second refresh reads `1s` and a view that has never been refreshed leaves the cell blank. With `-force`, every matching view is refreshed regardless of staleness.
 
 **`-disabled`** is the one report spanning several object types, so `-type` picks which of `CONSTRAINT`, `INDEX` and `TRIGGER` to report. It lists disabled constraints, indexes whose status is not `VALID` or whose function-index status is not `ENABLED`, and disabled triggers.
+
+**`-vpd`** reports Virtual Private Database (row-level security) policies grouped by the function that implements them. `VPD FUNCTIONS:` lists each function as `PACKAGE.FUNCTION` with `COLUMNS`, `DYNAMIC` and how many `TABLES` it protects, one column name per row: the function's row carries its first column, and each further column gets a row of its own. Then each function gets its own `VPD POLICIES - <FUNCTION>:` table, one row per table and policy:
+
+| Column | `Y` | `*` | blank |
+| ------ | --- | --- | ----- |
+| `DYNAMIC` | every policy of the function is `DYNAMIC`, re-evaluated on every statement | some are | none is |
+| `SEL` | the policy filters `SELECT` | | it does not |
+| `DML` | it covers `INSERT`, `UPDATE` and `DELETE` | it covers some of them | it covers none |
+
+Every row fits 80 columns. When two names on one row are too long together, the longer one is cut and ends in `...`.
+
+`COLUMNS` shows which columns the function filters on, which is the value to pass to `-vpd`. Oracle doesn't store it: the function builds the predicate at run time and may build a different one for each table.
+
+So the report reads the function's source and never calls it. A call would be answered for your session only, and a function that keys on the APEX user or a context value often returns `1=0` to the schema owner.
+
+The source is the package body or function file `export_db` wrote. When that file is missing, or older than the object's last DDL, the report exports just those objects first, then reads the file.
+
+It reads the string literals the function can return, in a `RETURN` or assigned to a variable a `RETURN` hands back, and keeps the words that are columns of that table. Comments, context names such as `'APP_USER'` and compared values don't count. A file that can't be made current names no column. Nothing is guessed.
+
+`VPD COVERAGE:` is a one-row table: `TABLES` in scope, `WITH POLICY` and `WITHOUT POLICY`. A schema with a thousand tables and ten policies gets three numbers here, not a list of the 990 tables that have none.
+
+To list them, name the column that makes a table need a policy: `-vpd TENANT_ID` adds `VPD MISSING - TENANT_ID:`, which lists every table that has the column but no policy. The value is a `LIKE` pattern, so `-vpd %TENANT%` also works.
+
+`-type` sets what `-name` matches: `TABLE`, `POLICY` or `FUNCTION`, with the function matched with or without its package. Without `-type`, a row matches when the pattern hits any of the three. The missing list and the counts are about tables, so a `POLICY` or `FUNCTION` pattern leaves them covering the whole schema.
+
+A disabled policy protects nothing, so it is left out of the policy tables, and its table counts as having no policy.
 
 <br>
 
@@ -223,6 +261,7 @@ An empty result still prints a header-only table, so the report is visibly prese
 | `-synonyms`, `--synonyms` | No | off | Report-only: one table per target owner mapping each synonym to its target, one privilege per row, with `GRNT` and `VALID`. |
 | `-disabled`, `--disabled` | No | off | Report-only: disabled constraints, invalid or function-disabled indexes, and disabled triggers, scoped by `-name` and by `-type` to one of `CONSTRAINT`/`INDEX`/`TRIGGER`. |
 | `-jobs`, `--jobs` | No | off | Report-only: today's scheduler job runs in status-grouped compact tables, scoped by `-name`. |
+| `-vpd`, `--vpd` | No | off | Report-only: VPD policy definitions, their table assignments and a coverage count; with an optional `COLUMN` value, also the tables carrying it but no enabled policy. Scoped by `-name`, and by `-type` to one of `TABLE`/`POLICY`/`FUNCTION`. |
 | `-trailing`, `--trailing` | No | off | Strip trailing whitespace from stored source through `CREATE OR REPLACE`, scoped by `-type` and `-name`. |
 | `-silent`, `--silent` | No | off | Suppress object overview details while keeping the banner, connection block and final timer. |
 

@@ -8,11 +8,11 @@ What `-trailing` rewrites and why, which object types it covers, the separate pa
 
 `-trailing` fixes the diff noise the export creates. `export_db` strips trailing whitespace from every line it writes, so an untouched 10k-line package still differs from the database's stored source on every export. `-trailing` repairs the *source* side once per schema.
 
-There is no preview mode and no second flag to confirm with: asking for `-trailing` is asking for the fix. It lists each rewritten object as it goes under an `UPDATED <n> OBJECTS:` header, in the shared object listing ([console](console.md)), and a clean schema prints `UPDATED 0 OBJECTS:`, the proof the pass ran.
+There is no preview mode and no second flag to confirm with: asking for `-trailing` is asking for the fix. It prints `UPDATED OBJECTS:` before it reads the source, then lists each rewritten object as it goes, in the shared object listing ([console](console.md)). A clean schema prints the bare header, the proof the pass ran.
 
 ```text
-UPDATED 2 OBJECTS:
-------------------
+UPDATED OBJECTS:
+----------------
 
            PROCEDURE | APP_UTIL
                      | APP_NOTIFY
@@ -47,6 +47,7 @@ A view whose column list is not a plain unquoted identifier is reported as a fai
 - **One object at a time**, fetched, rewritten and finished before the next is read, so a colleague's change made in that window is not clobbered.
 - **Disabled triggers stay disabled.** `CREATE OR REPLACE TRIGGER` re-enables one, so the status is captured first and restored after.
 - **Wrapped objects are skipped**, since their stored source is an obfuscated blob.
+- **APEX scan helpers are removed, never rewritten.** Stray `DEPSCAN$<n>#<n>` procedures are dropped before the sweep reads anything.
 - **A view's grants survive**, which is why the view is replaced rather than dropped and recreated.
 
 `CREATE OR REPLACE` invalidates dependents, so follow a sweep with a plain recompile pass. Any failed rewrite is listed below the table as `  <NAME>) <error>` and makes the run exit non-zero.

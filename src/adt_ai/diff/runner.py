@@ -325,6 +325,26 @@ def artifact_name(request: DiffRequest) -> str:
     )
 
 
+def data_log_path(out: str, source: Connection, target: Connection) -> Path:
+    """Where `diff -data -out` writes its untrimmed rows (`#886`).
+
+    A `.log` or `.txt` path is the file itself; anything else is the folder it
+    lands in, named for the two sides the way the object artifact is, so a run
+    of the same pair replaces its file rather than adding one beside it.
+    """
+    path = Path(out).expanduser()
+    if path.suffix.lower() in _LOG_SUFFIXES:
+        return path.resolve()
+    return path.resolve() / (
+        f"{_safe(source.environment)}_{_safe(source.schema)}"
+        f"---{_safe(target.environment)}_{_safe(target.schema)}_data.log"
+    )
+
+
+#: The suffixes that make a `diff -data -out` path a file rather than a folder.
+_LOG_SUFFIXES = (".log", ".txt")
+
+
 def _safe(part: str) -> str:
     return _UNSAFE_IN_NAME.sub("_", part)
 

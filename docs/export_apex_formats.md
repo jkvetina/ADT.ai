@@ -65,6 +65,8 @@ The loop from export to promotion is on apex_round_trip.md.
 
 `-rest` and `-files_ws` write under a path carrying no application id, so both belong to the schema rather than to an application. That gives a run two shapes, and which one you get depends on whether a per-application format was selected too.
 
+`diff -rest` runs this same `-rest` export on both schemas and compares the text, so what it reports is what an `export_apex -rest` of either schema would write.
+
 **Only schema-level formats selected.** The run exports no application, so it lists none: no `APEX APPLICATIONS:` table, no per-application block, and one bare `EXPORTING:` header over the progress rows in each schema segment. The schema is not repeated there: the connection block three lines above already names it. Nothing per-application runs, so a schema with seventeen applications costs one workspace export rather than seventeen passes. One application is still used, silently and never named, to put the workspace security context in place, and a schema hosting none needs no context at all.
 
 **A per-application format selected too.** The screen is unchanged: the overview, a block per application, and the schema-level row inside the **first** application's block among its other rows, so one row does not cost a section of its own. A schema hosting no application has no block for that row to sit in, and is the one case that prints its own `SCHEMA <name>, EXPORTING:` header.

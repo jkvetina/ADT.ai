@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from adt_ai.shared.object_types import PLSQL_OBJECT_TYPES
+from adt_ai.shared.queries.scan_helpers import not_a_scan_helper
 from adt_ai.shared.sql_identifiers import safe_identifier, safe_identifiers
 
 # Object types -trailing rebuilds from user_source. Identical to
@@ -37,7 +38,9 @@ _TRAILING_TYPE_IN_LIST = ", ".join(f"'{object_type}'" for object_type in PLSQL_O
 # whitespace, not as part of the terminator: export_db strips it on the way out, so
 # leaving it in the database would keep producing the very diff noise this fixes.
 # Wrapped objects are excluded outright: user_source returns their obfuscated blob,
-# not recoverable source, so rewriting one would destroy it.
+# not recoverable source, so rewriting one would destroy it. So are APEX scan
+# helpers (`DEPSCAN$<n>#<n>`, ADT #888): generated scratch the run removes, never
+# source worth rewriting.
 TRAILING_OBJECTS_QUERY = f"""
 WITH objects_add AS (
     SELECT /*+ MATERIALIZE CARDINALITY(t 1) */
@@ -71,6 +74,7 @@ LEFT JOIN objects_ignore g
 WHERE 1 = 1
     AND g.object_like   IS NULL
     AND s.type          IN ({_TRAILING_TYPE_IN_LIST})
+    AND {not_a_scan_helper("s.name")}
     AND EXISTS (
         SELECT 1
         FROM object_types n_t

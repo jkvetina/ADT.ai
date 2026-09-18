@@ -45,6 +45,7 @@ from adt_ai.dependencies.queries import (
     DEPSCAN_CLEANUP_STATEMENT,
 )
 from adt_ai.export_apex.queries import EXPORT_START_QUERY
+from adt_ai.shared.scan_helpers import drop_scan_helpers
 
 
 class ScanLifecycleError(RuntimeError):
@@ -115,15 +116,6 @@ def run_component_scan(
         raise scan_error
     if cleanup_error is not None:
         raise cleanup_error
-
-
-def drop_scan_helpers(gateway: Any) -> None:
-    """Take the helper procedures away, on their own.
-
-    Idempotent by construction: the statement drops whatever currently matches
-    the `DEPSCAN$<n>#<n>` pattern, so a schema that carries none is a no-op.
-    """
-    gateway.execute(DEPSCAN_CLEANUP_STATEMENT)
 
 
 __all__ = ["ScanLifecycleError", "drop_scan_helpers", "run_component_scan"]

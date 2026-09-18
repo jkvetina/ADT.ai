@@ -40,6 +40,7 @@ from adt_ai.cli.recompile_reporters import (
     _print_recompile_overview_table,
     print_root_causes,
 )
+from adt_ai.cli.recompile_vpd_sources import vpd_source_provider
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.recompile.contracts import DependentsProvider
 from adt_ai.recompile.render import (
@@ -47,11 +48,14 @@ from adt_ai.recompile.render import (
     _ConsoleMViewReporter,
     _ConsoleTrailingReporter,
     _mview_row_cells,
+    opening_header,
     print_disabled_tables,
     print_job_tables,
     print_synonym_tables,
     print_trailing_updated_objects,
+    print_vpd_tables,
 )
+from adt_ai.recompile.vpd import VpdReport
 from adt_ai.shared.config import ConfigError, ConfigLoader
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.internal_paths import internal_path
@@ -103,6 +107,7 @@ def _is_focused_run(request: RecompileRequest) -> bool:
         or request.synonyms
         or request.disabled
         or request.jobs
+        or request.vpd
         or request.trailing
     )
 
@@ -201,6 +206,9 @@ def _run_recompile_for_schema(
         synonyms       = args.synonyms,
         disabled       = args.disabled,
         jobs           = args.jobs,
+        # -vpd takes an optional column: None is the flag absent, "" a bare flag.
+        vpd            = args.vpd is not None,
+        vpd_column     = (args.vpd or "").strip().upper(),
         trailing       = args.trailing,
         debug          = args.debug,
     )
@@ -211,8 +219,16 @@ def _run_recompile_for_schema(
     # one reporter is selected per run. It is injected post-construction so the CLI
     # test fakes (single-arg __init__) are untouched; those fakes never drive the
     # reporter, so `streamed` stays False and the batch render runs as the fallback.
+    # A report-only run's first header goes up BEFORE the run (`#887`), the
+    # `#372` move for `OBJECTS OVERVIEW:` below: `-vpd` read every policy and
+    # exported the stale function files under the connection block, then printed
+    # `VPD FUNCTIONS:` over the finished tables. -silent keeps chrome and drops
+    # detail, and the one report-only header it keeps is -trailing's.
+    opening = opening_header(request) if not silent or request.trailing else ""
     console_reporter = (
-        _ConsoleTrailingReporter(silent=silent) if args.trailing else _ConsoleMViewReporter()
+        _ConsoleTrailingReporter(silent=silent, opening=opening)
+        if args.trailing
+        else _ConsoleMViewReporter()
     )
     runner = RecompileRunner(recompile_gateway_factory)
     runner.reporter = console_reporter
@@ -221,6 +237,11 @@ def _run_recompile_for_schema(
     # than opened by the runner so the recompile module stays free of SQLite, and
     # so a project with no mirror simply ranks on error evidence.
     runner.dependents_for = _invalid_dependents_provider(args, schema)
+    # -vpd reads the policy functions from the export_db files, exporting any
+    # that are missing or older than the object first (#884).
+    runner.vpd_sources = vpd_source_provider(
+        startup, environment, gateway_factory, debug=args.debug
+    )
     # **The overview header goes up before the run, not after it** (`#372`).
     # Everything a default recompile does is silent, the object survey, the
     # to-do selection, the compiles themselves and the re-read, so the run used
@@ -233,6 +254,8 @@ def _run_recompile_for_schema(
     reports_overview = not silent and not _is_focused_run(request)
     if reports_overview:
         print_adt_header("OBJECTS OVERVIEW:")
+    if opening:
+        print_adt_header(opening)
     result = runner.run(request)
 
     if request.trailing:
@@ -241,7 +264,9 @@ def _run_recompile_for_schema(
         # below would swallow. The run normally streams through the reporter; the
         # batch render is the fallback when the runner never drove it.
         if not console_reporter.streamed:
-            print_trailing_updated_objects(result.trailing, result.trailing_actions, silent)
+            print_trailing_updated_objects(
+                result.trailing, result.trailing_actions, silent, opening=opening
+            )
         return 0 if result.success else 1
 
     if not silent and not console_reporter.streamed:
@@ -280,11 +305,15 @@ def _run_recompile_for_schema(
                 # trailing blank is consumed by this list, re-emit one.
                 print()
         if request.synonyms:
-            print_synonym_tables(result.synonyms)
+            print_synonym_tables(result.synonyms, opening=opening)
         if request.disabled:
-            print_disabled_tables(result.disabled_objects)
+            print_disabled_tables(result.disabled_objects, opening=opening)
         if request.jobs:
-            print_job_tables(result.jobs)
+            print_job_tables(result.jobs, opening=opening)
+        if request.vpd:
+            print_vpd_tables(
+                result.vpd or VpdReport(column=request.vpd_column), opening=opening
+            )
 
     return 0 if result.success else 1
 

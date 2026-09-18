@@ -50,6 +50,7 @@ ACTION_DESTS = {
     "update",
     "used_by",
     "uses",
+    "vpd",
 }
 # Three dests left this set with ADT #345. `list` and `rebuild` went with the
 # flags themselves, which parsed and did nothing. `rebuild_db` was already
@@ -129,6 +130,10 @@ COMMAND_SECTION_OVERRIDES = {
         "schema": "actions",
         "target": "actions",
         "target_schema": "actions",
+        # `rest` is an export ACTION on `export_apex`, where it names something
+        # the run writes. Here it switches what `diff` compares and is optional,
+        # which is a modifier by the line Jan drew above (ADT #878).
+        "rest": "modifiers",
     },
     "patch": {
         # `-target` and `-name` are the two things a `patch` run acts ON, so they
