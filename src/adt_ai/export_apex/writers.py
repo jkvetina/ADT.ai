@@ -27,20 +27,7 @@ from adt_ai.export_apex.postprocess import (
     _target_path,
 )
 from adt_ai.export_apex.recent import WHOLE_APP_ACTIONS, RecentComponentFilter
-from adt_ai.export_apex.rest import (
-    _cleanup_sqlcl,
-    _matches_prefix,
-    _plsql_block,
-    _rest_export_completed,
-    _rest_export_error,
-    _rest_module_name,
-    _rest_prefixes,
-    _schema_block,
-    _schema_definition,
-    _split_rest_modules,
-    _stable_rest_module,
-    rest_timeout_seconds,
-)
+from adt_ai.export_apex.rest import export_rest
 from adt_ai.shared import text_files
 from adt_ai.shared.apex_paths import REST_SCHEMA_DEFINITION
 from adt_ai.shared.apex_payloads import link_payloads
@@ -307,48 +294,16 @@ class ApexCollectionWriterMixin:
         root = resolver.apex_root()
         root.mkdir(parents=True, exist_ok=True)
         resolver.rest_export(REST_SCHEMA_DEFINITION).parent.mkdir(parents=True, exist_ok=True)
-        output = gateway.sqlcl_request(
-            "SET LINESIZE 200;\nrest export;",
-            root,
-            timeout_seconds = rest_timeout_seconds(config),
-        )
-        lines = _cleanup_sqlcl(output)
-        preamble, modules, trailer = _split_rest_modules(lines)
-        # Both checks run before the first write, and both run whatever the split
-        # found. Scanning for the diagnostic only when the split found NO module
-        # meant an export that broke on module N, after 1..N-1 printed cleanly,
-        # reported success: SQLcl still exits 0, and the split flushed the
-        # truncated block as a module whose name came off the failed
-        # `DEFINE_MODULE` text, then wrote it verbatim to `<module>.sql`
-        # (ADT #670). Nothing is written for a failed run, the clean modules
-        # included: the run reports failure, so half a schema's REST definitions
-        # on disk would be a repository nobody can trust.
-        error = _rest_export_error(lines)
-        if error is not None:
-            # The headline is the first diagnostic, but the transcript comes
-            # with it: the line a regex picked is regularly the symptom and
-            # the cause is some other line in the same output (ADT #232).
-            raise RuntimeError(
-                f"SQLcl rest export failed: {error}\nFull SQLcl output:\n"
-                + "\n".join(lines).strip()
-            )
-        if modules and not _rest_export_completed(lines):
-            raise RuntimeError(
-                "SQLcl rest export ended before its closing COMMIT;, so the "
-                "modules it printed may be incomplete\nFull SQLcl output:\n"
-                + "\n".join(lines).strip()
-            )
-        prefixes = _rest_prefixes(config)
-        for module in modules:
-            name = _rest_module_name(module)
-            if not _matches_prefix(name, prefixes):
-                continue
+        # `export_rest` raises before returning anything on a failed run, so
+        # nothing is written for one, the clean modules included: the run
+        # reports failure, and half a schema's REST definitions on disk would be
+        # a repository nobody can trust (ADT #670).
+        export = export_rest(gateway, root, config)
+        for name, text in export.modules.items():
             target = resolver.rest_export(name)
             target.parent.mkdir(parents=True, exist_ok=True)
-            text_files.write_text(target, _plsql_block(_stable_rest_module(module)))
-        if modules:
+            text_files.write_text(target, text)
+        if export.schema_definition is not None:
             target = resolver.rest_export(REST_SCHEMA_DEFINITION)
             target.parent.mkdir(parents=True, exist_ok=True)
-            text_files.write_text(
-                target, _schema_block(_schema_definition(preamble, trailer))
-            )
+            text_files.write_text(target, export.schema_definition)

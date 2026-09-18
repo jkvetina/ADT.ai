@@ -1,19 +1,19 @@
-- **`patch` never drops or re-creates a table or a sequence.** A deleted file's drop is linked commented out, and a changed sequence ships an `ALTER SEQUENCE` for each changed clause. The new `immutables` key in `config/config.yaml` lists the protected types; `immutables: []` turns it off.
-- **`export_db` writes a sequence without the `/` after its `;`**, so a patch carrying a new sequence no longer fails on `ORA-00955`. Exported sequence files lose that line on their next export.
-- **`patch -create` skips commits an earlier patch of the same code already shipped.** The newest commit adding that patch folder marks the older commits as shipped. `-force` keeps them, and a build left with nothing stops with `NO NEW COMMITS FOR "<CODE>"`.
-- **The `patch` template scaffold ships APEX examples switched off inside `/* */`** for installing supporting objects, switching the authentication scheme and setting the application version. Delete a block's `/*` and `*/` lines to use it.
-- **`flow`'s `-refresh` mode stores a link target with the real application id** in place of `&APP_ID.`, so `f?p=&APP_ID.:7` in application 100 is stored as `f?p=100:7`.
-- **The commit store is about half the size and faster to write**, and `rebuild`, `calendar` and `search_repo` read only what they need. An existing store is upgraded in place with every commit number kept.
-- **The local stores drop columns nothing read back**, such as the application workspace id `export_apex` and `validate` carried and the run timestamp and line counts `ut` stored. Existing files are upgraded in place.
-- **`repo_authors` in `config/config.yaml` maps a personal commit address to the company one**, so `calendar` and `search_repo` show one person, and `-by` and `-my` match either address.
-- **Every warning prints under a `WARNING - <SUBJECT>:` header**, among them empty group rules and job arguments not exported in `export_db`, applications too old for `dependencies`, and a password `connection` may echo. Exit codes are unchanged.
+- **`diff -rest` compares the REST modules, privileges and roles two schemas publish.** It runs `export_apex`'s `-rest` export on both sides and lists each one as `MISSING`, `EXTRA` or `CHANGED`. The object comparison is skipped, so the run is fast.
+- **`diff -data` compares the rows of the tables `export_data` exports.** Rows match on their key, and only data is compared, never metadata. `-ignore` and `-limit` narrow the comparison.
+- **`diff -data -verbose` prints one block per table and names what differs.** `-out` writes the untrimmed rows.
+- **The `diff` documentation is a hub page plus one page per mode.**
+- **`recompile -vpd` reports VPD policies and the tables that carry a tenant column but no policy.** Policies are grouped by function, with the columns each one filters on.
+- **`recompile -vpd` reads `COLUMNS` from the policy function's source and reads the `export_db` file**, exporting what is missing or old. It prints one column name per row, in the order `FUNCTION`, `COLUMNS`, `DYNAMIC`, `TABLES`.
+- **Every `recompile` report prints its first header before it reads.** `-vpd`, `-disabled`, `-jobs`, `-synonyms` and `-trailing` no longer sit silent under the connection block.
+- **`recompile` drops stray `DEPSCAN$` helper procedures and never compiles or rewrites one.** APEX's dependency scan generates them, and `dependencies` and `patch` already dropped them after their own scan. `recompile -trailing` no longer rewrites them, and the report-only modes leave them alone.
+- **An empty `recompile -trailing` run leaves two blank lines above `TIMER:`, not four.**
 
 ## Verification
 
 | Suite          | Passed | Failed | Unverified | Coverage | Cores | Time |
 | -------------- | -----: | -----: | ---------: | -------: | ----: | ---: |
-| Unit tests     |   8491 |        |            |     100% |    14 | 0:56 |
-| User stories   |    151 |        |          2 |          |     3 | 1:35 |
+| Unit tests     |   8631 |        |            |     100% |    14 | 1:32 |
+| User stories   |    154 |        |          2 |          |     3 | 7:54 |
 | Security audit |     23 |        |            |          |     1 | 0:15 |
 
 The 2 unverified user stories are Windows-only contracts, and every release is built on macOS.

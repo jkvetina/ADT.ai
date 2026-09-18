@@ -27,6 +27,7 @@ from adt_ai.recompile.inventory import (
     TrailingObject,
 )
 from adt_ai.recompile.root_causes import RootCauseReport
+from adt_ai.recompile.vpd import VpdReport
 from adt_ai.shared.db import QueryGateway
 
 # A no-arg factory that returns a fresh gateway, mirroring old ADT's reconnect
@@ -63,6 +64,9 @@ class RecompileRequest:
     synonyms: bool = False
     disabled: bool = False
     jobs: bool = False
+    # -vpd, and its optional COLUMN value upper-cased ("" for a bare flag).
+    vpd: bool = False
+    vpd_column: str = ""
     trailing: bool = False
     debug: bool = False
 
@@ -96,6 +100,7 @@ class RecompileResult:
     synonyms: list[SynonymInfo] = field(default_factory=list)
     disabled_objects: list[DisabledObject] = field(default_factory=list)
     jobs: list[SchedulerJobRun] = field(default_factory=list)
+    vpd: VpdReport | None = None
     trailing: list[TrailingObject] = field(default_factory=list)
     trailing_actions: list[TrailingAction] = field(default_factory=list)
     error_details: list[CompileError] = field(default_factory=list)

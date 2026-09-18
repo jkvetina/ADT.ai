@@ -3,8 +3,8 @@ name: adt
 description: "Lean ADT.ai command router for Oracle/APEX work. Invoke only when the user explicitly asks an agent to use the ADT skill by name; never auto-load it for repository work, general discussion, development, review, command lookup, or incidental mentions of ADT."
 metadata:
   created: "2026-06-10"
-  updated: "2026-09-16 20:46"
-  version: "2.4.0"
+  updated: "2026-09-18 08:52"
+  version: "2.5.0"
   tags: [oracle, apex, deployment, cli, database]
 ---
 # ADT.ai
@@ -61,7 +61,7 @@ adtai dependencies -scan -env DEV -app 100 -page 12 40
 
 ## diff: compare two environments or schemas
 
-Read [docs/diff.md](../../docs/diff.md). It reads both sides through SQLcl and writes a diff artifact; name the source and target explicitly.
+Read [docs/diff.md](../../docs/diff.md). Writes a SQLcl diff artifact; `-rest` compares REST services and `-data` table rows instead. Name both sides explicitly.
 
 ```bash
 adtai diff -source DEV -target UAT
@@ -138,7 +138,7 @@ adtai rebuild
 
 ## recompile: recompile invalid objects
 
-Read [docs/recompile.md](../../docs/recompile.md). The default and `-mviews` modify database objects. `-synonyms`, `-disabled`, and `-jobs` are reports. `-trailing` is not cleanup of exported files: it rewrites stored database source through `CREATE OR REPLACE` and has no preview mode.
+Read [docs/recompile.md](../../docs/recompile.md). The default and `-mviews` modify database objects. `-synonyms`, `-disabled`, `-jobs`, `-vpd` are reports. `-trailing` is not cleanup of exported files: it rewrites stored database source through `CREATE OR REPLACE` and has no preview mode.
 
 ```bash
 adtai recompile -schema APP

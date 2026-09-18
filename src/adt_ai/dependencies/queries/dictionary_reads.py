@@ -18,6 +18,7 @@ cannot silently drift.
 from __future__ import annotations
 
 from adt_ai.shared.apex_version import apex_version_tuple
+from adt_ai.shared.queries.scan_helpers import DROP_SCAN_HELPERS_STATEMENT
 
 # ------------------------------------------------------------------- USER_* axis
 
@@ -284,18 +285,9 @@ BEGIN
 END;
 """.strip()
 
-DEPSCAN_CLEANUP_STATEMENT = """
-BEGIN
-    FOR r IN (
-        SELECT object_name
-        FROM user_objects
-        WHERE object_type = 'PROCEDURE'
-        AND REGEXP_LIKE(object_name, '^DEPSCAN\\$[[:digit:]]+#[[:digit:]]+$')
-    ) LOOP
-        EXECUTE IMMEDIATE 'DROP PROCEDURE "' || REPLACE(r.object_name, '"', '""') || '"';
-    END LOOP;
-END;
-""".strip()
+# The helper pattern and its drop live in `shared/scan_helpers.py` (ADT #888),
+# which `export_db` and `recompile` read too; the name stays for this module's callers.
+DEPSCAN_CLEANUP_STATEMENT = DROP_SCAN_HELPERS_STATEMENT
 
 # What the scan above concluded about each fragment it could NOT compile, which
 # is the half `APEX_USED_DB_OBJECTS` cannot report: a fragment that fails to

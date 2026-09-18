@@ -13,6 +13,7 @@ every topic, so callers keep importing everything from ``adt_ai.recompile.querie
 from __future__ import annotations
 
 from adt_ai.shared.object_types import PLSQL_OBJECT_TYPES
+from adt_ai.shared.queries.scan_helpers import not_a_scan_helper
 
 # get database objects overview
 OVERVIEW_QUERY = """
@@ -115,7 +116,11 @@ ORDER BY 1
 
 
 # get database objects to recompile
-OBJECTS_TO_RECOMPILE_QUERY = """
+#
+# Neither arm returns an APEX scan helper (`DEPSCAN$<n>#<n>`, ADT #888): the run
+# drops the strays it finds before this read, and the filter keeps out one a
+# concurrent scan creates after that drop.
+OBJECTS_TO_RECOMPILE_QUERY = f"""
 WITH objects_add AS (
     SELECT /*+ MATERIALIZE CARDINALITY(t 1) */
         t.column_value AS object_like
@@ -152,6 +157,7 @@ FROM (
         AND g.object_like       IS NULL
         AND o.status            != 'VALID'
         AND o.object_type       NOT IN ('SEQUENCE')
+        AND {not_a_scan_helper("o.object_name")}
         AND EXISTS (
             SELECT 1
             FROM object_types n_t
@@ -178,6 +184,7 @@ FROM (
     WHERE 1 = 1
         AND g.object_like       IS NULL
         AND :force              = 'Y'
+        AND {not_a_scan_helper("o.object_name")}
         -- The first arm already returns every invalid object, so this one takes
         -- the VALID ones and nothing else. Without the predicate a bare -force
         -- (:drift_only = 'N', where the drift arm below applies no status test of

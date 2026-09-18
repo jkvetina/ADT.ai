@@ -8,7 +8,7 @@ the ``discovery/render.py`` split.
 
 from __future__ import annotations
 
-from adt_ai.recompile.contracts import MViewAction, TrailingAction
+from adt_ai.recompile.contracts import MViewAction, RecompileRequest, TrailingAction
 from adt_ai.recompile.inventory import (
     DisabledObject,
     MaterializedView,
@@ -18,6 +18,7 @@ from adt_ai.recompile.inventory import (
 )
 from adt_ai.recompile.queries import mview_type_code
 from adt_ai.recompile.runner import RecompileReporter
+from adt_ai.recompile.vpd import VpdAssignment, VpdFunction, VpdReport
 from adt_ai.shared.object_list import (
     ObjectRowFormatter,
     print_listing_gap,
@@ -62,6 +63,36 @@ _DISABLED_SECTION_TYPES = (
 )
 _JOBS_COLUMNS = ("JOB_NAME", "LAST_START_DATE", "DURAT", "CPU")
 _JOB_STATUS_ORDER = ("FAILED", "SUCCEEDED")
+_VPD_OPENING = "VPD FUNCTIONS:"
+_SYNONYMS_OPENING = "SYNONYMS:"
+_TRAILING_OPENING = "UPDATED OBJECTS:"
+
+
+def opening_header(request: RecompileRequest) -> str:
+    """The first header of the report-only run `RecompileRunner.run` will take.
+
+    The CLI prints it BEFORE the run, so the read sits under the name of the
+    report instead of under the connection block's closing blank (ADT #887,
+    the `#372` move for `OBJECTS OVERVIEW:`). The checks follow the runner's own
+    precedence, so a request naming two reports opens the one that runs.
+    `-mviews` answers "": its reporter's `reading_mviews()` already does this.
+
+    Jan, 2026-09-18, on the two whose header was built from the rows they read:
+    *"Should be same everywhere."* So `-synonyms` opens on `SYNONYMS:` with its
+    per-schema blocks below, and `-trailing` on `UPDATED OBJECTS:`, which can
+    no longer carry a count it has not read yet.
+    """
+    if request.synonyms:
+        return _SYNONYMS_OPENING
+    if request.disabled:
+        return _DISABLED_SECTION_TYPES[0][1]
+    if request.jobs:
+        return f"SCHEDULER JOBS - {_JOB_STATUS_ORDER[0]}:"
+    if request.vpd:
+        return _VPD_OPENING
+    if request.trailing:
+        return _TRAILING_OPENING
+    return ""
 
 
 def _mview_row_cells(mview: MaterializedView) -> dict[str, object]:
@@ -101,10 +132,14 @@ def _disabled_type(item: DisabledObject) -> str:
     return (item.object_type or "").upper()
 
 
-def print_disabled_tables(disabled_objects: list[DisabledObject]) -> None:
-    """Render -disabled as one compact table per disabled object type."""
+def print_disabled_tables(disabled_objects: list[DisabledObject], *, opening: str = "") -> None:
+    """Render -disabled as one compact table per disabled object type.
+
+    `opening` is the header the CLI already printed before the read, never twice.
+    """
     for object_type, heading in _DISABLED_SECTION_TYPES:
-        print_adt_header(heading)
+        if heading != opening:
+            print_adt_header(heading)
         print_adt_table(
             [
                 _disabled_row_cells(item)
@@ -135,15 +170,135 @@ def _job_row_cells(item: SchedulerJobRun) -> dict[str, object]:
     }
 
 
-def print_job_tables(jobs: list[SchedulerJobRun]) -> None:
-    """Render -jobs as one compact table per scheduler status."""
+def print_job_tables(jobs: list[SchedulerJobRun], *, opening: str = "") -> None:
+    """Render -jobs as one compact table per scheduler status.
+
+    `opening` is the header the CLI already printed before the read, never twice.
+    """
     extra_statuses = sorted({_job_status(job) for job in jobs} - set(_JOB_STATUS_ORDER))
     for status in [*_JOB_STATUS_ORDER, *extra_statuses]:
-        print_adt_header(f"SCHEDULER JOBS - {status}:")
+        if f"SCHEDULER JOBS - {status}:" != opening:
+            print_adt_header(f"SCHEDULER JOBS - {status}:")
         print_adt_table(
             [_job_row_cells(job) for job in jobs if _job_status(job) == status],
             columns=list(_JOBS_COLUMNS),
         )
+
+
+# One overview block per policy function, then one block per function listing
+# the tables it protects. DYNAMIC is the policy's type, so it sits with the
+# function (ADT #881). Jan, 2026-09-18 (#887): one column name per row, the
+# order FUNCTION | COLUMNS | DYNAMIC | TABLES, and a name that would push a row
+# past 80 cut with "..." rather than `~`.
+_VPD_WIDTH = 80
+_VPD_FUNCTION_COLUMNS = ("FUNCTION", "COLUMNS", "DYNAMIC", "TABLES")
+_VPD_POLICY_COLUMNS = ("TABLE_NAME", "POLICY_NAME", "SEL", "DML")
+_VPD_COVERAGE_COLUMNS = ("TABLES", "WITH_POLICY", "WITHOUT_POLICY")
+
+
+def _clip(text: str, width: int) -> str:
+    return text if len(text) <= width else text[: width - 3] + "..."
+
+
+def _vpd_function_rows(item: VpdFunction) -> list[dict[str, object]]:
+    """The function's own row carrying its first column, then one row per column."""
+    columns = item.columns() or [""]
+    return [
+        {
+            "FUNCTION": item.function_name if index == 0 else "",
+            "COLUMNS":  column,
+            "DYNAMIC":  item.dyn() if index == 0 else "",
+            "TABLES":   len(item.assignments) if index == 0 else "",
+        }
+        for index, column in enumerate(columns)
+    ]
+
+
+def _fit_widths(first: int, second: int, budget: int) -> tuple[int, int]:
+    """Share ``budget`` between two name columns, the shorter one kept whole."""
+    if first + second <= budget:
+        return first, second
+    half = budget // 2
+    if first <= half:
+        return first, budget - first
+    if second <= half:
+        return budget - second, second
+    return budget - half, half
+
+
+def _fixed_width(columns: tuple[str, ...], flexible: tuple[str, str]) -> int:
+    """Indent, every gutter, and the header width of every non-name column."""
+    gutters = 3 * (len(columns) - 1)
+    return 2 + gutters + sum(len(name) for name in columns if name not in flexible)
+
+
+def _fitted_rows(
+    rows: list[dict[str, object]], columns: tuple[str, ...], flexible: tuple[str, str]
+) -> list[dict[str, object]]:
+    def widest(name: str) -> int:
+        header = len(name.replace("_", " "))
+        return max([header, *(len(str(row[name])) for row in rows)])
+
+    first, second = _fit_widths(
+        widest(flexible[0]), widest(flexible[1]), _VPD_WIDTH - _fixed_width(columns, flexible)
+    )
+    for row in rows:
+        row[flexible[0]] = _clip(str(row[flexible[0]]), first)
+        row[flexible[1]] = _clip(str(row[flexible[1]]), second)
+    return rows
+
+
+def _vpd_policy_cells(item: VpdAssignment) -> dict[str, object]:
+    return {
+        "TABLE_NAME":  item.table_name,
+        "POLICY_NAME": item.policy_name,
+        "SEL":         "Y" if item.select else "",
+        "DML":         item.dml,
+    }
+
+
+def print_vpd_tables(report: VpdReport, *, opening: str = "") -> None:
+    """Render -vpd: functions, one block per function, the missing list, the counts.
+
+    `opening` is the header the CLI already printed before the read, never twice.
+    """
+    functions = report.functions()
+    if opening != _VPD_OPENING:
+        print_adt_header(_VPD_OPENING)
+    print_adt_table(
+        _fitted_rows(
+            [row for item in functions for row in _vpd_function_rows(item)],
+            _VPD_FUNCTION_COLUMNS,
+            ("FUNCTION", "COLUMNS"),
+        ),
+        columns=list(_VPD_FUNCTION_COLUMNS),
+        numeric=("TABLES",),
+    )
+    for item in functions:
+        name = _clip(item.function_name, _VPD_WIDTH - len("VPD POLICIES - :"))
+        print_adt_header(f"VPD POLICIES - {name}:")
+        print_adt_table(
+            _fitted_rows(
+                [_vpd_policy_cells(assignment) for assignment in item.assignments],
+                _VPD_POLICY_COLUMNS,
+                ("TABLE_NAME", "POLICY_NAME"),
+            ),
+            columns=list(_VPD_POLICY_COLUMNS),
+        )
+    if report.column:
+        print_adt_header(f"VPD MISSING - {report.column}:")
+        print_adt_table(
+            [{"TABLE_NAME": name} for name in report.missing()],
+            columns=["TABLE_NAME"],
+        )
+    print_adt_header("VPD COVERAGE:")
+    total = len(report.tables)
+    protected = report.protected_count()
+    print_adt_table(
+        [{"TABLES": total, "WITH_POLICY": protected, "WITHOUT_POLICY": total - protected}],
+        columns=list(_VPD_COVERAGE_COLUMNS),
+        numeric=_VPD_COVERAGE_COLUMNS,
+    )
 
 
 # `_TrailingRowFormatter` stood here until ADT #506. It was the third
@@ -154,16 +309,18 @@ def print_job_tables(jobs: list[SchedulerJobRun]) -> None:
 # separator row closing each type group.
 
 
-def _print_trailing_updated_header(total: int) -> None:
-    # Same shape as export_db's EXPORTING <n> OBJECTS: (ADT #237), the count
-    # belongs in the phrase, not parked after the colon.
-    print_adt_header(f"UPDATED {total} OBJECTS:")
+def _print_trailing_updated_header(opening: str) -> None:
+    # Printed before the read that finds the objects (ADT #887), so it carries
+    # no count; `opening` is the header the CLI already put up, never twice.
+    if opening != _TRAILING_OPENING:
+        print_adt_header(_TRAILING_OPENING)
 
 
 def print_trailing_updated_objects(
     trailing: list[TrailingObject],
     trailing_actions: list[TrailingAction],
     silent: bool = False,
+    opening: str = "",
 ) -> None:
     """Batch fallback listing the rewritten objects, for non-streamed callers.
 
@@ -178,15 +335,17 @@ def print_trailing_updated_objects(
     so a sort in this half alone is exactly the drift the two renders exist to
     rule out.
     """
-    _print_trailing_updated_header(len(trailing))
-    if not silent:
+    _print_trailing_updated_header(opening)
+    # The gap and the closing blank frame a listing, so a run that rewrote
+    # nothing prints neither (ADT #888): the footer owns the blanks under a bare
+    # header, and two more of ours made it four.
+    if not silent and trailing_actions:
         print_listing_gap()
         formatter = ObjectRowFormatter()
         for action in trailing_actions:
             for row in formatter.stream_rows(action.object_type, action.object_name):
                 print(row)
-        if trailing_actions:
-            print(type_separator())
+        print(type_separator())
         print()
     _print_trailing_failures(trailing_actions)
 
@@ -214,8 +373,9 @@ class _ConsoleTrailingReporter(RecompileReporter):
     reporter, so a path that never reaches the runner still gets its table.
     """
 
-    def __init__(self, silent: bool = False) -> None:
+    def __init__(self, silent: bool = False, opening: str = "") -> None:
         self._silent = silent
+        self._opening = opening
         self._formatter = ObjectRowFormatter()
         self._streamed_rows = False
         self.streamed = False
@@ -224,8 +384,11 @@ class _ConsoleTrailingReporter(RecompileReporter):
         self.streamed = True
         self._formatter = ObjectRowFormatter()
         self._streamed_rows = False
-        _print_trailing_updated_header(len(candidates))
-        if self._silent:
+        _print_trailing_updated_header(self._opening)
+        # Nothing to list opens no listing (ADT #888). The gap is committed the
+        # moment it prints, so the footer could not fold it away afterwards: an
+        # empty run showed four blank lines above TIMER instead of two.
+        if self._silent or not candidates:
             return
         print_listing_gap()
         _commit_stdout()
@@ -238,12 +401,11 @@ class _ConsoleTrailingReporter(RecompileReporter):
             print(row, flush=True)
 
     def end_trailing(self, trailing_actions: list[TrailingAction]) -> None:
-        if not self._silent:
+        if not self._silent and self._streamed_rows:
             # The last type group closes here, where the caller finally knows
             # there is no next object: the same moment `export_db`'s runner
             # calls `finish_type` for its final type.
-            if self._streamed_rows:
-                print(type_separator())
+            print(type_separator())
             print()
         _commit_stdout()
         _print_trailing_failures(trailing_actions)
@@ -285,11 +447,15 @@ def _synonym_row_cells(synonym: SynonymInfo, privilege: str) -> dict[str, object
     }
 
 
-def print_synonym_tables(synonyms: list[SynonymInfo]) -> None:
-    """Render -synonyms as one compact table per target owner."""
+def print_synonym_tables(synonyms: list[SynonymInfo], *, opening: str = "") -> None:
+    """Render -synonyms as one compact table per target owner.
+
+    `opening` is the header the CLI already printed before the read, never twice.
+    """
     sorted_synonyms = sorted(synonyms, key=_synonym_sort_key)
     if not sorted_synonyms:
-        print_adt_header("SYNONYMS:")
+        if opening != _SYNONYMS_OPENING:
+            print_adt_header(_SYNONYMS_OPENING)
         print_adt_table([], columns=list(_SYNONYM_COLUMNS))
         return
 

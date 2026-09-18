@@ -81,7 +81,7 @@ EXPORTING 6 OBJECTS:
                      |
 ```
 
-It is one renderer, not a convention. Seven sections call it: `EXPORTING <n> OBJECTS:`, `DELETED OBJECTS:` and `WARNING - JOB ARGUMENTS NOT EXPORTED:` in `export_db`, `UPDATED <n> OBJECTS:` in `recompile`, and `DELETED OBJECTS:`, `WARNING - OBJECTS CHANGED:` plus `INVALID OBJECTS:` in `patch`. A second hand-rolled version of the row fails the suite.
+It is one renderer, not a convention. Seven sections call it: `EXPORTING <n> OBJECTS:`, `DELETED OBJECTS:` and `WARNING - JOB ARGUMENTS NOT EXPORTED:` in `export_db`, `UPDATED OBJECTS:` in `recompile`, and `DELETED OBJECTS:`, `WARNING - OBJECTS CHANGED:` plus `INVALID OBJECTS:` in `patch`. A second hand-rolled version of the row fails the suite.
 
 **The unit is the object, never the file that holds it.** A file moved between folders is the same object, so a listing keyed on paths reports a move as a deletion.
 

@@ -231,7 +231,7 @@ Where PL/Scope can trace an impacted column through a view and the component pro
 
 APEX refresh reads the release from the connection block before choosing its dictionary path. Releases before APEX 24.2 skip the app refresh and list every skipped application under `WARNING - APEX TOO OLD, SKIPPED:`, as `APP 100 needs APEX 24.2 or newer`.
 
-Supported releases run the APEX dependency scan silently, then drop the helper procedures it generates so scan internals never reach the console or an export.
+Supported releases run the APEX dependency scan silently, then drop the helper procedures it generates so scan internals never reach the console or an export. They are the `DEPSCAN$<n>#<n>` procedures, and `dependencies` matches them by the same name pattern `export_db` and `recompile` use.
 
 <br>
 

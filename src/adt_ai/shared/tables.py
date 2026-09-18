@@ -73,6 +73,7 @@ class _AdtTableLayout:
     columns: tuple[str, ...]
     widths: tuple[int, ...]
     numeric: tuple[bool, ...]
+    headers: tuple[str, ...] = ()
 
     def cells_segment(self, values: Sequence[object], start: int, end: int) -> str:
         line = ADT_TABLE_INDENT if start == 0 else ""
@@ -91,18 +92,26 @@ class _AdtTableLayout:
         return self.cells_segment(values, 0, len(self.columns)).rstrip()
 
     def header_line(self) -> str:
-        return self.row_line([column.upper().replace("_", " ") for column in self.columns])
+        return self.row_line(list(self.headers or map(_header, self.columns)))
 
     def separator_line(self) -> str:
         return self.row_line(["-" * width for width in self.widths])
+
+def _header(column: str) -> str:
+    return column.upper().replace("_", " ")
 
 def _compute_adt_layout(
     rows: Sequence[Mapping[str, object]],
     columns: Sequence[str],
     min_widths: Mapping[str, int],
     numeric_columns: Sequence[str] = (),
+    labels: Mapping[str, str] | None = None,
 ) -> _AdtTableLayout:
     columns = list(columns)
+    # ``labels`` prints a header as given instead of upper-cased with its
+    # underscores spaced out. A column named after a database column keeps the
+    # database's spelling, `DEPARTMENT_ID` rather than `DEPARTMENT ID` (`#886`).
+    headers = [(labels or {}).get(column, _header(column)) for column in columns]
     # `_cell_text` rather than `str(...)`: a `None` cell renders blank, so it
     # must MEASURE blank too. Sizing it as `str(None)` reserved four characters
     # for text no reader ever sees, and the numeric sniff below already spells
@@ -111,11 +120,11 @@ def _compute_adt_layout(
     # workspace row whose developer count is genuinely unknown).
     widths = [
         max(
-            len(column),
+            len(header),
             min_widths.get(column, 0),
             *(len(_cell_text(row.get(column, ""))) for row in rows),
         )
-        for column in columns
+        for column, header in zip(columns, headers, strict=True)
     ]
     # Detection reads the cells, so a column of quantities that carry a unit,
     # `75%`, `1.2s`, sniffs as text and prints left-aligned, which is exactly
@@ -134,7 +143,23 @@ def _compute_adt_layout(
         )
         for column in columns
     ]
-    return _AdtTableLayout(tuple(columns), tuple(widths), tuple(numeric))
+    return _AdtTableLayout(tuple(columns), tuple(widths), tuple(numeric), tuple(headers))
+
+def adt_table_lines(
+    rows: Sequence[Mapping[str, object]],
+    numeric: Sequence[str] | None = None,
+    labels: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Header, separator and rows as text, for a table written to a file rather than the screen."""
+    if not rows:
+        return []
+    columns = list(rows[0].keys())
+    layout = _compute_adt_layout(rows, columns, {}, numeric or (), labels)
+    return [
+        layout.header_line(),
+        layout.separator_line(),
+        *(layout.row_line([row.get(column, "") for column in columns]) for row in rows),
+    ]
 
 def open_adt_table(
     rows: Sequence[Mapping[str, object]],
@@ -142,6 +167,7 @@ def open_adt_table(
     columns: Sequence[str] | None = None,
     leading_blank: bool = True,
     numeric: Sequence[str] | None = None,
+    labels: Mapping[str, str] | None = None,
 ) -> _AdtTableLayout | None:
     """Header, separator and ``rows``, with the table left OPEN.
 
@@ -162,7 +188,7 @@ def open_adt_table(
         return None
     min_widths = min_widths or {}
     columns = list(rows[0].keys()) if rows else list(columns or ())
-    layout = _compute_adt_layout(rows, columns, min_widths, numeric or ())
+    layout = _compute_adt_layout(rows, columns, min_widths, numeric or (), labels)
     if leading_blank:
         print()
     print(layout.header_line())
@@ -182,8 +208,9 @@ def print_adt_table(
     columns: Sequence[str] | None = None,
     leading_blank: bool = True,
     numeric: Sequence[str] | None = None,
+    labels: Mapping[str, str] | None = None,
 ) -> None:
-    if open_adt_table(rows, min_widths, columns, leading_blank, numeric) is None:
+    if open_adt_table(rows, min_widths, columns, leading_blank, numeric, labels) is None:
         return
     close_adt_table()
 
