@@ -3,7 +3,7 @@
 `patch/staleness.py` has refused a stale graph since `#261`, and refusing is the
 right answer to a question nobody can answer offline: the ordering it would
 produce fails in the target database rather than in ADT. But the fix it printed,
-`adtai dependencies -refresh -schema X`, is a command the operator then typed
+a dependency refresh for schema X, is a command the operator then typed
 verbatim before re-running the one they wanted, so the refusal was a round trip
 through a human to run a command ADT could run itself.
 
@@ -60,7 +60,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+# `REFRESH_HEADER` is the section the count rows sit under, Jan's own wording
+# (2026-08-19). It is defined in `cli/constants.py` since ADT #895, because
+# `export_db` prints it too and ships in releases that do not bundle this file.
 from adt_ai.cli.constants import (
+    REFRESH_HEADER,
     DependencyIndexRequest,
     DependencyIndexRunner,
     GatewayFactory,
@@ -73,10 +77,6 @@ from adt_ai.cli.context import (
 from adt_ai.cli.gateways import build_gateway, cached_schema_gateway_factory
 from adt_ai.patch.staleness import GraphFreshness, graph_freshness
 from adt_ai.shared.progress import FixedWidthProgressPrinter, print_adt_header
-
-#: The section the count rows sit under. Jan's own wording, 2026-08-19, plus the
-#: colon every ADT section header carries.
-REFRESH_HEADER = "UPDATING DEPENDENCIES:"
 
 #: Refresh one schema's mirror. Returns nothing; failures raise, and the caller
 #: turns them back into the gate's own refusal.
@@ -144,7 +144,7 @@ def _refresh_schemas(
     gateway_factory: GatewayFactory | None,
     schemas: list[str],
 ) -> None:
-    """Run the `dependencies -refresh` pass for the named schemas.
+    """Run the dependency refresh `rebuild -schema` runs, for the named schemas.
 
     Every failure is swallowed to a return: the caller re-measures immediately
     afterwards, so a refresh that could not connect surfaces as the staleness

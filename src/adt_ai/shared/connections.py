@@ -127,7 +127,7 @@ class ConnectionResult:
         # most projects it is the same one, so a file that names `schema_db` has
         # already answered the APEX question too (`#685`). Reading it here rather
         # than at each call site means one rule for `export_apex`, `patch`,
-        # `dependencies` and `flow` alike. There is no inverse: nothing stands in
+        # `rebuild` and `validate` alike. There is no inverse: nothing stands in
         # for `schema_db`, because `schema_apex` names the workspace's parsing
         # schema only when a project deliberately splits the two.
         if not schema and kind == "apex":
@@ -161,7 +161,7 @@ class ConnectionResult:
     # connection file, and what a command derived. `patch` derives its group from the
     # exported folder and uppercases it, so a file keyed `app_owner` could not serve a
     # patch group named `APP_OWNER`, the same project resolved fine for
-    # `dependencies -refresh -schema app_owner` and failed for `patch -deploy`, which
+    # `rebuild -schema app_owner` and failed for `patch -deploy`, which
     # reads as a broken connection file rather than a lookup rule (`#198`).
     #
     # The exact key still wins, so a file deliberately carrying two casings keeps both.

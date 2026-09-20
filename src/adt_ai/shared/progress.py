@@ -52,7 +52,9 @@ def print_adt_header(message: str, append: str = "", file: TextIO | None = None)
     the tool prints. Jan, 2026-08-23: *"Two empty lines above first header is
     wrong (We are not counting module header)"*. So the banner and the section
     directly under it both open on `OPENING_GAP`, and everything below keeps the
-    pair.
+    pair. **Unless the banner carried rows**: `rebuild` prints its branch and
+    `REBUILDING` bar there. Jan, `#904`: *"There is just 1 empty line below
+    REBUILDING"*. That asks about the banner alone.
 
     **The predicate is a count, deliberately, and the wider one was written and
     withdrawn.** Asking instead whether the section above printed any ROWS reads
@@ -81,9 +83,10 @@ def print_adt_header(message: str, append: str = "", file: TextIO | None = None)
         normalize = getattr(sys.stdout, "normalize_trailing_newlines", None)
         if callable(normalize):
             # The banner is section 1, so a section above this one means 2 or
-            # more have already been opened.
+            # more have already been opened, or the banner carried rows (#904).
             opened = getattr(sys.stdout, "sections_opened", SECTION_GAP)
-            normalize(SECTION_GAP if opened > 1 else OPENING_GAP)
+            under_rows = opened == 1 and getattr(sys.stdout, "section_has_body", False)
+            normalize(SECTION_GAP if opened > 1 or under_rows else OPENING_GAP)
     print(file=file)
     print(f"{message}{(' ' + append).rstrip()}", file=file)
     print("-" * len(message), file=file)

@@ -11,6 +11,11 @@ Two independent axes feed one ``config/internal/dependencies.db``:
   (``APEX_APP_OBJECT_DEPENDENCY.SCAN``) then pull each ``APEX_USED_DB*`` view and
   hand it to :meth:`DependencyStore.refresh_app_incremental`.
 
+The ``-app`` axis then fills the text mirrors `search TERM` reads, the
+component source and static files per app; the logic lives in
+:mod:`adt_ai.dependencies.source_mirror` (ADT #895). The schema axis mirrors no
+source: `search` reads a schema's from the files `export_db` wrote (ADT #904).
+
 The ``.db`` is the single source of truth: no YAML index, graph/edges/
 constraints/columns YAML, or per-object ``.md`` cards are written anymore; the
 query modes recompute from the raw mirrors at query time.
@@ -18,15 +23,17 @@ query modes recompute from the raw mirrors at query time.
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol, cast
 
-from adt_ai.dependencies import plscope, queries, refresh
+from adt_ai.dependencies import plscope, queries, refresh, source_mirror
 from adt_ai.dependencies.component_scan import run_component_scan
 from adt_ai.dependencies.store import DependencyStore
+from adt_ai.shared.apex_store import ApexStore
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.progress import (
@@ -35,11 +42,22 @@ from adt_ai.shared.progress import (
     fixed_width_status_line,
     print_adt_header,
 )
-from adt_ai.shared.recent_state import is_bare_recent, recent_days
+from adt_ai.shared.timed_bar import FALLBACK_TARGET_SECONDS, TimedProgressBar
 
 #: `#861`, spelled by Jan picking it: the state leads and what the run did about
 #: it trails, the shape `WARNING - NOT COMMITTED SCRIPTS, IGNORED:` already has.
 APEX_TOO_OLD_HEADER = "WARNING - APEX TOO OLD, SKIPPED:"
+
+#: The component scan's row, and the key its duration is kept under in
+#: `apex.db`'s per-application timers (ADT #904).
+SCAN_HEADER = "SCANNING COMPONENTS"
+SCAN_TIMER_ACTION = "component_scan"
+
+#: ADT #908, the same shape as the header above: the state leads, and what the
+#: run did about it trails. What it did is keep the application's dependency
+#: rows, because the scan clears the cache the `APEX_USED_DB*` views read from.
+SCAN_FAILED_HEADER = "WARNING - COMPONENT SCAN FAILED, DEPENDENCIES KEPT:"
+
 
 @dataclass(frozen=True)
 class DependencyIndexRequest:
@@ -52,13 +70,14 @@ class DependencyIndexRequest:
     progress: Any = None
     apex_versions: dict[str, str] | None = None
     refresh_names: list[str] | None = None
-    # `-recent` narrowing for `-refresh`: None (full refresh), an int day window,
-    # or BARE_RECENT (since each schema scope's own `refreshes` stamp).
-    recent: Any = None
     # Per-scope last-refresh stamp; defaults to "now" when the request omits it.
     refreshed_at: str | None = None
     # app_id -> display label ("122" or "122/ALIAS"), for the per-app section header.
     app_labels: dict[int, str] | None = None
+    # Called with each application's id once its scan is stored, before the next
+    # application's header opens: `rebuild -app` reads the page links there, so
+    # they print under the one header the scan opened (`#30`).
+    on_app_refreshed: Callable[[int], None] | None = None
 
 
 GatewayFactory = Callable[[str], QueryGateway]
@@ -93,16 +112,16 @@ class DependencyIndexRunner:
     def __init__(self, gateway_factory: GatewayFactory) -> None:
         self.gateway_factory = gateway_factory
 
-    @staticmethod
-    def _schema_last_refresh(store: DependencyStore, schema: str) -> str | None:
-        """The schema scope's own ``refreshes`` stamp, bare ``-recent``'s cutoff."""
-        for row in store.last_refreshes():
-            if row["type"] == "schema" and row["scope"] == schema:
-                return row["last_refresh"]
-        return None
+    def refresh(self, request: DependencyIndexRequest) -> list[int]:
+        """Refresh every scope the request names; return the apps whose scan failed.
 
-    def refresh(self, request: DependencyIndexRequest) -> None:
+        The return value is what lets `rebuild` exit non-zero on a run it
+        finished anyway (ADT #908): a failed component scan is one
+        application's problem, not the run's, so it is reported and stepped
+        over rather than raised.
+        """
         progress = _progress_reporter(request.progress)
+        scan_failures: list[int] = []
         apps = list(request.apps or [])
         refresh_names = list(request.refresh_names or [])
         app_schema = request.app_schema or (request.schemas[0] if request.schemas else None)
@@ -111,53 +130,22 @@ class DependencyIndexRunner:
         db_path = internal_path(request.root, "dependencies.db")
         store = DependencyStore.open(db_path, rebuild=True)
         prepared: set[int] = set()
+        apex_columns: dict[str, set[str]] | None = None
         try:
             for schema in request.schemas:
                 gateway = self.gateway_factory(schema)
-                # `-recent` narrows THIS schema's refresh to objects changed since
-                # its own `refreshes` stamp (bare) or an N-day window, selected
-                # server-side and patched through the deep per-object path so the
-                # untouched mirror rows survive. A user-named deep refresh or
-                # `-force` wins over `-recent`; a bare `-recent` with no stamp yet
-                # falls back to the plain full refresh.
-                recent_params: dict[str, Any] | None = None
-                if request.recent is not None and not refresh_names and not request.force:
-                    stamp = (
-                        self._schema_last_refresh(store, schema)
-                        if is_bare_recent(request.recent)
-                        else None
-                    )
-                    if is_bare_recent(request.recent) and stamp is None:
-                        progress.line(
-                            f"  RECENT: no previous refresh recorded for {schema}, "
-                            "refreshing all objects"
-                        )
-                    else:
-                        recent_params = {
-                            "changed_since": stamp,
-                            # Not `int(...)`: a sub-day window (`-recent 1/24`)
-                            # floors to 0, and `SYSDATE - 0` selects nothing.
-                            "recent_days": (
-                                None if stamp is not None else recent_days(request.recent)
-                            ),
-                        }
-                recent_names: list[str] | None = None
                 scope_names = refresh_names
                 progress.begin("USER_OBJECTS")
-                if recent_params is not None:
-                    object_query = queries.USER_OBJECTS_RECENT_QUERY
-                    scoped_params: dict[str, Any] | None = recent_params
-                else:
-                    object_query = (
-                        queries.USER_OBJECTS_SCOPED_QUERY
-                        if refresh_names
-                        else queries.USER_OBJECTS_QUERY
-                    )
-                    scoped_params = (
-                        {"object_name_filter": ",".join(refresh_names)}
-                        if refresh_names
-                        else None
-                    )
+                object_query = (
+                    queries.USER_OBJECTS_SCOPED_QUERY
+                    if refresh_names
+                    else queries.USER_OBJECTS_QUERY
+                )
+                scoped_params: dict[str, Any] | None = (
+                    {"object_name_filter": ",".join(refresh_names)}
+                    if refresh_names
+                    else None
+                )
                 try:
                     # Under the USER_OBJECTS row already open above, on purpose.
                     # It is one `FROM DUAL` read and a row of its own would be a
@@ -172,14 +160,6 @@ class DependencyIndexRunner:
                 except Exception:
                     progress.fail("USER_OBJECTS")
                     raise
-                if recent_params is not None:
-                    recent_names = sorted({row["OBJECT_NAME"] for row in object_rows})
-                    scope_names = recent_names
-                    scoped_params = (
-                        {"object_name_filter": ",".join(recent_names)}
-                        if recent_names
-                        else None
-                    )
                 if scope_names:
                     changed_objects = [
                         (row["OBJECT_TYPE"], row["OBJECT_NAME"]) for row in object_rows
@@ -193,14 +173,6 @@ class DependencyIndexRunner:
                     progress.finish("USER_OBJECTS", len(object_rows))
                 else:
                     progress.finish("USER_OBJECTS", len(changed_objects), total=len(object_rows))
-                if recent_names is not None and not recent_names:
-                    # Nothing changed since the cutoff: skip the detail pulls
-                    # entirely, but still advance the stamp, the scope WAS
-                    # covered for everything since the previous refresh.
-                    store.record_refresh(
-                        "schema", schema, refreshed_at, db_offset=db_offset
-                    )
-                    continue
                 if id(gateway) not in prepared:
                     # No row of its own (`#372`). The refresh header above says
                     # what is happening and stands for every call in the
@@ -277,37 +249,138 @@ class DependencyIndexRunner:
                         gateway, progress=progress.line, bar=progress.bar()
                     )
                     prepared.add(id(gateway))
-                # The component scan below is a real, potentially slow DB call
-                # with no natural row count; without a visible row here the
-                # header prints and the console then sits silent until the
-                # scan resolves, minutes on an app with many pages.
-                progress.begin("SCANNING COMPONENTS")
-                try:
-                    # One boundary for the whole helper lifecycle (`#699`): the
-                    # scan installs `DEPSCAN$` procedures and the cleanup that
-                    # removes them now runs in a `finally`, so a scan that
-                    # raises here leaves none of them on the schema. PL/Scope is
-                    # not passed as a session statement, because
-                    # `ensure_plscope` above already prepared this connection.
-                    run_component_scan(gateway, app)
-                except Exception:
-                    progress.fail("SCANNING COMPONENTS")
-                    raise
-                progress.status("SCANNING COMPONENTS", "DONE")
-                tables = {}
-                for table, query in queries.apex_table_queries(apex_version).items():
-                    progress.begin(table)
-                    try:
-                        rows = gateway.fetch_all(query, {"app_id": app})
-                    except Exception:
-                        progress.fail(table)
-                        raise
-                    progress.finish(table, len(rows))
-                    tables[table] = rows
-                store.refresh_app_incremental(app, tables, force=request.force)
-                store.record_refresh("app", str(app), refreshed_at)
+                scan_error = _scan_components(gateway, app, progress, request.root)
+                if scan_error is None:
+                    tables = {}
+                    for table, query in queries.apex_table_queries(apex_version).items():
+                        progress.begin(table)
+                        try:
+                            rows = gateway.fetch_all(query, {"app_id": app})
+                        except Exception:
+                            progress.fail(table)
+                            raise
+                        progress.finish(table, len(rows))
+                        tables[table] = rows
+                    store.refresh_app_incremental(app, tables, force=request.force)
+                    store.record_refresh("app", str(app), refreshed_at)
+                else:
+                    # Not one `APEX_USED_DB*` row is read on this path, and that
+                    # is the point (ADT #908): the scan runs `CLEAR_CACHE` first,
+                    # so after it fails those views answer nothing, and storing
+                    # that answer would wipe a mirror the last good scan filled.
+                    scan_failures.append(app)
+                    _print_scan_failed(label, scan_error)
+                # Component source and static files, a full replace per app;
+                # the dictionary's column list is read on the first app only.
+                apex_columns = source_mirror.refresh_app_source(
+                    store.connection,
+                    gateway,
+                    app,
+                    apex_columns,
+                    progress     = progress,
+                    refreshed_at = refreshed_at,
+                )
+                if request.on_app_refreshed is not None:
+                    request.on_app_refreshed(app)
         finally:
             store.close()
+        return scan_failures
+
+
+def _scan_components(
+    gateway: QueryGateway, app: int, progress: Any, root: Path
+) -> BaseException | None:
+    """The APEX component scan, crawling on a timed row like the recompile beside it.
+
+    The scan is one opaque call with no count of its own, minutes on an app with
+    many pages, so it runs under the shared timed bar: a percentage counting
+    down from what the same application's scan took last time, closed on the
+    time it really took. It ended on a bare `DONE` until ADT #904, Jan:
+    *"Recompile has a timer but scan has DONE? Use timer there too!"*. The
+    figure is kept in `apex.db` beside the export timers, per application,
+    folded `(elapsed + previous) / 2` like every other countdown target.
+
+    One boundary for the whole helper lifecycle (`#699`): the scan installs
+    `DEPSCAN$` procedures and the cleanup that removes them runs in a
+    `finally`, so a scan that raises leaves none of them on the schema. A
+    reporter with no terminal line to draw on runs the scan bare, and still
+    closes a failed row on `FAILED`.
+
+    **The error comes back rather than out** (ADT #908). The scan is APEX's own
+    PL/SQL, and an application whose components it cannot compile raises out of
+    `WWV_FLOW_OBJECT_DEPENDENCY_DEV` however long the rest of the run would have
+    taken: one such application took a 542-second `rebuild -app` with it. The
+    caller reports it and carries on, so what this returns is the failure, and a
+    caller that ignores the answer is the one thing that would restore the abort.
+    """
+    bar = progress.bar()
+    if bar is None:
+        try:
+            run_component_scan(gateway, app)
+        except Exception as error:  # noqa: BLE001 - returned, reported by the caller
+            progress.fail(SCAN_HEADER)
+            return error
+        return None
+    # The figure only paces the bar, so an unreadable `apex.db` crawls from the
+    # fallback and records nothing rather than failing the scan.
+    try:
+        with ApexStore.load(root) as store:
+            previous = store.timers().get(app, {}).get(SCAN_TIMER_ACTION, 0.0)
+    except (sqlite3.Error, OSError):
+        previous = None
+    try:
+        # `TimedProgressBar` closes the row on `FAILED` itself before re-raising,
+        # so the row is already finished by the time the error arrives here.
+        elapsed = TimedProgressBar().run(
+            SCAN_HEADER,
+            previous or FALLBACK_TARGET_SECONDS,
+            lambda: run_component_scan(gateway, app),
+        )
+    except Exception as error:  # noqa: BLE001 - returned, reported by the caller
+        return error
+    if previous is None:
+        return None
+    with ApexStore.load(root) as store:
+        store.store_timer(
+            app, SCAN_TIMER_ACTION, (elapsed + previous) / 2 if previous > 0 else elapsed
+        )
+    return None
+
+
+def _print_scan_failed(label: str, error: BaseException) -> None:
+    """One warning section naming the application and what APEX said (ADT #908).
+
+    The error's own message and not its stack: a failed scan carries a dozen
+    `ORA-06512: at "APEX_240200.WWV_FLOW_OBJECT_DEPENDENCY_DEV"` frames inside
+    APEX's own package, and a warning a run carries on from is a sentence, not
+    the error screen a run that stops prints.
+
+    **It ends on its row, not on a blank line**, unlike every warning block that
+    stands alone. This one sits inside the application's own section and the
+    application's source mirror and page links are read under it: a blank line
+    here would retire the header's claim on the screen, and those reads would
+    then be the naked wait `test_no_silent_blocking_phase` exists to catch.
+    """
+    print_adt_header(SCAN_FAILED_HEADER)
+    print(f"  APP {label} kept its previous dependencies: {_error_sentence(error)}")
+
+
+def _error_sentence(error: BaseException) -> str:
+    """The error's own first message, whole, however Oracle broke it up.
+
+    Usually the first line is the message (`ORA-01086: savepoint 'START_SCAN'
+    never established in this session or is invalid`). `ORA-06550` is the one
+    that is not: it opens with a locator, `ORA-06550: line 1, column 7:`, and
+    puts the message on the line under it, so a first-line rule printed the
+    coordinates of the error and never the error. A line ending in a colon is
+    Oracle saying the sentence continues, measured live on SANDBOX 2026-09-20.
+    """
+    lines = [line.strip() for line in str(error).splitlines() if line.strip()]
+    if not lines:
+        return repr(error)
+    if lines[0].endswith(":") and len(lines) > 1:
+        return f"{lines[0]} {lines[1]}"
+    return lines[0]
 
 
 class DependencyProgress(Protocol):
@@ -334,8 +407,6 @@ class DependencyProgress(Protocol):
 
     def fail(self, label: str, *, status: str = ..., indent: str = ...) -> None: ...
 
-    def status(self, label: str, status: str, *, indent: str = ...) -> None: ...
-
 
 class _NoProgressReporter:
     def bar(self) -> None:
@@ -360,9 +431,6 @@ class _NoProgressReporter:
     def fail(self, label: str, *, status: str = "FAILED", indent: str = "  ") -> None:
         return None
 
-    def status(self, label: str, status: str, *, indent: str = "  ") -> None:
-        return None
-
 
 class _CallableProgressReporter:
     """Test-only adapter: one complete formatted string per callback.
@@ -371,7 +439,7 @@ class _CallableProgressReporter:
     ``FixedWidthProgressPrinter.begin()`` does, because a plain callable has
     no notion of "the same terminal line, filled in later". Real CLI output
     always goes through ``FixedWidthProgressPrinter`` (see
-    ``commands_dependencies.py``); this class exists only so tests can assert
+    ``cli/rebuild_refresh.py``); this class exists only so tests can assert
     on complete formatted rows via a plain callback like ``list.append``.
     """
 
@@ -400,9 +468,6 @@ class _CallableProgressReporter:
         self._progress(text)
 
     def fail(self, label: str, *, status: str = "FAILED", indent: str = "  ") -> None:
-        self._progress(fixed_width_status_line(label, status, indent=indent))
-
-    def status(self, label: str, status: str, *, indent: str = "  ") -> None:
         self._progress(fixed_width_status_line(label, status, indent=indent))
 
 

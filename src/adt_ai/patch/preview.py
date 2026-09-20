@@ -243,7 +243,7 @@ def folders_within_window(
     copy, a restore and an archive round trip, where an mtime does not.
 
     The arithmetic is `shared/dates.within_recent_window`, the same one the commit
-    table and `search_repo` use, so `-recent 1` means today on both halves of this
+    table and `search` use, so `-recent 1` means today on both halves of this
     screen and in every other command.
 
     **A name that does not parse survives**, the opposite call to

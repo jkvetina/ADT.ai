@@ -1,3 +1,13 @@
+"""`patch -upload`: the static-files watch, and its one-shot push.
+
+Was the whole of the `live_upload` command until ADT #903 folded it into `patch`
+as a verb. The engine it drives keeps its own name, `adt_ai/live_upload/`: the
+fold is a command-surface change, and nothing under that package is visible to a
+user. What moved is this layer, which now reads `patch`'s own argument spellings
+-- `-app` for the application, `-files_ws` for the workspace target, `-target`
+for the environment and a one-value `-schema` -- instead of declaring its own.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -8,7 +18,6 @@ from adt_ai.cli.constants import (
     ApexDiscovery,
     GatewayFactory,
     QueryGateway,
-    print_module_banner,
 )
 from adt_ai.cli.context import (
     StartupContext,
@@ -41,28 +50,29 @@ MINIFIERS_HEADER = "WARNING - MINIFIERS NOT INSTALLED:"
 QUIT_HINT = "press Control+C to quit"
 UPLOADED_LABEL = "UPLOADED"
 
-_APP_REQUIRED_MESSAGE = "An application id is required: pass -app N."
+APP_REQUIRED_MESSAGE = "-upload needs the application to upload into: pass -app N."
 # The default nap between passes, old ADT's own. A folder a person is editing
 # changes a few times a minute, so anything shorter buys nothing.
 DEFAULT_INTERVAL = 1
 
 
-def _run_live_upload(
+def run_patch_upload(
     args: argparse.Namespace,
     gateway_factory: GatewayFactory | None = None,
 ) -> int:
-    print_module_banner("LIVE_UPLOAD")
+    """The watch, or the one-shot push, under `patch`'s own banner.
 
+    No banner of its own: `_run_patch` printed `PATCH` before this ran, and a
+    second module banner inside one command is the screen `#764` ended.
+    """
     app_id = _app_id(args)
-    if app_id is None:
-        print_adt_error("ARGUMENT INVALID", _APP_REQUIRED_MESSAGE)
-        return exit_code_for("ARGUMENT INVALID")
-
     startup = _load_startup_context(args)
     root = startup.root
     connections = startup.connections
-    environment = args.env or connections.default_environment
-    schema = args.schema or apex_lookup_schema(
+    # `-target` is `patch`'s spelling of the environment, the one `live_upload`
+    # spelled `-env` (ADT #903). One command, one word for it.
+    environment = args.target or connections.default_environment
+    schema = _schema(args) or apex_lookup_schema(
         connections, environment, connections.schema_names(environment)
     )
     connection = connections.resolve(environment=environment, schema=schema, kind="apex")
@@ -100,7 +110,7 @@ def _run_live_upload(
     request = LiveUploadRequest(
         folder    = folder,
         app_id    = app_id,
-        workspace = args.workspace,
+        workspace = args.files_ws,
         interval  = args.interval or DEFAULT_INTERVAL,
         show      = args.show,
     )
@@ -115,17 +125,32 @@ def _run_live_upload(
     return 1 if result.failed else 0
 
 
-def _app_id(args: argparse.Namespace) -> int | None:
-    """The one application this run binds to, or None when it cannot be read.
+def _app_id(args: argparse.Namespace) -> int:
+    """The one application this run binds to.
 
-    Required even in `-workspace` mode: the workspace itself is never named on
+    Required even in `-files_ws` mode: the workspace itself is never named on
     the command line, it is the one owning this application, and the session has
     to be bound to it before `WWV_FLOW_API` will write anything.
+
+    Total rather than optional, because two refusals have already run by here.
+    `patch -app` parses as a list (`nargs="*"`, `type=int`), so a bare `-app`
+    reads as empty, which `upload_flag_refusal` answers with
+    `APP_REQUIRED_MESSAGE`; a second id is `resolve_target`'s refusal, ahead of
+    everything. A `None` branch here would be a third answer nothing can reach.
     """
-    try:
-        return int(str(args.app))
-    except (TypeError, ValueError):
-        return None
+    return int(args.app[0])
+
+
+def _schema(args: argparse.Namespace) -> str | None:
+    """The one APEX owner schema `-upload` connects through, or None.
+
+    `patch -schema` carries `-install`'s repeatable list shape, which upload mode
+    has no use for: one run watches one folder through one connection. More than
+    one value is refused by `patch_build.upload_flag_refusal`, so flattening here
+    cannot silently drop a schema the user named.
+    """
+    values = [value for group in (args.schema or []) for value in group]
+    return values[0] if values else None
 
 
 def _gateway(
@@ -162,7 +187,7 @@ def _folder(
     if args.folder:
         return Path(args.folder).expanduser().resolve()
     resolver = ApexFileResolver.from_config(startup.root, startup.config).for_schema(schema)
-    if args.workspace:
+    if args.files_ws:
         return resolver.workspace_file("")
     application = _application(gateway, schema, app_id)
     if application is None:

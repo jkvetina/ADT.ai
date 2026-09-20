@@ -10,15 +10,13 @@ from typing import TextIO
 
 from adt_ai import __version__
 from adt_ai.cli.commands_connection import _run_connection
-from adt_ai.cli.commands_dependencies import _dependencies_argument_error, _run_dependencies
 from adt_ai.cli.commands_diff import _run_diff
 from adt_ai.cli.commands_export_data import _run_export_data
 from adt_ai.cli.commands_exports import _run_export_apex, _run_export_db
-from adt_ai.cli.commands_flow import _flow_argument_error, _run_flow
-from adt_ai.cli.commands_history import _run_calendar, _run_rebuild, _run_search_repo
-from adt_ai.cli.commands_live_upload import _run_live_upload
+from adt_ai.cli.commands_history import _run_calendar, _run_rebuild, _run_search
 from adt_ai.cli.commands_patch import _run_patch
 from adt_ai.cli.commands_recompile import _run_discovery, _run_doctor, _run_recompile
+from adt_ai.cli.commands_search_graph import _search_argument_error
 from adt_ai.cli.commands_ut import _run_ut3
 from adt_ai.cli.commands_validate import _run_validate
 from adt_ai.cli.constants import (
@@ -52,6 +50,8 @@ from adt_ai.cli.parser import (
     _removed_compatibility_args,
     build_parser,
 )
+from adt_ai.cli.rebuild_refresh import _rebuild_argument_error
+from adt_ai.cli.validate_scan import _scan_argument_error
 from adt_ai.shared.announce import announced_factory, strict_mode
 from adt_ai.shared.env_bootstrap import hydrate_environment
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
@@ -80,7 +80,7 @@ class _TrackedScreen:
         A failed run whose message went to stderr keeps its footer there, under
         the message, rather than on a stdout the reader may have piped away.
         ``default`` is the caller's own routing for the success case
-        (``dependencies -format yaml`` sends chrome to stderr); without one the
+        (``search -format yaml`` sends chrome to stderr); without one the
         footer follows the output.
         """
         if exit_code != 0 and self.stderr.had_output:
@@ -273,20 +273,13 @@ def main(
     # runs before the banner, so it neither prints nor raises (internal_paths).
     _migrate_internal_files(args)
 
-    # `dependencies` is spelled one way: PUBLIC_MODULES gives it no aliases, so
-    # `adtai depends` never reaches here at all -- `_is_unknown_command` refuses
-    # it above. The dead branch made the alias look supported to every reader of
-    # this file, which is how one gets documented (`#656`).
-    if args.command == "dependencies":
-        dependencies_error = _dependencies_argument_error(args)
-        if dependencies_error is not None:
-            return _run_command_argument_error(
-                raw_argv[0], dependencies_error, raw_argv[1:]
-            )
-    if args.command == "flow":
-        flow_error = _flow_argument_error(args)
-        if flow_error is not None:
-            return _run_command_argument_error(raw_argv[0], flow_error, raw_argv[1:])
+    # A flag the chosen mode would ignore is refused before the banner, on the
+    # parser-style screen with exit 2, never inside a handler that already
+    # printed it. `dependencies` and `flow` were retired by `#30`, so they reach
+    # `_is_unknown_command` above and never get here.
+    argument_error = _mode_argument_error(args)
+    if argument_error is not None:
+        return _run_command_argument_error(raw_argv[0], argument_error, raw_argv[1:])
 
     with _tracked_screen() as screen:
         exit_code = _run_command(args, screen, gateway_factory)
@@ -327,20 +320,14 @@ def _run_command(
             exit_code = _run_patch(args, gateway_factory=gateway_factory)
         elif args.command == "diff":
             exit_code = _run_diff(args, gateway_factory=gateway_factory)
-        elif args.command == "live_upload":
-            exit_code = _run_live_upload(args, gateway_factory=gateway_factory)
         elif args.command == "rebuild":
-            exit_code = _run_rebuild(args)
-        elif args.command == "search_repo":
-            exit_code = _run_search_repo(args)
+            exit_code = _run_rebuild(args, gateway_factory=gateway_factory)
+        elif args.command == "search":
+            exit_code = _run_search(args, gateway_factory=gateway_factory)
         elif args.command == "recompile":
             exit_code = _run_recompile(args, gateway_factory=gateway_factory)
         elif args.command == "doctor":
             exit_code = _run_doctor(args)
-        elif args.command == "dependencies":
-            exit_code = _run_dependencies(args, gateway_factory=gateway_factory)
-        elif args.command == "flow":
-            exit_code = _run_flow(args, gateway_factory=gateway_factory)
         elif args.command == "discovery":
             exit_code = _run_discovery(args, gateway_factory=gateway_factory)
         elif args.command == "connection":
@@ -348,7 +335,7 @@ def _run_command(
         elif args.command == "ut":
             exit_code = _run_ut3(args, gateway_factory=gateway_factory)
         elif args.command == "validate":
-            exit_code = _run_validate(args)
+            exit_code = _run_validate(args, gateway_factory=gateway_factory)
     except KeyboardInterrupt:
         exit_code = 130
         print("\nInterrupted by user.", file=sys.stderr)
@@ -452,9 +439,23 @@ def _run_invalid_command(command: str) -> int:
 
 
 def _command_timer_stdout(args: argparse.Namespace, stdout: TextSink) -> TextSink:
-    if args.command == "dependencies" and getattr(args, "format", "table") != "table":
+    # The one command that prints a machine `-format` keeps stdout pure data.
+    if args.command == "search" and getattr(args, "format", "table") != "table":
         return sys.stderr
     return stdout
+
+
+#: The commands whose modes refuse a flag another mode takes, by command.
+_MODE_ARGUMENT_CHECKS = {
+    "rebuild":  _rebuild_argument_error,
+    "search":   _search_argument_error,
+    "validate": _scan_argument_error,
+}
+
+
+def _mode_argument_error(args: argparse.Namespace) -> str | None:
+    check = _MODE_ARGUMENT_CHECKS.get(args.command)
+    return None if check is None else check(args)
 
 
 def _completion_args_from_raw(raw_args: Sequence[str]) -> argparse.Namespace | None:

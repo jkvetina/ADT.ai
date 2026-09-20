@@ -121,7 +121,7 @@ class ApexScanReport:
     app_id: int
     #: The page this report is about, when the scan was narrowed to one (ADT
     #: #751). `None` is an application-wide scan, which is every `patch -deploy`
-    #: verification and a `dependencies -scan` with no `-page`. It is what lets a
+    #: verification and a `validate -scan` with no `-page`. It is what lets a
     #: row say WHICH question it answers, and the distinction matters: an
     #: application-wide `SUCCESS` and a one-page `SUCCESS` are very different
     #: claims about the same application.

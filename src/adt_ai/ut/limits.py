@@ -40,7 +40,7 @@ def error_limit(config: Mapping[str, Any] | None) -> int:
     """How many `ERRORS & FAILURES:` stanzas print. ``0`` means every one.
 
     Zero is the documented escape hatch rather than a degenerate case, the same
-    meaning `search_repo`'s `-limit 0` already carries, so a reader who knows one
+    meaning `search`'s `-limit 0` already carries, so a reader who knows one
     knows the other. A negative or unparsable value is treated as absent: a
     typo'd cap should print the shipped 20, never silently suppress the section.
     """

@@ -189,7 +189,7 @@ def _cached_apex_workspace(root: Path, app_id: int) -> str:
     """The workspace `export_apex` recorded for this app, or "" if it never did.
 
     `config/internal/apex.db` is the gitignored cache `export_apex` writes and
-    `validate` / `dependencies -refresh` already read offline before connecting;
+    `validate` / `rebuild -app` already read offline before connecting;
     it carries `workspace` per app id (`export_apex/metadata.py`). Reading it
     here keeps `patch -create` connectionless, the workspace costs no round
     trip. The store keys applications by integer id whatever spelling the caller

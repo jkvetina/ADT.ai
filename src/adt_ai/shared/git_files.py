@@ -53,7 +53,7 @@ def run_git_paths(root: Path, args: list[str]) -> list[str]:
     path outside plain ASCII in its default output, so `příklad.sql` comes back
     as `"database/tables/p\305\231\303\255klad.sql"`, quotes and octal escapes
     and all. That quoted spec resolves to nothing, so every Czech-named object
-    silently vanished from `rebuild`, `search_repo`, `patch -create` and the hash
+    silently vanished from `rebuild`, `search`, `patch -create` and the hash
     index with no message (ADT #664). `-z` turns the quoting off and terminates
     each path with NUL, which is also the only separator a filename cannot
     contain, so a path holding a newline survives too.
@@ -69,9 +69,17 @@ def changed_files(root: Path, commit_hash: str) -> list[ChangedFile]:
     # `--name-status -z` emits the status and the path as SEPARATE NUL-terminated
     # records rather than one tab-joined line, so they are read in pairs, except
     # a rename or copy, which carries its source and its destination.
+    #
+    # A merge is diffed against its first parent: it is the one commit the merge
+    # adds to the branch's first-parent line, which is where commits are numbered
+    # (ADT #895), so it carries everything the merged branch changed. Without
+    # `--diff-merges`, `diff-tree` prints nothing at all for a merge.
     records = run_git_paths(
         root,
-        ["diff-tree", "--root", "--no-commit-id", "--name-status", "-r", commit_hash],
+        [
+            "diff-tree", "--root", "--no-commit-id", "--name-status", "-r",
+            "--diff-merges=first-parent", commit_hash,
+        ],
     )
     entries: list[tuple[str, str]] = []
     index = 0
@@ -349,20 +357,6 @@ def last_commit_time(root: Path, ref: str, path: str) -> int:
     return int(output) if output else 0
 
 
-def git_is_ancestor(root: Path, commit: str, branch: str) -> bool:
-    """True when ``commit`` is an ancestor of ``branch``."""
-    result = subprocess.run(
-        ["git", "merge-base", "--is-ancestor", commit, branch],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=safe_subprocess_environment(),
-    )
-    return result.returncode == 0
-
-
 def git_show(root: Path, ref: str, path: str) -> bytes | None:
     """Raw bytes of ``path`` at ``ref``, or ``None`` when it does not resolve."""
     result = subprocess.run(
@@ -418,6 +412,68 @@ def git_status_paths(root: Path, paths: list[str]) -> dict[str, str]:
         if record:
             statuses[record[3:]] = record
     return statuses
+
+
+#: The subject of the snapshot `save_work_in_progress` commits.
+WIP_SUBJECT = "WIP"
+
+
+class WorkInProgressError(RuntimeError):
+    """Git refused the `WIP` commit, so the restore it protects writes nothing.
+
+    Carries the two halves of the `GIT COMMIT FAILED` screen apart, because both
+    commands that restore print them there (ADT #897, Jan: *"ERROR header with
+    proper name and desc"*): what failed, and git's own first line saying why.
+    """
+
+    def __init__(self, root: Path, reason: str) -> None:
+        self.root = root
+        self.reason = reason
+        super().__init__(f"{self.description} {reason}".rstrip())
+
+    @property
+    def description(self) -> str:
+        return (
+            f"The uncommitted changes in {self.root} could not be saved as a WIP "
+            "commit, so nothing was written."
+        )
+
+
+def save_work_in_progress(root: Path) -> str | None:
+    """Commit what `root`'s checkout holds uncommitted as `WIP`, and name the commit.
+
+    Jan, 2026-09-19 (ADT #897): *"before we do -pull, we should commit what we
+    have as "WIP" and dont push, so after -pull we would be able to see the
+    changes and not lost anything."* `diff -restore` and `search -restore`
+    write over files in the checkout, so this runs first: afterwards `git diff`
+    shows the restore alone and the user's own work sits one commit back.
+
+    ``None`` when there is nothing to save, and nothing is committed then.
+    Otherwise every change, untracked files included, becomes one local commit
+    with the subject `WIP`, and the answer is its short hash. It is never pushed.
+    `--no-verify`, because it is a safety snapshot rather than a real commit, and
+    a project's commit-msg or lint hook must not stop the restore it protects.
+
+    A refusal raises `WorkInProgressError` carrying git's own first line, with
+    the index put back as it was, so the caller writes nothing and the checkout
+    is left exactly as found. `write-tree` is what reads the index to put back, and it
+    also refuses an index holding unmerged paths, which `add -A` would
+    otherwise mark resolved, conflict markers and all.
+    """
+    if git_output(root, ["status", "--porcelain", "--untracked-files=all"]) == "":
+        return None
+    try:
+        index = run_git(root, ["write-tree"]).strip()
+        run_git(root, ["add", "-A"])
+        try:
+            run_git(root, ["commit", "--no-verify", "--quiet", "-m", WIP_SUBJECT])
+        except subprocess.CalledProcessError:
+            run_git(root, ["read-tree", index])
+            raise
+    except subprocess.CalledProcessError as error:
+        reason = next(iter((error.stderr or "").strip().splitlines()), "")
+        raise WorkInProgressError(root, reason) from error
+    return git_output(root, ["rev-parse", "--short", "HEAD"])
 
 
 def git_checkout(root: Path, name: str) -> None:

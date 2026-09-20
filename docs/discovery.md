@@ -113,7 +113,7 @@ ORDER  BY object_type;
 
 ## One schema per run
 
-`-schema` takes a single schema here, where `export_db`, `export_data`, `export_apex`, `dependencies` and `recompile` all repeat it. That is deliberate. Discovery runs your SQL and prints one result per statement, so N schemas would mean N result sets per query, which is a different output contract rather than a second connection.
+`-schema` takes a single schema here, where `export_db`, `export_data`, `export_apex`, `rebuild` and `recompile` all repeat it. That is deliberate. Discovery runs your SQL and prints one result per statement, so N schemas would mean N result sets per query, which is a different output contract rather than a second connection.
 
 Oracle already spans schemas from inside one statement, which is the better tool here:
 

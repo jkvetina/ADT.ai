@@ -39,7 +39,7 @@ SWITCH_LINE_WIDTH = 78
 # `TypeError` and friends, so a defect in this module reported itself as a tidy
 # `Error:` line with exit 1, indistinguishable from a dirty working tree and
 # carrying no traceback and no `-debug` hint. The siblings in
-# `commands_history.py` (`_run_search_repo`, `_run_calendar`) already narrow to
+# `commands_history.py` (`_run_search`, `_run_calendar`) already narrow to
 # their runner's own error types; these three are the ones that did not.
 GIT_LOOKUP_FAILURES = (RuntimeError, OSError, subprocess.SubprocessError)
 

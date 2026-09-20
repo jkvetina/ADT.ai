@@ -5,11 +5,8 @@ local file rather than a gateway, and it is here for the same reason as the
 rest, one SQL home per module.
 
 The schema is the numbering contract written down. `number INTEGER PRIMARY KEY`
-says a number belongs to one commit, `UNIQUE (id)` says a commit carries one
-number, and together they make a reused number unwritable rather than merely
-tested for. That matters because the defect this store replaces was exactly a
-numbering one: positional numbering let a merge renumber commits that were
-already cached.
+says a number belongs to one commit and `UNIQUE (id)` says a commit carries one
+number, so two commits can never share a position in the branch's history.
 
 Version 2 (ADT #642) is the convention every store follows: the version table
 is `_meta`, the author date is `authored_at`, and `commit_files` declares the
@@ -35,7 +32,7 @@ CREATE TABLE IF NOT EXISTS commits (
 
 # WITHOUT ROWID: the key is the row, so a file row is stored once in key order
 # instead of twice (table plus key index). The path index then carries the
-# number too, which is what the status fallback in `search_repo` reads.
+# number too, which is what the status fallback in `search` reads.
 COMMIT_FILES_DDL = """
 CREATE TABLE IF NOT EXISTS commit_files (
     number INTEGER NOT NULL REFERENCES commits (number) ON DELETE CASCADE,
@@ -155,7 +152,7 @@ WHERE substr(authored_at, 1, 7) = ?
 ORDER BY number
 """.strip()
 
-# `search_repo`'s page: newest first below a number, narrowed by whatever
+# `search`'s page: newest first below a number, narrowed by whatever
 # filters the caller could state in SQL. `{conditions}` is filled only from the
 # `COMMIT_SEARCH_*` fragments below, joined with AND.
 COMMIT_SEARCH_TEMPLATE = """
@@ -210,8 +207,59 @@ INSERT OR REPLACE INTO commit_files (number, path, hash, status)
 VALUES (?, ?, ?, ?)
 """.strip()
 
-# Dropping the history is for ONE case: history was rewritten under it, so the
-# numbers point at commits that no longer exist. Anything else that reached for
-# this would be renumbering, which is the defect the store was built to end.
-# The file rows go with the commits through the cascade.
-COMMIT_DELETE_ALL = "DELETE FROM commits"
+# Numbering by first-parent position (ADT #895). `_meta.numbering` records that
+# every number in the file is its commit's position on the branch's first-parent
+# line. A store written any other way cannot claim it: the allocator before #895
+# topped a merge's side-branch commits up above the tip, where a ceiling that
+# agrees with the line says nothing about the rows in between.
+NUMBERING_FIRST_PARENT = "first-parent"
+
+META_NUMBERING_QUERY = "SELECT value FROM _meta WHERE key = 'numbering'"
+
+META_NUMBERING_UPSERT = (
+    f"INSERT INTO _meta (key, value) VALUES ('numbering', '{NUMBERING_FIRST_PARENT}') "
+    "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+)
+
+# The commit at the ceiling, which is all `reconcile` compares with the line
+# before it trusts a store. One key probe.
+COMMIT_ID_AT_NUMBER_QUERY = "SELECT id FROM commits WHERE number = ?"
+
+# Renumbering runs against the line held in a temporary table, so a branch of
+# any size moves in a handful of statements. A commit the line no longer has
+# is dropped and its file rows go with it through the cascade. Every moved
+# number passes through its negative first, so no two rows ever hold one number
+# at once, and the file rows move before the commits they reference; the
+# foreign key is deferred for that one transaction.
+COMMIT_POSITIONS_DDL = """
+CREATE TEMP TABLE IF NOT EXISTS commit_positions (
+    id     TEXT    PRIMARY KEY,
+    number INTEGER NOT NULL
+) WITHOUT ROWID
+""".strip()
+
+COMMIT_POSITIONS_CLEAR = "DELETE FROM temp.commit_positions"
+
+COMMIT_POSITIONS_INSERT = "INSERT INTO temp.commit_positions (id, number) VALUES (?, ?)"
+
+DEFER_FOREIGN_KEYS = "PRAGMA defer_foreign_keys = ON"
+
+COMMIT_RENUMBER_STEPS = (
+    "DELETE FROM commits WHERE id NOT IN (SELECT id FROM temp.commit_positions)",
+    """
+UPDATE commit_files
+   SET number = -(SELECT p.number
+                    FROM commits c JOIN temp.commit_positions p ON p.id = c.id
+                   WHERE c.number = commit_files.number)
+ WHERE number IN (SELECT c.number
+                    FROM commits c JOIN temp.commit_positions p ON p.id = c.id
+                   WHERE p.number <> c.number)
+""".strip(),
+    """
+UPDATE commits
+   SET number = -(SELECT p.number FROM temp.commit_positions p WHERE p.id = commits.id)
+ WHERE number <> (SELECT p.number FROM temp.commit_positions p WHERE p.id = commits.id)
+""".strip(),
+    "UPDATE commit_files SET number = -number WHERE number < 0",
+    "UPDATE commits SET number = -number WHERE number < 0",
+)

@@ -31,6 +31,7 @@ from typing import Any
 
 from adt_ai.cli.commands_patch_actions import run_archive_patches, run_install_script
 from adt_ai.cli.commands_patch_drop import run_drop_applications
+from adt_ai.cli.commands_patch_upload import APP_REQUIRED_MESSAGE, run_patch_upload
 from adt_ai.cli.constants import (
     GatewayFactory,
     PatchError,
@@ -64,6 +65,11 @@ def dispatch_supporting_actions(
     `-drop` is the third (ADT #592). It connects, so it lives beside the deploy
     rather than beside the other two, and it names no patch at all.
     """
+    # `-upload` joined the three on ADT #903. It opens a database, so it sits
+    # beside `-drop` rather than beside the two that write nothing, and it reads
+    # no commit at all, which is what puts it in this function.
+    if args.upload:
+        return run_patch_upload(args, gateway_factory=gateway_factory)
     if args.install:
         return run_install_script(root, workspace, config, schemas=args.schema)
     if args.archive is not None:
@@ -92,8 +98,59 @@ def install_flag_refusal(args: argparse.Namespace) -> str | None:
             "-branch cannot be combined with -install: the install script is built "
             "from the checked-out files"
         )
-    if args.schema and not args.install:
-        return "-schema applies only to -install"
+    if args.schema and not (args.install or args.upload):
+        return "-schema applies only to -install and -upload"
+    return None
+
+
+# The verbs `-upload` cannot share a run with. `-create`, `-deploy`, `-install`,
+# `-archive`, `-drop`, `-hash` and `-baseline` each own the whole run, and a
+# folder watch that never returns cannot be one step of a build.
+UPLOAD_EXCLUSIVE_VERBS = ("create", "deploy", "install", "drop")
+
+# `-upload`'s own knobs, and the spelling each is refused under. Every one reads
+# only in upload mode, so a run without the verb would parse a flag and do
+# nothing with it (SOP §Command surface), exactly as a stray `-schema` does.
+UPLOAD_ONLY_FLAGS = (("folder", "-folder"), ("interval", "-interval"), ("once", "-once"),
+                     ("show", "-show"))
+
+
+def upload_flag_refusal(args: argparse.Namespace) -> str | None:
+    """What `-upload` refuses, or ``None`` (ADT #903).
+
+    Asked with the other argument-shaped refusals, before the config load and the
+    commit scan, because a rejected flag must cost nothing.
+
+    Three questions, in the order a reader meets them: is the verb alone, does it
+    know which application to upload into, and does a run without it carry a knob
+    only it reads.
+    """
+    if not args.upload:
+        stray = [flag for dest, flag in UPLOAD_ONLY_FLAGS if getattr(args, dest, None)]
+        return f"{', '.join(stray)} applies only to -upload" if stray else None
+    clashing = [f"-{verb}" for verb in UPLOAD_EXCLUSIVE_VERBS if getattr(args, verb, None)]
+    # `-archive` and `-name` are the two that are falsy when given: a bare
+    # `-archive` parses as `[]` and only lists, and `-name` carries a string the
+    # verb has no folder to match it against. `-hash` and `-baseline` split
+    # `None` from `""` the same way (`parser_patch.py`).
+    if args.archive is not None:
+        clashing.append("-archive")
+    for dest in ("hash", "baseline"):
+        if getattr(args, dest) is not None:
+            clashing.append(f"-{dest}")
+    if args.name:
+        clashing.append("-name")
+    if clashing:
+        return f"-upload cannot be combined with {', '.join(clashing)}"
+    if not args.app:
+        return APP_REQUIRED_MESSAGE
+    schemas = [value for group in (args.schema or []) for value in group]
+    if len(schemas) > 1:
+        named = ", ".join(schemas)
+        return (
+            f"-upload connects through one schema, got {len(schemas)}: {named}. "
+            "One folder is watched through one connection."
+        )
     return None
 
 

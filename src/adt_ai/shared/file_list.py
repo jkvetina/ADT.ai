@@ -71,7 +71,7 @@ def nested_files(config: dict[str, Any] | None) -> bool:
     """`nested_files`: whether a file list groups its rows under their folder.
 
     Global rather than `patch_`-prefixed because it governs the `export_db` and
-    `search_repo` lists too, and lower case like every other key in
+    `search` lists too, and lower case like every other key in
     `config/config.yaml`.
     """
     value = (config or {}).get("nested_files")
@@ -141,7 +141,7 @@ def file_rows(
     all is a plain row at ``depth``.
 
     ``decorate`` rewrites a row's text from ``(path, leaf)`` once the grouping is
-    decided, so `search_repo` can prefix its git status letter without the folder
+    decided, so `search` can prefix its git status letter without the folder
     rule ever seeing it.
 
     ``children`` hangs rows off one file, and is called with the depth they will

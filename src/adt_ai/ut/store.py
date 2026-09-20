@@ -10,7 +10,7 @@ command under ``config/internal/``, reached through
 ``dependencies.db`` and ``flow.db`` already are. Sharing ``dependencies.db`` was
 considered and rejected for the same reason those three are separate: a store's
 lifetime belongs to the command that writes it, and a `ut` retention sweep has
-no business deleting rows a `dependencies -refresh` is reading.
+no business deleting rows a `rebuild` is reading.
 
 **Read before you write.** :func:`run_history` answers "what did the runs BEFORE
 this one measure", so the runner must call it before :func:`record_run`.

@@ -37,7 +37,7 @@ Two limits, written here rather than discovered later:
 
 * The guard is armed on the **gateway**, so it covers Oracle and SQLcl and
   nothing else. Git walks, file scans and subprocess work block just as visibly
-  and are not seen; `rebuild` and `search_repo` are the commands that spend real
+  and are not seen; `rebuild` and `search` are the commands that spend real
   time outside a gateway.
 * It can only judge when the CLI's own `_StdoutTracker` is installed on
   `sys.stdout`. A unit test that drives a runner directly gets no verdict rather

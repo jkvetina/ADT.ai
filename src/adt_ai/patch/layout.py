@@ -29,7 +29,7 @@ from adt_ai.shared.apex_paths import APEXLANG_DIR, app_folder_depth
 from adt_ai.shared.config import DEFAULT_PATH_OBJECTS, reject_unresolved_placeholders
 
 # `object_layouts` moved to `shared/` with the ownership rule it feeds (ADT #471),
-# so `search_repo` reads the same vocabulary. Re-exported: this module was its
+# so `search` reads the same vocabulary. Re-exported: this module was its
 # home and several patch modules import it from here.
 from adt_ai.shared.object_files import object_layouts as object_layouts
 from adt_ai.shared.object_files import (

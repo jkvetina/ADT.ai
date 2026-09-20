@@ -37,6 +37,7 @@ from adt_ai.cli.export_db_baseline import (
     refusal,
     write_measured_baseline,
 )
+from adt_ai.cli.export_db_dependencies import refresh_exported_dependencies
 from adt_ai.cli.gateways import build_gateway, cached_schema_gateway_factory
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.export_db.config import (
@@ -171,6 +172,12 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
         if measuring:
             measured.update(measured_hashes(plans, root))
             measured_bodies.update(measured_tables(plans, root, config))
+        else:
+            # A measured run writes nothing, so it has exported nothing to
+            # bring the mirror level with (`#30`).
+            refresh_exported_dependencies(
+                root, config, schema, plans, cached_gateway_factory, silent=args.silent
+            )
         return 0
 
     try:

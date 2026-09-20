@@ -2,7 +2,7 @@
 
 ![Make UAT look like DEV, not like yesterday's zip.](images/diff.png)
 
-`diff` compares two live schemas, usually the same one across two environments, and reports what differs: which objects, REST services or table rows changed, and whether the two match at all.
+`diff` compares two live schemas, usually the same one across two environments, and reports what differs: which objects, REST services, table rows or APEX applications changed, and whether the two match at all.
 
 Run it before a release to see what the deployment would really change, or after one to confirm the environments converged. It connects to both sides itself and reads nothing from exported files.
 
@@ -13,6 +13,7 @@ What it compares is picked by one flag, and each mode has a page of its own:
 | objects | The database objects and grants, and leaves a SQLcl DIFF artifact behind. The default, with no mode flag. |
 | `-rest` | The REST modules, privileges and roles the two schemas publish. |
 | `-data` | The rows of the tables `export_data` exports, matched on their keys. |
+| `-apex` | The APEX applications, their static files and the workspace's static files. |
 
 <br>
 
@@ -48,18 +49,27 @@ Leave `-source` out and it is the environment your connections file declares fir
 adtai diff -target UAT
 ```
 
-Compare the REST services, or the table rows, instead of the objects:
+Compare the REST services, the table rows, or the APEX applications and files instead of the objects:
 
 ```bash
 adtai diff -source DEV -target UAT -rest -verbose
 adtai diff -source DEV -target UAT -data -name APP_% -ignore UPDATED_% -limit 20 -verbose
+adtai diff -source DEV -target UAT -apex -app 100 -verbose
+adtai diff -source DEV -target UAT -apex -app 100 -page 10-20 -verbose
+```
+
+Write what UAT holds into your checkout, on a branch of its own, and read the difference with git:
+
+```bash
+adtai diff -source DEV -target UAT -restore -branch uat-review
+git diff
 ```
 
 <br>
 
 ## Output
 
-Every mode opens the same way: a connection block per side, then the comparison crawling under its own row. What differs follows, in the tables of the mode that ran, shown on diff_db.md, diff_rest.md and diff_data.md.
+Every mode opens the same way: a connection block per side, then the comparison crawling under its own row. What differs follows, in the tables of the mode that ran, shown on diff_db.md, diff_rest.md, diff_data.md and diff_apex.md.
 
 ```text
 APEX DEPLOYMENT TOOL - DIFF
@@ -86,8 +96,45 @@ COMPARING SCHEMAS:
 - **Every mode reports the same three statuses.** `MISSING` means the source has it and the target does not; `EXTRA` means the target has it and the source does not; `CHANGED` means both have it and the two differ.
 - **`LEGEND:`** closes the screen whenever something was listed, and spells out only the statuses that actually appeared. It sits last because you meet the tables first and want the definition when a cell puzzles you; a run that found no differences prints no legend.
 - Two sides that already match print `NO DIFFERENCES:`, so an identical pair never looks like an unexamined one.
+- **`-limit N` answers whether anything differs without listing all of it.** Each listing prints its first `N` rows, and one that had more says so on the line under it, `LIMIT: 20 of 57 rows shown`. The counts table is never cut; `-apex` has none, and its summaries are cut like any listing.
 - **No table on this screen runs past 80 characters, and the cap is absolute.** Oracle object names reach 128, so the width is budgeted rather than hoped for: the name columns give up characters first, then the object type, and a trimmed cell ends in `...` so a shortened name can never read as a real one. A row wide enough to exhaust that budget keeps giving until the line fits. `STATUS` and `PRIVILEGE` never give way, a trimmed status would be a guess.
 - A failed run prints `DIFF FAILED:` with SQLcl's own output underneath and exits non-zero.
+
+<br>
+
+## Restoring the target's versions
+
+**`-restore` turns a comparison into files you can review.** After the listings, it writes the target's version of everything that differs into `-root`, at the path where the source's own export keeps it, so `git diff` shows the change line by line in the editor you already use. It works in every mode, and it reuses the exporters rather than a writer of its own, so a restored file is byte for byte what `export_db`, `export_data` or `export_apex` would have written against the target:
+
+| Mode | What a difference writes |
+| --- | --- |
+| objects | `CHANGED` and `EXTRA` objects are exported from the target; a `MISSING` object's file is deleted. Grant files are rewritten when a grant differs. |
+| `-data` | Each differing table is exported from the target, per table; a table the target lacks loses its file. |
+| `-rest` | Each differing module file, and the schema's REST definition when a privilege or role differs. |
+| `-apex` | The application is exported from the target in the formats your checkout already holds. With `-page`, only those pages' files move, and the workspace's files stay put. |
+
+- **`-root` must be a git work tree**, and that is checked before either side is connected.
+- **Anything uncommitted is saved first, as one local commit named `WIP`**, untracked files included, so the restored files are the only changes git shows and none of your work is lost. It is never pushed and skips the project's commit hooks; a clean checkout gets none.
+- **`-branch NAME` picks where the files land**, created from `HEAD` when it does not exist yet; without it the restore writes on the current branch. The `WIP` commit stays on the branch you started on, and the restore itself commits and pushes nothing: you review the working tree and decide.
+- **Everything that differs is restored, whatever `-limit` says.** The limit caps what the screen lists, never what is written.
+- A section of its own reports the restore, after the listings and above `LEGEND:`. Its row counts down while the exporters work, and their own screens stay off it (`-debug` shows them). Then git's answer, one row per file:
+
+```text
+RESTORED FILES:
+---------------
+
+  UAT.DEMO -> uat-review ................................... 100%  0:00:04
+
+  FILE                                         STATUS
+  ------------------------------------------   --------
+  database/demo/packages/orders_api.spec.sql   MODIFIED
+  database/demo/views/orders_open_v.sql        NEW
+  database/demo/views/orders_v.sql             DELETED
+
+  BRANCH: uat-review
+```
+
+A restore that moved nothing says so in one line in place of the table. A restore that fails prints `DIFF FAILED:` under the section and exits non-zero, leaving whatever it already wrote for git to show. A `WIP` commit git refuses prints `ERROR - GIT COMMIT FAILED:` with git's own message instead, writes nothing, and exits `1`.
 
 <br>
 
@@ -135,11 +182,17 @@ What a run can actually save is export time, which is what `-name` and `-type` n
 | `-out`, `--out` | No | `<root>/config/diff` | Output folder for the SQLcl DIFF artifact, or a `.zip` path naming the artifact itself. With `-data`, the file every differing row is written to untrimmed; see diff_data.md. |
 | `-type`, `--type` | Yes | all | Object type pattern(s) to compare; narrows the export and the screen. Comma- or space-separated, `%` wildcards. |
 | `-name`, `--name` | Yes | all | Object name pattern(s) to compare; narrows the export and the screen. Comma- or space-separated, `%` wildcards. |
-| `-verbose`, `--verbose` | No | off | List every changed object, uncapped, under `CHANGED OBJECTS:` and `GRANTS:`. With `-data`, one block per table of its differing rows and values. |
+| `-verbose`, `--verbose` | No | off | List every changed object under `CHANGED OBJECTS:` and `CHANGED GRANTS:`, uncapped unless `-limit` caps it. With `-data`, one block per table of its differing rows and values; with `-apex`, one section per changed page under the summaries. |
 | `-rest`, `--rest` | No | off | Compare the REST modules, privileges and roles both schemas publish instead of the schema objects. See diff_rest.md. |
 | `-data`, `--data` | No | off | Compare the rows of the tables `export_data` exports instead of the schema objects. See diff_data.md. |
+| `-apex`, `--apex` | No | off | Compare the APEX applications and static files both schemas own instead of the schema objects. See diff_apex.md. |
+| `-app`, `--app` | Yes | connection `apex.app` | With `-apex`, application id(s) or `MIN-MAX` / `MIN+` ranges to compare, on both sides. |
+| `-target-app`, `--target-app` | No | the `-app` id | With `-apex` and one `-app` id, the target's application to compare it with, such as a working copy. See diff_apex.md. |
+| `-page`, `--page` | Yes | all | With `-apex`, page id(s) or `MIN-MAX` / `MIN+` ranges to compare, leaving out application-wide and workspace changes. See diff_apex.md. |
 | `-ignore`, `--ignore` | Yes | none | With `-data`, column pattern(s) to leave out on both sides. Comma- or space-separated, `%` wildcards. |
-| `-limit`, `--limit` | No | all | With `-data`, stop each table after N differing rows. |
+| `-limit`, `--limit` | No | all | List at most N rows per listing, in every mode, and say how many were left off; the counts stay whole. With `-data`, stop each table after N differing rows. `0` lists all. |
+| `-restore`, `--restore` | No | off | Write the target's version of everything that differs into `-root`, where the source's export keeps it, over a `WIP` commit of any uncommitted work. See [Restoring the target's versions](#restoring-the-targets-versions). |
+| `-branch`, `--branch` | No | the current branch | With `-restore`, the branch to write on, created from `HEAD` when new. |
 
 `-schema` is the shared flag and it names the SOURCE schema here. It also supplies the target schema, because the usual comparison is one schema across two environments; `-target-schema` above is how you say the two sides differ.
 

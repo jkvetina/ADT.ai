@@ -14,10 +14,11 @@ from __future__ import annotations
 
 from adt_ai.shared.queries.sqlite_store import META_TABLE_DDL
 
-# Bump when any table definition changes. A file at version 3 or 4 is lifted in
-# place on open (ADT #642, #873); anything older is wiped by a refresh and
-# refused by a query mode, the same split the fold-on-refresh already draws.
-SCHEMA_VERSION = "5"
+# Bump when any table definition changes. A file at version 3 to 7 is lifted in
+# place on open (ADT #642, #873, #895, #901, #904); anything older is wiped by a
+# refresh and refused by a query mode, the same split the fold-on-refresh
+# already draws.
+SCHEMA_VERSION = "8"
 
 # Tables removed from the schema that must be dropped on every open() (no version bump needed).
 LEGACY_TABLES: tuple[str, ...] = ("ALL_USERS",)
@@ -113,6 +114,45 @@ _TABLE_DEFS: dict[str, tuple[tuple[tuple[str, str], ...], tuple[str, ...]]] = {
         ),
         ("APPLICATION_ID", "USED_DB_OBJECT_ID", "COMPONENT_ID", "PROPERTY_ID"),
     ),
+    # The two text mirrors `search TERM` reads (ADT #895). Neither is a
+    # dependency: they hold APEX source, so a JavaScript function or a plugin
+    # name is found where the dependency mirror above has nothing to say about
+    # it. A schema's source is not mirrored: `search` reads it from the files
+    # `export_db` wrote (ADT #904).
+    #
+    # One row per non-empty text property of an APEX component, unpivoted from
+    # the `APEX_APPLICATION_*` views by `rebuild -app`. `COMPONENT_ID` is the
+    # view's own id, or the application id for an application-level property,
+    # held as its digits: an APEX id can exceed SQLite's 64-bit INTEGER, and a
+    # longer integer text in an INTEGER column is silently stored as REAL
+    # (ADT #901).
+    "APEX_COMPONENT_SOURCE": (
+        (
+            ("APPLICATION_ID", "INTEGER NOT NULL"),
+            ("PAGE_ID", "INTEGER"),
+            ("COMPONENT_TYPE", "TEXT NOT NULL"),
+            ("COMPONENT_ID", "TEXT NOT NULL"),
+            ("COMPONENT_NAME", "TEXT"),
+            ("PROPERTY", "TEXT NOT NULL"),
+            ("TEXT", "TEXT"),
+        ),
+        ("APPLICATION_ID", "COMPONENT_TYPE", "COMPONENT_ID", "PROPERTY"),
+    ),
+    # Application, plugin and workspace static files. `TEXT` is the decoded
+    # content of a text file and NULL for anything else; a workspace file is
+    # stored once per workspace under `APPLICATION_ID` 0.
+    "APEX_STATIC_FILES": (
+        (
+            ("SCOPE", "TEXT NOT NULL"),
+            ("WORKSPACE", "TEXT NOT NULL"),
+            ("APPLICATION_ID", "INTEGER NOT NULL"),
+            ("FILE_NAME", "TEXT NOT NULL"),
+            ("MIME_TYPE", "TEXT"),
+            ("BYTES", "INTEGER"),
+            ("TEXT", "TEXT"),
+        ),
+        ("SCOPE", "WORKSPACE", "APPLICATION_ID", "FILE_NAME"),
+    ),
 }
 
 _INDEX_DEFS: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -144,6 +184,10 @@ _INDEX_DEFS: dict[str, tuple[str, tuple[str, ...]]] = {
 #: What version 5 dropped because nothing read it back (ADT #873): the table,
 #: the columns, and the indexes that named them.
 RETIRED_TABLES: tuple[str, ...] = ("APEX_USED_DB_OBJ_DEPENDENCIES",)
+
+#: What version 8 dropped because it copied what the exported object files
+#: already hold (ADT #904). A wipe drops it too, from a file too old to lift.
+RETIRED_SOURCE_TABLE = "USER_SOURCE"
 RETIRED_COLUMNS: dict[str, tuple[str, ...]] = {
     "USER_CONS_COLUMNS": ("TABLE_NAME",),
     "USER_IDENTIFIERS": ("USAGE",),
@@ -166,6 +210,15 @@ APEX_TABLES: tuple[str, ...] = (
     "APEX_USED_DB_OBJECTS",
     "APEX_USED_DB_OBJECT_COMP_PROPS",
 )
+
+#: The text mirrors `search TERM` reads, written by a writer of their own
+#: rather than the dependency refreshes above (ADT #895).
+SOURCE_TABLES: tuple[str, ...] = ("APEX_COMPONENT_SOURCE", "APEX_STATIC_FILES")
+
+#: The `refreshes` scope type stamped when an application's text was filled, so
+#: a mirror written before version 6 reads as never searched rather than as a
+#: search that found nothing: its `app` stamps predate the text.
+APEX_SOURCE_SCOPE = "apex_source"
 
 TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
     table: tuple(name for name, _ in defs) for table, (defs, _pk) in _TABLE_DEFS.items()
@@ -215,7 +268,7 @@ DROP_SCHEMA: str = "\n".join(
     [
         *(
             f"DROP TABLE IF EXISTS {name};"
-            for name in (*reversed(list(_TABLE_DEFS)), *RETIRED_TABLES)
+            for name in (*reversed(list(_TABLE_DEFS)), *RETIRED_TABLES, RETIRED_SOURCE_TABLE)
         ),
         "DROP TABLE IF EXISTS refreshes;",
         "DROP TABLE IF EXISTS _meta;",

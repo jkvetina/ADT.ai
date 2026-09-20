@@ -93,8 +93,8 @@ def within_recent_window(
     is inclusive of today and counted in calendar days, `-recent 1` being today
     and `-recent 7` today plus the six days before it.
 
-    **Three modules held two readings before ADT #467.** `search_repo` compared
-    against `today - N`, which is N + 1 calendar days, so `search_repo -recent 1`
+    **Three modules held two readings before ADT #467.** `search` compared
+    against `today - N`, which is N + 1 calendar days, so `search -recent 1`
     kept yesterday while `recent_since` rendered a header saying today; `patch`
     was about to grow the flag, and Jan named the meaning when he asked for it,
     2026-08-22: "when I pass '-recent 1', it will show just commits and patches
@@ -135,7 +135,7 @@ def _on_the_client_clock(value: datetime) -> datetime:
     hands that offset straight through. `now` on this side is the naive client
     clock, and Python refuses to compare the two, so every fractional `-recent`
     raised `TypeError: can't compare offset-naive and offset-aware datetimes`
-    (ADT #670). `patch -recent 1/24` and `search_repo -recent 1/24` both died on
+    (ADT #670). `patch -recent 1/24` and `search -recent 1/24` both died on
     it, in a traceback rather than a filter.
 
     Converted, never merely stripped: `12:00:25+02:00` is not 12:00:25 here, and

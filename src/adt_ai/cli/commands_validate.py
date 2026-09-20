@@ -8,11 +8,13 @@ from typing import Any
 from adt_ai.cli.constants import (
     ConfigError,
     ConfigLoader,
+    GatewayFactory,
     print_adt_header,
     print_module_banner,
 )
 from adt_ai.cli.context import _config_search_paths, _repo_root
 from adt_ai.cli.context_apex import _flatten_arg_groups
+from adt_ai.cli.validate_scan import _scan_applications
 from adt_ai.shared.apex_paths import APEXLANG_DIR
 from adt_ai.shared.apex_payloads import drop_legacy_staging, link_payloads
 from adt_ai.shared.db import run_sqlcl_script
@@ -22,7 +24,6 @@ from adt_ai.shared.progress import FixedWidthProgressPrinter
 from adt_ai.validate.files import ValidateTarget, discovery_label, resolve_targets
 from adt_ai.validate.report import UNRECOGNISED, CompileMessage, message_lines
 from adt_ai.validate.runner import (
-    SqlclRequest,
     ValidateReporter,
     ValidateRequest,
     ValidateRunner,
@@ -42,16 +43,31 @@ FILES_DIR = "files"
 # cases: what you pointed me at is not there. They are lead LINES now rather than
 # headers, so the wording that separates the two survives inside one screen; the
 # `_HEADER` suffix goes with them, because the console inventory holds the
-# family's eleven codes and a lead line is body text rather than furniture.
+# family's twelve codes and a lead line is body text rather than furniture.
 INPUT_NOT_FOUND_LEAD     = "These inputs are not on disk:"
 NOTHING_TO_VALIDATE_LEAD = "Nothing to validate:"
 
 
 class ConsoleValidateReporter(ValidateReporter):
-    """Streams one row per folder: label before the compile, result after."""
+    """Streams one row per folder: label before the compile, result after.
 
-    def __init__(self) -> None:
+    Under ``-debug`` the generated script prints first, as a block of its own in
+    the shape ``DebugQueryGateway`` gives a ``QUERY:``, and the row follows it
+    whole. Echoed from inside the SQLcl call, it landed after the row's label
+    and before its verdict, which split one row across the whole block.
+    """
+
+    def __init__(self, *, debug: bool = False) -> None:
         self.printer = FixedWidthProgressPrinter()
+        self.debug = debug
+
+    def request(self, script: str) -> None:
+        if not self.debug:
+            return
+        print()
+        print("SQLCL REQUEST:")
+        print(script)
+        print()
 
     def begin(self, label: str) -> None:
         self.printer.begin(label)
@@ -63,9 +79,16 @@ class ConsoleValidateReporter(ValidateReporter):
         print(f"  {message}")
 
 
-def _run_validate(args: argparse.Namespace) -> int:
+def _run_validate(
+    args: argparse.Namespace,
+    gateway_factory: GatewayFactory | None = None,
+) -> int:
     print_module_banner("VALIDATE")
     root = Path(args.root).expanduser().resolve()
+    if args.scan:
+        # The one mode that connects: it asks the running application what the
+        # exported files cannot answer (`#30`), see `cli/validate_scan.py`.
+        return _scan_applications(args, root, gateway_factory)
     inputs = _flatten_arg_groups(args.input)
     app_ids = _flatten_arg_groups(args.app)
     config = _optional_config(args, root, inputs, app_ids)
@@ -77,11 +100,13 @@ def _run_validate(args: argparse.Namespace) -> int:
         return 1
     drop_legacy_staging(root)
     notes.extend(_link_payloads(targets))
-    reporter = ConsoleValidateReporter()
+    reporter = ConsoleValidateReporter(debug=args.debug)
 
     if targets:
         print_adt_header("VALIDATING:")
-    result = ValidateRunner(sqlcl_request=_sqlcl_request(args.debug)).run(
+    # The module global, read at call time, so the CLI facade's patch sync can
+    # swap SQLcl out wholesale in tests.
+    result = ValidateRunner(sqlcl_request=run_sqlcl_script).run(
         ValidateRequest(
             targets      = tuple(targets),
             root         = root,
@@ -225,25 +250,6 @@ def _print_messages(header: str, messages: tuple[CompileMessage, ...]) -> None:
     for line in message_lines(messages):
         print(line)
     print()
-
-
-def _sqlcl_request(debug: bool) -> SqlclRequest:
-    """Echo the generated script under ``-debug``, mirroring ``DebugQueryGateway``.
-
-    Read from the module global at call time so the CLI facade's patch sync can
-    swap SQLcl out wholesale in tests.
-    """
-    if not debug:
-        return run_sqlcl_script
-
-    def request(script: str, root: Path, project_root: Path | None = None) -> str:
-        print()
-        print("SQLCL REQUEST:")
-        print(script)
-        print()
-        return run_sqlcl_script(script, root, project_root=project_root)
-
-    return request
 
 
 def _optional_config(

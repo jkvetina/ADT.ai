@@ -2,7 +2,7 @@
 
 It stood in `export_db/table.py` until `#670`, and only because `export_db` is
 the command that needed a table first. Nothing here knows what `export_db` is:
-`ut`, `recompile`, `patch`, `dependencies` and `flow` all render through these
+`ut`, `recompile`, `patch`, `rebuild` and `search` all render through these
 helpers, so five commands reached into a sixth command's package to draw a row.
 TECHNICAL_REQUIREMENTS.md §Package Layout puts code used by more than one
 command in `shared/`, which is where it lives now;

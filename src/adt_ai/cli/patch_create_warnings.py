@@ -240,7 +240,7 @@ def print_no_database_clock(result: DatabasePatchResult) -> None:
     holds naive readings off a clock nothing recorded, so the check above cannot
     run for that owner. That is a weaker statement than a proven stale export and
     so cannot carry a harder consequence: it stopped the build until `#468` and
-    reports beside the other one now. The fix is `adtai dependencies -refresh`,
+    reports beside the other one now. The fix is `adtai rebuild`,
     in `docs/patch.md` for the same reason.
     """
     if not result.unclocked_schemas:

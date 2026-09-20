@@ -1,6 +1,6 @@
-# Dictionary Mirror (adtai dependencies)
+# Dictionary Mirror (adtai rebuild)
 
-`dependencies` keeps a local mirror of the Oracle data dictionary in `config/internal/dependencies.db`, so every query answers offline. Tables and columns carry the dictionary's own names, upper case, and hold only the columns a query mode or a generated artifact reads.
+`rebuild` keeps a local mirror of the Oracle data dictionary in `config/internal/dependencies.db`, so every graph question `search` asks answers from this file, refreshed first when stale. Tables and columns carry the dictionary's own names, upper case, and hold only the columns a query mode or a generated artifact reads.
 
 The `USER_*` views scope themselves to the connected schema and carry no owner, so the mirror adds a leading `OWNER` to each and one file holds many schemas. This page is the schema half, refreshed per schema; the APEX half, refreshed per application, is on [storage_dependencies_apex.md](storage_dependencies_apex.md).
 
@@ -82,7 +82,7 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 
 | Column        | Type | Nullable | Key | Meaning                                                                                                                              |
 | ------------- | ---- | -------- | --- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| scope_type    | TEXT | No       | PK  | `schema` for the schema half, `app` for an application refreshed by the APEX half.                                                   |
+| scope_type    | TEXT | No       | PK  | `schema` or `app` for the two dependency halves, `apex_source` for the application text mirrors filled beside them.                  |
 | scope_name    | TEXT | No       | PK  | The owner, upper case, or the application id.                                                                                        |
 | refreshed_at  | TEXT | Yes      |     | When the scope was last refreshed: `YYYY-MM-DD HH:MM:SS` on this machine's local clock.                                              |
 | db_utc_offset | TEXT | Yes      |     | The database's UTC offset, `+02:00` shape, read on that refresh so a mirrored `LAST_DDL_TIME` is read on the clock that produced it. |
@@ -179,8 +179,14 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 
 ## Version and lifetime
 
-The file is at version 5. A version 3 file, which kept its refresh stamps as `_meta` rows and named its indexes `idx_`, is lifted in place on either path with every row kept.
+The file is at version 8. A version 3 file, which kept its refresh stamps as `_meta` rows and named its indexes `idx_`, is lifted in place on either path with every row kept.
 
-A version 4 file is lifted the same way and loses what nothing read back: `USER_CONS_COLUMNS.TABLE_NAME` with its index, `USER_IDENTIFIERS.USAGE`, and the `APEX_USED_DB_OBJ_DEPENDENCIES` table. A file older than that is wiped and rebuilt by a refresh and refused by a query mode, so nothing destructive can happen mid-report.
+A version 4 file is lifted the same way and loses what nothing read back: `USER_CONS_COLUMNS.TABLE_NAME` with its index, `USER_IDENTIFIERS.USAGE`, and the `APEX_USED_DB_OBJ_DEPENDENCIES` table. A file older than that is wiped and rebuilt by a refresh and refused by a `search` question, so nothing destructive can happen mid-report.
 
-A refresh replaces the rows of the scope it covers, a schema or an application, and writes that scope's `refreshes` row. `-force` deletes the scope first, and bare `-recent` patches per object instead of replacing. A table the schema no longer has, `ALL_USERS`, is dropped on every open.
+A version 5 file is lifted in place with every row kept and gains the three text mirrors, empty. Its `schema` and `app` stamps predate the text, so `search TERM` names those layers not searched until a refresh fills them.
+
+A version 6 file is lifted in place and rebuilds `APEX_COMPONENT_SOURCE` empty, its `COMPONENT_ID` now text because an APEX id can pass SQLite's 64-bit integer. Its `apex_source` stamps go with it, so `search TERM` names the `APEX` and `STATIC` layers not searched until the next `rebuild -app`; every other row and stamp is kept.
+
+A version 7 file is lifted in place and drops `USER_SOURCE` with its `source` stamps. That table copied, line for line, the object files `export_db` writes, and `search TERM` reads its `DB` layer from those files now; every other row and stamp is kept.
+
+A schema refresh reloads the objects that changed, an application refresh replaces that application's rows, and either writes the scope's `refreshes` row. `rebuild -force` deletes the scope first and reloads all of it, text mirrors included. A table the schema no longer has, `ALL_USERS`, is dropped on every open.

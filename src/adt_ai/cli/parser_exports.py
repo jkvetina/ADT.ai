@@ -373,8 +373,8 @@ def add_export_parsers(subparsers: SubParsers) -> None:
 
     validate = subparsers.add_parser(
         "validate",
-        description="validate APEXlang application source",
-        help="validate APEXlang application source",
+        description="validate APEXlang application source, or scan a live application",
+        help="validate APEXlang application source, or scan a live application",
     )
     validate.add_argument("--root", "-root", default=".", help="output root folder")
     validate.add_argument(
@@ -396,8 +396,29 @@ def add_export_parsers(subparsers: SubParsers) -> None:
         "-app",
         action = "append",
         nargs  = "+",
-        help   = "application id(s) whose exported apexlang/ folder to validate",
+        help   = "application id(s) to validate: the exported apexlang/ folder, or "
+                 "under -scan the live application, where ranges MIN-MAX / MIN+ "
+                 "resolve against discovered apps",
     )
+    # `-scan` connects, which nothing else here does: it asks the running
+    # application what `APEX_APP_OBJECT_DEPENDENCY.SCAN` could not compile (`#30`,
+    # moved from the retired dependency command). `-page` and `-env` exist only for it.
+    validate.add_argument(
+        "--scan",
+        "-scan",
+        action = "store_true",
+        help   = "compile every component of the live -app application(s) and "
+                 "report what no longer compiles; writes nothing",
+    )
+    validate.add_argument(
+        "--page",
+        "-page",
+        action = "append",
+        nargs  = "+",
+        help   = "scan only: page id(s), or ranges MIN-MAX / MIN+, to scan instead "
+                 "of the whole application",
+    )
+    validate.add_argument("--env", "-env", help="connection environment (scan only)")
     # No `-silent`, removed on Jan's instruction 2026-09-10. The per-folder rows
     # ARE the report on this command: a run validates a handful of folders, so
     # suppressing them left a banner, a timer and an exit code the exit code had
@@ -409,5 +430,6 @@ def add_export_parsers(subparsers: SubParsers) -> None:
         action = "store_true",
         help   = "show input parameters and the generated SQLcl script",
     )
-    # No -env/-schema/-key: `apex validate` compiles inside SQLcl and answers on a
-    # bare `sql -S /nolog` session, so the command never connects (card #163).
+    # No -schema/-key: `apex validate` compiles inside SQLcl and answers on a bare
+    # `sql -S /nolog` session, so validating files never connects (card #163);
+    # `-scan` routes through the application's owner schema on its own.

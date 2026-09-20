@@ -1,10 +1,12 @@
-"""``dependencies -scan``: compile an application's components and report the errors.
+"""``validate -scan``: compile a live application's components and report the errors.
 
-The third mode beside query and refresh (`#751`). It connects the way a refresh
-connects and reads what `APEX_APP_OBJECT_DEPENDENCY.SCAN` could not compile,
-then writes nothing at all -- no mirror row, no log, no receipt. Until this
-existed, the only route to that answer was `patch -deploy`, which is a strange
-thing to have to build in order to ask whether an application is broken.
+`validate` checks exported APEXlang source on disk and never connects. `-scan`
+asks the other half of the same question of the running application: it
+connects, reads what `APEX_APP_OBJECT_DEPENDENCY.SCAN` could not compile, and
+writes nothing at all, no mirror row, no log, no receipt (`#30`, moved here from
+the retired `dependencies` command, where `#751` built it). Until that mode existed, the only
+route to the answer was `patch -deploy`, which is a strange thing to have to
+build in order to ask whether an application is broken.
 
 `scan_application` is `patch`'s, unchanged. Its five outcomes already encode
 what a verification proved, including the two that look quiet and are not
@@ -15,10 +17,9 @@ about the same evidence.
 from __future__ import annotations
 
 import argparse
-import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from adt_ai.cli.constants import (
     ConnectionConfigError,
@@ -34,51 +35,57 @@ from adt_ai.cli.context import (
     _parse_apex_page_selection,
     _print_connection_block,
 )
-from adt_ai.cli.dependencies_modes import (
+from adt_ai.cli.dependencies_reporters import _print_component_scans
+from adt_ai.cli.refresh_connect import (
+    _app_selection_error,
     _connecting_mode_gateways,
-    _query_requested,
-    _refresh_chrome_stream,
+    _page_selection_error,
     _refresh_lookup_schema,
     _resolve_refresh_app_ids,
 )
-from adt_ai.cli.dependencies_reporters import _print_component_scans
-from adt_ai.cli.export_apex_owners import resolve_apex_owner_routes
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.dependencies import queries as dependency_queries
 from adt_ai.export_apex.filters import ApexPageSelection
-from adt_ai.patch.apex_scan import ApexScanReport, resolve_apex_version, scan_application
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.internal_paths import internal_path
 
+# `patch`'s scan and `export_apex`'s owner routing are imported inside the
+# functions that run a scan, never here (ADT #895). `cli/runtime.py` imports
+# `_scan_argument_error` from this module at module scope, so a module-scope
+# import of either failed every command of a release that ships `validate`
+# without `patch` or `export_apex`, not only `-scan`.
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from adt_ai.patch.apex_scan import ApexScanReport
+
 
 def _scan_argument_error(args: argparse.Namespace) -> str | None:
-    """What `-scan` and `-page` refuse, in the order a reader meets them.
+    """What `-scan`, `-page` and `-env` refuse, in the order a reader meets them.
 
-    `-scan` is the third mode beside query and refresh: it connects like a
-    refresh, reads what the APEX component scan could not compile, and writes
-    nothing. So it combines with neither of the other two, and it cannot work
-    out on its own which application the question is about -- an application
-    scan with no application is not a wider scan, it is no scan at all.
+    `-scan` cannot work out on its own which application the question is about:
+    an application scan with no application is not a wider scan, it is no scan
+    at all. `-input` names exported files, which is the other half of `validate`
+    and never a live application, so the two do not combine.
 
     `-page` narrows the scan itself (ADT #751): `APEX_APP_OBJECT_DEPENDENCY.SCAN`
     takes `p_page_id`, so a named page is compiled instead of the application.
     Which is exactly why it still needs `-scan`. Jan, asked with chips before
     this was built: *"-scan should be required (if we want a scan), with scan you
     also have to provide -app, and you MIGHT provide -page. Later we might add
-    other features, no -scan imply!"* So `-page` never turns a run into a scan;
-    it says how narrow a scan already asked for should be. Without `-scan`, an
-    invocation carrying `-app` is a refresh, and a refresh has no page scope.
+    other features, no -scan imply!"* So neither `-page` nor `-env` turns a run
+    into a scan; a validation of exported files has no page scope and no
+    connection.
     """
     scanning = bool(getattr(args, "scan", False))
     if scanning:
-        if _query_requested(args):
-            return "-scan cannot be combined with a query"
-        if args.refresh is not None:
-            return "-scan cannot be combined with -refresh"
+        if args.input:
+            return "-input validates exported files and cannot be combined with -scan"
         if not args.app:
             return "-scan needs -app to say which application to scan"
-    if getattr(args, "page", None) and not scanning:
+        return _app_selection_error(args.app) or _page_selection_error(args.page)
+    if args.page:
         return "-page narrows a -scan and needs it"
+    if args.env:
+        return "-env names the connection a -scan reads through and needs it"
     return None
 
 
@@ -89,12 +96,12 @@ def _scan_applications(
 ) -> int:
     """Compile every component of the named applications and report the errors.
 
-    The connecting half is the refresh's, deliberately: `-app` ids and ranges,
-    the owner routing that picks the one schema to connect through, and the APEX
-    security context the scan needs are all already solved there, and a second
-    spelling of any of them is how two commands come to disagree about what
-    `-app 100-200` means. What is NOT reused is everything after the read: no
-    store is opened, no row is written, no log is filed.
+    The connecting half is `rebuild -app`'s, deliberately: `-app` ids and
+    ranges, the owner routing that picks the one schema to connect through, and
+    the APEX security context the scan needs are all already solved there, and a
+    second spelling of any of them is how two commands come to disagree about
+    what `-app 100-200` means. What is NOT reused is everything after the read:
+    no store is opened, no row is written, no log is filed.
     """
     handler_started_at = time.monotonic()
     startup = _load_startup_context(args)
@@ -105,6 +112,7 @@ def _scan_applications(
         startup, environment, gateway_factory, debug=debug
     )
 
+    # Already proven parseable by `_scan_argument_error`, before the banner.
     selection = _parse_apex_app_selection(_flatten_arg_groups(args.app))
     apps = _resolve_refresh_app_ids(
         selection, connections, environment, selected_gateway_factory
@@ -113,43 +121,24 @@ def _scan_applications(
         print_adt_error("INPUT NOT FOUND", "-app range matched no applications.")
         return exit_code_for("INPUT NOT FOUND")
 
-    schemas = (
-        connections.expand_schemas(
-            _flatten_arg_groups(args.schema), environment=environment
-        )
-        if args.schema
-        else []
-    )
-    schema = schemas[0] if schemas else _scan_schema(root, connections, environment, apps)
+    schema = _scan_schema(root, connections, environment, apps)
     if schema is None:
         print_adt_error("INPUT NOT FOUND", "No schema to scan through.")
         return exit_code_for("INPUT NOT FOUND")
 
     pages = _parse_apex_page_selection(_flatten_arg_groups(args.page))
-    machine_format = getattr(args, "format", "table") != "table"
-    timer_stdout = sys.stderr if machine_format else None
+    from adt_ai.patch.apex_scan import resolve_apex_version
 
     def scan_segment(segment_schema: str) -> int:
         gateway = selected_gateway_factory(segment_schema)
-        with _refresh_chrome_stream(machine_format):
-            _print_connection_block(
-                gateway, connection_for(segment_schema), debug=debug
-            )
-            # The header announces every read under it (`shared/announce.py`), so
-            # it is printed BEFORE the scan rather than above its results, and on
-            # whichever stream carries this run's chrome: the guard reads
-            # `sys.stdout`, and under a machine format that is the redirected one.
-            print_adt_header("SCANNING APPLICATIONS:")
-            apex_version = resolve_apex_version(gateway)
-            reports = _scan_reports(gateway, apps, pages, apex_version)
-            if not machine_format:
-                return _print_component_scans(reports, args.format)
-        # A machine format's document is the one thing that stays on real stdout.
-        return _print_component_scans(reports, args.format)
+        _print_connection_block(gateway, connection_for(segment_schema), debug=debug)
+        # The header announces every read under it (`shared/announce.py`), so it
+        # is printed BEFORE the scan rather than above its results.
+        print_adt_header("SCANNING APPLICATIONS:")
+        apex_version = resolve_apex_version(gateway)
+        return _print_component_scans(_scan_reports(gateway, apps, pages, apex_version))
 
-    return run_schema_sections(
-        [schema], scan_segment, first_started_at=handler_started_at, timer_stdout=timer_stdout
-    )
+    return run_schema_sections([schema], scan_segment, first_started_at=handler_started_at)
 
 
 def _scan_reports(
@@ -172,6 +161,8 @@ def _scan_reports(
     rather than skipped, by scanning the pages as named. A page that turns out
     not to exist is the answer somebody typing `-page 101` wants to see.
     """
+    from adt_ai.patch.apex_scan import scan_application
+
     if pages is None:
         return [
             scan_application(gateway, app_id, apex_version=apex_version)
@@ -236,6 +227,8 @@ def _scan_schema(
     """
     if not internal_path(root, "apex.db").exists():
         return _refresh_lookup_schema(connections, environment)
+    from adt_ai.cli.export_apex_owners import resolve_apex_owner_routes
+
     try:
         owner_routes = resolve_apex_owner_routes(root, connections, environment, apps)
     except ConnectionConfigError:

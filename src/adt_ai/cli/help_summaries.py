@@ -29,14 +29,6 @@ separator: write a comma, a "so", (round brackets), or two sentences.
 from __future__ import annotations
 
 COMMAND_SUMMARIES = {
-    "flow": (
-        "Shows how the pages of an APEX application lead to one another.",
-        "Use it to answer which pages a page can be reached from and where it can take "
-        "a user next, the questions that otherwise mean clicking through the whole "
-        "application and hoping you did not miss a link.",
-        "It answers them from a picture of the application held locally, so asking is "
-        "cheap, and it can draw that picture as a diagram to read or share.",
-    ),
     "calendar": (
         "Shows when you worked, drawn from the history of your repository.",
         "Use it to see the shape of a month at a glance (the busy stretches, the quiet "
@@ -52,17 +44,6 @@ COMMAND_SUMMARIES = {
         "Passwords are asked for when they are needed rather than typed on the command "
         "line, so they stay out of your shell history and off your screen.",
     ),
-    "dependencies": (
-        "Answers what a database object uses, and what would break if you changed it.",
-        "Use it before a change, to find the callers nobody remembers, and after one, "
-        "to see how far the effect actually reached, including into APEX applications, "
-        "which is where the surprising callers usually are.",
-        "The answers come from a local picture of the database you refresh when it "
-        "moves on, so asking is fast, needs no connection, and costs an AI agent a "
-        "fraction of the tokens that digging through a live schema would.",
-        "It also scans an APEX application on demand and names every component that "
-        "no longer compiles.",
-    ),
     "diff": (
         "Reports how two Oracle environments or schemas differ.",
         "Use it before a deployment, when you need to know exactly how far the target "
@@ -70,6 +51,8 @@ COMMAND_SUMMARIES = {
         "The result is something you can read, review and share: a record of what "
         "the difference was at the moment you asked, rather than a screen that scrolls "
         "past and is gone.",
+        "It can also write the target's version of every difference into your git "
+        "checkout, so you review the change line by line where you review any other.",
     ),
     "discovery": (
         "Answers questions about a database, writes down what it found, and only "
@@ -111,30 +94,29 @@ COMMAND_SUMMARIES = {
         "You can take a whole schema or only what has moved recently, and what comes out "
         "is written to be read by a person, not just replayed by a tool.",
     ),
-    "live_upload": (
-        "Puts a change to a stylesheet or a script into APEX the moment you save it.",
-        "Use it while you are working on how an application looks or behaves, so the "
-        "editor you actually want is the one you edit in, and the change is already in "
-        "the builder by the time you switch back to it.",
-        "It watches the folder your static files are exported to, so nothing has to be "
-        "zipped, imported, or dragged anywhere. It keeps watching until you stop it, or "
-        "pushes the whole folder a single time and exits.",
-    ),
+    # `live_upload` had an entry of its own until ADT #903 folded it in below, as
+    # the third paragraph: one command now carries everything that ships work to
+    # an environment, from a whole release down to a saved stylesheet.
     "patch": (
         "Packages finished work into something you can deploy to another environment.",
         "Use it to turn a set of changes into a release that is reviewable before it "
         "runs and repeatable after it does, instead of running scripts by hand and "
         "trusting that the order was right and nothing was forgotten.",
         "It works out what to include from the changes you actually made, deploys as a "
-        "separate deliberate step, and leaves behind the record of what was released.",
+        "separate deliberate step, and leaves behind the record of what was released. "
+        "For a stylesheet you are still editing it uploads every save straight into "
+        "APEX instead, with nothing zipped or dragged anywhere.",
     ),
     "rebuild": (
-        "Refreshes ADT.ai's picture of your repository's history.",
-        "Use it after new commits or a change of branch, so that everything built on "
-        "that history (releases, activity reports, searches) is working from what is "
-        "there now rather than from what was there yesterday.",
-        "It is the one step those commands cannot do for you, because only you know when "
-        "the history has moved.",
+        "Refreshes the local pictures ADT.ai answers from: your repository's history, "
+        "and which database objects depend on which.",
+        "Use it after new commits, a change of branch or a change in the schema, so that "
+        "everything built on those pictures (releases, activity reports, searches, "
+        "impact questions) works from what is there now rather than from what was "
+        "there yesterday.",
+        "On request it also reads an APEX application, what it depends on and how its "
+        "pages lead to one another, so those questions are answered without clicking "
+        "through it.",
     ),
     "recompile": (
         "Gets a schema back to a working state after something has broken it.",
@@ -145,13 +127,16 @@ COMMAND_SUMMARIES = {
         "failures are the real cause and which are only consequences of it, so you "
         "start at the one object that matters instead of the twenty it took down.",
     ),
-    "search_repo": (
-        "Finds where something happened in your repository's history.",
+    "search": (
+        "Finds where something happened in your repository's history, and what is "
+        "connected to what.",
         "Use it to track down the change behind a file, a database object or a release "
-        "(who made it, when, and what moved along with it) when you know what you "
-        "are looking for but not where it is.",
-        "It can also bring an older version of a file back so you can look at what it "
-        "used to say, without disturbing the one you are working on.",
+        "(who made it, when, and what moved along with it), or to ask what an object "
+        "uses, what would break if you changed it, and what an APEX application "
+        "uses and how its pages lead to one another.",
+        "Answers come from a local picture, refreshed first when missing or stale, so "
+        "asking is fast and cheap in an AI agent's tokens. It can also bring an older "
+        "version of a file back without disturbing the one you are working on.",
     ),
     "ut": (
         "Runs the unit tests installed in a database schema and reports how they went.",
@@ -169,7 +154,8 @@ COMMAND_SUMMARIES = {
         "Use it after editing an exported application outside the builder, to find the "
         "mistakes while they are cheap: an import that fails halfway has already left "
         "the application in a state someone has to undo.",
-        "It needs no database, no credentials and no environment, so it can run anywhere: "
-        "on your machine, or automatically on every change before anyone sees it.",
+        "Checking the files needs no database, no credentials and no environment, so it "
+        "runs anywhere, including on every change before anyone sees it. It can also ask "
+        "a running application which of its components no longer compile.",
     ),
 }

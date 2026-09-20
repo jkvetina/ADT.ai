@@ -7,7 +7,7 @@ and the SQL home stays the ``queries/`` package.
 Version 1 (ADT #642) is the first the file carries. Before it the tables wore
 an `apex_` prefix no other store used and the opener read the declared type of
 one column to decide whether to rebuild; a file in that shape is a cache the
-next `flow -refresh` refills, so it is dropped rather than migrated.
+next `rebuild -app` refills, so it is dropped rather than migrated.
 
 Version 2 (ADT #873) drops what nothing read back: the edge's `workspace`,
 `target_app`, `working_copy_id` and `loaded_at`, the link source's

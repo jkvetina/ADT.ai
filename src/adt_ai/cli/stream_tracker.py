@@ -76,6 +76,17 @@ class _StdoutTracker:
         return self._sections_opened
 
     @property
+    def section_has_body(self) -> bool:
+        """Has anything but blank lines printed under the newest header?
+
+        `print_adt_header` reads it for the banner alone: a banner that carried
+        rows of its own stood in for a section, so the header under it owes the
+        pair any other section does (ADT #904). Every later header is spaced by
+        the count, never by this, for the reason `sections_opened` gives.
+        """
+        return self._section_has_body
+
+    @property
     def trailing_newlines(self) -> int:
         return len(self._pending_newlines)
 

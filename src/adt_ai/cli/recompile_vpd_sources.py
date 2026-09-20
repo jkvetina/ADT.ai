@@ -28,7 +28,6 @@ from adt_ai.export_db.config import _with_default_layout
 from adt_ai.export_db.files import ObjectFileError, ObjectFileResolver
 from adt_ai.export_db.groups import resolve_group_inputs
 from adt_ai.export_db.inventory import DatabaseObject
-from adt_ai.patch.clocks import ddl_seconds
 from adt_ai.recompile.vpd import SourceProvider, VpdSource
 from adt_ai.shared.connection_errors import ConnectionNotFoundError
 
@@ -41,6 +40,11 @@ def _path(resolver: ObjectFileResolver, source: VpdSource) -> Path | None:
 
 
 def _changed_at(source: VpdSource) -> int | None:
+    # Imported here, not at module scope (ADT #895): `commands_recompile.py`
+    # imports this module at module scope, so a release shipping `recompile`
+    # without `patch` failed every command on `patch`'s clock reader.
+    from adt_ai.patch.clocks import ddl_seconds
+
     return ddl_seconds(source.ddl_time, source.db_offset) if source.ddl_time else None
 
 

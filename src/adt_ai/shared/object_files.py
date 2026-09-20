@@ -15,7 +15,7 @@ Oracle identifier and killed `patch -create` outright (ADT #471).
 
 The rule that settles both is one line long, longest matching extension wins,
 and `export_db` has applied it correctly since ADT #412. It lived in
-`export_db/groups.py`, where `patch` and `search_repo` could not import it,
+`export_db/groups.py`, where `patch` and `search` could not import it,
 `patch` sitting beside `export_db` rather than under it, so each grew its own
 reading and the three disagreed. It lives here for the same reason
 `shared/object_types.py` does: what a file IS has to mean the same thing on

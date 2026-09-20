@@ -16,7 +16,7 @@ Measured on `local-26ai` (`APPS@FREEPDB1`, container UTC, host CEST) on
 15:57:50`` against a file mtime of `17:55:33`, and the gate passed a stale
 export where it had to refuse.
 
-`dependencies -refresh` now records the database's own UTC offset per scope, and
+The dependency refresh now records the database's own UTC offset per scope, and
 :func:`ddl_seconds` reads through it. The offset comes from ``SYSTIMESTAMP``
 rather than ``SESSIONTIMEZONE``, because the session zone is whatever
 python-oracledb set from this host and would hand the same bug back wearing a

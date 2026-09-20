@@ -1,6 +1,6 @@
-# Navigation Store (adtai flow)
+# Navigation Store (adtai rebuild)
 
-`flow -refresh` scrapes one application's links out of the APEX dictionary into `config/internal/flow.db`, and every later `flow` question is answered from the file. Four tables: the application, its pages, a catalog of the twelve link sources the scrape resolves statically, and one row per link found.
+`rebuild -app` scrapes one application's links out of the APEX dictionary into `config/internal/flow.db`, and every later `search -to` or `-from` on a page is answered from the file. Four tables: the application, its pages, a catalog of the twelve link sources the scrape resolves statically, and one row per link found.
 
 <br>
 
@@ -105,13 +105,13 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | ix_edges_target    | edges | target_app_id, target_page, flag | No     |
 | ix_edges_source    | edges | app_id, src_page                 | No     |
 
-The unique index is what makes a refresh an upsert: the same component scraped again replaces its row. The two directional indexes answer the two questions the command asks, what links into a page and what leaves it.
+The unique index is what makes a refresh an upsert: the same component scraped again replaces its row. The two directional indexes answer the two questions `search` asks of a page, what links into it and what leaves it.
 
 <br>
 
 ## Version and lifetime
 
-The file is at version 2. A file from before version 1 wore an `apex_` prefix on every table and no version; it is a cache, so the opener drops the old tables, creates these, and the next `flow -refresh` per application refills them. The link source catalog is reseeded on every open.
+The file is at version 2. A file from before version 1 wore an `apex_` prefix on every table and no version; it is a cache, so the opener drops the old tables, creates these, and the next `rebuild -app` per application refills them. The link source catalog is reseeded on every open.
 
 A version 1 file is lifted in place with every row kept. It loses the columns nothing read back: the edge's `workspace`, `target_app`, `working_copy_id` and `loaded_at`, the link source's `description`, the application's `loaded_at`, and the workspace index. `working_copy_id` was always zero, so the unique index names the same edges without it.
 

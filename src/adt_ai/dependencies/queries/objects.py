@@ -17,11 +17,12 @@ from adt_ai.shared.queries.sqlite_store import META_TABLE_DDL
 
 # ------------------------------------------------------------- refresh stamps
 
-# One row per refreshed scope in `refreshes` (ADT #642): the stamp `-age`
-# prints, and the database UTC offset `patch -create` resolves a mirrored
-# LAST_DDL_TIME through (ADT #394). A stamp or offset the caller does not have
-# leaves the stored one alone, so `-refresh` on a gateway that cannot report
-# its offset never erases the one a previous refresh recorded.
+# One row per refreshed scope in `refreshes` (ADT #642): the stamp that says a
+# schema or an application is in the mirror at all (`search -app` reads it),
+# and the database UTC offset `patch -create` resolves a mirrored LAST_DDL_TIME
+# through (ADT #394). A stamp or offset the caller does not have leaves the
+# stored one alone, so a refresh on a gateway that cannot report its offset
+# never erases the one a previous refresh recorded.
 REFRESH_UPSERT = (
     "INSERT INTO refreshes (scope_type, scope_name, refreshed_at, db_utc_offset) "
     "VALUES (?, ?, ?, ?) "
@@ -84,7 +85,7 @@ MIRROR_LIFT_3_SCRIPT = "\n".join(
 MIRROR_LIFT_4_SCRIPT = "\n".join(f"DROP TABLE IF EXISTS {name};" for name in RETIRED_TABLES)
 
 # The dictionary's own LAST_DDL_TIME per object, mirrored on every
-# `dependencies -refresh`. `patch -create` reads it to prove the exported files
+# `rebuild`. `patch -create` reads it to prove the exported files
 # still match the schema, so a stale `export_db` cannot ship a previous package
 # body (ADT #261), and reads it OFFLINE, because the mirror already carries it.
 LAST_DDL_TIMES_QUERY = (
@@ -190,6 +191,34 @@ ORDER BY MIN(p.PAGE_ID), UPPER(object_owner), UPPER(object_type), UPPER(p.USED_D
 
 def apex_page_db_objects_query(page_filter: str) -> str:
     return APEX_PAGE_DB_OBJECTS_QUERY_TEMPLATE.format(page_filter=page_filter)
+
+
+# One row per object an application references, with the distinct pages and
+# components that use it. The join is LEFT so an object no component property
+# names still counts, as 0 and 0; a page filter lands on `p.PAGE_ID` and so
+# drops those rows, which is what narrowing to pages means.
+APEX_APP_INVENTORY_QUERY_TEMPLATE = """
+SELECT o.APPLICATION_ID AS app_id,
+       COALESCE(o.USED_DB_OBJECT_OWNER, '') AS object_owner,
+       COALESCE(o.USED_DB_OBJECT_TYPE, '') AS object_type,
+       COALESCE(o.USED_DB_OBJECT_NAME, '') AS object_name,
+       COUNT(DISTINCT p.PAGE_ID) AS pages,
+       COUNT(DISTINCT p.COMPONENT_ID) AS comps
+FROM APEX_USED_DB_OBJECTS o
+LEFT JOIN APEX_USED_DB_OBJECT_COMP_PROPS p
+  ON p.APPLICATION_ID = o.APPLICATION_ID
+ AND p.USED_DB_OBJECT_ID = o.USED_DB_OBJECT_ID
+WHERE o.APPLICATION_ID IN ({app_ids}){page_filter}
+GROUP BY o.APPLICATION_ID, object_owner, object_type, object_name
+ORDER BY o.APPLICATION_ID, UPPER(object_type), UPPER(object_name), UPPER(object_owner)
+""".strip()
+
+
+def apex_app_inventory_query(app_count: int, page_filter: str) -> str:
+    return APEX_APP_INVENTORY_QUERY_TEMPLATE.format(
+        app_ids=", ".join("?" for _ in range(app_count)),
+        page_filter=f"\n  AND ({page_filter})" if page_filter else "",
+    )
 
 
 def tracked_owner_predicate(owner_sql: str) -> str:

@@ -120,7 +120,7 @@ RELEVANT COMMITS FOR "%report%":
 - `patch_commit_pattern` in `config.yaml` keeps commits whose subject does not match that shape out of every patch. An explicit `-search` or `-commit` overrides it.
 - **A `-create` whose name matches no commit subject stops with `NO COMMITS MATCHED "<CODE>"`**, quoting the pattern it ran, counting the commits that passed every other filter, and offering two options: `-search PATTERN` to select them by a different term, or `-commit N` and `-ignore N` to select them by number, hash prefix or range. It closes on the habit that avoids the screen altogether, **putting the patch name in the commit message**: the name is matched against subjects, so a repository that writes its ticket number into the subject is found by `-name` alone. `NO COMMITS FOUND ... commits scanned` is the other failure and a different fix, the scan reached nothing at all, so raise `patch_scan_commits`.
 - **A commit that committed a patch folder hides the older commits of its code.** The newest commit adding a `.sql` directly in `<patch_root>/<folder>/` for that code marks everything older as shipped, folder on disk or archived, and a commit touching nothing but patch folders goes too. `-force` keeps them, `-commit` names one, and the folder `-name` resolves to never hides its own. With nothing left, `-create` stops with `NO NEW COMMITS FOR "<CODE>"`.
-- The commits come from the per-branch store `rebuild` maintains, at `repo_commits_file`. There is one store, shared with `search_repo` and `calendar`, and `patch` tops it up rather than keeping a copy. Use `adtai rebuild` to rebuild one from scratch.
+- The commits come from the per-branch store `rebuild` maintains, at `repo_commits_file`. There is one store, shared with `search` and `calendar`, and `patch` tops it up rather than keeping a copy. Use `adtai rebuild` to rebuild one from scratch.
 
 <br>
 
@@ -222,6 +222,16 @@ Each application gets a receipt at `<path_apex>/logs_<ENV>/<timestamp>_apex_drop
 
 <br>
 
+## Uploading static files as you save them
+
+`-upload` uploads every static file you save straight into APEX, and `-once` uploads the whole folder and exits. It is the smallest thing `patch` ships, one saved stylesheet rather than a release, so it reads no commit and is refused beside every other verb. Everything about it is on [patch_upload.md](patch_upload.md).
+
+```bash
+adtai patch -upload -app 100
+```
+
+<br>
+
 ## Building from hashes instead of commits
 
 `-hash` builds the patch from what the working tree no longer agrees with the target about, which reaches work no commit window covers. `-baseline` records the state you believe the environment is at. Both are on [patch_hash.md](patch_hash.md).
@@ -244,16 +254,21 @@ Each application gets a receipt at `<path_apex>/logs_<ENV>/<timestamp>_apex_drop
 | `-search`, `--search` | Yes | none | Filter commits by a SQL LIKE pattern, matched against the subject, the author and each changed path. `%` is any run, `_` is one character, and a term with no `%` is searched as `%term%`. A discovery run: `-create` beside it lists the commits and builds nothing until `-commit`, `-ignore` or `-force` narrows them. |
 | `-commit`, `--commit` | Yes | none | Include commit numbers, hash prefixes or ranges (`12`, `12+`, `12-40`). One flag takes several refs, comma- or space-separated, and the flag repeats. |
 | `-ignore`, `--ignore` | Yes | none | Exclude commit numbers, hash prefixes or ranges, in the same shape as `-commit`. |
-| `-app [ID]`, `--app [ID]` | No | off | Ship every APEX application the patch touches whole instead of as the components that changed. The application's own export format picks the mode: an `apexlang/` tree ships as the tree, anything else as its `f<id>.sql` full export with the components dropped. Bare, no application id changes; `ID` lands the tree on that application id instead, with the alias derived alongside it. One id per run. Refuses the build when a full-export application changed after the export it would ship; an APEXlang application needs no `f<id>.sql` and is never compared against one. On `-deploy` it also imports the `apexlang/` tree, refusing on target drift. |
+| `-app [ID]`, `--app [ID]` | No | off | Ship every APEX application the patch touches whole instead of as the components that changed. The application's own export format picks the mode: an `apexlang/` tree ships as the tree, anything else as its `f<id>.sql` full export with the components dropped. Bare, no application id changes; `ID` lands the tree on that application id instead, with the alias derived alongside it. One id per run. Refuses the build when a full-export application changed after the export it would ship; an APEXlang application needs no `f<id>.sql` and is never compared against one. On `-deploy` it also imports the `apexlang/` tree, refusing on target drift. With `-upload` it is the one application to upload into, and required. |
 | `-hash [FILE]`, `--hash [FILE]` | No | off | Build the patch from what the working tree no longer matches the baseline on, instead of from commits. `FILE` names the baseline; omitted, it is `patch_hashes/baseline.<TARGET_ENV>.log`. Forces the `local` content mode. |
 | `-baseline [FILE]`, `--baseline [FILE]` | No | off | Record every current file hash as this target's deployed baseline, and store every table beside it under `baseline.<TARGET_ENV>/`, overwriting both whole. Builds nothing and opens no database. |
 | `-install`, `--install` | No | off | Write `config/install/<SCHEMA>.sql` for each exported schema from the checked-out files; `-schema` picks the schemas. Needs no name. Details on [patch_install.md](patch_install.md#the-install-script). |
+| `-upload`, `--upload` | No | off | Upload static files into APEX as you save them, or the whole folder once with `-once`. Needs `-app ID`, no name, and is refused beside every other verb. On [patch_upload.md](patch_upload.md). |
+| `-folder`, `--folder` | No | the exported folder | With `-upload`, the folder to watch. |
+| `-interval`, `--interval` | No | `1` | With `-upload`, seconds between passes over the folder. Refused with `-once`. |
+| `-once`, `--once` | No | off | With `-upload`, upload the folder once and exit instead of watching. |
+| `-show`, `--show` | No | off | With `-upload`, list what the folder holds before the watch starts. |
 | `-archive`, `--archive` | No | none | Archive folders by ticket number or LIKE pattern; omit refs to only list. One flag takes several refs and mixes both kinds. A ref matching nothing archives nothing and still exits `0`. `-archive %` takes every folder; `\` escapes a literal `_` in a ticket-number ref, quoted. Closes with `ALL PATCH FOLDERS:`, every folder left on disk. |
 | `-drop ID [ID ...]`, `--drop` | No | none | Remove the sandbox APEX applications a `-deploy -app ID` run created. Ids only: no `-name` and no patch folder, and `-target` is required. An id is taken only when it is a derived sandbox, `<application><task>` carrying the derived `<SOURCE_ALIAS>_<task>` alias, so an application's own id refuses and names it. A sandbox drops only when its recorded creator is your `apex_account` in `config/IDENTITY.yaml`; anybody else's, or one recording no creator, needs `-force`. Every id is checked before the first one is dropped. |
 | `-local`, `--local` | No | off | Snapshot the working-tree file instead of its committed version. Mutually exclusive with `-head` and `-nosnap`. |
 | `-head`, `--head` | No | off | Snapshot the newest committed version of each file, taken from the local branch or the remote default branch, and skip the newer-commit warning. Runs `git fetch --prune origin` first, before anything reads history, best effort on an offline repository. Which ref wins is on [patch_content.md](patch_content.md). Mutually exclusive with `-local` and `-nosnap`. |
 | `-nosnap`, `--nosnap` | No | off | Write no snapshots; link each repo file where it already lives. Mutually exclusive with `-local` and `-head`. |
-| `-files_ws`, `--files_ws`, `--files-ws` | No | off | With `-create`, carry every workspace static file, not only the ones the selected commits changed, in the version the content mode selects. Application static files are not widened. Exits `2` on a run that builds nothing. Details on [patch_content.md](patch_content.md#workspace-static-files). |
+| `-files_ws`, `--files_ws`, `--files-ws` | No | off | With `-create`, carry every workspace static file, not only the ones the selected commits changed, in the version the content mode selects. Application static files are not widened. Exits `2` on a run that builds nothing. With `-upload` it names where the uploads land instead, the workspace files rather than the application ones. On [patch_content.md](patch_content.md#workspace-static-files). |
 | `-branch`, `--branch` | No | current branch | Scan the named branch's history instead of the checked-out one. Read-only. A name resolving to no ref fails the run. Refused beside `-install`. |
 
 Shared options (-root, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).
