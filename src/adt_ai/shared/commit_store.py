@@ -1,28 +1,28 @@
 """The per-branch commit store, and the numbering rule that is its whole point.
 
-**A commit number is allocated once and never re-derived.** It is a surrogate
-key, not a position in history. ADT.ai used to number by position in
-`git log --reverse` offset from `rev-list --count`, and that produced three
-defects, all of them measurable on a four-commit repo with one merged side
-branch:
+**A commit's number is its position on the branch's first-parent line** (ADT
+#895): the commit `git log --first-parent --reverse <branch>` lists first is 1.
+Jan, 2026-09-19: *"We care about continuity in main/master. What happen in
+other branches, nobody cares. When you merge to main, you merge as 1 new
+commit."* So a merge takes the next number and carries everything it brought,
+and the commits behind its second parent are not stored: they have no place on
+the line, and giving them one would push every later number up. Three things
+follow from a number being a fact about the line rather than about which runs
+built the store:
 
-* a merge of an older-dated branch **renumbered commits already cached**,
-  because merged-in commits sort in by date and push everything below them up;
-* an incremental run and a full rebuild **disagreed about the same commit**, so
-  deleting a cache silently rewrote every number a patch folder had recorded;
-* a bounded window **left holes**, since only the newest N commits were kept.
+* a merge moves no number already handed out, however old the merged branch;
+* a store deleted and rebuilt, or rebuilt by `-force`, reads the same numbers
+  back, and a `-limit` or `-since` window keeps them, so its first commit is
+  not 1 and the range below it is simply not stored yet;
+* a dropped unpushed commit frees its number, so the next commit takes it and
+  the store keeps no hole.
 
-Allocation here is monotonic and additive, so none of the three can happen:
-new commits take numbers above the tip, older commits pulled in by a wider
-`patch_history_bottom_days` take numbers below the floor, and a commit that
-already carries a number keeps it.
-
-The seed exists for that bottom-days window. A first build bounded to a year of
-an 85,000-commit repo would otherwise start at 1 and leave no room underneath,
-so the caller seeds the floor at the oldest included commit's true position and
-the range below stays free. The seed is read **once**, on an empty branch: a
-later run never re-seeds, because re-deriving a floor is the same mistake as
-re-deriving a number.
+`reconcile` is how the store follows the line when it was cut back. A commit id
+fixes its whole first-parent ancestry, so the ceiling alone says whether the
+store still sits on the line: one key probe. When it does not, or when the file
+never recorded that it was numbered this way (a store written by the allocator
+before #895), `renumber` moves every row in SQL, file rows included, and forgets
+a commit the line no longer has.
 
 SQLite rather than a text file because the corpus is large: measured on a real
 20,000-commit corpus, a text cache costs a full parse (0.67 s and about 512 MB
@@ -46,7 +46,7 @@ opener is the shared one. Older files are lifted in place on open.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -105,15 +105,14 @@ class StoredCommit:
     """One commit as the store holds it.
 
     ``statuses`` is git's per-file letter (``A``/``M``/``D``). The YAML cache
-    never carried it, so `search_repo` guessed ("M" when the path appeared in an
+    never carried it, so `search` guessed ("M" when the path appeared in an
     older commit, else "A") and the patch install script could not split
     NEW/DELETED/MODIFIED from anything but that guess. ``deleted`` stays as its
     own list for the old-ADT payload shape, and is derivable from ``statuses``.
     """
 
-    #: 0 while the record is still unallocated. A scanner hands the store what
-    #: git told it and the store decides the number, so a caller that filled
-    #: this in itself would be re-deriving the one thing it must not.
+    #: 0 on a record about to be written: `place` takes the number beside it,
+    #: read off the branch's first-parent line, and a read fills it in.
     number: int = 0
     id: str = ""
     summary: str = ""
@@ -233,9 +232,6 @@ class CommitStore:
         low, high, count = self.connection.execute(queries.COMMIT_SPAN_QUERY).fetchone()
         return Span(low, high, count)
 
-    def floor(self) -> int | None:
-        return self.span().floor
-
     def ceiling(self) -> int | None:
         return self.span().ceiling
 
@@ -344,77 +340,90 @@ class CommitStore:
             for row in rows
         ]
 
-    # -- allocation --------------------------------------------------------
+    # -- writes ------------------------------------------------------------
 
-    def allocate(
-        self,
-        records: Iterable[StoredCommit],
-        *,
-        seed: int | None = None,
-    ) -> list[int]:
-        """Number ``records`` (oldest first) at or above the current tip.
+    def place(self, numbered: Iterable[tuple[int, StoredCommit]]) -> None:
+        """Write each commit at the number it is given, its place on the line.
 
-        A commit already carrying a number keeps it and is returned unchanged,
-        so an overlapping re-run is a no-op rather than a second allocation.
-        ``seed`` is honoured only while the branch is empty.
+        The caller has already read the positions off the branch and left out
+        the commits the store holds, so this is a write and nothing else.
         """
-        ordered = list(records)
-        existing = self.numbers_for(item.id for item in ordered)
-        ceiling = self.ceiling()
-        # The seed is read only while the branch is empty. Re-seeding a branch
-        # that already has commits is the same mistake as re-deriving a number.
-        next_number = (seed if seed is not None else 1) if ceiling is None else ceiling + 1
-        return self._assign(ordered, existing, next_number)
+        self._write(list(numbered))
 
-    def backfill(self, records: Iterable[StoredCommit]) -> list[int]:
-        """Number ``records`` (oldest first) below the current floor.
+    # -- numbering by first-parent position --------------------------------
 
-        This is the `patch_history_bottom_days` path: raising the window pulls
-        older commits in, and they cannot take numbers above the tip without
-        claiming to be newer than commits they precede. Allocating downward from
-        the floor keeps every number already handed out exactly where it was,
-        which is the invariant the whole card rests on.
+    def reconcile(self, history: Sequence[str], merges: Collection[str] = ()) -> bool:
+        """Make every stored number its commit's position on ``history``.
+
+        ``history`` is the branch's first-parent line, oldest first, the whole
+        of it, and ``merges`` the merge commits on it. A store this method
+        already numbered whose ceiling still sits at its position is trusted as
+        it stands: that commit's id fixes every commit below it, so one row is
+        read and nothing is written. Returns whether it renumbered.
+
+        A store numbered any other way is moved once, and its merges are
+        forgotten so the run reads them again: before first-parent numbering a
+        merge was stored with no files, its changes kept on the second-parent
+        commits this move drops.
         """
-        ordered = list(records)
-        if not ordered:
-            return []
-        floor = self.floor()
-        if floor is None:
-            return self.allocate(ordered)
-        existing = self.numbers_for(item.id for item in ordered)
-        wanted = [item for item in ordered if item.id not in existing]
-        first = floor - len(wanted)
-        if first < 1:
-            raise ValueError(
-                f"backfilling {len(wanted)} commit(s) below floor {floor} would run "
-                f"below 1; the store cannot hold them without renumbering"
+        span = self.span()
+        numbered = self._first_parent()
+        if span.ceiling is None:
+            if not numbered:
+                self._mark_first_parent()
+            return False
+        if numbered and self._ceiling_agrees(span.ceiling, history):
+            return False
+        self.renumber(history, forget=() if numbered else merges)
+        if not numbered:
+            self._mark_first_parent()
+        return True
+
+    def renumber(self, history: Sequence[str], forget: Collection[str] = ()) -> None:
+        """Move every stored commit to its position on ``history``, one transaction.
+
+        A commit ``history`` does not hold, or ``forget`` names, is dropped with
+        its file rows, which is what a dropped unpushed commit, a rewritten
+        branch, or a merged branch's own commits leave behind.
+        """
+        connection = self.connection
+        connection.execute(queries.COMMIT_POSITIONS_DDL)
+        try:
+            connection.execute(queries.COMMIT_POSITIONS_CLEAR)
+            connection.executemany(
+                queries.COMMIT_POSITIONS_INSERT,
+                (
+                    (commit, number)
+                    for number, commit in enumerate(history, start=1)
+                    if commit not in forget
+                ),
             )
-        return self._assign(ordered, existing, first)
+            connection.execute(queries.DEFER_FOREIGN_KEYS)
+            for statement in queries.COMMIT_RENUMBER_STEPS:
+                connection.execute(statement)
+            connection.execute(queries.COMMIT_POSITIONS_CLEAR)
+            connection.commit()
+        except BaseException:
+            # sqlite3 leaves the failed transaction open, and the next commit
+            # on this connection would write the half-moved rows.
+            connection.rollback()
+            raise
 
-    def reset(self) -> None:
-        """Forget every commit.
+    def _first_parent(self) -> bool:
+        row = self.connection.execute(queries.META_NUMBERING_QUERY).fetchone()
+        return row is not None and row[0] == queries.NUMBERING_FIRST_PARENT
 
-        The one legitimate caller is rewritten history: after a rebase or a
-        force-push the stored numbers point at commits the branch no longer
-        has, so they describe nothing. Any other use is a renumbering.
-        """
-        self.connection.execute(queries.COMMIT_DELETE_ALL)
+    def _mark_first_parent(self) -> None:
+        self.connection.execute(queries.META_NUMBERING_UPSERT)
         self.connection.commit()
 
-    def _assign(
-        self, ordered: list[StoredCommit], existing: dict[str, int], next_number: int
-    ) -> list[int]:
-        assigned: list[int] = []
-        fresh: list[tuple[int, StoredCommit]] = []
-        for item in ordered:
-            if item.id in existing:
-                assigned.append(existing[item.id])
-                continue
-            assigned.append(next_number)
-            fresh.append((next_number, item))
-            next_number += 1
-        self._write(fresh)
-        return assigned
+    def _ceiling_agrees(self, ceiling: int, history: Sequence[str]) -> bool:
+        if ceiling > len(history):
+            return False
+        (found,) = self.connection.execute(
+            queries.COMMIT_ID_AT_NUMBER_QUERY, (ceiling,)
+        ).fetchone()
+        return bool(found == history[ceiling - 1])
 
     def _write(self, fresh: list[tuple[int, StoredCommit]]) -> None:
         if not fresh:
@@ -449,9 +458,10 @@ class CommitStore:
 def problems_in(span: Span, label: str) -> list[str]:
     """What a span says is wrong with a store's numbering.
 
-    Contiguity is checkable because allocation is additive: floor to ceiling
-    with no gap is the only shape allocate/backfill can produce, so a gap
-    means something outside this module wrote the store.
+    Contiguity is checkable because `rebuild` fills every position on the
+    first-parent line from the store's floor to the branch's tip, the gap
+    between a window and what the store already held included, so a gap means
+    something outside ADT.ai wrote the store.
     """
     if span.size == 0 or span.floor is None or span.ceiling is None:
         return []

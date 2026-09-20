@@ -40,7 +40,7 @@ def print_unreadable_yaml(path: Path, error: yaml.YAMLError) -> None:
     Written first to stderr, the live run on `SANDBOX` lost the blank under it:
     the runtime holds each stream's trailing newlines back and settles them per
     stream, so the next stdout header landed flush against the last row. A
-    command whose stdout is a document, `dependencies -format yaml`, already
+    command whose stdout is a document, `search -format yaml`, already
     routes its chrome to stderr around the whole segment, and this rides it.
     """
     reason = _yaml_reason(error)

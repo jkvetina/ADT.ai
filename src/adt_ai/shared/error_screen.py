@@ -2,7 +2,7 @@
 
 Eight shapes reported a refusal before this module, and none of the differences
 were design. `validate` prefixed `validate: error:`, `connection` prefixed
-`connection:`, `search_repo` prefixed `Error:` and printed it to **stdout**,
+`connection:`, `search` prefixed `Error:` and printed it to **stdout**,
 `patch -deploy` prefixed nothing at all, `export_db` rendered a dashed section,
 and three screens replaced the module banner with `APEX DEPLOYMENT TOOL - ERROR`.
 An argument refusal exited 2 in one module and 1 in the next. One screen of the
@@ -55,6 +55,10 @@ ERROR_CODES: tuple[str, ...] = (
     "DATABASE CONNECTION FAILED",
     "DATABASE QUERY FAILED",
     "SQLCL SCRIPT FAILED",
+    # `diff -restore` and `search -restore` commit uncommitted work as `WIP`
+    # before writing, and git refused (ADT #897). Jan: *"ERROR header with
+    # proper name and desc"*. Git's own line is the diagnosis, so no hint.
+    "GIT COMMIT FAILED",
     "STARTUP FAILED",
     "UNEXPECTED ERROR",
 )

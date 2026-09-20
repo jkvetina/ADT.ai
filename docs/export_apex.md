@@ -147,7 +147,7 @@ What the cache holds, table by table, is on [storage_apex.md](storage_apex.md).
 
 When `-app` names an application whose owner is not among the requested schemas, that lookup runs once inside the last requested schema's segment, and the owner it finds becomes its own appended segment.
 
-An owner the connection file does not name gets no segment, because there is no connection for it. The schema whose connection found the owner exports the application in its own segment, into that schema's folder, and `WARNING - SCHEMA NOT CONFIGURED:` says so as `APP 430 is owned by WEBCRM, exported through APEX_DEPLOYMENT`.
+An owner the connection file does not name gets no segment, because there is no connection for it. The schema that found the owner exports the application into its own folder, and warns about nothing. An id it cannot reach is named under `WARNING - APP NOT FOUND:`.
 
 <br>
 

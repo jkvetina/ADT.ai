@@ -80,7 +80,7 @@ def build_patch_request(
         search_terms         = args.search,
         authors              = patch_authors(args, root),
         # A bare `-recent` is one day here (ADT #467), the same resolution
-        # `search_repo` makes at its own edge and for the same reason: the
+        # `search` makes at its own edge and for the same reason: the
         # sentinel means "since my last export of this scope", and git history
         # keeps no such watermark. Resolved at the edge, so `PatchRequest` holds
         # a number and no reader below it has to know the sentinel exists.

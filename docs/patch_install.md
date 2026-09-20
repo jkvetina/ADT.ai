@@ -77,7 +77,7 @@ Both order objects from `config/internal/dependencies.db`, and a graph that is a
 PATCH FAILED
 ------------
 No readable config/internal/dependencies.db: objects cannot be ordered from a graph that is absent or unreadable, and name order is not a runnable script.
-Run: adtai dependencies -refresh
+Run: adtai rebuild
 ```
 
 A graph that is present but stale reports one row per affected scope, with the stamp it was measured against and the object that outran it:
@@ -87,7 +87,7 @@ PATCH FAILED
 ------------
 Stale config/internal/dependencies.db: the graph is older than the objects it would order.
   APP: refreshed 2026-07-30 09:12:44, newest object 2026-07-31 14:02:11 (app/database/tables/app_role.sql)
-Run: adtai dependencies -refresh -schema APP
+Run: adtai rebuild -schema APP
 ```
 
 Four things follow, and they are deliberate:
@@ -97,7 +97,7 @@ Four things follow, and they are deliberate:
 - **A layout naming no schema is still refused**, having no owner to scope a refresh to.
 - **Read-only previews are never gated**, because they order nothing. A layout matching no exported objects reports what it searched and exits `0`.
 
-Staleness is measured against the mirror's own refresh stamps, the rows [dependencies](dependencies.md) prints with `-age`, versus the newest mtime among the object files that would be ordered. A schema the mirror has never refreshed reads `refreshed never`.
+Staleness is measured against the mirror's own refresh stamps, the `refreshes` rows on [storage_dependencies.md](storage_dependencies.md), versus the newest mtime among the object files that would be ordered. A schema the mirror has never refreshed reads `refreshed never`.
 
 <br>
 
@@ -130,7 +130,7 @@ WARNING - NO DATABASE CLOCK:
   - APP
 ```
 
-`adtai dependencies -refresh -schema <SCHEMA>` clears it permanently.
+`adtai rebuild -schema <SCHEMA>` clears it permanently.
 
 <br>
 

@@ -1,6 +1,6 @@
 # Commit Store (adtai rebuild)
 
-`rebuild` keeps one SQLite file per branch at `config/commits/<branch>.db`, the path `repo_commits_file` points at. It is a cache of `git log` for that branch, numbered so that a commit keeps its number for life, plus the files each commit touched with their status and content hash. `search_repo`, `calendar` and the patch commands read it instead of walking git.
+`rebuild` keeps one SQLite file per branch at `config/commits/<branch>.db`, the path `repo_commits_file` points at. It is a cache of `git log --first-parent` for that branch, each commit numbered by its position on that line, plus the files each commit touched with their status and content hash. `search`, `calendar` and the patch commands read it instead of walking git.
 
 <br>
 
@@ -38,7 +38,7 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 
 | Column      | Type    | Nullable | Key | Meaning                                                                                                                                  |
 | ----------- | ------- | -------- | --- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| number      | INTEGER | No       | PK  | The commit's number on this branch, one for the oldest, upwards without holes.                                                           |
+| number      | INTEGER | No       | PK  | The commit's position on the branch's first-parent line, one for the oldest. A merge is one commit.                                      |
 | id          | TEXT    | No       |     | The full commit hash, unique in the file.                                                                                                |
 | summary     | TEXT    | Yes      |     | The subject line.                                                                                                                        |
 | author      | TEXT    | Yes      |     | The author's e-mail address.                                                                                                             |
@@ -67,7 +67,7 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 
 The primary key and the uniqueness of `id` are the numbering contract written down: a number belongs to one commit and a commit carries one number, so a reused number is unwritable rather than merely tested for.
 
-The path index serves `search_repo`, which reads the status a path had in its previous commit when an early store wrote the file row without one.
+The path index serves `search`, which reads the status a path had in its previous commit when an early store wrote the file row without one.
 
 <br>
 
@@ -75,11 +75,13 @@ The path index serves `search_repo`, which reads the status a path had in its pr
 
 The file holds one branch and `_meta` records which, under the key `branch_name`, written the first time a command opens the file for a branch. A second branch name that flattens to the same file name is refused rather than mixed in, so no row needs to repeat the branch.
 
+`_meta` also records how the file is numbered, under the key `numbering`, as `first-parent`. A file without it was written by an older ADT.ai, and the next `rebuild` moves it to first-parent numbering once.
+
 <br>
 
 ## Reads
 
-Every read is bounded. `patch` reads the newest commits up to its window, `rebuild` counts through the key and looks up only the commits it just scanned, `calendar` reads one month without file rows, and `search_repo` reads newest first a page at a time with its date, summary, file and author filters applied in SQL.
+Every read is bounded. `patch` reads the newest commits up to its window, `rebuild` counts through the key and looks up only the commits it just scanned, `calendar` reads one month without file rows, and `search` reads newest first a page at a time with its date, summary, file and author filters applied in SQL.
 
 <br>
 
@@ -93,4 +95,6 @@ A version 3 file loses `branch` from both tables and has both rebuilt on their n
 
 `authored_at` is the only stamp, and it is git's rather than this machine's. The store carries no refresh stamp; `rebuild` compares the numbered tail against git and appends what is new.
 
-A branch whose history was rewritten is dropped and rebuilt, because its numbers point at commits that no longer exist. Nothing else ever renumbers. Deleting the file costs nothing: `rebuild` recreates it from git.
+A merge moves no number: it is one new commit on the first-parent line, and the commits behind its second parent are never stored. A dropped unpushed commit, a rebase or a force-push cuts the line back, and `rebuild` then forgets what the branch no longer has, so the next commit takes the freed number.
+
+Deleting the file costs nothing: `rebuild` recreates it from git with the same numbers.

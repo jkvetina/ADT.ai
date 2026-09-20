@@ -27,7 +27,7 @@ stopped with `+` on each count and a legend line saying so; Jan removed both on
 """
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from adt_ai.cli.constants import print_adt_header, print_adt_table
@@ -61,8 +61,17 @@ _KEY = "key:"
 _MIN_CELL = 12
 
 
-def report_data_diff(result: DataDiff, *, verbose: bool = False, log: str | None = None) -> None:
-    """Row counts per table, one block per table under `-verbose`, then the legend."""
+def report_data_diff(
+    result: DataDiff,
+    *,
+    verbose: bool = False,
+    log: str | None = None,
+    tail: Callable[[], object] | None = None,
+) -> None:
+    """Row counts per table, one block per table under `-verbose`, then the legend.
+
+    `tail` is `-restore`'s section, run above the legend (`#893`).
+    """
     if result.in_sync:
         print_adt_header(IN_SYNC_HEADER)
         print(f"  {IN_SYNC_DATA}")
@@ -70,6 +79,8 @@ def report_data_diff(result: DataDiff, *, verbose: bool = False, log: str | None
             print()
             print(f"  LOG: {log}")
         print()
+        if tail is not None:
+            tail()
         return
     print_adt_header(TABLES_HEADER)
     _print_fitted([_count_row(table) for table in result.changed_tables])
@@ -87,6 +98,8 @@ def report_data_diff(result: DataDiff, *, verbose: bool = False, log: str | None
         print()
     elif not verbose:
         print()
+    if tail is not None:
+        tail()
     _report_legend(result)
 
 

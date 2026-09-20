@@ -159,7 +159,7 @@ def run_apex_reveal(run: ApexRun) -> int:
         widen_owner_counts   = bool(args.owners),
         max_app_id           = args.max_app_id,
     )
-    print_apex_owner_not_configured(located.not_configured, reveal=True)
+    print_apex_owner_not_configured(located.not_configured)
     print_apex_app_not_found(located.not_found, reveal=True)
     return 0
 
@@ -268,11 +268,11 @@ def _route_missing_apps(run: ApexRun, schema: str) -> None:
     # and exports it in this segment, which has not exported yet. Jan,
     # 2026-09-15: "I am providing a schema which can reach the app, but you are
     # not exporting the app" (`#863`).
+    # An app that exported needs no warning at all: Jan, 2026-09-20, on the one
+    # this used to print, "You can access the app from other schemas, so dont
+    # bother user with this" (`#909`). Only an id nothing reached is reported.
     exported = _add_reached_apps(
         run, owner_discovery, schema, [app_id for app_id, _owner in not_configured]
-    )
-    print_apex_owner_not_configured(
-        [(app_id, owner, [schema]) for app_id, owner in not_configured if app_id in exported]
     )
     print_apex_app_not_found(
         [*not_found, *(app_id for app_id, _owner in not_configured if app_id not in exported)]

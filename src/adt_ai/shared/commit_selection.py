@@ -235,8 +235,8 @@ def commit_ref_matches(number: int, commit_hash: str, ref: str) -> bool:
     * `12+`    , commit 12 and everything newer
     * `12-40`  , the inclusive span
 
-    Shared by `patch` and `search_repo` rather than written twice: they are one
-    concept at two call sites, and `search_repo` already understood `N+` while
+    Shared by `patch` and `search` rather than written twice: they are one
+    concept at two call sites, and `search` already understood `N+` while
     `patch` understood neither, so `docs/patch.md`'s documented "commit numbers
     or ranges" selected nothing at all, silently (ADT #309, was #15).
 

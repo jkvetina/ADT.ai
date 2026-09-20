@@ -23,8 +23,9 @@ def listed_applications(
 
     `#360` wrapped this in a `READING THE APEX INVENTORY:` section with a row
     per schema; `#372` removed the furniture and kept the helper, because the
-    one thing worth having here was `dependencies` and `flow` sharing a single
-    listing path instead of two copies of the same loop.
+    one thing worth having here was the application refreshes (now both
+    `rebuild -app`'s, `#30`) sharing a single listing path instead of two
+    copies of the same loop.
     """
     found: list[ApexApplication] = []
     for schema in schemas:
@@ -48,7 +49,7 @@ def apex_lookup_schema(
 
     `default_schemas` RAISES on an unconfigured default rather than returning an
     empty list, so the `except` is what makes the fallback reachable at all.
-    `flow -refresh` had this same expression without it (`#638`) and every
+    The page-link refresh had this same expression without it (`#638`) and every
     connection carrying `defaults: {}` failed there while `-reveal` beside it
     worked; both callers share this one function now.
 
@@ -138,7 +139,7 @@ class ApexOwnerRoutes:
     def sole_owner(self) -> str | None:
         """The one non-default schema owning *every* requested app, else None.
 
-        `dependencies -refresh` pulls the APEX_* views over a single connection,
+        `rebuild -app` pulls the APEX_* views over a single connection,
         so it can only take the shortcut when the whole request agrees on one
         owner; mixed owners and unknown apps fall back to the default schema.
         """
@@ -157,7 +158,7 @@ def resolve_apex_owner_routes(
 ) -> ApexOwnerRoutes:
     """The pre-connect owner routing both APEX-aware handlers start from.
 
-    `export_apex` and `dependencies -refresh` both answer the same question
+    `export_apex` and `rebuild -app` both answer the same question
     before they connect (*which schema owns each requested app?*) and both
     answer it from the same cached `config/internal/apex.db`. They differ only in
     what they do with the answer, so the derivation (default schema, configured

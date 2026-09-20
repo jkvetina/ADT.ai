@@ -4,7 +4,7 @@ A developer who commits from a personal machine under a personal address and
 from work under the company one shows up as two people in git history. The
 legacy ADT carried `repo_authors`, a flat `personal: company` map, and this is
 that key: every history reader maps a stored commit author through it before it
-shows, groups or filters on it, so `calendar` prints one row and `search_repo
+shows, groups or filters on it, so `calendar` prints one row and `search
 -by`/`-my` match both addresses. An absent or empty key maps nothing.
 """
 

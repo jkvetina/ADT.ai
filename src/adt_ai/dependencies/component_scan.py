@@ -3,7 +3,7 @@
 The scan generates `DEPSCAN$<n>#<n>` helper procedures on the target schema, and
 dropping them again is a second statement the caller has to issue. Both callers,
 the post-deploy verification in `patch/apex_scan.py` and the
-`dependencies -refresh` APEX axis in `dependencies/runner.py`, used to issue that
+`rebuild -app` APEX axis in `dependencies/runner.py`, used to issue that
 pair in sequence, which is a guarantee only for the runs that succeed: an
 exception anywhere between the two skipped the drop, and a helper left on the
 schema is one a later scan reads as its own or somebody removes by hand.

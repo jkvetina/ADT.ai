@@ -69,10 +69,12 @@ def ensure_commit_store_current(
     Jan, 2026-08-15: *"before running anything it must check that commits .db for
     requested branch is up to date"*.
 
-    Update-only, so it costs a bounded walk from the stored tip rather than a
-    rebuild, and it allocates nothing that already carries a number. Returns the
-    branch it worked on so a caller that passed ``None`` learns the resolved name
-    without asking git twice.
+    Update-only, so it costs a walk from the stored tip rather than a rebuild,
+    and it re-reads no commit already stored: a number is the commit's position
+    on the branch's first-parent line (ADT #895), where a merge is appended as
+    one commit, so a number moves only when the line was cut back under it.
+    Returns the branch it worked on so a caller that passed ``None`` learns the
+    resolved name without asking git twice.
     """
     from adt_ai.rebuild.models import RebuildRequest
     from adt_ai.rebuild.runner import RebuildRunner
@@ -107,7 +109,7 @@ class PatchRequest:
     # `-recent`, a day window over the commit DATE (ADT #467). Resolved at the
     # CLI edge, so what arrives here is a number or `None`, never the bare-flag
     # sentinel: git history has no export watermark for a bare `-recent` to
-    # resume from, which is the same call `search_repo` makes.
+    # resume from, which is the same call `search` makes.
     recent: int | float | None = None
     commit_refs: list[str] | None = None
     ignore_commits: list[str] | None = None
@@ -170,7 +172,7 @@ class CommitRecord:
     # Git's per-file status letter for this commit (`A`/`M`/`D`/...), kept so the
     # install script can split its file list into NEW / DELETED / MODIFIED the way
     # old ADT did (patch.py:1766-1780). The text cache could not carry it, which
-    # is what left `search_repo` guessing; the store does, so `#358` made it a
+    # is what left `search` guessing; the store does, so `#358` made it a
     # real field rather than one that survived only inside a single run.
     statuses: dict[str, str] | None = None
 
@@ -237,8 +239,9 @@ class GitCommitCache:
         had cached, patch.py:1636).
 
         The window (`patch_scan_commits`) bounds the READ, never the numbering:
-        the numbers come out of the store, which allocated them once, so a wider
-        or narrower scan reports the same commit under the same number.
+        the numbers come out of the store, where each is the commit's position on
+        the branch's first-parent line, so a wider or narrower scan reports the
+        same commit under the same number.
 
         ``top_up=False`` says the caller has already brought the store level with
         git this run. `#367` moved that call to the front of the `patch` command
@@ -342,7 +345,7 @@ def _detected_patches(paths: Iterable[str], patch_root: str = "patch/") -> tuple
 
 # The selection half moved to `commit_selection.py` when ADT #467 pushed this
 # module past the 20 KB context guard. Re-exported so every existing importer,
-# `patch`, `search_repo` and their tests, keeps reaching them here.
+# `patch`, `search` and their tests, keeps reaching them here.
 from adt_ai.shared.commit_selection import (  # noqa: E402,F401  (re-exported)
     _filter_records,
     _like_pattern,

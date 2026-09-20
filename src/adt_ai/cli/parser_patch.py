@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from adt_ai.cli.parser_common import COMMIT_IDENTITY_HELP, SubParsers, add_connection_key_argument
+from adt_ai.cli.parser_patch_upload import add_upload_flags, add_upload_verb
 from adt_ai.shared.dates import recent_window
 from adt_ai.shared.recent_state import BARE_RECENT
 
@@ -8,8 +9,8 @@ from adt_ai.shared.recent_state import BARE_RECENT
 def add_patch_parser(subparsers: SubParsers) -> None:
     patch = subparsers.add_parser(
         "patch",
-        description="build and preview deployment patches",
-        help="build and preview deployment patches",
+        description="build, deploy and upload to an environment",
+        help="build, deploy and upload to an environment",
     )
     patch.add_argument("--root", "-root", default=".", help="project root folder")
     patch.add_argument(
@@ -116,7 +117,7 @@ def add_patch_parser(subparsers: SubParsers) -> None:
     #
     # What each row states after "limit to" is the module's own noun and its own
     # identity source. `#364` wrote a DIFFERENCE in there that did not exist:
-    # this `-my` matched `user.name` while `search_repo -my` and `rebuild -my`
+    # this `-my` matched `user.name` while `search -my` and `rebuild -my`
     # matched `user.email`, and since all three read one store written with
     # `%ae`, the odd one out simply selected nothing (ADT #467). Both rows name
     # the email now, and both narrow the patch folders as well as the commits.
@@ -138,7 +139,7 @@ def add_patch_parser(subparsers: SubParsers) -> None:
     # commits & patch folders, so when I pass '-recent 1', it will show just
     # commits and patches created today".
     #
-    # The parser shape is `search_repo -recent`'s, which is the nearest
+    # The parser shape is `search -recent`'s, which is the nearest
     # precedent rather than merely the nearest neighbour: both read git history,
     # which carries no export watermark for a bare `-recent` to mean, so both
     # map the shared sentinel back to one day at the edge. Sharing `const` and
@@ -191,7 +192,7 @@ def add_patch_parser(subparsers: SubParsers) -> None:
     # more often than you re-seed.
     #
     # The name comes back from `-rollout`, which `#309` renamed it to because
-    # `search_repo -hash` takes git hash prefixes while `patch -hash` took a
+    # `search -hash` takes git hash prefixes while `patch -hash` took a
     # commit NUMBER. What the mode does changed under it: the optional value is
     # now the baseline FILE to compare the working tree against, so the two
     # commands genuinely mean different things by the word and the divergence is
@@ -229,17 +230,25 @@ def add_patch_parser(subparsers: SubParsers) -> None:
         action="store_true",
         help="write config/install/<SCHEMA>.sql for each exported schema",
     )
-    # ADT #804. Which exported schemas `-install` writes a script for, in the
-    # `export_db` shape so a repeatable `-schema` parses the same in every module.
-    # Refused without `-install` (`patch_build.install_flag_refusal`): no other
-    # patch mode reads it, and a flag that parses and does nothing is not shipped.
+    # The `live_upload` command folded in here by ADT #903, verb and knobs alike;
+    # both halves are declared in `parser_patch_upload.py`, for the reasons that
+    # file carries.
+    add_upload_verb(patch)
+    # ADT #804, widened by ADT #903. Which exported schemas `-install` writes a
+    # script for, in the `export_db` shape so a repeatable `-schema` parses the
+    # same in every module. `-upload` reads it too, as the one APEX owner schema
+    # to connect through, which is the shape `live_upload -schema` had; more than
+    # one is refused there rather than silently taking the first. Every other mode
+    # is refused (`patch_build.install_flag_refusal`): a flag that parses and does
+    # nothing is not shipped.
     patch.add_argument(
         "--schema",
         "-schema",
         action = "append",
         nargs  = "+",
         help   = "with -install, schema(s) to write a script for, repeatable, "
-                 "comma- or space-separated, supports %% wildcards",
+                 "comma- or space-separated, supports %% wildcards; "
+                 "with -upload, the one APEX owner schema to connect through",
     )
     # `-contents` was withdrawn by ADT #353. Listing what a patch holds is not a
     # mode to ask for, it is what naming a patch means, so every mode prints it.
@@ -393,8 +402,15 @@ def add_patch_parser(subparsers: SubParsers) -> None:
         "-files_ws",
         action = "store_true",
         dest   = "files_ws",
-        help   = "with -create, carry every workspace static file, not only the changed ones",
+        help   = "with -create, carry every workspace static file, not only the changed ones; "
+                 "with -upload, upload into the workspace static files instead of the "
+                 "application ones",
     )
+    # The four knobs `-upload` reads, declared here rather than after `-app`
+    # because `-app` CLOSES this section, which is where Jan put it on 2026-08-30
+    # and what `test_patch_closes_modifiers_on_app` holds (ADT #903). They read
+    # beside `-files_ws` above them, the other flag upload mode borrows.
+    add_upload_flags(patch)
     # `-fullapp` folded into `-app` (ADT #592, Jan 2026-08-29). The two flags
     # answered one question between them: `-fullapp` said WHICH applications ship
     # whole, and the APEXlang deploy needed a way to say WHICH id they land on.
@@ -426,7 +442,8 @@ def add_patch_parser(subparsers: SubParsers) -> None:
         default = None,
         metavar = "ID",
         help    = "deploy the APEX application whole, optional ID lands it on "
-                  "that application id instead of its own",
+                  "that application id instead of its own; "
+                  "with -upload, the one application to upload into, required",
     )
     # `-rebuild` was declared here until ADT #345 withdrew it. It reached
     # `PatchRequest.rebuild` and was read by nothing, while its help and its

@@ -58,7 +58,7 @@ adtai recompile -env DEV -vpd TENANT_ID
 
 A run reads the overview, recompiles, retries whatever failed on a fresh connection, then re-checks.
 
-First it drops any stray `DEPSCAN$<n>#<n>` procedures, silently. APEX's dependency scan generates these helpers, and `dependencies` and `patch` already remove them after their own scan. They are never compiled, counted or rewritten, here or under `-trailing`, and `export_db` never writes one. The report-only modes leave them alone.
+First it drops any stray `DEPSCAN$<n>#<n>` procedures, silently. APEX's dependency scan generates these helpers, and `rebuild -app`, `validate -scan` and `patch` already remove them after their own scan. They are never compiled, counted or rewritten, here or under `-trailing`, and `export_db` never writes one. The report-only modes leave them alone.
 
 The retry runs in reverse order, and repeats for as long as each pass compiles something new. Reversing alone is enough when the dependencies run with the alphabet, and not enough when they criss-cross.
 
@@ -148,7 +148,7 @@ The ranking reads four sources, because no one of them is enough:
 - **The compile errors.** Oracle usually names the culprit, and whether that culprit is itself invalid separates a knock-on from a root. An owner prefix is stripped only when it is the connected schema's own.
 - **The stored source**, for errors that name nothing. `ORA-00942` reports no object and Oracle records no dependency row for a reference that never resolved, so the error's own line and position are read back from `user_source` for exactly those lines.
 - **The schema's invalid objects**, all of them, whatever `-type` and `-name` narrowed the run to. It answers one question, is the object Oracle blamed itself invalid, and the answer must not depend on what the run selected: a `-type "PACKAGE BODY"` run cannot see the spec that broke the body, and used to report it as MISSING and tell you to restore something already there. Only the classification reads this list. What gets compiled stays scoped exactly as you asked.
-- **The dependency mirror**, `config/internal/dependencies.db`, read offline and never refreshed here. It supplies the edges no error text carries, which is what makes `BLAST` meaningful. A project with no mirror ranks on the compile errors alone; that is never an error. Keep it current with `adtai dependencies -refresh -schema <SCHEMA>`.
+- **The dependency mirror**, `config/internal/dependencies.db`, read offline and never refreshed here. It supplies the edges no error text carries, which is what makes `BLAST` meaningful. A project with no mirror ranks on the compile errors alone; that is never an error. Keep it current with `adtai rebuild -schema <SCHEMA>`.
 
 There is no lock report. It read `gv$locked_object`, which needs a DBA grant no application schema holds, and Oracle offers no unprivileged substitute. Nothing is lost operationally: the connection bootstrap sets `DDL_LOCK_TIMEOUT = 10`, so a lock wait is bounded, and an object that stays locked surfaces as its own compile error.
 

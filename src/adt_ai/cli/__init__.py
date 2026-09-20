@@ -34,11 +34,9 @@ from typing import Any
 from adt_ai.cli.startup import print_startup_failure as _print_startup_failure
 
 try:
-    from adt_ai.cli import commands_dependencies as _commands_dependencies
     from adt_ai.cli import commands_diff as _commands_diff
     from adt_ai.cli import commands_export_data as _commands_export_data
     from adt_ai.cli import commands_exports as _commands_exports
-    from adt_ai.cli import commands_flow as _commands_flow
     from adt_ai.cli import commands_history as _commands_history
     from adt_ai.cli import commands_patch as _commands_patch
     from adt_ai.cli import commands_recompile as _commands_recompile
@@ -72,8 +70,6 @@ else:
         _commands_history,
         _commands_recompile,
         _commands_patch,
-        _commands_dependencies,
-        _commands_flow,
         _commands_export_data,
         _commands_exports,
         _commands_validate,
@@ -88,7 +84,7 @@ else:
         "DROPBOX_PATH_RE",
         "PatchRunner",
         "RecompileRunner",
-        "SearchRepoRunner",
+        "SearchRunner",
         "ValidateRunner",
         "_oracle_client_version",
         "_repo_root",

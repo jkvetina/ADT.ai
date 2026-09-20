@@ -27,7 +27,7 @@ from adt_ai.dependencies.foreign_key_tree import foreign_key_tree as _foreign_ke
 from adt_ai.dependencies.owner_case import owner_params as _owner_params
 
 #: How deep `impact` walks before it stops. Re-exported by `store` so the one
-#: importer outside this package (`cli/commands_dependencies.py`) is unmoved.
+#: importer outside this package (`cli/commands_search_graph.py`) is unmoved.
 DEFAULT_MAX_DEPTH = 20
 
 
@@ -210,6 +210,27 @@ class DependencyQueries:
     ) -> list[dict[str, Any]]:
         """Distinct DB objects recorded against selected APEX page ids."""
         return apex_pages.apex_page_db_objects(self.connection, app_id, explicit_ids, ranges)
+
+    def apex_app_inventory(
+        self,
+        app_ids: Iterable[int],
+        *,
+        page_ids: tuple[int, ...] = (),
+        page_ranges: tuple[tuple[int, int | None], ...] = (),
+        types: list[str] | None = None,
+        names: list[str] | None = None,
+        owners: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Every DB object the applications reference, see `apex_pages`."""
+        return apex_pages.apex_app_inventory(
+            self.connection,
+            app_ids,
+            page_ids=page_ids,
+            page_ranges=page_ranges,
+            types=types,
+            names=names,
+            owners=owners,
+        )
 
     def apex_callers(self, node: str) -> list[dict[str, Any]]:
         """APEX app/page/component properties that depend on ``node``.

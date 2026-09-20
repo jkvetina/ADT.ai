@@ -131,10 +131,8 @@ class ApexFlowStore:
             edge.raw_target, edge.target_app_id, edge.target_page, edge.flag,
         )
 
-    def remove_app(self, app_id: int) -> bool:
-        cursor = self._con.execute(queries.STORE_DELETE_APP, (app_id,))
-        self._con.commit()
-        return cursor.rowcount > 0
+    # `remove_app` stood here for the retired `flow -delete`; `#30` took the
+    # command and the flag away, so nothing could reach it any more.
 
     def all_app_ids(self) -> list[int]:
         rows = self._con.execute(queries.STORE_APP_IDS_QUERY)

@@ -82,7 +82,7 @@ def default_search_paths(root: Path | str) -> list[Path]:
     not quietly win over it.
 
     This lives here rather than in `cli/context` because the runners that need an
-    identity (`search_repo`, `rebuild`, `calendar`) carry a root and no argparse
+    identity (`search`, `rebuild`, `calendar`) carry a root and no argparse
     namespace, and reaching into `cli` from `shared` would invert the layering.
     """
     root = Path(root)

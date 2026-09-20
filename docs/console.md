@@ -135,14 +135,15 @@ The code is chosen by what your next move is rather than by which layer raised t
 | `DATABASE CONNECTION FAILED` | A connect attempt was made and refused: SQLcl reported no session, or Oracle returned a known connection ORA, DPY, DPI or TNS code. Ordinary application text that merely says connection, listener or wallet does not select this screen. | Check the connection file and the wallet folder. |
 | `DATABASE QUERY FAILED` | A statement failed after a successful connect. The error leads and the offending SQL follows it under `Query:`. | The `-debug` hint. |
 | `SQLCL SCRIPT FAILED` | SQLcl exited non-zero. The description is the captured transcript. | The `-debug` hint. |
+| `GIT COMMIT FAILED` | `diff -restore` or `search -restore` could not save your uncommitted work as a local `WIP` commit, so nothing was written. | Git's own message. |
 | `STARTUP FAILED` | ADT.ai could not import itself. The banner carries no command, because none resolved. | The `-debug` hint. |
 | `UNEXPECTED ERROR` | Anything ADT.ai could not classify. | The `-debug` hint. |
 
-The set is closed: a code outside it is refused, and all eleven headers are held in the checked-in console inventory, so adding one is a reviewed console change like any other section header.
+The set is closed: a code outside it is refused, and all twelve headers are held in the checked-in console inventory, so adding one is a reviewed console change like any other section header.
 
 **Every refusal goes to stderr**, and the `TIMER` footer follows it there. **The exit code is a property of the code**: `2` for `ARGUMENT INVALID` and `UNKNOWN COMMAND`, which are about what you typed, `1` for every other, which happened during the work.
 
-**The `-debug` hint prints on four codes only**, the ones where a Python traceback is the next thing worth reading. A screen that names its own cause and its own remedy does not carry it: the hint above a located config file or a refused connect is advice that leads nowhere. `-debug` itself re-raises for the traceback on any command whose parser declares it, and `calendar`, `dependencies`, `doctor`, `rebuild` and `search_repo` never did, so the hint never prints there either.
+**The `-debug` hint prints on four codes only**, the ones where a Python traceback is the next thing worth reading. A screen that names its own cause and its own remedy does not carry it: the hint above a located config file or a refused connect is advice that leads nowhere. `-debug` itself re-raises for the traceback on any command whose parser declares it, and `calendar`, `doctor`, `rebuild` and `search` never did, so the hint never prints there either.
 
 The description is indented plain text, not a bullet list, and a nested list stays a nested list where the content genuinely is one: the searched-paths rows above are the case that shape is for.
 
@@ -170,7 +171,7 @@ That is `patch -create` refusing because `-name` matched no commit subject. Writ
 
 ### Multi-schema runs
 
-`export_db`, `export_data`, `export_apex`, `recompile` and `dependencies -refresh` all take a list of schemas. Such a run reads as N single-schema invocations concatenated: the banner prints once, then each schema is its own segment, connect, do that schema's entire work, print its own `TIMER`, before the next connection block appears.
+`export_db`, `export_data`, `export_apex`, `recompile` and `rebuild` all take a list of schemas. Such a run reads as N single-schema invocations concatenated: the banner prints once, then each schema is its own segment, connect, do that schema's entire work, print its own `TIMER`, before the next connection block appears.
 
 There is no grand-total timer after the last segment. That segment's own `TIMER` is the run's final line, exactly as if the command had been invoked once per schema.
 
@@ -222,7 +223,7 @@ Eight flags mean the same thing wherever they are accepted, so they are document
 | `-root`, `--root` | No | `.` | Project root folder. Config and connection files resolve from here, and so does the Git history the history commands read. |
 | `-config-dir`, `--config-dir` | Yes | none | Folder holding project config YAML. ADT.ai loads the shipped defaults first, then overlays these instead of `<root>/config/` and `<root>/`. |
 | `-env`, `--env` | No | connection default environment | Connection environment to use, for example `DEV`. |
-| `-schema`, `--schema` | Yes (one per run on `connection`, `diff`, `discovery` and `live_upload`) | environment default schema | Schema to work on. On `diff` it names the source schema and supplies the target's too. Where it repeats, pass it several times, space-separate it (`-schema APP CORE`), use comma lists, or use `%` patterns such as `CORE%`. A literal `_` or `%` is escaped with `\`, quoted so the shell leaves it alone: `-schema 'APP\_%'`. |
+| `-schema`, `--schema` | Yes (one per run on `connection`, `diff`, `discovery` and `patch -upload`) | environment default schema | Schema to work on. On `diff` it names the source schema and supplies the target's too. Where it repeats, pass it several times, space-separate it (`-schema APP CORE`), use comma lists, or use `%` patterns such as `CORE%`. A literal `_` or `%` is escaped with `\`, quoted so the shell leaves it alone: `-schema 'APP\_%'`. |
 | `-key`, `--key` | No | `ADT_KEY` or `ADT_KEY_CMD` | Encryption key value or path to a key file. Prefer a file path; a literal value is visible in shell history and the process list. |
 | `-debug`, `--debug` | No | off | Show the input parameters and the SQL behind the run, and keep Python tracebacks for troubleshooting. |
 | `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |
@@ -237,11 +238,11 @@ A flag a command does not take is a parser error, not a flag it ignores.
 | Argument | Commands that take it |
 | -------- | --------------------- |
 | `-root` | every command |
-| `-config-dir` | `connection`, `dependencies`, `diff`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `live_upload`, `patch`, `recompile`, `ut`, `validate` |
-| `-env` | `connection`, `dependencies`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `live_upload`, `recompile`, `ut` |
-| `-schema` | `connection`, `dependencies`, `diff`, `discovery`, `export_apex`, `export_data`, `export_db`, `live_upload`, `patch` (only with `-install`, default every exported schema), `recompile`, `ut` |
-| `-key` | `connection`, `dependencies`, `diff`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `live_upload`, `patch`, `recompile`, `ut` |
-| `-debug` | `connection`, `diff`, `discovery`, `export_apex`, `export_data`, `export_db`, `flow`, `live_upload`, `patch`, `recompile`, `ut`, `validate` |
+| `-config-dir` | `connection`, `diff`, `discovery`, `export_apex`, `export_data`, `export_db`, `patch`, `rebuild`, `recompile`, `ut`, `validate` |
+| `-env` | `connection`, `discovery`, `export_apex`, `export_data`, `export_db`, `rebuild`, `recompile`, `ut`, `validate` (only with `-scan`) |
+| `-schema` | `connection`, `diff`, `discovery`, `export_apex`, `export_data`, `export_db`, `patch` (with `-install`, default every exported schema; one value with `-upload`), `rebuild`, `recompile`, `search` (only beside an object's `-from`, `-to` or `-impact`, as an owner filter), `ut` |
+| `-key` | `connection`, `diff`, `discovery`, `export_apex`, `export_data`, `export_db`, `patch`, `rebuild`, `recompile`, `ut` |
+| `-debug` | `connection`, `diff`, `discovery`, `export_apex`, `export_data`, `export_db`, `patch`, `recompile`, `ut`, `validate` |
 | `-beep` | every command |
 | `-nobeep` | every command |
 

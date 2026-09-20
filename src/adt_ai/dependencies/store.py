@@ -19,6 +19,7 @@ from adt_ai.dependencies.owner_case import fold_owner_case, normalize_owner
 from adt_ai.dependencies.schema import (
     DROP_SCHEMA,
     LEGACY_TABLES,
+    REFRESHES_DDL,
     RETIRED_COLUMNS,
     RETIRED_INDEXES,
     SCHEMA,
@@ -62,7 +63,45 @@ def _lift_4(connection: Any) -> None:
         drop_columns(connection, table, columns, indexes=RETIRED_INDEXES)
 
 
-MIGRATIONS: tuple[Migration, ...] = (Migration("3", "4", _lift_3), Migration("4", "5", _lift_4))
+def _lift_5(connection: Any) -> None:
+    """Version 5 to 6: nothing to move (ADT #895).
+
+    Version 6 only adds the text mirrors `search TERM` reads, and the schema
+    script run after every lift creates them. Their stamps start absent, so the
+    next refresh fills them and `search` names the layer until it has.
+    """
+
+
+def _lift_6(connection: Any) -> None:
+    """Version 6 to 7: the component source is keyed by text ids (ADT #901).
+
+    Its `COMPONENT_ID` could not hold an APEX id past SQLite's 64-bit INTEGER,
+    so the table is recreated as TEXT and refilled by the next `rebuild -app`;
+    every other table and stamp stays as it was. The `refreshes` DDL is
+    idempotent and runs first, because a lift chained up from an older file
+    reaches this step before the schema script has created that table.
+    """
+    connection.executescript(REFRESHES_DDL)
+    connection.executescript(queries.MIRROR_LIFT_6_SCRIPT)
+
+
+def _lift_7(connection: Any) -> None:
+    """Version 7 to 8: the mirror stops copying the schema's source (ADT #904).
+
+    `USER_SOURCE` held what the exported object files already hold, and
+    `search TERM` reads those now, so the table and its `source` stamps go and
+    every other row and stamp stays.
+    """
+    connection.executescript(queries.MIRROR_LIFT_7_SCRIPT)
+
+
+MIGRATIONS: tuple[Migration, ...] = (
+    Migration("3", "4", _lift_3),
+    Migration("4", "5", _lift_4),
+    Migration("5", "6", _lift_5),
+    Migration("6", "7", _lift_6),
+    Migration("7", "8", _lift_7),
+)
 
 
 def build_db(db_path: str | Path) -> DependencyStore:
@@ -225,8 +264,8 @@ class DependencyStore(DependencyQueries):
         """Per-scope last-refresh stamps, schemas first then apps (offline).
 
         Reads the ``refreshes`` rows that carry a stamp as
-        ``{type, scope, last_refresh}``. Backs the ``-age`` query mode, so an
-        agent can check staleness without the file-mtime heuristic.
+        ``{type, scope, last_refresh}``. `search -app` reads it to tell an
+        application the mirror holds from one nobody scanned (`#30`).
         """
         rows = self.connection.execute(queries.REFRESHES_QUERY).fetchall()
         parsed: list[dict[str, str]] = [

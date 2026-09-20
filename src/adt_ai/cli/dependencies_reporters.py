@@ -1,20 +1,27 @@
-"""Output rendering for the ``dependencies`` CLI query modes.
+"""Output rendering for the dependency answers `search` prints (`#30`).
 
-Pure formatting helpers split out of ``cli_commands_dependencies``, no
-argparse, gateway, or store coupling. Each printer renders one query result
-in the shared table/yaml/md contract: table mode prints human chrome on
-stdout, machine formats keep stdout pure data.
+Pure formatting helpers split out of the retired ``dependencies`` command, no
+argparse, gateway, or store coupling. Each query printer renders one result in
+the shared table/yaml/md contract: table mode prints human chrome on stdout,
+machine formats keep stdout pure data. The component-scan rows `validate -scan`
+prints live here too, because they are the same APEX dependency scan's answer,
+and so does `search -app`'s list of what an application uses.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import yaml
 
 from adt_ai.cli.constants import print_adt_header, print_adt_table
 from adt_ai.dependencies.classify import split_object_row
-from adt_ai.patch.apex_scan import ApexScanReport
+
+# Annotation only (ADT #895). This module ships in every release and `patch`
+# does not, so the scan report's class is never imported at run time.
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from adt_ai.patch.apex_scan import ApexScanReport
 
 
 def _print_dependency_list(
@@ -185,6 +192,71 @@ def _print_foreign_key_tree(
     return 0
 
 
+def _print_app_inventories(
+    answers: Sequence[tuple[int, Sequence[dict[str, object]]]],
+    output_format: str,
+) -> None:
+    """`search -app`: the objects each application uses, one section per app (`#30`).
+
+    Each answer is `(app_id, rows)` as `DependencyStore.apex_app_inventory`
+    returns them. The header is Jan's, picked 2026-09-19. `PAGES` counts the
+    distinct pages using an object and `COMPS` its components, so a shared
+    component adds to the second and not the first. Several applications under
+    `yaml` are one document each, so a reader parses one app and many alike.
+    """
+    if output_format == "yaml":
+        print(
+            yaml.safe_dump_all(
+                [
+                    {"app": app_id, "objects": [_inventory_payload(row) for row in rows]}
+                    for app_id, rows in answers
+                ],
+                sort_keys=False,
+            ).rstrip()
+        )
+        return
+    if output_format == "md":
+        sections = []
+        for app_id, rows in answers:
+            lines = [f"## Objects used by APP {app_id} ({len(rows)})", ""]
+            lines.extend(
+                f"- {row['object_type']}.{row['object_name']} "
+                f"(pages {row['pages']}, comps {row['comps']})"
+                for row in rows
+            )
+            if not rows:
+                lines.append("- (none)")
+            sections.append("\n".join(lines))
+        print("\n\n".join(sections))
+        return
+    for app_id, rows in answers:
+        print_adt_header(f"OBJECTS USED BY APP {app_id} ({len(rows)}):")
+        if rows:
+            print_adt_table(
+                [
+                    {
+                        "OBJECT_TYPE": row["object_type"],
+                        "OBJECT_NAME": row["object_name"],
+                        "PAGES": row["pages"],
+                        "COMPS": row["comps"],
+                    }
+                    for row in rows
+                ]
+            )
+        else:
+            print("  (none)")
+
+
+def _inventory_payload(row: dict[str, object]) -> dict[str, object]:
+    return {
+        "type": row["object_type"],
+        "name": row["object_name"],
+        "owner": row["object_owner"],
+        "pages": row["pages"],
+        "comps": row["comps"],
+    }
+
+
 def _foreign_key_tree_table_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     return [
         {
@@ -228,32 +300,11 @@ def _scan_scope(report: ApexScanReport) -> str:
     return f"APP {report.app_id} PAGE {report.page_id}"
 
 
-def _scan_yaml_payload(report: ApexScanReport) -> dict[str, object]:
-    payload: dict[str, object] = {"app": report.app_id}
-    if report.page_id is not None:
-        payload["page_scanned"] = report.page_id
-    payload["status"] = report.status
-    payload["analyzed"] = report.analyzed
-    if report.reason:
-        payload["reason"] = report.reason
-    payload["findings"] = [
-        {
-            "page": finding.page_id,
-            "component_type": finding.component_type,
-            "component_name": finding.component_name,
-            "property": finding.property_name,
-            "error": " ".join(str(finding.error_message or "").split()),
-        }
-        for finding in report.findings
-    ]
-    return payload
-
-
-def _print_component_scans(
-    reports: Sequence[ApexScanReport],
-    output_format: str,
-) -> int:
+def _print_component_scans(reports: Sequence[ApexScanReport]) -> int:
     """`SCANNING APPLICATIONS:`, what the on-demand component scan found (`#751`).
+
+    Printed by `validate -scan` since `#30` retired the `dependencies` command,
+    whose scan rows these are, unchanged.
 
     A clean application still prints its row, for the reason the post-deploy
     scan prints one (`#676`): silence and a verification that never happened
@@ -269,71 +320,20 @@ def _print_component_scans(
     cell destroys the layout at 80 columns, which is the same call
     `_print_apex_scans` and `_print_deployment_errors` already make.
     """
-    if output_format == "yaml":
-        print(
-            yaml.safe_dump(
-                {"scan": [_scan_yaml_payload(report) for report in reports]},
-                sort_keys=False,
-            ).rstrip()
-        )
-    elif output_format == "md":
-        lines: list[str] = []
-        for report in reports:
-            lines.append(f"## Scan: {_scan_scope(report)} ({report.status})")
-            lines.append("")
-            lines.append(f"- {_scan_summary(report)}")
-            if report.reason:
-                lines.append(f"- {report.reason}")
-            lines.extend(f"- {finding.line()}" for finding in report.findings)
-            lines.append("")
-        print("\n".join(lines).rstrip())
-    else:
-        # The `SCANNING APPLICATIONS:` header belongs to the caller, printed
-        # before the scan runs so it announces the reads under it. Printing it
-        # here as well is how the section came to open twice on one screen.
-        for report in reports:
-            print(f"  {_scan_scope(report)} | {report.status} | {_scan_summary(report)}")
-            # The reason under the row for every outcome that is not a plain
-            # success: `FAILED`, `EMPTY` and `UNSUPPORTED` all print a row that
-            # looks quiet, and this line says which of the three it is.
-            if report.reason:
-                print(f"    {report.reason}")
-            for finding in report.findings:
-                print(f"    {finding.line()}")
-        print()
+    # The `SCANNING APPLICATIONS:` header belongs to the caller, printed before
+    # the scan runs so it announces the reads under it. Printing it here as well
+    # is how the section came to open twice on one screen.
+    for report in reports:
+        print(f"  {_scan_scope(report)} | {report.status} | {_scan_summary(report)}")
+        # The reason under the row for every outcome that is not a plain
+        # success: `FAILED`, `EMPTY` and `UNSUPPORTED` all print a row that
+        # looks quiet, and this line says which of the three it is.
+        if report.reason:
+            print(f"    {report.reason}")
+        for finding in report.findings:
+            print(f"    {finding.line()}")
+    print()
     return 1 if any(report.failed for report in reports) else 0
-
-
-def _print_dependency_age(
-    rows: list[dict[str, str]],
-    output_format: str,
-) -> int:
-    """Render per-scope last-refresh stamps (offline ``-age`` mode)."""
-    if output_format == "yaml":
-        print(yaml.safe_dump({"age": rows}, sort_keys=False).rstrip())
-        return 0
-    if output_format == "md":
-        lines = [f"## Age ({len(rows)})", ""]
-        lines.extend(
-            f"- {row['type']} {row['scope']}: {row['last_refresh']}" for row in rows
-        )
-        print("\n".join(lines))
-        return 0
-    print_adt_header(f"DEPENDENCY AGE ({len(rows)}):")
-    if rows:
-        print_adt_table(
-            [
-                {
-                    "SCOPE TYPE": row["type"].upper(),
-                    "SCOPE": row["scope"],
-                    "LAST REFRESH": row["last_refresh"],
-                }
-                for row in rows
-            ]
-        )
-    else:
-        print("  (none)")
-    return 0
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

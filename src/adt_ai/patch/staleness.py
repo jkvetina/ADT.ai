@@ -20,10 +20,10 @@ Both actions therefore refuse rather than degrade, and a missing or unreadable
 graph is the same class of failure as a stale one: "no graph" and "the wrong
 graph" both mean the ordering is unproven. There is deliberately no override,
 ``-force`` does not reach this gate, and the way past it is
-``adtai dependencies -refresh``.
+``adtai rebuild``.
 
 Staleness is measured against the mirror's own ``refreshes`` stamps, the
-schema rows ``dependencies -age`` reads, versus the
+schema rows the refresh records, versus the
 newest mtime among the exported object files that would be ordered. Read-only
 previews consume no ordering and are never gated.
 
@@ -49,7 +49,7 @@ from adt_ai.patch.layout import database_object_type, database_schema, object_la
 from adt_ai.shared.deploy_status import latest_deploy_status
 from adt_ai.shared.object_files import object_name_for_type
 
-REFRESH_COMMAND = "adtai dependencies -refresh"
+REFRESH_COMMAND = "adtai rebuild"
 
 # The label a layout without a `<schema>` placeholder reports under: the tree it
 # collects cannot be attributed to one owner.

@@ -117,7 +117,7 @@ def _invalid_dependents_provider(
 ) -> DependentsProvider:
     """Reverse edges among the still-invalid objects, read from the local mirror.
 
-    ``dependencies -refresh`` already maintains ``config/internal/dependencies.db``; this
+    ``rebuild`` already maintains ``config/internal/dependencies.db``; this
     only reads it, offline, and only for the objects that are still invalid, so
     the cost is one cheap SQLite lookup per leftover, not a graph walk.
 

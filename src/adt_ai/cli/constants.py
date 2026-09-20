@@ -41,15 +41,6 @@ from adt_ai.export_db.runner import (
     print_adt_header,
     print_adt_table,
 )
-from adt_ai.flow.files import write_all_dumps, write_dump
-from adt_ai.flow.model import FlowApp, FlowEdge, FlowPage
-from adt_ai.flow.runner import (
-    ApexFlowError,
-    ApexFlowRefreshRequest,
-    ApexFlowRefreshResult,
-    ApexFlowRefreshRunner,
-)
-from adt_ai.flow.store import ApexFlowStore
 
 # `adt_ai.patch.hashes` is NOT re-exported here (ADT #447): its readers are the
 # cli modules hash mode owns, and they import it directly.
@@ -87,7 +78,7 @@ from adt_ai.recompile.runner import (
     RecompileRequest,
     RecompileRunner,
 )
-from adt_ai.search_repo.runner import SearchRepoError, SearchRepoRequest, SearchRepoRunner
+from adt_ai.search.runner import SearchError, SearchRequest, SearchRunner
 from adt_ai.shared.config import ConfigError, ConfigLoader
 from adt_ai.shared.connections import ConnectionError as ConnectionConfigError
 from adt_ai.shared.connections import ConnectionLoader, ConnectionResult
@@ -101,23 +92,20 @@ from adt_ai.shared.queries import (
 from adt_ai.validate.runner import ValidateRequest, ValidateRunner
 
 PUBLIC_MODULES = (
-    ("flow", "map APEX page navigation links (to/from, refresh)", ()),
     ("calendar", "show your Git activity across all branches as a calendar", ()),
     ("connection", "edit the connection file (add env/schema, set password)", ()),
-    ("dependencies", "query or refresh the index, or scan an APEX app", ()),
     ("diff", "compare schemas using SQLcl DIFF", ()),
     ("discovery", "run read-only SELECT discovery queries", ()),
     ("doctor", "check local setup and run explicit updates", ()),
     ("export_apex", "export APEX applications", ()),
     ("export_data", "export table data", ()),
     ("export_db", "export database objects", ()),
-    ("live_upload", "upload static files to APEX as you save them", ()),
-    ("patch", "build and preview deployment patches", ()),
-    ("rebuild", "rebuild the git commit cache", ()),
+    ("patch", "build, deploy and upload to an environment", ()),
+    ("rebuild", "rebuild the commit, dependency and page-link caches", ()),
     ("recompile", "recompile invalid database objects", ()),
-    ("search_repo", "search cached Git commit history", ()),
+    ("search", "search commit history, object dependencies and page links", ()),
     ("ut", "run utPLSQL test suites", ()),
-    ("validate", "validate APEXlang application source", ()),
+    ("validate", "validate APEXlang application source, or scan a live application", ()),
 )
 
 PUBLIC_COMMANDS = tuple(
@@ -127,10 +115,6 @@ PUBLIC_COMMANDS = tuple(
 )
 
 REMOVED_COMPATIBILITY_FLAGS = {
-    "flow": (
-        "-dump", "--dump", "-format", "--format", "-out", "--out",
-        "-remove", "--remove", "-schema", "--schema",
-    ),
     # Renamed by ADT #292: `-commits` -> `-window`, `-full` -> `-fullapp`.
     #
     # `-full` NEEDS this entry to make the break real. argparse resolves an
@@ -224,6 +208,13 @@ APEX_EXPORT_ACTIONS = (
     "files", "files_ws",
 )
 
+#: The section the dependency refresh rows sit under, on `patch` and on
+#: `export_db` alike. Jan's own wording, 2026-08-19 (ADT #413). It lived in
+#: `cli/patch_dependency_refresh.py` until ADT #895: `export_db` ships in every
+#: release and read it from there, so a release without `patch` failed every
+#: command on the import of a file it does not bundle.
+REFRESH_HEADER = "UPDATING DEPENDENCIES:"
+
 
 class AdtArgumentError(Exception):
     pass
@@ -264,11 +255,6 @@ __all__ = [
     "ApexDiscovery",
     "ApexExportRequest",
     "ApexExportRunner",
-    "ApexFlowError",
-    "ApexFlowRefreshRequest",
-    "ApexFlowRefreshResult",
-    "ApexFlowRefreshRunner",
-    "ApexFlowStore",
     "ApexOwnerCount",
     "ApexOwnerResolutionError",
     "ApexWorkspace",
@@ -304,9 +290,6 @@ __all__ = [
     "ExportDataRunner",
     "ExportDbRequest",
     "ExportDbRunner",
-    "FlowApp",
-    "FlowEdge",
-    "FlowPage",
     "GatewayFactory",
     "MViewAction",
     "Mapping",
@@ -322,6 +305,7 @@ __all__ = [
     "PatchWorkspace",
     "Path",
     "QueryGateway",
+    "REFRESH_HEADER",
     "REMOVED_COMPATIBILITY_FLAGS",
     "REVEAL_DEFAULT_LIMIT",
     "RebuildRequest",
@@ -329,9 +313,9 @@ __all__ = [
     "RecompileReporter",
     "RecompileRequest",
     "RecompileRunner",
-    "SearchRepoError",
-    "SearchRepoRequest",
-    "SearchRepoRunner",
+    "SearchError",
+    "SearchRequest",
+    "SearchRunner",
     "Sequence",
     "SynonymInfo",
     "TextIO",
@@ -362,8 +346,6 @@ __all__ = [
     "switch_to_branch",
     "sys",
     "timedelta",
-    "write_all_dumps",
-    "write_dump",
     "write_file_results",
     "yaml",
 ]

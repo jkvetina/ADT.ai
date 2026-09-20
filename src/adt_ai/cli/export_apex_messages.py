@@ -11,20 +11,23 @@ APP_NOT_FOUND_HEADER = "WARNING - APP NOT FOUND:"
 
 
 def print_apex_owner_not_configured(
-    owners: Sequence[tuple[str, str, Sequence[str]]], *, reveal: bool = False
+    owners: Sequence[tuple[str, str, Sequence[str]]],
 ) -> None:
     """One warning section for every app whose owner the connection file lacks.
 
     Each entry is `(app id, owner, configured schemas that reached it)`.
 
+    **`-reveal` is the only caller**, because it is the only screen that reports
+    the gap instead of working around it: it exports nothing, so naming the
+    unconfigured owner and every schema that reaches it IS its answer. The
+    export and `rebuild -app` read the app through the schema that reached it
+    and say nothing, per Jan, 2026-09-20: *"You can access the app from other
+    schemas, so dont bother user with this"* (`#909`).
+
     Jan, 2026-09-15, on the two bare lines this replaced: *"I want a warning
     header, then the note and make it shorter. skip this 'which is not
-    configured for environment DEV'"* (`#858`). On a configured schema that can
-    see the app anyway: *"The warning should get extra line and print schema
-    able to reach it."* `-reveal` lists every such schema, sorted: *"I would
-    like to see other schemas listed (and sorted)"*. The export no longer skips
-    the app, it exports it through the schema that reached it: *"I am providing
-    a schema which can reach the app, but you are not exporting the app"*
+    configured for environment DEV'"* (`#858`). On listing the schemas that
+    reach it: *"I would like to see other schemas listed (and sorted)"*
     (`#863`).
     """
     if not owners:
@@ -32,9 +35,6 @@ def print_apex_owner_not_configured(
     print_adt_header(SCHEMA_NOT_CONFIGURED_HEADER)
     for app_id, owner, reached_through in owners:
         through = ", ".join(sorted(reached_through))
-        if not reveal:
-            print(f"  APP {app_id} is owned by {owner}, exported through {through}")
-            continue
         print(f"  APP {app_id} is owned by {owner}, add it to your connections to export it")
         print(f"  APP {app_id} is reachable through {through}")
     print()

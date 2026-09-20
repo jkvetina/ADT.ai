@@ -4,7 +4,9 @@
 
 `validate` runs the APEXlang compiler over an exported `apexlang/` folder and reports what it finds, with a non-zero exit code when anything is wrong. It closes the loop that [`export_apex -apexlang`](export_apex.md) opens: export the `.apx` source, edit it by hand or with an agent, validate, fix, and import only on a clean run.
 
-**The command never connects.** The compiler ships inside SQLcl and answers on a bare `sql -S /nolog` session, so `validate` takes no `-env`, no `-schema` and no credentials, and it works in CI and from any checkout. The only requirement is a SQLcl new enough to carry the compiler, 26.1 or later.
+**Checking the files never connects.** The compiler ships inside SQLcl and answers on a bare `sql -S /nolog` session, so it needs no environment, no schema and no credentials, and it works in CI and from any checkout. The only requirement is a SQLcl new enough to carry the compiler, 26.1 or later.
+
+`-scan` is the one mode that connects. It asks a running application which of its components no longer compile, and writes nothing ([Scanning a live application](#scanning-a-live-application)).
 
 <br>
 
@@ -34,6 +36,14 @@ Use it as a gate straight after an export:
 
 ```bash
 adtai export_apex -app 100 -apexlang -files && adtai validate -app 100
+```
+
+Ask a running application which of its components no longer compile, whole or page by page:
+
+```bash
+adtai validate -scan -app 100
+adtai validate -scan -env DEV -app 100 200
+adtai validate -scan -app 100 -page 12 40-60
 ```
 
 <br>
@@ -152,6 +162,58 @@ A `Nothing to validate:` refusal names that shape as your config spells it, `<sc
 
 <br>
 
+## Scanning a live application
+
+`-scan` asks the database what an application's components still compile against, and prints what they do not. It is the same `APEX_APP_OBJECT_DEPENDENCY.SCAN` a deploy runs afterwards, described on [patch_verify.md](patch_verify.md), reachable on its own so the question does not need a patch to be asked:
+
+```text
+APEX DEPLOYMENT TOOL - VALIDATE
+-------------------------------
+
+CONNECTING TO SCHEMA SANDBOX, DEV:
+----------------------------------
+              APEX | 26.1.0
+          DATABASE | 23.26.3.0.0 | FREEPDB1
+
+
+SCANNING APPLICATIONS:
+----------------------
+  APP 100 | SUCCESS | 1 fragments, no errors
+
+
+TIMER: 3s
+```
+
+**A clean application still prints its row.** Silence and a scan that never ran read identically on a screen, and telling those two apart is the whole point of the mode. The verdicts are `patch -deploy`'s own, and the three that would otherwise look quiet print their reason under the row:
+
+| Verdict | Meaning | Exit |
+| ------- | ------- | ---- |
+| `SUCCESS` | Every component fragment compiled. | `0` |
+| `UNSUPPORTED` | The release is older than APEX 24.2, which has no scan. | `0` |
+| `ERROR` | Something does not compile: the row counts the errors, one line each under it. | `1` |
+| `FAILED` | The scan did not complete. | `1` |
+| `EMPTY` | It analyzed nothing although the application holds pages. | `1` |
+
+**`-page` narrows the work, not just the answer.** The scan takes a page, so APEX compiles that page's fragments and nothing else. Measured against a 42-page application on APEX 26.1, that is 1.8s for a page against 4.0s for all of it, and the gap widens with the page count. Each page is its own scan, row and verdict:
+
+```text
+SCANNING APPLICATIONS:
+----------------------
+  APP 100 PAGE 12 | ERROR | 1 error(s) in 14 fragments
+    PAGE 12 | Region | EMPLOYEES | SQL Query | ORA-00942: table or view does not exist
+  APP 100 PAGE 40 | SUCCESS | 9 fragments, no errors
+```
+
+**Several pages are several scans.** APEX has no page-scoped cache clear, so scanning page 40 discards what page 12's scan recorded, and each page is read back before the next one runs. A page the application does not hold is `EMPTY` and fails, as `application 100 holds no page 7777, so the scan verified nothing`.
+
+**It writes nothing.** No mirror row, no log file, no deploy receipt: the console is the whole report. The helper procedures the scan generates on the schema are dropped again before the run ends, whether or not it succeeded.
+
+The run connects through the application's owner as `config/internal/apex.db` records it, or the environment's default schema when that store cannot say. `-app` takes ranges here, `MIN-MAX` or `MIN+`, resolved against the applications the configured schemas can see.
+
+`-scan` needs `-app`, and `-page` and `-env` need `-scan`, since a check of exported files has no page scope and no connection. `-input` names exported files, so it is refused beside `-scan`. Each of those refusals exits `2`.
+
+<br>
+
 ## Notes
 
 - The compiler validates against metadata from the APEX version that exported the application, so a result is only as meaningful as the SQLcl build running it. An old SQLcl against a 26.1 export is not a trustworthy pass.
@@ -165,6 +227,8 @@ A `Nothing to validate:` refusal names that shape as your config spells it, `<sc
 | Argument | Repeatable | Default | Description |
 | -------- | ---------- | ------- | ----------- |
 | `-input`, `--input` | Yes | every exported `apexlang/` folder | APEXlang folder or folders, or zips, to validate. Comma-separated, space-separated, or the flag repeated. |
-| `-app`, `--app` | Yes | none | Application id or ids whose exported `apexlang/` folder to validate, resolved offline through `config/internal/apex.db`. |
+| `-app`, `--app` | Yes | none | Application id or ids whose exported `apexlang/` folder to validate, resolved offline through `config/internal/apex.db`. Under `-scan`, the live applications to scan, where a range `MIN-MAX` or `MIN+` resolves against the discovered applications. |
+| `-scan`, `--scan` | No | off | Connect and compile every component of the `-app` applications, reporting each fragment that does not compile. Writes nothing. Requires `-app`; refused beside `-input`. |
+| `-page`, `--page` | Yes | whole application | Scan only: scan these page ids instead of the whole application, repeated, space-separated, or as a `MIN-MAX` / `MIN+` range. One scan and one row per page. |
 
-Shared options (-root, -config-dir, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).
+Shared options (-root, -env, -config-dir, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

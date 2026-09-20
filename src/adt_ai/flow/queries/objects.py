@@ -12,6 +12,15 @@ FROM   apex_applications a
 WHERE  a.application_id = :app_id
 """.strip()
 
+# How long ago the application last changed, measured on the database's own
+# clock so no offset between it and this machine enters the answer. `search`
+# compares it with the age of the application's last refresh (ADT #900).
+APP_CHANGED_QUERY = """
+SELECT ROUND((SYSDATE - a.last_updated_on) * 86400) AS seconds_ago
+FROM   apex_applications a
+WHERE  a.application_id = :app_id
+""".strip()
+
 # Page label cache (readable output / diagram node text).
 APP_PAGES_QUERY = """
 SELECT p.page_id     AS page_id,

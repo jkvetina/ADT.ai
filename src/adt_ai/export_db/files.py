@@ -295,23 +295,45 @@ class ObjectFileResolver:
     def flat_object_names(self, schemas: list[str]) -> dict[str, list[str]]:
         """Object names of files sitting directly in each type folder (not grouped)."""
         names_by_type: dict[str, list[str]] = {}
-        for object_type, layout in self.object_types.items():
-            if object_type in {"DATA", "GRANT"}:
-                continue
-            for folder in self._search_roots_for(object_type, layout, schemas):
-                if not folder.is_dir():
-                    continue
-                for file_path in sorted(folder.glob(f"*{layout.extension}")):
-                    if not file_path.is_file():
-                        continue
-                    if file_path.name.endswith(f".fix{layout.extension}"):
-                        continue
-                    if not self._is_best_layout_for_file(object_type, layout, file_path):
-                        continue
-                    names_by_type.setdefault(object_type, []).append(
-                        object_name_from_file(file_path, layout.extension)
-                    )
+        for object_type, file_path in self.object_files(schemas, grouped=False):
+            names_by_type.setdefault(object_type, []).append(
+                object_name_from_file(file_path, self.object_types[object_type].extension)
+            )
         return names_by_type
+
+    def object_files(
+        self, schemas: list[str], *, grouped: bool = True
+    ) -> list[tuple[str, Path]]:
+        """Every exported object file of ``schemas``, as ``(object_type, path)``.
+
+        Each type folder, and with ``grouped`` the `-groups` sub-folders one
+        level under it. `.fix` sidecars, DATA and GRANT are skipped, and a
+        shared folder answers by the longest extension. `search TERM` reads the
+        DB layer through this (ADT #904).
+        """
+        found: list[tuple[str, Path]] = []
+        type_roots = self.iter_type_roots(schemas)
+        type_folders = {folder for _object_type, folder, _extension in type_roots}
+        for object_type, folder, extension in type_roots:
+            if not folder.is_dir():
+                continue
+            layout = self.object_types[object_type]
+            candidates = sorted(folder.glob(f"*{extension}"))
+            if grouped:
+                candidates += sorted(
+                    file_path
+                    for group in sorted(folder.iterdir())
+                    if group.is_dir() and group not in type_folders
+                    for file_path in group.glob(f"*{extension}")
+                )
+            found.extend(
+                (object_type, file_path)
+                for file_path in candidates
+                if file_path.is_file()
+                and not file_path.name.endswith(f".fix{extension}")
+                and self._is_best_layout_for_file(object_type, layout, file_path)
+            )
+        return found
 
     def _folder_for(self, database_object: DatabaseObject, layout: ObjectTypeLayout) -> Path:
         rendered = render_path_template(

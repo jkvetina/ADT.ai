@@ -28,6 +28,7 @@ from adt_ai.cli.patch_build import (
     missing_patch_name,
     resolve_patch_name_and_folder,
     select_content_and_hash,
+    upload_flag_refusal,
 )
 from adt_ai.cli.patch_dependency_refresh import ensure_fresh_dependency_graph
 from adt_ai.cli.patch_hash_mode import run_baseline
@@ -161,7 +162,14 @@ def _run_patch_command(
         raise PatchError(str(error)) from error
     # Same reasoning, same place: `-install -branch` and a stray `-schema` read
     # nothing but `args`, so they refuse before the config load (ADT #804).
-    misplaced = install_flag_refusal(args) or files_ws_flag_refusal(args)
+    # `-files_ws` is a second workspace answer in upload mode, where it names
+    # where the files GO rather than widening a build, so the build-only refusal
+    # skips that mode (ADT #903).
+    misplaced = (
+        upload_flag_refusal(args)
+        or install_flag_refusal(args)
+        or (None if args.upload else files_ws_flag_refusal(args))
+    )
     if misplaced is not None:
         return _refuse(misplaced)
     root = Path(args.root).expanduser().resolve()

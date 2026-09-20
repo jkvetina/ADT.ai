@@ -63,7 +63,12 @@ class TimedProgressBar:
         with ThreadPool(processes=1) as pool:
             result = pool.apply_async(operation)
             while not result.ready():
-                progress = self._print_progress(header, progress, target_seconds, started_at)
+                progress = self._draw(header, progress, target_seconds, started_at)
+                # Waited on the call rather than slept: a call that finishes
+                # mid-interval closes its row at once, so a scan that took a
+                # tenth of a second is not recorded, and next shown, as one
+                # that took a whole second (ADT #904).
+                result.wait(self.interval)
             try:
                 result.get()
             except BaseException:
@@ -75,17 +80,6 @@ class TimedProgressBar:
         elapsed = time.monotonic() - started_at
         self._print_done(header, elapsed)
         return elapsed
-
-    def _print_progress(
-        self,
-        header: str,
-        progress: float,
-        target_seconds: float,
-        started_at: float,
-    ) -> float:
-        next_progress = self._draw(header, progress, target_seconds, started_at)
-        time.sleep(self.interval)
-        return next_progress
 
     def _draw(
         self,

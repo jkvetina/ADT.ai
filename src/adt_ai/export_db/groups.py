@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from adt_ai.shared.file_list import print_file_rows
 
 # `owns_file` and `object_name_from_file` were written here for ADT #412 and
-# moved to `shared/` for ADT #471, where `patch` and `search_repo` can reach them
+# moved to `shared/` for ADT #471, where `patch` and `search` can reach them
 # too. Re-exported so this module's own callers are untouched.
 from adt_ai.shared.object_files import extensions_by_folder as extensions_by_folder
 from adt_ai.shared.object_files import object_name_from_file as object_name_from_file

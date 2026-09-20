@@ -146,9 +146,9 @@ It sets the workspace security context and the session PL/Scope flag on the conn
 
 Measured on APEX 26.1, a bare scan with no cleanup behind it left no `DEPSCAN` object on the schema at all, so on that release there is nothing to strand in the first place. The boundary is there for the release or the application that does leave one, and it costs a `finally`.
 
-The same boundary is what `dependencies -refresh` runs its APEX axis through, so the two callers cannot drift on when the helpers get cleaned up.
+The same boundary is what `rebuild -app` runs its dependency scan through, so the two callers cannot drift on when the helpers get cleaned up.
 
-It never recompiles the schema it is verifying. `dependencies -refresh` does that through `ensure_plscope`, which is right for an index refresh the user asked for and wrong for a check running at the end of a deploy.
+It never recompiles the schema it is verifying. A `rebuild` schema refresh does that through `ensure_plscope`, which is right for an index refresh the user asked for and wrong for a check running at the end of a deploy.
 
 <br>
 

@@ -5,8 +5,13 @@ cap, the same budget that split `tests/diff/test_runner.py`. `diff` was the
 newest and largest of the four history-shaped commands living there and the only
 one with a module of its own behind it, so it is the one that leaves.
 
-What stays in `commands_history.py`: `rebuild`, `search_repo` and `calendar`,
+What stays in `commands_history.py`: `rebuild`, `search` and `calendar`,
 which share the commit store this command never touches.
+
+The three modes that replace the object comparison, `-rest`, `-apex` and
+`-data`, live in `commands_diff_modes.py` since ADT #893 took this module to
+the cap again. What is left here is the command: its refusals (`_refusal`), its
+two connections, and the SQLcl object comparison.
 
 **A command module belongs in `cli/__init__._EXPORT_MODULES`, inside the `[2:]`
 slice `_PATCH_MODULES` is cut from.** That slice is what makes
@@ -18,10 +23,14 @@ believes it patched it, and the symptom is a unit test that opens a database.
 from __future__ import annotations
 
 import argparse
-import tempfile
-from collections.abc import Callable, Mapping, Sequence
-from pathlib import Path
 
+from adt_ai.cli.commands_diff_modes import (
+    ApexSelection,
+    _comparison_row,
+    _run_apex_diff,
+    _run_data_diff,
+    _run_rest_diff,
+)
 from adt_ai.cli.constants import (
     DiffRequest,
     DiffRunner,
@@ -36,19 +45,27 @@ from adt_ai.cli.context import (
     _print_connection_block,
     _print_startup_debug,
 )
-from adt_ai.cli.context_errors import _project_relative
-from adt_ai.cli.diff_data_reporter import report_data_diff, write_data_log
-from adt_ai.cli.diff_reporters import COMPARING_HEADER, IN_SYNC_REST, report_summary
+from adt_ai.cli.context_apex import _parse_apex_app_selection, _parse_apex_page_selection
+from adt_ai.cli.diff_pull import Pull, PullScreen
+from adt_ai.cli.diff_reporters import COMPARING_HEADER, report_summary
 from adt_ai.cli.gateways import build_gateway, debug_wrapped
-from adt_ai.diff.data import TABLE_DATA_TYPE, DataDiffRunner, DataOptions, DataSide
-from adt_ai.diff.rest import REST_MODULE_TYPE, RestDiffRunner
+from adt_ai.diff.data import DataOptions, DataSide
+from adt_ai.diff.pull import PullSides, pull_objects
+from adt_ai.diff.pull_git import checkout_refusal
 from adt_ai.diff.runner import DiffResult, data_log_path, resolve_out
-from adt_ai.diff.summary import DiffSummary, summarize
+from adt_ai.diff.summary import summarize
 from adt_ai.diff.timers import pair_key, previous_seconds, record_seconds, timers_path
 from adt_ai.export_data.runner import _existing_data_names
 from adt_ai.shared.connections import Connection
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.timed_bar import FALLBACK_TARGET_SECONDS, TimedProgressBar
+
+#: The flags that switch what `diff` compares, and what each one compares.
+_MODES = {
+    "rest" : ("-rest", "REST definitions"),
+    "data" : ("-data", "table rows"),
+    "apex" : ("-apex", "APEX applications and files"),
+}
 
 
 def _run_diff(args: argparse.Namespace, *, gateway_factory: GatewayFactory | None = None) -> int:
@@ -65,48 +82,27 @@ def _run_diff(args: argparse.Namespace, *, gateway_factory: GatewayFactory | Non
         )
         return exit_code_for("ARGUMENT INVALID")
 
-    # `-rest` compares REST definitions and writes no artifact (`#878`), so the two
-    # flags that only the object comparison reads would be accepted and then
-    # ignored. Refused before anything connects, the way `-target` is.
-    rest = getattr(args, "rest", False)
-    data = getattr(args, "data", False)
-    if rest and data:
-        print_adt_error(
-            "ARGUMENT INVALID",
-            "-rest and -data each replace the object comparison; run them one at a time.",
-        )
+    refusal = _refusal(args)
+    if refusal is not None:
+        print_adt_error("ARGUMENT INVALID", refusal)
         return exit_code_for("ARGUMENT INVALID")
-    # `-data -out` names the file the untrimmed rows go to (`#886`), so under
-    # `-data` only `-type` is left for the object comparison alone.
-    if rest or data:
-        mode, compares = ("-rest", "REST definitions") if rest else ("-data", "table rows")
-        refused = (("-type", args.type), *((("-out", args.out),) if rest else ()))
-        for flag, value in refused:
-            if value:
-                print_adt_error(
-                    "ARGUMENT INVALID",
-                    f"{flag} applies to the object comparison, and {mode} compares "
-                    f"{compares} only.",
-                )
-                return exit_code_for("ARGUMENT INVALID")
-    # `-ignore` and `-limit` shape the row comparison only (`#883`).
+    rest, data, apex = (bool(getattr(args, mode, False)) for mode in _MODES)
     ignore = tuple(_flatten_arg_groups(getattr(args, "ignore", None)) or ())
-    limit = getattr(args, "limit", None)
-    if not data:
-        for flag, value in (("-ignore", ignore), ("-limit", limit)):
-            if value or value == 0:
-                print_adt_error(
-                    "ARGUMENT INVALID",
-                    f"{flag} applies to the table data comparison; add -data.",
-                )
-                return exit_code_for("ARGUMENT INVALID")
-    if limit is not None and limit < 0:
-        print_adt_error("ARGUMENT INVALID", "-limit counts rows, so it cannot be negative.")
-        return exit_code_for("ARGUMENT INVALID")
+    # `-limit 0` reads everything, like leaving it out.
+    limit = getattr(args, "limit", None) or None
 
     startup = _load_startup_context(args)
     root = startup.root
     connections = startup.connections
+
+    # `-restore` writes into the checkout, so the checkout is judged before
+    # anything connects: a run that compared for a minute and then refused to
+    # write would have spent the minute on nothing (`#893`). Uncommitted work
+    # is not refused; the screen saves it as a WIP commit before writing (`#897`).
+    pull_refusal = checkout_refusal(root, args.branch) if args.restore else None
+    if pull_refusal is not None:
+        print_adt_error("ARGUMENT INVALID", pull_refusal)
+        return exit_code_for("ARGUMENT INVALID")
 
     # The comparison a person actually runs is one schema across two
     # environments, so the target side falls back to the source schema rather
@@ -114,8 +110,11 @@ def _run_diff(args: argparse.Namespace, *, gateway_factory: GatewayFactory | Non
     # `-target-schema` is what says the two sides are spelled differently.
     source_schema = getattr(args, "schema", None)
     target_schema = getattr(args, "target_schema", None) or source_schema
-    source_conn   = connections.resolve(environment=args.source, schema=source_schema)
-    target_conn   = connections.resolve(environment=args.target, schema=target_schema)
+    # `-apex` compares what an APEX owner owns, so a side named by environment
+    # alone is its `schema_apex`, the schema `export_apex` exports from.
+    kind          = "apex" if apex else "db"
+    source_conn   = connections.resolve(environment=args.source, schema=source_schema, kind=kind)
+    target_conn   = connections.resolve(environment=args.target, schema=target_schema, kind=kind)
     # Under `config/`, beside every other folder ADT.ai generates into a project
     # (`commits/`, `discovery/`, `internal/`, `temp/`). It used to default to
     # `<root>/diff_output`, a folder invented at the project root, which is the
@@ -161,6 +160,16 @@ def _run_diff(args: argparse.Namespace, *, gateway_factory: GatewayFactory | Non
     # the same strings or a run would zip one set and print another.
     object_types = tuple(_flatten_arg_groups(args.type) or ())
     object_names = tuple(_flatten_arg_groups(args.name) or ())
+    # Where the target's versions are written, and what `RESTORED FILES:` reads
+    # back (`#893`); `None` without `-restore`.
+    pull = (
+        Pull(
+            PullScreen(root, args.branch, (source_conn, target_conn), limit, args.debug),
+            PullSides(root, startup.config, source_conn, target_conn, gateways[1]),
+        )
+        if args.restore
+        else None
+    )
 
     if data:
         return _run_data_diff(
@@ -169,10 +178,24 @@ def _run_diff(args: argparse.Namespace, *, gateway_factory: GatewayFactory | Non
             startup.config,
             root,
             names   = data_names,
-            options = DataOptions(ignore=ignore, limit=limit or None),
+            options = DataOptions(ignore=ignore, limit=limit),
             verbose = args.verbose,
             debug   = args.debug,
             log     = data_log_path(args.out, source_conn, target_conn) if args.out else None,
+            pull    = pull,
+        )
+
+    if apex:
+        return _run_apex_diff(
+            gateways,
+            (source_conn, target_conn),
+            root,
+            selection = _apex_selection(args),
+            names     = object_names,
+            verbose   = args.verbose,
+            debug     = args.debug,
+            limit     = limit,
+            pull      = pull,
         )
 
     if rest:
@@ -184,6 +207,8 @@ def _run_diff(args: argparse.Namespace, *, gateway_factory: GatewayFactory | Non
             names   = object_names,
             verbose = args.verbose,
             debug   = args.debug,
+            limit   = limit,
+            pull    = pull,
         )
 
     request = DiffRequest(
@@ -232,145 +257,98 @@ def _run_diff(args: argparse.Namespace, *, gateway_factory: GatewayFactory | Non
             # the name of the object it hangs off, so a row whose own name does
             # not match the pattern can still come back.
             summary = summary.select(types=object_types, names=object_names)
-        report_summary(summary, verbose=args.verbose)
+        tail = None
+        if pull is not None and summary is not None:
+            shown = summary
+            tail = pull.tail("OBJECTS", lambda sides: pull_objects(sides, shown))
+        report_summary(summary, verbose=args.verbose, limit=limit, tail=tail)
     else:
         print_adt_header("DIFF FAILED:")
         if result.output:
             print(result.output)
 
-    return 0 if result.success else 1
+    return 0 if result.success and not (pull and pull.failed) else 1
 
 
-def _run_rest_diff(
-    gateways: Sequence[QueryGateway],
-    connections: tuple[Connection, Connection],
-    config: Mapping[str, object],
-    root: Path,
-    *,
-    names: tuple[str, ...],
-    verbose: bool,
-    debug: bool,
-) -> int:
-    """`diff -rest`: both schemas' REST modules, privileges and roles, compared (ADT #878, #880).
+def _refusal(args: argparse.Namespace) -> str | None:
+    """Why these flags cannot run together, checked before anything connects.
 
-    The same screen as the object comparison, top to bottom: `COMPARING
-    SCHEMAS:` over one crawling row, then the counts, and `-verbose` for the
-    listing. `REST MODULE`, `REST PRIVILEGE` and `REST ROLE` are the object
-    types it can print. The two exports
-    run from a throwaway folder that is gone when the run ends, because a
-    comparison writes nothing a user asked to keep.
+    `None` when they can. Every refusal is one the run would otherwise accept
+    and then ignore, which reads as a comparison of something it never looked at.
     """
-    def compare() -> DiffSummary:
-        with tempfile.TemporaryDirectory(prefix="adt_diff_rest_") as workdir:
-            return RestDiffRunner().run(gateways[0], gateways[1], config, Path(workdir))
+    modes = [flag for dest, (flag, _) in _MODES.items() if getattr(args, dest, False)]
+    if len(modes) > 1:
+        return f"{' and '.join(modes)} each replace the object comparison; run them one at a time."
+    apex = bool(getattr(args, "apex", False))
+    # `-app` names applications and `-page` their pages, and only `-apex`
+    # compares either (`#778`, `#893`). Both parse the way `export_apex` parses
+    # them, ids and `MIN-MAX` / `MIN+` ranges alike.
+    for flag, dest, parse in (
+        ("-app", "app", _parse_apex_app_selection),
+        ("-page", "page", _parse_apex_page_selection),
+    ):
+        tokens = _flatten_arg_groups(getattr(args, dest, None))
+        if tokens and not apex:
+            return f"{flag} applies to the APEX comparison; add -apex."
+        try:
+            parse(tokens)
+        except ValueError as error:
+            return str(error)
+    refusal = _pairing_refusal(args, apex)
+    if refusal is not None:
+        return refusal
+    # `-data -out` names the file the untrimmed rows go to (`#886`), so under
+    # `-data` only `-type` is left for the object comparison alone.
+    if modes:
+        mode, compares = next(_MODES[dest] for dest in _MODES if getattr(args, dest, False))
+        refused = (("-type", args.type), *((("-out", args.out),) if mode != "-data" else ()))
+        for flag, value in refused:
+            if value:
+                return (
+                    f"{flag} applies to the object comparison, and {mode} compares "
+                    f"{compares} only."
+                )
+    # `-ignore` shapes the row comparison only (`#883`). `-limit` caps every
+    # mode's listings since `#893`, so only its sign is checked.
+    if _flatten_arg_groups(getattr(args, "ignore", None)) and not getattr(args, "data", False):
+        return "-ignore applies to the table data comparison; add -data."
+    limit = getattr(args, "limit", None)
+    if limit is not None and limit < 0:
+        return "-limit counts rows, so it cannot be negative."
+    return None
 
-    # Keyed apart from the object comparison of the same pair: a REST export
-    # takes seconds where the object one takes a quarter minute, so one shared
-    # figure would count each down from the other's clock.
-    source, target = connections
-    summary = _compare_under_a_bar(
-        connections,
-        root,
-        pair_key(source.schema, target.schema, types=(REST_MODULE_TYPE,)),
-        compare,
-        debug = debug,
-    )
-    if summary is None:
-        return 1
-    report_summary(summary.select(names=names), verbose=verbose, in_sync_note=IN_SYNC_REST)
-    return 0
 
+def _pairing_refusal(args: argparse.Namespace, apex: bool) -> str | None:
+    """`-target-app` pairs one application, and `-branch` is where `-restore` writes (`#893`).
 
-def _run_data_diff(
-    sides: tuple[DataSide, DataSide],
-    connections: tuple[Connection, Connection],
-    config: Mapping[str, object],
-    root: Path,
-    *,
-    names: tuple[str, ...],
-    options: DataOptions,
-    verbose: bool,
-    debug: bool,
-    log: Path | None = None,
-) -> int:
-    """`diff -data`: the rows of both schemas' exported tables, compared (ADT #877, #883).
-
-    The `-rest` screen up to the counts, which are rows per table rather than
-    objects per type (`cli/diff_data_reporter`). Its countdown is keyed by the
-    tables asked for and the `-limit`, since either one changes the size of the
-    job. `log` is where `-out` asked for the untrimmed rows (`#886`).
+    Jan: *"-target-app to override the app, this will allow us to compare our
+    app to a working copy"*. A pairing is one application with one other, so a
+    range or a second id on `-app` has nothing to pair with.
     """
-    source, target = connections
-    variant = (TABLE_DATA_TYPE, *((f"LIMIT {options.limit}",) if options.limit else ()))
-    result = _compare_under_a_bar(
-        connections,
-        root,
-        pair_key(source.schema, target.schema, types=variant, names=names),
-        lambda: DataDiffRunner().run(sides[0], sides[1], config, names=names, options=options),
-        debug = debug,
+    if getattr(args, "target_app", None) is not None:
+        if not apex:
+            return "-target-app pairs an application on the APEX comparison; add -apex."
+        selection = _parse_apex_app_selection(_flatten_arg_groups(getattr(args, "app", None)))
+        ids = selection.explicit_ids if selection is not None and not selection.ranges else ()
+        if len(ids) != 1 or not ids[0].isdigit():
+            return "-target-app pairs one application: name exactly one id with -app."
+    if getattr(args, "branch", None) is not None and not getattr(args, "restore", False):
+        return "-branch names the branch -restore writes to; add -restore."
+    return None
+
+
+def _apex_selection(args: argparse.Namespace) -> ApexSelection:
+    """`-app`, `-page` and `-target-app` as `diff -apex` reads them, already known to parse."""
+    app_tokens = tuple(_flatten_arg_groups(getattr(args, "app", None)) or ())
+    page_tokens = tuple(_flatten_arg_groups(getattr(args, "page", None)) or ())
+    return ApexSelection(
+        app_tokens  = app_tokens,
+        apps        = _parse_apex_app_selection(list(app_tokens)),
+        page_tokens = page_tokens,
+        pages       = _parse_apex_page_selection(list(page_tokens)),
+        target_app  = getattr(args, "target_app", None),
     )
-    if result is None:
-        return 1
-    if log is not None:
-        write_data_log(result, log, _comparison_row(source, target))
-    report_data_diff(
-        result,
-        verbose = verbose,
-        log     = _project_relative(log, root) if log is not None else None,
-    )
-    return 0
 
-
-def _compare_under_a_bar[T](
-    connections: tuple[Connection, Connection],
-    root: Path,
-    pair: str,
-    compare: Callable[[], T],
-    *,
-    debug: bool,
-) -> T | None:
-    """`COMPARING SCHEMAS:` over one crawling row, for the modes that replace the objects.
-
-    `None` means the comparison failed and `DIFF FAILED:` is already on screen.
-    `-debug` compares without the bar and lets a failure raise, the posture
-    the object comparison takes.
-    """
-    print_adt_header(COMPARING_HEADER)
-    print()
-    carried: list[T] = []
-    try:
-        if debug:
-            carried.append(compare())
-        else:
-            path = timers_path(root)
-            target_seconds = previous_seconds(path, pair) or FALLBACK_TARGET_SECONDS
-            elapsed = TimedProgressBar().run(
-                _comparison_row(*connections), target_seconds, lambda: carried.append(compare())
-            )
-            record_seconds(path, pair, elapsed)
-    except RuntimeError as error:
-        if debug:
-            raise
-        print_adt_header("DIFF FAILED:")
-        print(str(error))
-        return None
-    return carried[0]
-
-
-def _comparison_row(source: Connection, target: Connection) -> str:
-    """`DEV.GSN -> TEST.GSN`: the direction, named once, for the whole screen.
-
-    It read `GSN -> GSN` until `#790`, which is the same word twice and the usual
-    comparison, one schema across two environments. The listings below carry
-    `MISSING` / `CHANGED` / `EXTRA` and no `ON <env>` suffix on any row, because
-    the target is the same for every one of them (Jan: *"thats redundant and
-    increasing column width for no valid reason"*). This row is where the reader
-    learns which side those words are about, so it has to name both sides.
-    """
-    return (
-        f"{source.environment}.{source.schema} -> "
-        f"{target.environment}.{target.schema}"
-    )
 
 # What a comparison is assumed to cost before it has run. SQLcl DIFF reports no
 # progress of its own, so the bar crawls against this and holds at 99 until the

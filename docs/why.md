@@ -39,7 +39,7 @@ adtai export_apex -app 100 -apexlang -files
 
 - [`recompile`](recompile.md) recompiles what a change broke in dependency-safe passes, then separates the root causes from the knock-ons: which object is missing, which needs a grant, which cannot parse, and how many invalid objects clear once that one compiles. You start at the one object that matters.
 - [`ut`](ut.md) runs the schema's utPLSQL suites, reports coverage per package and per module, and turns the result into an exit code. A failed test, a run that executed nothing, or a package under the `-gate` threshold all exit non-zero, so CI can stop on it without anyone reading the report.
-- [`validate`](validate.md) compiles exported APEXlang source with no database, no credentials and no environment, so an edit made outside the builder is checked before an import can fail halfway.
+- [`validate`](validate.md) compiles exported APEXlang source with no database, no credentials and no environment, so an edit made outside the builder is checked before an import can fail halfway. `-scan` asks a running application instead, and names every component that no longer compiles.
 
 ```bash
 adtai recompile -env DEV -schema APP
@@ -74,42 +74,42 @@ The second line is refused, with the reason printed where the table would be.
 
 <br>
 
-### dependencies: what breaks before you change it
+### search: what breaks before you change it
 
 `USER_DEPENDENCIES` answers in one direction and its raw dump is mostly noise: on a real schema more than half the edges point at Oracle and APEX built-ins, and the catalog stops being readable past a few hundred objects.
 
-[`dependencies`](dependencies.md) mirrors the dictionary into a local SQLite file once, then answers offline, in both directions, transitively, across every schema you refreshed. When the APEX dictionary is mirrored too, the pages and components that use an object are listed beside its database callers, which is where the surprising callers usually are.
+[`rebuild`](rebuild.md) mirrors the dictionary into a local SQLite file, and [`search`](search.md) answers from it offline, in both directions, transitively, across every schema you refreshed. When an application was read with `-app` too, the pages and components that use an object are listed beside its database callers, which is where the surprising callers usually are.
 
 ```bash
-adtai dependencies -refresh -env DEV -schema APP
-adtai dependencies -to "TABLE.CORE_LOGS"
-adtai dependencies -impact "TABLE.CORE_LOGS"
-adtai dependencies -tree "ORDER_ITEMS_ORDER_FK"
+adtai rebuild -env DEV -schema APP
+adtai search -to "TABLE.CORE_LOGS"
+adtai search -impact "TABLE.CORE_LOGS"
+adtai search -constraint "ORDER_ITEMS_ORDER_FK"
 ```
 
-Only the refresh touches Oracle. Every query after it answers in milliseconds, which is also what makes it cheap for an agent: a fraction of the tokens a live schema crawl costs.
+Only the refresh touches Oracle. Every question after it answers in milliseconds, which is also what makes it cheap for an agent: a fraction of the tokens a live schema crawl costs.
 
 <br>
 
-### flow: every link into a page, without clicking through the builder
+### search: every link into a page, without clicking through the builder
 
-APEX scatters navigation across branches, buttons, lists, the navigation bar and report column links, and no screen says "everything that links into page 50." [`flow`](flow.md) scrapes an application's edges once, stores them locally, and answers in either direction. Every refresh also writes Mermaid, DOT and JSON diagrams you can drop into documentation.
+APEX scatters navigation across branches, buttons, lists, the navigation bar and report column links, and no screen says "everything that links into page 50." `rebuild -app` scrapes an application's links once and stores them locally, and `search` answers in either direction. The same refresh writes Mermaid, DOT and JSON diagrams you can drop into documentation.
 
 ```bash
-adtai flow -app 100 -refresh -env DEV
-adtai flow -app 100 -to 50
+adtai rebuild -env DEV -app 100
+adtai search -to 100.50
 ```
 
 <br>
 
-### search_repo and calendar: the history you already committed
+### search and calendar: the history you already committed
 
-[`search_repo`](search_repo.md) reads the local store of commit metadata `rebuild` keeps per branch, to find the commit that touched a database object by name, type, path, author or date, and can bring an older version of a file back beside the current one.
+[`search`](search.md) reads the local store of commit metadata `rebuild` keeps per branch, to find the commit that touched a database object by name, type, path, author or date, and can bring an older version of a file back beside the current one.
 
 [`calendar`](calendar.md) draws a month of that history as a grid of tickets and commit counts. Neither of them connects to Oracle.
 
 ```bash
-adtai search_repo -type VIEW -name MONTHLY_REPORT_V
+adtai search -type VIEW -name MONTHLY_REPORT_V
 adtai calendar
 ```
 
@@ -134,7 +134,7 @@ adtai patch -target UAT -name 12 -deploy
 
 [`doctor`](doctor.md) reports which piece of the toolchain is missing or old, and it is the only command that installs or updates anything, on an explicit flag. `-init` scaffolds a project folder with the config and ignore rules already written. [`connection`](connection.md) edits the connection file for you and asks for passwords interactively, so one never lands in shell history.
 
-[`rebuild`](rebuild.md) keeps the local store of commit metadata per branch that `search_repo`, `calendar` and `patch` read, so run it after new commits or a change of branch.
+[`rebuild`](rebuild.md) keeps the local stores `search`, `calendar`, `patch` and `recompile` read, commit metadata per branch and your schema's object dependencies, so run it after new commits, a change of branch or a change in the schema.
 
 A stored password can be encrypted with a key kept elsewhere, replaced by a secret-manager command, or left out entirely in favour of SQLcl's own store or an Oracle wallet. How each option holds up, and the two things no credential store can protect against, is written for your security reviewer on [connection / security](connection_security.md).
 
@@ -149,7 +149,7 @@ adtai rebuild
 
 ## Built to be run by an AI agent
 
-Every command prints one console shape, takes the same shared flags, and turns its verdict into an exit code, which is what an agent branches on. The read-only commands are the ones an agent runs unsupervised: `discovery` cannot write, `dependencies` and `flow` answer from a local mirror, and `validate` needs no database at all.
+Every command prints one console shape, takes the same shared flags, and turns its verdict into an exit code, which is what an agent branches on. The read-only commands are the ones an agent runs unsupervised: `discovery` cannot write, `search` answers from a local mirror, and `validate` checks exported files with no database at all.
 
 The repository ships [skills/adt/SKILL.md](../skills/adt/SKILL.md), a lean router that sends an agent to only the page it needs, with the safety boundaries stated. Point Claude Code, Codex, Copilot or Cursor at it and the first command it types is a real one.
 
@@ -157,7 +157,7 @@ The repository ships [skills/adt/SKILL.md](../skills/adt/SKILL.md), a lean route
 
 ## Why it is safe to try this week
 
-- **Read-only by default.** Exports write files, never the database. `discovery` validates and rolls back every statement. `dependencies` and `flow` connect only on `-refresh`. What does act on a schema, `recompile`, `ut`, a dependency refresh that compiles for PL/Scope, and a deploy, prints what it did.
+- **Read-only by default.** Exports write files, never the database. `discovery` validates and rolls back every statement. `rebuild` connects only to refresh its mirror, and `search` connects only to refresh a mirror that is missing or stale before it answers. What does act on a schema, `recompile`, `ut`, a dependency refresh that compiles for PL/Scope, and a deploy, prints what it did.
 - **No new infrastructure.** SQLite, YAML and Markdown from the Python standard library, plus the Oracle client you already have.
 - **Nothing reaches git.** Reports, mirrors and connection files live under folders the first run adds to `.gitignore`.
 - **Zero blast radius on DEV.** Refresh against a development schema with a least-privilege user, run the queries, and delete `config/` if you hate it. Nothing changed in the database.
@@ -182,8 +182,8 @@ adtai export_db -env DEV -schema APP
 Ask the two questions nothing answers today, then watch a write get refused.
 
 ```bash
-adtai dependencies -refresh -env DEV -schema APP
-adtai dependencies -impact "TABLE.CORE_LOGS"
+adtai rebuild -env DEV -schema APP
+adtai search -impact "TABLE.CORE_LOGS"
 adtai discovery -env DEV -sql "SELECT COUNT(*) FROM user_objects"
 adtai discovery -env DEV -sql "DELETE FROM app_settings"
 ```
@@ -191,8 +191,8 @@ adtai discovery -env DEV -sql "DELETE FROM app_settings"
 Map your most-edited application and look at what links into your busiest page.
 
 ```bash
-adtai flow -app 100 -refresh -env DEV
-adtai flow -app 100 -to 50
+adtai rebuild -env DEV -app 100
+adtai search -to 100.50
 ```
 
 The reverse edge you did not know about is the whole pitch.

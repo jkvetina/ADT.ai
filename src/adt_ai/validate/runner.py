@@ -32,6 +32,9 @@ VALIDATE_COMMAND = 'apex validate -input "{input}"'
 class ValidateReporter:
     """No-op reporter; the console implementation lives in ``cli/``."""
 
+    def request(self, script: str) -> None:
+        """The script about to run, handed over before its row opens (``-debug``)."""
+
     def begin(self, label: str) -> None:
         pass
 
@@ -81,10 +84,20 @@ class ValidateRunner:
         reporter = request.reporter or ValidateReporter()
         outcomes: list[FolderOutcome] = []
         for target in request.targets:
+            # The script is built and handed to the reporter while no row is
+            # open, so a `-debug` echo of it is a block of its own above the row
+            # rather than text wedged between a label and its verdict.
+            try:
+                script = _build_script(target)
+            except Exception:
+                reporter.begin(target.label)
+                reporter.finish(target.label, "FAILED")
+                raise
+            reporter.request(script)
             reporter.begin(target.label)
             try:
                 output = self.sqlcl_request(
-                    _build_script(target),
+                    script,
                     request.root,
                     project_root=request.project_root,
                 )

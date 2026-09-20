@@ -112,7 +112,7 @@ INTERNAL_FILES: tuple[str, ...] = (
 #: at that point"*.
 #:
 #: The deletion is CONDITIONAL on the replacement being there. A project that
-#: never ran ``dependencies -refresh`` has nothing but that file, and taking it
+#: never refreshed its dependencies has nothing but that file, and taking it
 #: away would leave the root with less than it arrived with.
 SUPERSEDED_FILES: dict[str, str] = {
     "dependencies.db": "db_dependencies.yaml",

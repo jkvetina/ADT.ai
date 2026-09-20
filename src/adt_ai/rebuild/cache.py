@@ -1,11 +1,15 @@
-"""Scanning a branch into the store, and letting the store do the numbering.
+"""Scanning a branch into the store, each commit at its place on the branch.
 
-The line this file used to carry, `offset = branch_counts[branch] - len(lines)`,
-was the defect: it DERIVED a commit's number from its position in `git log`, so
-anything that moved a position moved a number that had already been handed out.
-A merge of an older-dated branch does exactly that. Numbering now happens in
-`CommitStore`, once per commit, and this module's job is only to say which
-commits it found and in what order.
+A commit's number is its position on the branch's first-parent line, `git log
+--first-parent --reverse <branch>` counted from 1 (ADT #895). Jan, 2026-09-19:
+*"We care about continuity in main/master. [...] When you merge to main, you
+merge as 1 new commit."* So a merge is one commit here, carrying everything the
+merged branch changed, and the commits it brought in through its second parent
+are not stored at all: they have no place on the line, and a number for them
+would move every number above it. One `rev-list` per branch reads the line as
+ids, and everything numbered here is looked up in it: the window a run reads,
+the gap between that window and what the store already holds, and the store
+itself, which `CommitStore.reconcile` follows when the line was cut back.
 """
 
 from __future__ import annotations
@@ -29,8 +33,10 @@ from adt_ai.shared.commit_cache import (
 )
 from adt_ai.shared.commit_discovery import FIELD_SEPARATOR
 from adt_ai.shared.commit_store import CommitStore, StoredCommit
-from adt_ai.shared.commit_window import position_of
-from adt_ai.shared.git_files import changed_files, git_is_ancestor, git_ref_exists, run_git
+from adt_ai.shared.git_files import changed_files, git_ref_exists, run_git
+
+#: One scanned commit: hash, author, author date, subject.
+CommitLine = tuple[str, str, str, str]
 
 
 def _resolve_branches(request: RebuildRequest) -> list[str]:
@@ -93,9 +99,9 @@ def _build_records_with_stores(
     # In --update mode each branch resumes from its stored tip: existing records
     # are reused as-is (never re-hashed) and only commits after the last stored
     # id are fetched. A branch with no usable store falls back to a full window.
-    branch_lines: dict[str, list[tuple[str, str, str, str]]] = {}
+    branch_lines: dict[str, list[CommitLine]] = {}
     store_paths: dict[str, Path] = {}
-    seeds: dict[str, int] = {}
+    positions: dict[str, dict[str, int]] = {}
     unique_order: list[str] = []
     seen_hashes: set[str] = set()
     resumed_any = False
@@ -106,7 +112,12 @@ def _build_records_with_stores(
             store = open_store(request.root, branch, request.cache_file_template)
             stores[branch] = store
         store_paths[branch] = store_path(request.root, request.cache_file_template, branch)
-        since = _resume_point(request, store, branch)
+        history, merges = _first_parent_line(request.root, branch)
+        positions[branch] = {commit: number for number, commit in enumerate(history, start=1)}
+        # Before the resume point is read: a dropped commit cuts the line back,
+        # and a store numbered any other way is moved once to the line here.
+        store.reconcile(history, merges)
+        since = _resume_point(request, store)
         if since is not None:
             resumed_any = True
         # --update ignores any commit_limit: the window is "everything new".
@@ -120,36 +131,27 @@ def _build_records_with_stores(
         since_date = request.since_date
         if since is None and commit_limit is None and since_date is None:
             since_date = _history_floor_date(request.history_bottom_days)
+        # Every later read walks from the tip the walk above ended on, never
+        # the branch name again, so a commit landing mid-run cannot reach a
+        # scan without a position; the next run takes it.
+        head = history[-1]
         lines = _commit_lines(
             request.root,
-            branch,
+            head,
             commit_limit,
             since=since,
             since_date=since_date,
         )
+        lines += _gap_lines(request.root, head, store, history, positions[branch], lines)
         branch_lines[branch] = lines
-        # The seed is read once, while the branch is empty, and it is what makes
-        # a bounded first build safe: numbering the newest N from 1 would leave
-        # no room underneath, so widening the window later could only renumber.
-        # Starting the oldest commit IN THE WINDOW at its true position in
-        # history reserves everything below it for a backfill.
-        seeds[branch] = (
-            position_of(request.root, lines[0][0])
-            if lines and store.ceiling() is None
-            else 1
-        )
         for commit_hash, _author, _date, _summary in lines:
             if commit_hash not in seen_hashes:
                 seen_hashes.add(commit_hash)
                 unique_order.append(commit_hash)
 
     total = len(unique_order)
-    # One `git rev-list --count` per branch, shared by the header display below
-    # and the absolute-numbering offsets in the assembly loop, computing it at
-    # each use point doubled the subprocess cost per branch.
-    branch_counts = {
-        branch: _branch_commit_count(request.root, branch) for branch in branches
-    }
+    # The walk read once per branch above also sizes the header below.
+    branch_counts = {branch: len(numbered) for branch, numbered in positions.items()}
     # Display total is the FULL branch history (unlimited). With a commit_limit
     # the window holds only the newest N, so len(unique_order) == limit, not the
     # real branch size, recover the unlimited count for the header. In --update
@@ -182,16 +184,16 @@ def _build_records_with_stores(
         # progress bar at an instant 100% so the module matches the export style.
         reporter.on_commit(0, 0)
 
-    # Hand each branch's scan to its store. Nothing here computes a number:
-    # `allocate` mints above the tip, `backfill` mints below the floor, and a
-    # commit that already has one keeps it. The count is all the caller reports,
-    # so it is read off the key rather than by loading the branch back.
+    # Each branch's scan goes to its store at the positions the walk gave it. A
+    # commit the store already holds keeps its row, which `reconcile` has
+    # already put at its position. The count is read off the key.
     record_counts: dict[str, int] = {}
     for branch, lines in branch_lines.items():
         store = stores[branch]
-        _allocate(
-            store,
-            [
+        stored = store.numbers_for(commit_hash for commit_hash, *_ in lines)
+        store.place(
+            (
+                positions[branch][commit_hash],
                 StoredCommit(
                     id       = commit_hash,
                     summary  = summary,
@@ -200,45 +202,53 @@ def _build_records_with_stores(
                     files    = file_data[commit_hash].files,
                     deleted  = file_data[commit_hash].deleted,
                     statuses = file_data[commit_hash].statuses,
-                )
-                for commit_hash, author, date, summary in lines
-            ],
-            seeds[branch],
+                ),
+            )
+            for commit_hash, author, date, summary in lines
+            if commit_hash not in stored
         )
         record_counts[branch] = store.count()
 
     return record_counts, store_paths
 
 
-def _allocate(store: CommitStore, records: list[StoredCommit], seed: int) -> None:
-    """Give every scanned commit a number, each one exactly once.
+def _gap_lines(
+    root: Path,
+    head: str,
+    store: CommitStore,
+    history: list[str],
+    positions: dict[str, int],
+    lines: list[CommitLine],
+) -> list[CommitLine]:
+    """The commits between the store and the window, so the store keeps no hole.
 
-    The walk is oldest first, so an unknown commit that sits BEFORE the first
-    one the store recognises is older history a widened window pulled in, and it
-    needs a number below the floor. Everything else unknown is new to the branch
-    and goes above the tip, merged-in commits included: they interleave by date
-    in `git log`, and taking a number in the middle is precisely the renumbering
-    this store exists to prevent.
+    A window is the newest end of the line. When the store holds an older
+    stretch that stops short of it, or a store moved to first-parent numbering
+    forgot its merges so they are read again, the positions in between belong to
+    commits neither the store nor the window has, and they are read here. The
+    usual run, a window resuming at the stored tip, is answered by the count
+    alone and reads nothing more.
     """
-    if not records:
-        return
-    if store.ceiling() is None:
-        store.allocate(records, seed=seed)
-        return
-    # Only the scanned window is looked up, never the branch's whole id map.
-    existing = store.numbers_for(record.id for record in records)
-    first_known = next(
-        (index for index, record in enumerate(records) if record.id in existing), None
-    )
-    if first_known is None:
-        # The window overlaps nothing stored, so there is no floor to sit under.
-        # These are newer commits (a bounded scan that outran the stored tip),
-        # and appending is the only reading that cannot renumber.
-        store.allocate(records)
-        return
-    if first_known:
-        store.backfill(records[:first_known])
-    store.allocate(records[first_known:])
+    span = store.span()
+    bottoms = [positions[commit_hash] for commit_hash, *_ in lines]
+    if span.floor is not None:
+        bottoms.append(span.floor)
+    if not bottoms:
+        return []
+    bottom = min(bottoms)
+    scanned = {commit_hash for commit_hash, *_ in lines}
+    held = span.size + len(scanned) - len(store.numbers_for(scanned))
+    if held >= len(history) - bottom + 1:
+        return []
+    wanted = history[bottom - 1:]
+    stored = store.numbers_for(wanted)
+    missing = {commit for commit in wanted if commit not in stored and commit not in scanned}
+    lowest = min(positions[commit] for commit in missing)
+    return [
+        line
+        for line in _commit_lines(root, head, len(history) - lowest + 1)
+        if line[0] in missing
+    ]
 
 
 @dataclass(frozen=True)
@@ -263,7 +273,7 @@ def _commit_files(request: RebuildRequest, commit_hash: str) -> _CommitFiles:
         deleted  = [i.path for i in changed if i.status == "D"],
         # Git's own status letter per file, which the YAML payload never carried.
         # `patch/summary.py` needs it to split NEW/DELETED/MODIFIED, and
-        # `search_repo` was guessing it from whether a path had been seen before.
+        # `search` was guessing it from whether a path had been seen before.
         statuses = {i.path: i.status for i in changed},
     )
 
@@ -273,32 +283,33 @@ def _history_floor_date(bottom_days: int | None) -> str | None:
         return None
     return (date_type.today() - timedelta(days=bottom_days)).isoformat()
 
-def _resume_point(request: RebuildRequest, store: CommitStore, branch: str) -> str | None:
+def _resume_point(request: RebuildRequest, store: CommitStore) -> str | None:
     # The commit to resume after, or None to walk the window from its bottom.
-    # Records already in the store are never re-hashed and never re-numbered, so
-    # a resume is purely about which commits git is asked for.
-    #
-    # Rewritten history is the one case that drops rows: when the stored tip is
-    # no longer an ancestor of the branch, the numbers describe commits that do
-    # not exist, so the branch is reset and rebuilt. That is not a renumbering,
-    # it is the only honest answer to a force-push.
+    # Records already in the store are never re-hashed, so a resume is purely
+    # about which commits git is asked for. `reconcile` has already dropped
+    # anything the branch no longer has, so the stored tip is always in history.
     if not request.update_only:
         return None
     tip = store.tip()
-    if tip is None:
-        return None
-    if not _commit_in_history(request.root, branch, tip.id):
-        store.reset()
-        return None
-    return tip.id
+    return tip.id if tip is not None else None
 
-def _commit_in_history(root: Path, branch: str, commit: str) -> bool:
-    return git_is_ancestor(root, commit, branch)
+def _first_parent_line(root: Path, branch: str) -> tuple[list[str], set[str]]:
+    """The branch's first-parent line, oldest first, and the merges on it.
 
-def _branch_commit_count(root: Path, branch: str) -> int:
-    # Total commits reachable from the branch tip, independent of any window
-    # limit, this is the absolute number of the newest commit.
-    return int(run_git(root, ["rev-list", "--count", branch]).strip() or "0")
+    The same walk `_commit_lines` reads, so a commit's index here plus one is
+    its number, whatever window a run reads. `--parents` names the merges in the
+    same walk; only a store moving to this numbering needs them.
+    """
+    history: list[str] = []
+    merges: set[str] = set()
+    output = run_git(root, ["rev-list", "--first-parent", "--reverse", "--parents", branch])
+    # Each line is the commit and then its parents, so a merge has three ids.
+    for ids in (line.split() for line in output.split("\n")):
+        if ids:
+            history.append(ids[0])
+            if len(ids) > 2:
+                merges.add(ids[0])
+    return history, merges
 
 def _commit_lines(
     root: Path,
@@ -306,8 +317,10 @@ def _commit_lines(
     commit_limit: int | None,
     since: str | None = None,
     since_date: str | None = None,
-) -> list[tuple[str, str, str, str]]:
-    args = ["log", "--reverse"]
+) -> list[CommitLine]:
+    # `--first-parent`: the line commits are numbered on. A merge is one entry
+    # and the commits behind its second parent are never listed.
+    args = ["log", "--first-parent", "--reverse"]
     if commit_limit is not None:
         args.append(f"-n{commit_limit}")
     # `-since`: bound the window by committer date. A bare date is midnight
@@ -319,7 +332,7 @@ def _commit_lines(
     )
     # With a resume point, only fetch commits after the cached tip (exclusive).
     args.append(f"{since}..{branch}" if since else branch)
-    result: list[tuple[str, str, str, str]] = []
+    result: list[CommitLine] = []
     # Split on "\n" only: `str.splitlines()` also breaks on `\r`/`\x0c`/U+2028,
     # so a commit subject with an embedded control char would be truncated.
     for line in run_git(root, args).split("\n"):

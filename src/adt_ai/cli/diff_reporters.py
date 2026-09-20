@@ -32,13 +32,19 @@ what**. Three things changed, all of them Jan's wording:
   tables dont exceed 80 chars!"* Oracle names run to 128 characters, so a cap is
   a budget rather than a hope: `_fit` measures the line through the renderer's
   own geometry and trims the widest flexible column until it fits.
+
+`#893` made `-limit` a flag of every mode, Jan: *"-limit should be applicable
+across all types, basically used to check if we have changes or not"*. Each
+listing prints at most that many rows and says so on the line under it when it
+was cut, `LIMIT: 20 of 57 rows shown`, in the `LOG:` shape `diff -data` closes
+its tables on; the counts table above stays whole, since it is the answer.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 
 from adt_ai.cli.constants import print_adt_header, print_adt_table
-from adt_ai.diff.inventory import CHANGED, EXTRA, MISSING, GrantRow
+from adt_ai.diff.inventory import CHANGED, EXTRA, MISSING, STATUS_ORDER, GrantRow
 from adt_ai.diff.summary import DiffSummary
 from adt_ai.shared.tables import adt_table_line_width
 
@@ -60,6 +66,10 @@ _LEGEND = {
     EXTRA   : "the target has it, the source does not",
 }
 
+#: The order the legend lists them in, `STATUS_ORDER`'s, the order a summary's
+#: own statuses already came in.
+_LEGEND_ORDER = tuple(sorted(_LEGEND, key=lambda status: STATUS_ORDER[status]))
+
 #: The widest line any table on this screen may render. Jan asked for 80; the
 #: renderer's own geometry note (`#269`) budgets a line to 78 so the row still
 #: clears an 80-column terminal with the cursor on it, and a rule that holds at
@@ -76,6 +86,9 @@ MAX_LINE = 78
 _FLEXIBLE = ("object_name", "owner", "grantee")
 _LAST_RESORT = ("object_type", "table_name")
 
+#: The two tiers in the order they give way, for every listing but `-apex`'s.
+_OBJECT_TIERS = (_FLEXIBLE, _LAST_RESORT)
+
 #: What a trimmed cell ends on, so a shortened name can never be mistaken for a
 #: real one.
 _ELLIPSIS = "..."
@@ -87,6 +100,12 @@ _ELLIPSIS = "..."
 IN_SYNC_OBJECTS = "the two schemas already match, the artifact carries no changes"
 IN_SYNC_REST = "the two schemas publish the same REST modules, privileges and roles"
 IN_SYNC_DATA = "the compared tables hold the same rows on both sides"
+IN_SYNC_APEX = "the two schemas own the same APEX applications and static files"
+IN_SYNC_APEX_PAGES = "the selected pages match on both sides"
+
+#: The line under a listing `-limit` cut short, so a reader never takes the rows
+#: shown for all of them.
+LIMIT_NOTE = "  LIMIT: {shown} of {total} rows shown"
 
 #: The section the modes that replace the object comparison open on, and the
 #: first section of the `diff -data -out` file (`#886`).
@@ -98,6 +117,9 @@ def report_summary(
     *,
     verbose: bool = False,
     in_sync_note: str = IN_SYNC_OBJECTS,
+    listing: Callable[[], Iterable[str]] | None = None,
+    limit: int | None = None,
+    tail: Callable[[], object] | None = None,
 ) -> None:
     """Print what differs between the two schemas, or say that nothing does.
 
@@ -108,6 +130,14 @@ def report_summary(
 
     A `None` summary means the comparison could not be read. The run still
     succeeded, so this stays quiet rather than claiming either outcome.
+
+    `listing` prints in place of the counts table and `CHANGED OBJECTS:`, with
+    or without `-verbose`: `diff -apex`'s summary per application, its page and
+    application groups, then the workspace's files (`#896`). It answers the
+    statuses it printed, so the legend defines those too. `limit`
+    caps every listing at that many rows (`#893`); the counts stay whole.
+    `tail` is the section `-restore` adds after the listings and above the legend
+    (`#893`), run wherever the screen ends.
     """
     if summary is None:
         return
@@ -115,6 +145,7 @@ def report_summary(
         print_adt_header(IN_SYNC_HEADER)
         print(f"  {in_sync_note}")
         print()
+        _run(tail)
         return
     # A filter that matched nothing is NOT two matching schemas (`#773`). The
     # schemas may differ in forty ways and simply not in the way that was asked
@@ -124,30 +155,37 @@ def report_summary(
         print_adt_header(NO_MATCH_HEADER)
         print("  nothing matched -type / -name; the schemas may still differ elsewhere")
         print()
+        _run(tail)
         return
 
-    # No count beside this header (Jan, `#769`). The table under it IS the
-    # count, row by row, and a total repeated above it is a figure a reader has
-    # to reconcile against the rows rather than read.
-    print_adt_header(SUMMARY_HEADER)
-    _print_fitted(
-        [
-            {"object_type": object_type, "count": count}
-            for object_type, count in summary.counts()
-        ]
-    )
-
-    if not verbose:
-        print()
-        return
-
-    if summary.objects:
+    printed: Iterable[str] = ()
+    if listing is not None:
+        # `diff -apex` answers with its own summary and listings, and prints no
+        # counts table (Jan, `#896`: *"I already asked you to remove this
+        # section"*), so the listing decides what `-verbose` adds.
+        printed = listing()
+    else:
+        # No count beside this header (Jan, `#769`). The table under it IS the
+        # count, row by row, and a total repeated above it is a figure a reader
+        # has to reconcile against the rows rather than read.
+        print_adt_header(SUMMARY_HEADER)
+        _print_fitted(
+            [
+                {"object_type": object_type, "count": count}
+                for object_type, count in summary.counts()
+            ]
+        )
+        if not verbose:
+            print()
+            _run(tail)
+            return
+    if listing is None and summary.objects:
         # Bare header and no schema column (Jan, `#773`): *"Remove these stupid
         # numbers from here"*, *"Remove SCHEMA column from CHANGED OBJECT
         # table."* Every row that remains belongs to the one schema pair the run
         # compared, named once in `COMPARING SCHEMAS:` above.
         print_adt_header(OBJECTS_HEADER)
-        _print_fitted(
+        print_listing(
             [
                 {
                     "object_type" : change.object_type,
@@ -155,13 +193,23 @@ def report_summary(
                     "status"      : change.status,
                 }
                 for change in summary.objects
-            ]
+            ],
+            limit=limit,
         )
-    _report_grants(summary)
-    _report_legend(summary)
+    _report_grants(summary, limit)
+    # Materialized before the tail runs, so a listing handed in as a generator
+    # has printed its blocks before `-restore` prints below them.
+    printed = tuple(printed)
+    _run(tail)
+    _report_legend(summary, printed)
 
 
-def _report_grants(summary: DiffSummary) -> None:
+def _run(tail: Callable[[], object] | None) -> None:
+    if tail is not None:
+        tail()
+
+
+def _report_grants(summary: DiffSummary, limit: int | None = None) -> None:
     """One header, two tables, split by which way the grant points.
 
     Jan, ADT #773, on the five rows the object listing printed for them: *"Show
@@ -194,7 +242,7 @@ def _report_grants(summary: DiffSummary) -> None:
         # on one, and TWO blank lines is exactly what separates two sections on
         # this screen, so paying both made the pair read as a second section with
         # its header missing: the reading the absent label was avoiding.
-        _print_fitted([render(grant) for grant in rows], leading_blank=not printed)
+        print_listing([render(grant) for grant in rows], limit=limit, leading_blank=not printed)
         printed = True
 
 
@@ -220,15 +268,17 @@ def _outgoing_row(grant: GrantRow) -> dict[str, object]:
     }
 
 
-def _report_legend(summary: DiffSummary) -> None:
+def _report_legend(summary: DiffSummary, printed: Iterable[str] = ()) -> None:
     """What the status words mean, under everything, only when there are rows.
 
     Jan: *"Below all sections you should show LEGEND section explaining statuses.
     Only if there are any changes."* It is the last thing on the screen because a
     reader meets the tables first and the definition when a cell puzzles them, and
-    it lists only the statuses this run produced.
+    it lists only the statuses this run produced. `printed` is what a `details`
+    block added: a component `MISSING` inside a `CHANGED` application.
     """
-    statuses = summary.statuses
+    found = {*summary.statuses, *printed}
+    statuses = [status for status in _LEGEND_ORDER if status in found]
     if not statuses:
         return
     print_adt_header(LEGEND_HEADER)
@@ -244,7 +294,31 @@ def _print_fitted(
     print_adt_table(_fit(rows), leading_blank=leading_blank)
 
 
-def _fit(rows: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+def print_listing(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    limit: int | None = None,
+    tiers: Sequence[Sequence[str]] = _OBJECT_TIERS,
+    leading_blank: bool = True,
+    numeric: Sequence[str] | None = None,
+) -> list[str]:
+    """A listing fitted to the screen, at most `limit` rows of it (`#893`).
+
+    A cut listing says so on the line under it, how many of how many, so the
+    rows shown are never read as all of them. Returns the statuses it printed.
+    """
+    shown = list(rows[:limit] if limit else rows)
+    print_adt_table(_fit(shown, tiers), leading_blank=leading_blank, numeric=numeric)
+    if len(shown) < len(rows):
+        print(LIMIT_NOTE.format(shown=len(shown), total=len(rows)))
+        print()
+    return [str(row.get("status", "")) for row in shown]
+
+
+def _fit(
+    rows: Sequence[Mapping[str, object]],
+    tiers: Sequence[Sequence[str]] = _OBJECT_TIERS,
+) -> list[dict[str, object]]:
     """The same rows, with the flexible columns trimmed until the line fits.
 
     The width is measured through `adt_table_line_width`, the renderer's own
@@ -260,14 +334,15 @@ def _fit(rows: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
     them names, so the budget genuinely runs out.
 
     `_MIN_CELL` is therefore a preference rather than a floor: it decides WHICH
-    column gives way next, not whether one has to.
+    column gives way next, not whether one has to. `tiers` names the columns
+    that may give, in the order they do; the default is the object listing's.
     """
     if not rows:
         return [dict(row) for row in rows]
     columns = list(rows[0].keys())
     widths = {column: _natural_width(rows, column) for column in columns}
     while _line_width(columns, widths) > MAX_LINE:
-        widest = _next_to_trim(widths)
+        widest = _next_to_trim(widths, tiers)
         if widest is None:
             break
         widths[widest] -= 1
@@ -277,18 +352,21 @@ def _fit(rows: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
     ]
 
 
-def _next_to_trim(widths: Mapping[str, int]) -> str | None:
+def _next_to_trim(
+    widths: Mapping[str, int], tiers: Sequence[Sequence[str]] = _OBJECT_TIERS
+) -> str | None:
     """The column to take a character from, or `None` when none is left to take.
 
-    Three tiers, in order: a name column still above the comfortable floor, the
-    object type above it, then anything still trimmable at all. Stepping down a
-    tier only once the tier above is exhausted is what keeps the type intact on
-    every table whose names can pay for the line on their own.
+    Each tier in order, while a column in it is above the comfortable floor,
+    then anything still trimmable at all. For the object listing that is a
+    name column, then the object type. Stepping down a tier only once the tier
+    above is exhausted is what keeps the type intact on every table whose names
+    can pay for the line on their own.
     """
+    every = tuple(column for tier in tiers for column in tier)
     for candidates, floor in (
-        (_FLEXIBLE, _MIN_CELL),
-        (_LAST_RESORT, _MIN_CELL),
-        (_FLEXIBLE + _LAST_RESORT, len(_ELLIPSIS) + 1),
+        *((tier, _MIN_CELL) for tier in tiers),
+        (every, len(_ELLIPSIS) + 1),
     ):
         available = [
             column

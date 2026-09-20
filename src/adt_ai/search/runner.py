@@ -20,7 +20,7 @@ from adt_ai.shared.commit_cache import (
 from adt_ai.shared.commit_discovery import commit_ref_matches
 from adt_ai.shared.commit_store import AuthorClause, CommitFilter, CommitStore, StoredCommit
 from adt_ai.shared.dates import within_recent_window
-from adt_ai.shared.git_files import run_git, run_git_bytes
+from adt_ai.shared.git_files import run_git_bytes, save_work_in_progress
 from adt_ai.shared.identity import resolve_commit_email
 from adt_ai.shared.sql_like import matches_sql_like
 
@@ -32,12 +32,12 @@ FIELD_SEPARATOR = "\x1f"
 PAGE_SIZE = 200
 
 
-class SearchRepoError(Exception):
+class SearchError(Exception):
     """Search failed for a reason worth showing the user verbatim."""
 
 
 @dataclass(frozen=True)
-class SearchRepoRequest:
+class SearchRequest:
     root: Path
     branch: str | None = None
     commit_limit: int | None = REVEAL_DEFAULT_LIMIT
@@ -55,8 +55,7 @@ class SearchRepoRequest:
     recent: int | None = None
     my: bool = False
     restore: bool = False
-    stage: bool = False
-    # Where the stores live. `search_repo` used to hardcode the default, so a
+    # Where the stores live. `search` used to hardcode the default, so a
     # project that had configured `repo_commits_file` could rebuild happily and
     # then be told its cache did not exist.
     cache_file_template: str = DEFAULT_COMMITS_TEMPLATE
@@ -69,7 +68,7 @@ class SearchRepoRequest:
 
 
 @dataclass(frozen=True)
-class SearchRepoRecord:
+class SearchRecord:
     number: int
     id: str
     summary: str
@@ -85,8 +84,8 @@ class SearchRepoRecord:
 
 
 @dataclass(frozen=True)
-class SearchRepoResult:
-    records: list[SearchRepoRecord]
+class SearchResult:
+    records: list[SearchRecord]
     restored_files: list[Path] = field(default_factory=list)
     failed_restores: list[str] = field(default_factory=list)
 
@@ -103,10 +102,10 @@ class _Commit:
     file_statuses: dict[str, str]
 
 
-class SearchRepoRunner:
-    def run(self, request: SearchRepoRequest) -> SearchRepoResult:
+class SearchRunner:
+    def run(self, request: SearchRequest) -> SearchResult:
         root = request.root.resolve()
-        records: list[SearchRepoRecord] = []
+        records: list[SearchRecord] = []
         for commit in self._commits(request, root):
             record = self._matching_record(request, root, commit)
             if record is None:
@@ -117,14 +116,14 @@ class SearchRepoRunner:
         restored_files: list[Path] = []
         failed_restores: list[str] = []
         if request.restore:
-            restored_files, failed_restores = self._restore(request, records, root)
-        return SearchRepoResult(
+            restored_files, failed_restores = self._restore(records, root)
+        return SearchResult(
             records         = records,
             restored_files  = restored_files,
             failed_restores = failed_restores,
         )
 
-    def _commits(self, request: SearchRepoRequest, root: Path) -> Iterator[_Commit]:
+    def _commits(self, request: SearchRequest, root: Path) -> Iterator[_Commit]:
         """The branch's commits newest first, narrowed in SQL, one page at a time.
 
         It used to load the whole branch and filter in Python, which on a
@@ -137,9 +136,9 @@ class SearchRepoRunner:
         aliases = author_aliases(request.config)
         with open_store(root, branch, request.cache_file_template) as store:
             if store.ceiling() is None:
-                raise SearchRepoError(
+                raise SearchError(
                     f"commit store not found or empty for branch '{branch}', "
-                    "run adtai rebuild first"
+                    "and git could not fill it"
                 )
             criteria = _sql_filter(request, aliases)
             page = max(request.commit_limit or 0, PAGE_SIZE)
@@ -154,10 +153,10 @@ class SearchRepoRunner:
 
     def _matching_record(
         self,
-        request: SearchRepoRequest,
+        request: SearchRequest,
         root: Path,
         commit: _Commit,
-    ) -> SearchRepoRecord | None:
+    ) -> SearchRecord | None:
         if not _matches_refs(commit, request.commit_refs, request.hash_refs):
             return None
         if not _matches_date(commit.date, request):
@@ -193,7 +192,7 @@ class SearchRepoRunner:
                     deleted.append(path)
         if not files:
             return None
-        return SearchRepoRecord(
+        return SearchRecord(
             number        = commit.number,
             id            = commit.id,
             summary       = commit.summary,
@@ -206,53 +205,61 @@ class SearchRepoRunner:
 
     def _restore(
         self,
-        request: SearchRepoRequest,
-        records: list[SearchRepoRecord],
+        records: list[SearchRecord],
         root: Path,
     ) -> tuple[list[Path], list[str]]:
-        restored: list[Path] = []
+        """Each path's newest matching version, written over the path itself (ADT #897).
+
+        Jan: *"-restore & -stage has to merge, it has to be consistent with
+        current diff -pull; the assumption is we have code committed in our
+        active branch and we apply the result from diff/search on top so we can
+        see the difference."* So what `-stage` did, without its `git add` and
+        without the `<name>.<commit>.<ext>` copy plain `-restore` wrote beside
+        the original, and over a `WIP` commit of whatever the checkout held
+        uncommitted, so nothing is lost and `git diff` shows the restore alone.
+        A save git refuses raises `WorkInProgressError` before anything is
+        written, and the screen names it `GIT COMMIT FAILED`.
+        """
         failed: list[str] = []
-        # `-stage` writes every matching version to the one working-tree path,
-        # so without this the OLDEST version landed last and got staged, against
-        # the newest-wins promise in docs/search_repo.md. Records arrive
-        # newest-first, so the first writer of a path is the newest (ADT #659).
-        # Without `-stage` each version has a path of its own and none collide.
-        staged_paths: set[str] = set()
+        # Every version is read before anything is saved or written, so a
+        # restore that resolves nothing touches nothing. Records arrive
+        # newest-first, so the first version of a path is the newest, and the
+        # oldest can no longer land last on the one working-tree path (ADT #659).
+        payloads: dict[str, bytes] = {}
         for record in records:
             for file_path in record.files:
-                if request.stage and file_path in staged_paths:
+                if file_path in payloads:
                     continue
                 try:
-                    payload = run_git_bytes(root, ["show", f"{record.id}:{file_path}"])
+                    payloads[file_path] = run_git_bytes(
+                        root, ["show", f"{record.id}:{file_path}"]
+                    )
                 except subprocess.CalledProcessError:
                     # A stale cache entry (rebased/rewritten history), record
                     # it so a partial restore never looks like a full one.
                     failed.append(file_path)
-                    continue
-                target = root / file_path
-                if not request.stage:
-                    target = _versioned_restore_path(target, record.number)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                # Through the shared writer, so restoring a file that already
-                # holds the requested bytes leaves its mtime alone (`#593`). It
-                # is still a restore either way: what the row reports is that
-                # the path now carries that commit's content.
-                #
-                # Every destination is overwritten unconditionally, and both
-                # spellings mean it (ADT #732). A numbered copy is unique by
-                # commit number, so recovering overlapping ranges in a row lands
-                # the same `<file>.<commit>.sql` twice and the second run must
-                # not stop on the first run's copy. `-stage` used to refuse a
-                # target carrying uncommitted changes (ADT #670) and list it
-                # under `COULD NOT RESTORE:`; putting an old version back while
-                # mid-work is the normal case for the flag, so it overwrites the
-                # edit the same way an export overwrites WIP. `COULD NOT
-                # RESTORE:` now reports only what git could not resolve.
-                text_files.write_bytes(target, payload)
-                restored.append(target)
-                if request.stage:
-                    staged_paths.add(file_path)
-                    run_git(root, ["add", file_path])
+        # Saved only when a write is really coming: a restore whose every path
+        # already holds its version changes nothing, and committing the tree
+        # then would only fold a previous restore's diff into a `WIP` commit.
+        writes = any(
+            not text_files.bytes_match(root / file_path, payload)
+            for file_path, payload in payloads.items()
+        )
+        if writes:
+            save_work_in_progress(root)
+        restored: list[Path] = []
+        for file_path, payload in payloads.items():
+            target = root / file_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            # Through the shared writer, so restoring a file that already
+            # holds the requested bytes leaves its mtime alone (`#593`). It is
+            # still a restore either way: what the row reports is that the path
+            # now carries that commit's content. Every destination is
+            # overwritten unconditionally (ADT #732): what stood there is in
+            # the WIP commit, and `COULD NOT RESTORE:` reports only what git
+            # could not resolve.
+            text_files.write_bytes(target, payload)
+            restored.append(target)
         return restored, failed
 
 
@@ -283,7 +290,7 @@ def _as_commit(store: CommitStore, record: StoredCommit, aliases: Mapping[str, s
     )
 
 
-def _sql_filter(request: SearchRepoRequest, aliases: Mapping[str, str]) -> CommitFilter:
+def _sql_filter(request: SearchRequest, aliases: Mapping[str, str]) -> CommitFilter:
     """The part of the request SQLite can narrow by without dropping a match.
 
     SQLite folds case for ASCII only, so a term or pattern carrying anything
@@ -340,7 +347,7 @@ def _matches_refs(
 
 
 def _matches_ref(commit: _Commit, ref: str) -> bool:
-    # ONE resolver with `patch` (ADT #309). `search_repo` understood `N+` and
+    # ONE resolver with `patch` (ADT #309). `search` understood `N+` and
     # `patch` understood neither spelling, so the same argument written the same
     # way meant different things depending on which command read it, and
     # `docs/patch.md` documented the syntax `patch` did not have. `N-M` arrives
@@ -348,7 +355,7 @@ def _matches_ref(commit: _Commit, ref: str) -> bool:
     return commit_ref_matches(commit.number, commit.id, ref)
 
 
-def _matches_date(commit_date: str, request: SearchRepoRequest) -> bool:
+def _matches_date(commit_date: str, request: SearchRequest) -> bool:
     moment = datetime.fromisoformat(commit_date)
     value = moment.date()
     if request.since and value < date.fromisoformat(request.since):
@@ -365,7 +372,7 @@ def _matches_date(commit_date: str, request: SearchRepoRequest) -> bool:
     return within_recent_window(moment, request.recent)
 
 
-def _matches_file(path: str, request: SearchRepoRequest) -> bool:
+def _matches_file(path: str, request: SearchRequest) -> bool:
     if not _contains_all(path, request.file_terms):
         return False
     object_type, object_name = _object_identity(path, request.config)
@@ -419,7 +426,7 @@ def _matches_any_pattern(value: str, patterns: list[str]) -> bool:
 
     These three were substring tests while every other filter in the tool went
     through `shared/sql_like`, so `%` was a wildcard on `export_db -type` and a
-    literal character on `search_repo -type`: measured at the CLI, `-type
+    literal character on `search -type`: measured at the CLI, `-type
     "PACKAGE%"` and `-name "CORE%"` each returned nothing at all. Jan had already
     settled the question for `-search` on ADT #423, 2026-08-20: *"Same way as we
     are using SQL LIKE filters elsewhere, it should be reusable code!"*
@@ -431,7 +438,3 @@ def _matches_any_pattern(value: str, patterns: list[str]) -> bool:
     comparator kept handing the spec filter its body back.
     """
     return any(matches_sql_like(value, pattern) for pattern in patterns)
-
-
-def _versioned_restore_path(path: Path, number: int) -> Path:
-    return path.with_name(f"{path.stem}.{number}{path.suffix}")
