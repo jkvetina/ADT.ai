@@ -41,13 +41,13 @@ class SchemaSelectionError(PatchError):
 
     A subclass rather than a plain `PatchError` so the CLI can tell a mistyped
     value from a patch that broke while running: the first is an
-    `ARGUMENT INVALID` refusal exiting 2, the second stays on `PATCH FAILED:`.
+    `ARGUMENT INVALID` refusal exiting 2, the second stays on `ERROR - PATCH FAILED:`.
     Jan, 2026-09-13, after `-schema GSN` landed on the wrong screen: *"This
     should be a normal error."*
     """
 
     def __init__(self, unmatched: Sequence[str], available: Sequence[str]) -> None:
-        self.description = f"No exported schema matches -schema {', '.join(unmatched)}."
+        self.description = f"NO EXPORTED SCHEMA MATCHES -schema {', '.join(unmatched)}"
         self.details = f"Exported schemas: {', '.join(available) or 'none'}"
         super().__init__(f"{self.description} {self.details}")
 

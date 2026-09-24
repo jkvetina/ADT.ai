@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+from adt_ai.export_data.intervals import ds_interval_text, is_ym_interval, ym_interval_text
 from adt_ai.shared.sql_identifiers import (
     safe_identifier,
     safe_identifiers,
@@ -279,27 +280,46 @@ _WKT_CHUNK = 3000
 #: The mask both sides of the export agree on. `row_value` writes a datetime with
 #: `str()`, which is this shape, so the literal and the mask cannot drift.
 _DATE_MASK = "YYYY-MM-DD HH24:MI:SS"
+#: Oracle's own spellings of its two interval types, `[+|-]D HH:MI:SS[.FF]` and
+#: `[+|-]Y-MM`, which `TO_DSINTERVAL` and `TO_YMINTERVAL` read whatever the
+#: session's NLS settings are. `export_data/intervals.py` writes both.
+_DS_INTERVAL_TEXT = re.compile(r"^[+-]?\d+ \d{1,2}:\d{2}:\d{2}(\.\d{1,9})?$")
+_YM_INTERVAL_TEXT = re.compile(r"^[+-]?\d+-\d{1,2}$")
 
 
 def sql_value(value: Any, data_type: str = "") -> str:
     """The SQL literal for one exported value.
 
-    With `data_type`, the value is CSV text and the column's Oracle type decides
-    the literal: a RAW is hex that `HEXTORAW` decodes, a NUMBER stays unquoted
-    with every digit it was exported with, and a DATE or TIMESTAMP carries its
-    own conversion so it does not depend on the session's NLS formats, which
-    default to `DD-MON-RR` and raise ORA-01861 against an ISO string (`#670`).
+    With `data_type`, the column's Oracle type decides the literal: a RAW is hex
+    that `HEXTORAW` decodes, a NUMBER stays unquoted with every digit it was
+    exported with, and a DATE or TIMESTAMP carries its own conversion so it does
+    not depend on the session's NLS formats, which default to `DD-MON-RR` and
+    raise ORA-01861 against an ISO string (`#670`). The value is either CSV text
+    or the driver's own value, which is rendered to that same text first: the
+    LOB UPDATE scripts key their WHERE off the driver's row, where a RAW key is
+    `bytes` and `str()` of it is Python's `b'...'` repr (`#923`).
 
     Without it the value is rendered by its Python type, for a caller that holds
-    the driver's own row rather than a cell read back off disk.
+    the driver's own row and no inventory to type it with.
     """
     if value is None or value == "":
         return "NULL"
     if data_type:
-        return _typed_literal(str(value), data_type.strip().upper())
+        return _typed_literal(_exported_text(value), data_type.strip().upper())
     if isinstance(value, int | float | Decimal):
         return str(value)
     return _quoted(str(value))
+
+
+def _exported_text(value: Any) -> str:
+    """One driver value as the text its CSV cell carries, which `_typed_literal` reads."""
+    if isinstance(value, bytes | bytearray | memoryview):
+        return bytes(value).hex().upper()
+    if isinstance(value, timedelta):
+        return ds_interval_text(value)
+    if is_ym_interval(value):
+        return ym_interval_text(value)
+    return str(value)
 
 
 def _typed_literal(text: str, data_type: str) -> str:
@@ -311,6 +331,12 @@ def _typed_literal(text: str, data_type: str) -> str:
         return text
     if data_type == "DATE" or data_type.startswith("TIMESTAMP"):
         return _temporal_literal(text, data_type)
+    # `user_tab_cols` spells the type with its precisions, `INTERVAL DAY(2) TO
+    # SECOND(6)` and `INTERVAL YEAR(2) TO MONTH`, so the prefix identifies it.
+    if data_type.startswith("INTERVAL DAY") and _DS_INTERVAL_TEXT.match(text):
+        return f"TO_DSINTERVAL('{text}')"
+    if data_type.startswith("INTERVAL YEAR") and _YM_INTERVAL_TEXT.match(text):
+        return f"TO_YMINTERVAL('{text}')"
     return _quoted(text)
 
 

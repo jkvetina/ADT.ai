@@ -378,9 +378,17 @@ END;
 # payloads come back as `contents_blob` members under
 # `shared-components/static-files/`, including text ones such as `app.css`
 # (verified live on APEX 26.1.0, apps 800 and 808, 2026-07-27). They are dropped
-# here so `-files` stays the single static-file channel and the collection
-# round-trip stays CLOB-only; `shared-components/static-files.apx`, the text
-# metadata that references them, is a CLOB member and stays in.
+# here so `-files` stays the single static-file channel;
+# `shared-components/static-files.apx`, the text metadata that references them,
+# is a CLOB member and stays in.
+#
+# Every OTHER BLOB member is kept, as `blob001` beside the CLOBs (ADT #930): the
+# plugin and theme files under `shared-components/plugins/<type>/<name>/static-files/`
+# and `shared-components/themes/<name>/static-files/`. `-files` never exports
+# those, so dropping them left a tree `apex import` refused with one
+# `REFERENCE_NOT_FOUND` per file, 67 of them on a live application. Jan,
+# 2026-09-23: *"export plugins in apexlang as they are (untouched) so the import
+# does not require anything extra"*.
 EXPORT_APEXLANG_QUERY = """
 DECLARE
     l_files apex_t_export_files;
@@ -395,14 +403,14 @@ BEGIN
         p_truncate_if_exists    => 'YES'
     );
     FOR i IN 1 .. l_files.COUNT LOOP
-        IF (l_files(i).name LIKE 'shared-components/static-files/%'
-            OR l_files(i).contents_blob IS NOT NULL) THEN
+        IF l_files(i).name LIKE 'shared-components/static-files/%' THEN
             CONTINUE;
         END IF;
         APEX_COLLECTION.ADD_MEMBER (
             p_collection_name   => 'ADT_APEX_EXPORT',
             p_c001              => l_files(i).name,
-            p_clob001           => l_files(i).contents
+            p_clob001           => l_files(i).contents,
+            p_blob001           => l_files(i).contents_blob
         );
     END LOOP;
     COMMIT;
@@ -413,7 +421,8 @@ FETCH_FILES_QUERY = """
 SELECT
     c.seq_id,
     c.c001      AS file_name,
-    c.clob001   AS clob_content
+    c.clob001   AS clob_content,
+    c.blob001   AS blob_content
 FROM apex_collections c
 WHERE c.collection_name = 'ADT_APEX_EXPORT'
 """.strip()

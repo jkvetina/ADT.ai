@@ -37,9 +37,11 @@ The version prefix is also what makes the next change painless: a value written 
 `pwd_key:` records which key the value is under. It is a 12-character digest, not the key and not the password, and it exists because a wrong key and a corrupted value otherwise report the same error, so the commonest mistake of all used to read as a damaged connection file:
 
 ```text
-Wrong encryption key for DEV.APP pwd: the stored value carries key fingerprint
-4f2a91c7de08, the key in use fingerprints as 9b31e77c05aa. Pass -key or set
-ADT_KEY to the key this value was encrypted with.
+WRONG ENCRYPTION KEY FOR DEV.APP pwd
+
+The stored value carries key fingerprint 4f2a91c7de08, the key in use
+fingerprints as 9b31e77c05aa. Pass -key or set ADT_KEY to the key
+this value was encrypted with.
 ```
 
 The digest comes from that value's salted key material, not the key alone. Testing a guess against it therefore costs the same 600000 iterations as testing the ciphertext. The fingerprint does not weaken the encrypted value, but the whole connection file still stays out of Git.
@@ -130,9 +132,11 @@ pwd_cmd: ["op", "read", "op://My Vault/DEV APP/password"]
 **One source per secret.** A block carrying both a command and a stored value is refused, by name, instead of one of them quietly winning:
 
 ```text
-DEV.APP pwd: pwd_cmd is configured beside pwd, so the secret has two sources. A
-block reads its secret from exactly one place: remove pwd to fetch it with the
-command, or remove pwd_cmd to keep the stored value.
+DEV.APP pwd: THE SECRET HAS TWO SOURCES
+
+pwd_cmd is configured beside pwd, and a block reads its secret
+from exactly one place: remove pwd to fetch it with the command, or
+remove pwd_cmd to keep the stored value.
 ```
 
 That covers the marker and the fingerprint too, and it counts what the schema actually resolves, so an environment-level value inherited from above collides with a schema-level command just as a neighbouring one does. The same holds for the encryption key and its command form.
@@ -146,7 +150,7 @@ A `-key` on the command line still wins over both, because that is an override f
 **A failure names only the executable, never its arguments or output.** Standard output is where the secret arrives, and provider arguments or standard error can also contain tokens. All three are suppressed. The diagnostic retains the context, executable and exit status:
 
 ```text
-DEV.APP pwd: command failed with exit status 1: op
+DEV.APP pwd: COMMAND FAILED WITH EXIT STATUS 1: op
 ```
 
 Run the provider command directly in a trusted terminal when its own detailed diagnostic is needed. ADT.ai also removes `ADT_KEY` and `ADT_KEY_CMD` from the environment of the provider process; provider-owned variables such as `VAULT_TOKEN` are left intact.
@@ -282,7 +286,7 @@ Cleartext passwords are left exactly as they are. A rekey rewrites the values ca
 
 **Nothing is written unless everything can be.** Every secret is decrypted before any is rewritten, so a wrong old key leaves the file untouched instead of half converted. The recorded fingerprints are what let the command tell you which of two things went wrong:
 
-- Every recorded fingerprint disagrees with the old key, so the key is simply wrong: `wrong -old-key: it matches none of the 1 recorded key fingerprints in connections.yaml. Nothing was written`.
+- Every recorded fingerprint disagrees with the old key, so the key is simply wrong: `WRONG -old-key`, then `It matches none of the 1 recorded key fingerprints in connections.yaml.` and `Nothing was written.`
 - Some agree and some do not, so the file is already under more than one key. The message names the odd ones out and tells you to settle them with `-set-pwd -encrypt` before rekeying. That is the case a fingerprint-free file could never report.
 
 A rekey is also the wholesale way off the earlier stored format: values written by an older ADT.ai come out with a fresh salt and a recorded fingerprint each, whether or not the key actually changed. Passing the same value for both keys is a legitimate way to migrate a file in place.

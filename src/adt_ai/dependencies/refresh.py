@@ -374,12 +374,15 @@ def refresh_app_incremental(
                 stamped_row(table, row, {"APPLICATION_ID": app_id})
                 for row in provided.get(table, ())
             ]
+            # One row per key on both paths: the 24.2 read keys on a NULL
+            # component id, which SQLite's primary key lets repeat, so a row
+            # read twice was stored twice under `-force` and never left.
+            fresh_by_key = {row_key(row, pk): row for row in fresh_rows}
             if force:
                 connection.execute(queries.delete_app_rows_query(table), (app_id,))
-                counts[table] = insert_rows(connection, table, fresh_rows)
+                counts[table] = insert_rows(connection, table, fresh_by_key.values())
                 continue
 
-            fresh_by_key = {row_key(row, pk): row for row in fresh_rows}
             existing = connection.execute(
                 queries.select_app_rows_query(table), (app_id,)
             ).fetchall()

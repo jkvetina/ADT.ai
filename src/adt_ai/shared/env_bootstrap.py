@@ -2,22 +2,22 @@
 
 An AI tool (Claude Code, Codex) spawns a non-login, non-interactive shell, so
 ``~/.zshrc`` never runs and everything the user exports there is missing from
-ADT.ai's environment: ``ADT_KEY`` (which decrypts connection passwords),
-``ADT_ENV``, ``ORACLE_HOME``, the Instant Client library paths, and the SQLcl
+ADT.ai's environment: ``ADT_KEY`` or ``ADT_KEY_CMD`` (which decrypt connection
+passwords), ``ORACLE_HOME``, the Instant Client library paths, and the SQLcl
 ``PATH`` entries. The command then fails in a way that reads like a config bug
 rather than a missing environment.
 
 :func:`hydrate_environment` runs once at the top of the CLI entry point, so
-every module inherits it from a single hook. When either sentinel
-(``ADT_ENV`` / ``ORACLE_HOME``) is unset it fills in the allowlisted variables
-from the user's startup file, never overwriting one that is already set, so
-an explicit environment always wins.
+every module inherits it from a single hook. When no key source (``ADT_KEY`` /
+``ADT_KEY_CMD``) is set, or ``ORACLE_HOME`` is unset, it fills in the
+allowlisted variables from the user's startup file, never overwriting one that
+is already set, so an explicit environment always wins (#924 F69).
 
 Extraction is hybrid. The file is read as text and its ``export VAR=value``
 lines are parsed with ``~`` and ``$VAR`` expansion, which covers the normal
-case without executing anything. Only when a sentinel is *still* unresolved
-does it fall back to running the shell (``zsh -lic 'export -p'``), which also
-sees variables set inside a function, a conditional, or an ``eval``.
+case without executing anything. Only when no key source is resolved even
+then does it fall back to running the shell (``zsh -lic 'export -p'``), which
+also sees variables set inside a function, a conditional, or an ``eval``.
 
 POSIX only; Windows is an explicit no-op.
 
@@ -54,8 +54,16 @@ from pathlib import Path
 
 ShellRunner = Callable[[Sequence[str]], str]
 
-# Either one missing means the process never saw the user's startup file.
-SENTINEL_VARIABLES = ("ADT_ENV", "ORACLE_HOME")
+# The two ways to supply the key that decrypts connection passwords (ADT #397).
+# Either one set satisfies the key half of the sentinel.
+KEY_VARIABLES = ("ADT_KEY", "ADT_KEY_CMD")
+
+# No key source, or no ORACLE_HOME, means the process may never have seen the
+# user's startup file, so hydration runs. Only what a command actually reads
+# decides that (#924 F69): the sentinel used to be `ADT_ENV`, which nothing
+# reads for its work, so a process holding ADT_ENV and ORACLE_HOME but no key
+# skipped the one hydration an encrypted connection needed.
+SENTINEL_VARIABLES = (*KEY_VARIABLES, "ORACLE_HOME")
 
 # The variables worth carrying over. PATH is absent on purpose: it is derived
 # from the hydrated ORACLE_HOME below rather than copied wholesale.
@@ -110,35 +118,17 @@ _VARIABLE_REFERENCE = re.compile(
 
 @dataclass(frozen=True)
 class BootstrapResult:
-    """What hydration did, names only, never values (``ADT_KEY`` is a secret)."""
+    """What hydration did, names only, never values (``ADT_KEY`` is a secret).
+
+    ``display_source``, the ``home`` it read and the ``last_result()`` store that
+    kept the latest outcome went with ADT #923: they fed the ``HYDRATED`` row
+    `#539` took off ``doctor``, and nothing has read them since.
+    """
 
     source : str = ""               # startup file parsed, or the shell that was run
     method : str = ""               # "" | "parse" | "shell"
     applied: tuple[str, ...] = ()   # variables this run set
     skipped: tuple[str, ...] = ()   # variables found but already set explicitly
-    home   : str = ""               # home the run resolved against, for display
-
-    def display_source(self, home: Path | None = None) -> str:
-        """The source with the home directory folded back to ``~``, for ``doctor``."""
-        if not self.source:
-            return ""
-        home_path = str(home) if home is not None else (self.home or str(Path.home()))
-        if self.source.startswith(home_path + os.sep):
-            return "~" + self.source[len(home_path):]
-        return self.source
-
-
-_LAST_RESULT = BootstrapResult()
-
-
-def last_result() -> BootstrapResult:
-    """The most recent :func:`hydrate_environment` outcome, for ``doctor``."""
-    return _LAST_RESULT
-
-
-def reset_last_result() -> None:
-    global _LAST_RESULT
-    _LAST_RESULT = BootstrapResult()
 
 
 def hydrate_environment(
@@ -151,18 +141,14 @@ def hydrate_environment(
 ) -> BootstrapResult:
     """Fill in missing ADT/Oracle variables from the user's startup file.
 
-    Returns a :class:`BootstrapResult`; also stored for :func:`last_result`.
-    Safe to call more than once, a fully-set environment is a no-op.
+    Returns a :class:`BootstrapResult`. Safe to call more than once, a
+    fully-set environment is a no-op.
     """
-    global _LAST_RESULT
-
     target = os.environ if env is None else env
     if (platform_name or os.name) == "nt":
-        _LAST_RESULT = BootstrapResult()
-        return _LAST_RESULT
-    if all(target.get(name) for name in SENTINEL_VARIABLES):
-        _LAST_RESULT = BootstrapResult()
-        return _LAST_RESULT
+        return BootstrapResult()
+    if _key_resolved({}, target) and target.get("ORACLE_HOME"):
+        return BootstrapResult()
 
     home_path = home or Path.home()
     shell_path = shell if shell is not None else target.get("SHELL", "")
@@ -170,7 +156,7 @@ def hydrate_environment(
     values, source = _parse_startup_files(home_path, shell_path, target)
     method = "parse" if values else ""
 
-    if not _sentinels_resolved(values, target):
+    if not _key_resolved(values, target):
         shell_values = _read_from_shell(shell_path, shell_runner)
         if shell_values:
             # The file is closer to the user's intent, so it wins on overlap.
@@ -180,21 +166,28 @@ def hydrate_environment(
             source = shell_path
 
     applied, skipped = _apply(values, target, home_path)
-    _LAST_RESULT = BootstrapResult(
+    return BootstrapResult(
         source  = source if applied else "",
         method  = method if applied else "",
         applied = applied,
         skipped = skipped,
-        home    = str(home_path),
     )
-    return _LAST_RESULT
 
 
-def _sentinels_resolved(
+def _key_resolved(
     values: MutableMapping[str, str],
     env   : MutableMapping[str, str],
 ) -> bool:
-    return all(values.get(name) or env.get(name) for name in SENTINEL_VARIABLES)
+    """Whether a key source is set, parsed or inherited.
+
+    The login-shell fallback is gated on this alone (#924 F69). Gated on
+    ORACLE_HOME too, a thin-mode user, who has none and never will, spawned
+    `$SHELL -lic` on every run. The cost is that TNS_ADMIN, NLS_LANG and
+    JAVA_TOOL_OPTIONS set only inside a function or conditional now arrive
+    through the shell only when the key is missing as well; a plain `export`
+    line still reaches them through the parse.
+    """
+    return any(values.get(name) or env.get(name) for name in KEY_VARIABLES)
 
 
 def _startup_candidates(home: Path, shell: str) -> list[Path]:
@@ -243,7 +236,7 @@ def _assignments(line: str, *prefixes: re.Pattern[str]) -> list[tuple[str, str]]
     `export ADT_KEY=abc123 ORACLE_HOME=/opt/oracle` is a perfectly ordinary two.
     Read to end-of-line as a single value it gave `ADT_KEY` the whole tail and
     never saw `ORACLE_HOME` at all (ADT #670). The corrupt value was the smaller
-    half of that: `_sentinels_resolved` only asks whether a sentinel is truthy,
+    half of that: `_key_resolved` only asks whether a sentinel is truthy,
     so the mangled one read as resolved and suppressed the login-shell fallback
     that would have got both right.
 

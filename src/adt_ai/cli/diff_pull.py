@@ -9,7 +9,7 @@ before `LEGEND:`:
   branch the run started on, and a clean checkout gets none. Jan: *"before we
   do -pull, we should commit what we have as "WIP" and dont push"*, and *"No
   line for either of the commits."* A save git refuses is the one restore
-  failure that is not `DIFF FAILED:`: it prints `ERROR - GIT COMMIT FAILED:`
+  failure that is not `ERROR - DIFF FAILED:`: it prints `ERROR - GIT COMMIT FAILED:`
   with git's own line in place of the section, since nothing was restored.
 * **The header goes up before the work**, and the restore runs under one
   countdown row naming the target and the branch it writes to, the
@@ -81,8 +81,7 @@ class PullScreen:
             if self.debug:
                 raise
             self.failed = True
-            print_adt_header("DIFF FAILED:")
-            print(str(error))
+            print_adt_error("DIFF FAILED", str(error))
             return
         files = pulled_files(self.root)
         if files:
@@ -105,8 +104,14 @@ class PullScreen:
         source, target = self.connections
         path = timers_path(self.root)
         # Keyed apart from the comparison of the same pair and mode: writing an
-        # application's export costs nothing like comparing its fingerprint.
-        key = pair_key(source.schema, target.schema, types=("PULL", mode))
+        # application's export costs nothing like comparing its fingerprint. And
+        # apart per environment, since UAT and PROD may hold one schema (#923).
+        key = pair_key(
+            source.schema,
+            target.schema,
+            types        = ("PULL", mode),
+            environments = (source.environment, target.environment),
+        )
         # The bar draws its row from this thread and runs `pull` on a worker,
         # and the exporters fan out further, so this thread is the one kept.
         with _muted_except(threading.get_ident()):
@@ -161,7 +166,7 @@ def _muted_except(kept: int) -> Iterator[None]:
     """`sys.stdout` and `sys.stderr` with every write but `kept`'s dropped.
 
     A failure still propagates, since only output is dropped, so it reaches
-    `DIFF FAILED:` like any other.
+    `ERROR - DIFF FAILED:` like any other.
     """
     stdout, stderr = sys.stdout, sys.stderr
     # `setattr`, since the stand-in is a stream by what it answers rather than

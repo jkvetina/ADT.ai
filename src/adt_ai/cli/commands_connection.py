@@ -72,18 +72,18 @@ def _missing_connection_selector(action: str, args: argparse.Namespace) -> str |
         return None
     if action == "add-env":
         if not args.env:
-            return "-add-env requires -env"
+            return "-add-env REQUIRES -env"
         return None
     if action == "create":
         if not args.env or not args.schema:
-            return "-create requires -env and -schema"
+            return "-create REQUIRES -env AND -schema"
         return None
     if action == "set-wallet-pwd":
         if not args.env:
-            return "-set-wallet-pwd requires -env"
+            return "-set-wallet-pwd REQUIRES -env"
         return None
     if not args.env or not args.schema:
-        return f"-{action} requires -env and -schema"
+        return f"-{action} REQUIRES -env AND -schema"
     return None
 
 
@@ -185,10 +185,10 @@ def _no_password_available(action: str) -> str:
     # Two lines, because the screen is 80 columns and the indent is two of them.
     # It read as one 95-character sentence under the retired `connection: `
     # prefix and wrapped mid-word on a default terminal, which is the ragged
-    # look ADT #764 exists to end.
+    # look ADT #764 exists to end. The first line is the headline (ADT #934).
     return (
-        f"-{action} needs a password, and nothing arrived at the prompt.\n"
-        "Run it from a terminal."
+        f"-{action} NEEDS A PASSWORD\n\n"
+        "Nothing arrived at the prompt. Run it from a terminal."
     )
 
 
@@ -206,12 +206,12 @@ def _collect_connection_password(
         if first is None:
             return None, _no_password_available(action)
         if not first:
-            return None, f"a password is required for -{action}"
+            return None, f"-{action} NEEDS A PASSWORD"
         confirmation = prompt_password("Confirm password: ")
         if confirmation is None:
             return None, _no_password_available(action)
         if first != confirmation:
-            return None, "passwords did not match"
+            return None, "PASSWORDS DID NOT MATCH"
         return first, None
     # add-schema: a password is optional; a blank entry skips writing pwd, and
     # so does a stdin with nothing on it.
@@ -272,7 +272,8 @@ def _run_connection(args: argparse.Namespace) -> int:
     if action is None:
         print_adt_error(
             "ARGUMENT INVALID",
-            f"provide exactly one of {_CONNECTION_ACTION_LIST}",
+            "NO CONNECTION ACTION GIVEN",
+            f"Provide exactly one of {_CONNECTION_ACTION_LIST}.",
         )
         return exit_code_for("ARGUMENT INVALID")
     missing = _missing_connection_selector(action, args)
@@ -283,11 +284,11 @@ def _run_connection(args: argparse.Namespace) -> int:
         if action == "rekey":
             print_adt_error(
                 "ARGUMENT INVALID",
-                "-encrypt is not used with -rekey, which re-encrypts by definition",
-                "Give it -old-key and -new-key.",
+                "-encrypt IS NOT USED WITH -rekey",
+                "-rekey re-encrypts by definition. Give it -old-key and -new-key.",
             )
         else:
-            print_adt_error("ARGUMENT INVALID", "-encrypt is only valid for password actions")
+            print_adt_error("ARGUMENT INVALID", "-encrypt IS ONLY FOR PASSWORD ACTIONS")
         return exit_code_for("ARGUMENT INVALID")
 
     startup, path = _connection_edit_path(args, allow_missing=action == "create")

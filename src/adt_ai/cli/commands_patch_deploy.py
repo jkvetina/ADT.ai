@@ -17,10 +17,11 @@ from __future__ import annotations
 
 # ruff: noqa: F401 - re-exports keep the pre-split import path working.
 import argparse
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from functools import partial
 from pathlib import Path
+from typing import Any
 
 from adt_ai.cli.commands_patch_actions import print_patch_plan
 from adt_ai.cli.constants import (
@@ -55,16 +56,9 @@ from adt_ai.cli.patch_preview_render import (
     patch_scan_commits,
 )
 from adt_ai.patch.apex_import import resolve_target
-from adt_ai.patch.baseline_tables import working_tree_tables, write_baseline_tables
-from adt_ai.patch.create import install_script_name
-from adt_ai.patch.hashes import (
-    merge_into_baseline,
-    read_baseline,
-    read_patch_hashes,
-    resolve_baseline_path,
-)
+from adt_ai.patch.baseline_advance import merge_landed_files
+from adt_ai.patch.hashes import read_baseline
 from adt_ai.patch.models import DeploymentResult
-from adt_ai.patch.selection import apex_owner_schemas
 from adt_ai.shared.connections import Connection
 from adt_ai.shared.diff_tables import drop_diff_tables
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
@@ -99,7 +93,7 @@ def run_patch_deploy(
     if not args.target:
         print_adt_error(
             "ARGUMENT INVALID",
-            "-deploy needs a target, none was given",
+            "-deploy NEEDS A TARGET",
             "Use -target TARGET to name the environment to deploy to.",
         )
         return exit_code_for("ARGUMENT INVALID")
@@ -182,7 +176,13 @@ def run_patch_deploy(
         locks  = result.apex_locks,
     )
     _print_apex_notes(result.apex_notes)
-    advance_baseline(root, config, args, workspace, ref=ref, results=result.results)
+    advance_baseline(
+        root, config, args, workspace,
+        ref     = ref,
+        results = result.results,
+        scans   = result.apex_scans,
+        reverts = result.apex_reverts,
+    )
     print()
     return 1 if result.status == "ERROR" else 0
 
@@ -200,6 +200,8 @@ def advance_baseline(
     *,
     ref: str | None,
     results: list[DeploymentResult],
+    scans: Sequence[Any] = (),
+    reverts: Sequence[Any] = (),
 ) -> None:
     """Record what this deploy actually landed, for a hash-built patch (ADT #447).
 
@@ -211,48 +213,29 @@ def advance_baseline(
       it. User should not be mixing these modes."*
     * **Only the files that patch shipped move**, so work done between `-create`
       and `-deploy` stays pending instead of being recorded as deployed.
-    * **Only the files whose own install script SUCCEEDED.** Under `-continue` a
-      run can land one schema and fail another; advancing the whole patch there
-      would mark the failed schema's objects as live, and the next hash patch
-      would leave them out. `install_script_name` re-derives the grouping the
-      build used rather than trusting a second recorded copy of it.
+    * **Only the files whose own step SUCCEEDED**: a database file's install
+      script, and for an APEXlang file the import that landed its application in
+      place and was neither reverted nor failed by the scan (``scans``,
+      ``reverts``, ADT #923). `patch/baseline_advance.py` owns the rules and the
+      write; this owns when they run and what the console says.
     """
     try:
         folder, _plan = workspace.deployment_plan(config, ref=ref)
     except PatchError:
         return
-    shipped, commits = read_patch_hashes(folder.path)
-    if not shipped:
-        return
-    landed = {
-        getattr(item, "file", "")
-        for item in results
-        if getattr(item, "status", "") == "SUCCESS"
-    }
-    # Hoisted out of the comprehension: the lookup is a sqlite read, and this
-    # runs once per file the patch shipped.
-    owners = apex_owner_schemas(root)
-    advancing = {
-        file: value
-        for file, value in shipped.items()
-        if install_script_name(file, config, owners) in landed
-    }
-    if not advancing:
-        return
-    path = resolve_baseline_path(root, config, args.target or "-", None)
-    _written, advanced = merge_into_baseline(
-        path,
-        advancing,
-        {file: number for file, number in commits.items() if file in advancing},
+    merged = merge_landed_files(
+        root,
+        config,
+        folder.path,
+        results,
         target_env = args.target or "-",
         stamp      = datetime.now().strftime(BASELINE_STAMP_FORMAT),
+        scans      = scans,
+        reverts    = reverts,
     )
-    # The tables this deploy landed move with their lines (ADT #857), read off
-    # the working tree only where it still holds the bytes that shipped. A
-    # scope claiming nothing, because a deploy advances and never removes.
-    write_baseline_tables(
-        path, working_tree_tables(root, config, advancing), covered=lambda file: False
-    )
+    if merged is None:
+        return
+    path, advanced = merged
     total = len(read_baseline(path))
     print_adt_header("UPDATING BASELINE:")
     # One row, and flat: a baseline file is named rather than listed, so there is
@@ -376,7 +359,10 @@ def _patch_deploy_gateway_factories(
             project_root = root,
         )
 
-    return target_gateway_factory, source_gateway_factory, target_connection
+    # Cached (ADT #923): the view check asks once per view, and each ask opened
+    # a DEV session. The gateway scope closes the one it keeps, as for any other.
+    source = cached_schema_gateway_factory(source_gateway_factory)
+    return target_gateway_factory, source, target_connection
 
 
 def patch_build_gateway_factory(

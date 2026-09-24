@@ -26,6 +26,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from adt_ai.patch.apex_import import one_target_refusal
 from adt_ai.patch.content import CONTENT_MODE_COMMITTED, file_present
 from adt_ai.patch.create import (
     _patch_files,
@@ -37,8 +38,8 @@ from adt_ai.patch.files import _reject_unresolved_merges, _snapshot_link
 from adt_ai.patch.full_app import require_fresh_full_app_exports, resolve_full_app_ids
 from adt_ai.patch.hashes import write_patch_hashes
 from adt_ai.patch.immutables import never_recreated
-from adt_ai.patch.layout import ensure_deploy_log_folder
-from adt_ai.patch.models import DatabasePatchResult
+from adt_ai.patch.layout import apex_app_id, ensure_deploy_log_folder, is_apexlang_path
+from adt_ai.patch.models import DatabasePatchResult, PatchError
 from adt_ai.patch.report import build_reports
 from adt_ai.patch.scripts import collect_patch_scripts, reset_patch_scripts
 from adt_ai.patch.snapshots import _write_snapshots
@@ -66,6 +67,7 @@ def build_database_patch(
     gateway_factory: Callable[[str], Any] | None = None,
     files_ws: bool = False,
     hash_tables: Mapping[str, str] | None = None,
+    target_app_id: int | None = None,
 ) -> DatabasePatchResult:
     """Write ``folder`` and report what went into it.
 
@@ -81,7 +83,20 @@ def build_database_patch(
     already carries are kept exactly as they are. Its `patch_scripts/` is NOT,
     since ADT #508, because that folder is an input to the build rather than a
     record of one; `reset_patch_scripts` empties it below.
+
+    ``target_env`` no longer shapes anything written here (#924 F33): the
+    install scripts are the same for every target and `-deploy -target`
+    resolves their environment-specific lines. It stays in the signature
+    because `-create -target` still names the connection its table ALTERs use,
+    which reaches this build through ``gateway_factory``.
+
+    ``target_app_id`` is `-app <id>`'s target half (ADT #935): an APEXlang
+    application's `init` and `end` scripts, their SPOOL and so their logs are
+    named for the id the import lands on, and `DEPLOY.sql` says between them
+    which application is imported as which. One id over two APEXlang
+    applications is refused before anything is written, as `-deploy` refuses it.
     """
+    del target_env
     # Ahead of every write, and ahead of the file selection, so a refusal costs
     # nothing and leaves nothing behind.
     require_forced_refresh(folder, force=force)
@@ -103,6 +118,11 @@ def build_database_patch(
         content_mode = content_mode,
     )
     files = selection.files
+    if several := one_target_refusal(target_app_id, sorted({
+        app_id for path in files
+        if is_apexlang_path(path, config) and (app_id := apex_app_id(path, config)) is not None
+    })):
+        raise PatchError(several)
     # `-files_ws` files no selected commit touched, and the commit each ships from
     # in the committed mode (ADT #812). Every reader of bytes below is handed it.
     pinned = selection.pinned
@@ -124,13 +144,13 @@ def build_database_patch(
         )
         for path in files
     }
-    _reset_generated_artifacts(folder, config)
     folder.mkdir(parents=True, exist_ok=True)
     if config.get("patch_spooling", True):
         # The install script written below opens with a SPOOL into this folder,
         # so it is part of the patch, not deploy-time residue: a hand-run in
-        # SQLcl gets the same working folder `-deploy` does (ADT #270).
-        ensure_deploy_log_folder(folder, config, target_env)
+        # SQLcl finds it on disk (ADT #270). The environment-free one, because
+        # the script names no target (#924 F33); `-deploy` seeds its own.
+        ensure_deploy_log_folder(folder, config, None)
     generated = _write_generated_patch_scripts(
         root,
         files,
@@ -151,6 +171,10 @@ def build_database_patch(
         # compare, so a patch carrying no table opens none.
         gateway_factory = gateway_factory,
     )
+    # Only now, past the one step that connects (ADT #923): run before it, a
+    # re-create whose ALTER could not reach the database had already deleted
+    # the previous build's install scripts and snapshots, and stopped there.
+    _reset_generated_artifacts(folder, config)
     # The scripts move INTO the patch before the install script is written,
     # because that is where `_script_payload` now reads them from (ADT #309).
     # Recovery runs inside this call, so a re-create that finds the source folder
@@ -171,7 +195,6 @@ def build_database_patch(
         config,
         patch_code   = patch_code,
         full_app_ids = full_app_ids,
-        target_env   = target_env,
         content_mode = content_mode,
         present_files = present_files,
         # A table or sequence the target already holds is never created again
@@ -181,11 +204,12 @@ def build_database_patch(
             content_mode  = content_mode,
             hash_previous = hash_previous,
         ),
+        target_app_id = target_app_id,
     )
     # After every install script is on disk, so it sees exactly what the folder
     # holds; a re-create keeps a person's order unless `-force` (ADT #850).
     deploy_file = write_deploy_driver(folder, config, force=force)
-    _write_snapshots(
+    undecodable = _write_snapshots(
         root,
         folder,
         files,
@@ -219,6 +243,7 @@ def build_database_patch(
         refused_tables    = generated.refused_tables,
         changed_objects   = freshness.changed,
         unclocked_schemas = freshness.unclocked,
+        undecodable_files = undecodable,
         # Built last, and off the install scripts already on disk: the templates
         # and per-patch scripts it reports are read back from the
         # `PROMPT -- TEMPLATE:` / `PROMPT -- SCRIPT:` rows the writer emitted,

@@ -224,7 +224,9 @@ When a token resolves to nothing at all for an application, the export stops and
 
 Without an explicit format, a non-reveal `-recent` is report-only: it exports nothing and advances no watermark. With split, readable or embedded selected it also limits the output to those components, and each format advances its own watermark key. With `-reveal` it filters the application list to applications changed in that window, with no per-application detail.
 
-`-by` filters by exact APEX developer username. `-my` compares your `git config user.name` and `user.email` against the workspace developers, which covers short initials-style logins as well as email-form authors. Either one leaves the application list complete and skips applications with no matching change in the detail sections below it. Developer-filtered exports do not update the application cache.
+`-by` filters by exact APEX developer username. `-my` compares your `git config user.name` and `user.email` against the workspace developers, which covers short initials-style logins as well as email-form authors.
+
+Either one leaves the application list complete, and an application with no matching change still gets its `CHANGES SINCE` section, empty, the way an unfiltered `-recent` prints one. Developer-filtered exports do not update the application cache.
 
 <br>
 

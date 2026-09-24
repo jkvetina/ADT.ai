@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 DEFAULT_ROW_LIMIT = 200
@@ -63,16 +64,29 @@ def _blockquote(message: str) -> str:
     return "\n".join(f"> {line}" for line in message.splitlines())
 
 
+#: Every spelling of a line break a reader of the file will see as one: `CRLF`,
+#: then a bare `CR`, which `read_text` turns into `LF` on the next run.
+_LINE_BREAK = re.compile(r"\r\n|\r|\n")
+
+
 def _cell(value: Any) -> str:
+    """One table cell: `|` escaped, and every line break a Markdown `<br>`.
+
+    A value spanning lines broke its row, and a `-file` write-back put it inside
+    the `ADT-RESULT` block, where a data line reading exactly `*/` is the line the
+    re-run scrub anchors on. `get_ddl` of a package commented at column 0 cut the
+    block there and left the rest of the row as live SQL (residual of #650), so
+    no cell may start a line of its own.
+    """
     if value is None:
         return ""
-    return str(value).replace("|", "\\|")
+    return _LINE_BREAK.sub("<br>", str(value).replace("|", "\\|"))
 
 
 def _table(rows: list[dict[str, Any]], limit: int) -> str:
-    columns = list(rows[0].keys())
+    columns = [_cell(column) for column in rows[0]]
     display = rows[:limit]
-    matrix = [[_cell(row.get(column)) for column in columns] for row in display]
+    matrix = [[_cell(row.get(column)) for column in rows[0]] for row in display]
     widths = [
         max(len(columns[i]), *(len(row[i]) for row in matrix)) if matrix else len(columns[i])
         for i in range(len(columns))

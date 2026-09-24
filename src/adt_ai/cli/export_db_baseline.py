@@ -77,10 +77,11 @@ def narrowing_flags(args: argparse.Namespace) -> list[str]:
 
 
 def refusal(refused: list[str]) -> str:
+    """A short uppercase headline naming the flags, the reason under it (ADT #934)."""
     return (
-        f"export_db: -baseline cannot be narrowed by {', '.join(refused)}: "
-        "a baseline records everything this environment holds, so a "
-        "partial one would read as a complete one."
+        f"-baseline CANNOT BE NARROWED BY {', '.join(refused)}\n\n"
+        "A baseline records everything this environment holds, so a partial\n"
+        "one would read as a complete one."
     )
 
 

@@ -12,7 +12,6 @@ from adt_ai.cli.constants import (
     PatchError,
     PatchRunner,
     PatchWorkspace,
-    print_adt_header,
     print_module_banner,
 )
 from adt_ai.cli.context import (
@@ -61,9 +60,9 @@ def _run_patch(
     except PatchError as error:
         if args.debug:
             raise
-        print_adt_header("PATCH FAILED:")
-        print(str(error))
-        return 1
+        # The shared screen, so the body sits two columns in (ADT #934).
+        print_adt_error("PATCH FAILED", str(error))
+        return exit_code_for("PATCH FAILED")
 
 
 def _refuse(message: str) -> int:
@@ -132,8 +131,8 @@ def _level_history(
         fetch_origin(root)
     if args.branch and not git_ref_exists(root, args.branch):
         raise PatchError(
-            f'BRANCH "{args.branch}" NOT FOUND - check the name, or fetch the '
-            "remote first if the branch only exists there"
+            f'BRANCH "{args.branch}" NOT FOUND\n\n'
+            "Check the name, or fetch the remote first if the branch only exists there."
         )
     return ensure_commit_store(args, root, config)
 
@@ -261,16 +260,10 @@ def _run_patch_command(
     # The FLIP still happens where `#570` put it, because what it selects there
     # is the screen the run falls through to.
     discovery = searching_without_narrowing(args)
-    if selection.create_requested and not discovery:
-        # Same gate as -install, and for the same reason: a patch built from a
-        # graph that predates the objects it orders fails in the target
-        # database. Checked before the commit scan and the hash rollout write,
-        # so a refusal leaves nothing behind.
-        #
-        # Since ADT #367 it ENSURES rather than only refuses: a stale scope is
-        # refreshed for the schemas that are actually behind, and the refusal is
-        # what a run that still cannot produce a usable graph lands on.
-        ensure_fresh_dependency_graph(args, root, patch_config(), gateway_factory)
+    # The dependency gate `-create` owes moved below the commit scan (ADT #933):
+    # it measures the schemas the patch's own files live in, and those are only
+    # known once the selection is. Asked up here it measured every schema folder
+    # on disk and refreshed CRM_QA, DBADMIN and MATO for an APEX patch.
     # `IGNORING WITHOUT -deploy:` stood here until ADT #443 (added by #309, from
     # #292 §2c). Jan, 2026-08-21: "remove this block, I did not asked for it". An
     # ADT.ai invention with no old-ADT equivalent, firing on the ordinary case of
@@ -281,7 +274,7 @@ def _run_patch_command(
     # A read-only run degrades instead of refusing (ADT #352). Bare `patch` now
     # also lists the patch folders, and that answer does not depend on git at
     # all, so a project that is not a checkout, or has no commits yet, must still
-    # get its listing rather than a `PATCH FAILED` where the tables belong. A
+    # get its listing rather than an `ERROR - PATCH FAILED` where the tables belong. A
     # build still fails loudly: `-create` has nothing to build from.
     request = build_patch_request(
         args,
@@ -354,6 +347,22 @@ def _run_patch_command(
     # a `-create` without a name returned 2 at the top of the run. It is the
     # name the build is FOR, so it is the half spelled out here.
     if selection.create_requested and patch_ref is not None:
+        # Same gate as -install, and for the same reason: a patch built from a
+        # graph that predates the objects it orders fails in the target
+        # database. Since ADT #367 it ENSURES rather than only refuses, and
+        # since ADT #933 only for the schemas this patch's files live in. Still
+        # ahead of the first write, so a refusal leaves nothing behind.
+        ensure_fresh_dependency_graph(
+            args,
+            root,
+            patch_config(),
+            gateway_factory,
+            files = sorted({
+                path
+                for record in records
+                for path in (*record.usable_files, *record.deleted_files)
+            }),
+        )
         build_database_patch(
             args,
             workspace,

@@ -6,14 +6,19 @@ run once on each fresh connection (NLS settings, ``ALTER SESSION`` tuning, a
 SQL*Plus/SQLcl script, so it mixes three statement kinds that must be handled
 differently when replayed through python-oracledb:
 
-- **SQL*Plus directives** (``SET SERVEROUTPUT ON``, ``SET DEFINE OFF`` …) are
-  client-side commands the database never sees. python-oracledb cannot execute
-  them, so they are filtered out. The meaningful ones are emulated server-side
-  (``SET SERVEROUTPUT ON`` → ``DBMS_OUTPUT.ENABLE``).
+- **SQL*Plus and SQLcl directives** (``SET SERVEROUTPUT ON``, ``SET SQLFORMAT
+  ANSICONSOLE``, ``VAR`` …) are client-side commands the database never sees.
+  python-oracledb cannot execute them, so they are filtered out. The meaningful
+  ones are emulated server-side (``SET SERVEROUTPUT ON`` →
+  ``DBMS_OUTPUT.ENABLE``, ``EXEC call`` → ``BEGIN call; END;``).
 - **Session SQL** (``ALTER SESSION SET ...``) runs verbatim, with the trailing
   ``;`` stripped (oracledb rejects a statement terminator).
 - **PL/SQL blocks** (``BEGIN ... END;`` / ``DECLARE ...`` / ``CREATE ...``) run
   as a single statement, terminated by a lone ``/`` line which is stripped.
+
+A script include (``@file``, ``@@file``, ``START file``) is the one thing only
+SQLcl can do. It is split off as a statement of its own line, so the database
+refuses it there, naming that line, instead of it swallowing the next statement.
 
 The SQLcl deploy path consumes ``STARTUP.sql`` natively, so it is injected
 verbatim there; only the python-oracledb path needs this parser.
@@ -25,35 +30,32 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-# Second token of a ``SET`` line that marks it as a SQL*Plus client directive
-# rather than server SQL. ``SET TRANSACTION`` is intentionally absent: it is real
-# SQL and must reach the database.
-_SQLPLUS_SET_OPTIONS = frozenset(
+from adt_ai.shared import queries
+
+# Second token of the ``SET`` lines that are SQL, not client settings: the three
+# statements the SQL reference spells with ``SET``. Every other ``SET <word>`` is
+# a SQL*Plus or SQLcl setting. It was an allowlist of SQL*Plus options until
+# ADT #923, so SQLcl's own (``SQLFORMAT``, ``STATUSBAR``, ``HIGHLIGHTING``,
+# ``ENCODING``, ``HISTORY``, ``DDL`` …) read as unterminated SQL and swallowed
+# the statement below them: every python-oracledb connect failed on a file SQLcl
+# ran happily.
+_SQL_SET_STATEMENTS = frozenset({"CONSTRAINT", "CONSTRAINTS", "ROLE", "TRANSACTION"})
+
+# First token of other single-line SQL*Plus and SQLcl client commands that never
+# reach the database and are skipped entirely.
+_SQLPLUS_COMMANDS = frozenset(
     {
-        "APPINFO", "ARRAYSIZE", "AUTOCOMMIT", "AUTOPRINT", "AUTORECOVERY",
-        "AUTOTRACE", "BLOCKTERMINATOR", "CMDSEP", "COLSEP", "CONCAT",
-        "COPYCOMMIT", "DEFINE", "ECHO", "EDITFILE", "EMBEDDED", "ERRORLOGGING",
-        "ESCAPE", "ESCCHAR", "EXITCOMMIT", "FEEDBACK", "FLAGGER", "FLUSH",
-        "HEADING", "HEADSEP", "INSTANCE", "LINESIZE", "LOBOFFSET", "LOGSOURCE",
-        "LONG", "LONGCHUNKSIZE", "MARKUP", "NEWPAGE", "NULL", "NUMFORMAT",
-        "NUMWIDTH", "PAGESIZE", "PAUSE", "RECSEP", "RECSEPCHAR", "SECUREDCOL",
-        "SERVEROUTPUT", "SHIFTINOUT", "SHOWMODE", "SQLBLANKLINES", "SQLCASE",
-        "SQLCONTINUE", "SQLNUMBER", "SQLPLUSCOMPATIBILITY", "SQLPREFIX",
-        "SQLPROMPT", "SQLTERMINATOR", "SUFFIX", "TAB", "TERMOUT", "TIME",
-        "TIMING", "TRIMOUT", "TRIMSPOOL", "UNDERLINE", "VERIFY", "WRAP",
-        "XQUERY",
+        "ACCEPT", "ALIAS", "BTITLE", "CD", "CLEAR", "COL", "COLUMN", "COMPUTE",
+        "DEFINE", "ECHO", "EXEC", "EXECUTE", "FORMAT", "HISTORY", "INFO",
+        "INFORMATION", "PAUSE", "PRINT", "PROMPT", "REM", "REMARK", "REPFOOTER",
+        "REPHEADER", "SHOW", "SPOOL", "TTITLE", "UNDEFINE", "VAR", "VARIABLE",
+        "WHENEVER",
     }
 )
 
-# First token of other single-line SQL*Plus client commands that never reach the
-# database and are skipped entirely.
-_SQLPLUS_COMMANDS = frozenset(
-    {
-        "ACCEPT", "BTITLE", "CLEAR", "COL", "COLUMN", "COMPUTE", "DEFINE",
-        "ECHO", "PAUSE", "PROMPT", "REM", "REMARK", "REPFOOTER", "REPHEADER",
-        "SHOW", "SPOOL", "TTITLE", "UNDEFINE", "WHENEVER",
-    }
-)
+# `EXECUTE statement` is SQL*Plus shorthand for `BEGIN statement; END;`, so it is
+# emulated rather than skipped: the session gets the same call on both paths.
+_EXEC_COMMANDS = frozenset({"EXEC", "EXECUTE"})
 
 _PLSQL_START = re.compile(
     r"^\s*(DECLARE|BEGIN|CREATE\s+(OR\s+REPLACE\s+)?"
@@ -88,8 +90,10 @@ class StartupError(RuntimeError):
 
     def __init__(self, statement: Statement, error: Exception) -> None:
         first_line = statement.text.splitlines()[0] if statement.text else ""
+        # A short uppercase headline, the database's own words under it (ADT #934).
         super().__init__(
-            f"STARTUP.sql statement at line {statement.line} failed: {error}\n"
+            f"STARTUP.sql FAILED AT LINE {statement.line}\n\n"
+            f"{error}\n"
             f"  {first_line}"
         )
         self.statement = statement
@@ -102,8 +106,14 @@ def _sqlplus_directive(line: str) -> bool:
         return False
     head = tokens[0].upper()
     if head == "SET":
-        return len(tokens) >= 2 and tokens[1].upper() in _SQLPLUS_SET_OPTIONS
+        return len(tokens) >= 2 and tokens[1].upper() not in _SQL_SET_STATEMENTS
     return head in _SQLPLUS_COMMANDS
+
+
+def _script_include(line: str) -> bool:
+    """``@file``, ``@@file`` or ``START file``: another script, run by SQLcl only."""
+    tokens = line.split()
+    return bool(tokens) and (line.startswith("@") or tokens[0].upper() == "START")
 
 
 def split_statements(text: str) -> list[Statement]:
@@ -135,6 +145,12 @@ def split_statements(text: str) -> list[Statement]:
             if _sqlplus_directive(stripped):
                 statements.append(Statement(kind="sqlplus", text=stripped, line=index))
                 continue
+            if _script_include(stripped):
+                # One line, one statement: sent on its own, the database refuses
+                # it with this line's number rather than with the next one's.
+                include = _TRAILING_TERMINATOR.sub("", stripped)
+                statements.append(Statement(kind="sql", text=include, line=index))
+                continue
             start_line = index
             in_plsql = bool(_PLSQL_START.match(line))
 
@@ -158,15 +174,21 @@ def split_statements(text: str) -> list[Statement]:
 def _emulation_for(statement: Statement) -> str | None:
     """Server-side equivalent for a meaningful SQL*Plus directive, else ``None``.
 
-    Only ``SET SERVEROUTPUT`` carries over to a python-oracledb session; the rest
-    (DEFINE, TIMING, SQLBLANKLINES …) are pure client concerns and are skipped.
+    Two carry over to a python-oracledb session: ``SET SERVEROUTPUT``, and
+    ``EXEC``, which SQL*Plus itself runs as ``BEGIN statement; END;``. The rest
+    (DEFINE, TIMING, SQLFORMAT, VAR …) are pure client concerns and are skipped.
     """
     tokens = statement.text.split()
+    if len(tokens) >= 2 and tokens[0].upper() in _EXEC_COMMANDS:
+        call = _TRAILING_TERMINATOR.sub("", statement.text.split(None, 1)[1]).strip()
+        return f"BEGIN {call}; END;"
     if len(tokens) >= 2 and tokens[0].upper() == "SET" and tokens[1].upper() == "SERVEROUTPUT":
-        value = tokens[2].upper() if len(tokens) >= 3 else "ON"
+        # `SET SERVEROUTPUT OFF;` is as valid as the bare form, and its `;` made
+        # the value read `OFF;`, which enabled the output it switched off.
+        value = tokens[2].upper().rstrip(";") if len(tokens) >= 3 else "ON"
         if value == "OFF":
-            return "BEGIN DBMS_OUTPUT.DISABLE; END;"
-        return "BEGIN DBMS_OUTPUT.ENABLE(NULL); END;"
+            return queries.DBMS_OUTPUT_DISABLE_BLOCK
+        return queries.DBMS_OUTPUT_ENABLE_BLOCK
     return None
 
 

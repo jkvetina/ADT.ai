@@ -4,6 +4,7 @@ import re
 
 from adt_ai.export_db.normalizers import (
     NormalizationContext,
+    _code_positions,
     _ensure_sql_terminator,
     _ensure_statement_semicolon,
     _trim_trailing_blank_lines,
@@ -14,6 +15,7 @@ from adt_ai.export_db.object_normalizers.view_columns import (
     collapse_spaces,
     column_block,
     find_column_list,
+    plain_column_name,
 )
 
 
@@ -160,7 +162,9 @@ def _top_level_view_select_index(lines: list[str]) -> int | None:
     return None
 
 def _sql_parenthesis_depth_after_line(line: str, depth: int) -> int:
-    for index in _code_positions(line):
+    # Every scan here reads quoted identifiers as opaque (`identifiers=True`): a
+    # `(`, a top-level `,` and `from` are structure, `"A(B"` is a name (ADT #474).
+    for index in _code_positions(line, identifiers=True):
         char = line[index]
         if char == "(":
             depth += 1
@@ -168,25 +172,9 @@ def _sql_parenthesis_depth_after_line(line: str, depth: int) -> int:
             depth -= 1
     return depth
 
-def _code_positions(payload: str) -> list[int]:
-    """Every index of `payload` that is SQL rather than string, comment or identifier.
-
-    The one scan for all three questions this module asks of DDL text, where each
-    used to carry its own `in_string` walk against the rule `#299` wrote (ADT
-    #474). A quoted identifier is opaque here on purpose: a `(`, a top-level `,`
-    and the `from` keyword are all SQL structure, and `"A(B"`, `"X,Y"` and
-    `"FROM"` are names that merely look like it.
-    """
-    return [
-        index
-        for kind, start, end in sql_spans(payload, identifiers=True)
-        if kind == "code"
-        for index in range(start, end)
-    ]
-
 def _find_from_keyword(payload: str) -> int | None:
     depth = 0
-    for index in _code_positions(payload):
+    for index in _code_positions(payload, identifiers=True):
         char = payload[index]
         if char == "(":
             depth += 1
@@ -264,7 +252,7 @@ def _split_top_level_projection_items(projection: str) -> list[str]:
     items: list[str] = []
     depth = 0
     start = 0
-    code = set(_code_positions(projection))
+    code = set(_code_positions(projection, identifiers=True))
     for index, char in enumerate(projection):
         if index not in code:
             continue
@@ -287,27 +275,9 @@ def _simple_view_projection_column(token: str) -> str | None:
     if not match:
         return None
 
-    column = _normalize_simple_view_identifier(match.group("column"))
-    if not re.fullmatch(r"[a-z][a-z0-9_$#]*", column):
-        # pragma: no cover reason: unreachable, `column` already matched `identifier`'s charset
-        return None  # pragma: no cover
-
-    alias = match.group("alias")
-    if not alias:
-        return column
-
-    normalized_alias = _normalize_simple_view_identifier(alias)
-    if not re.fullmatch(r"[a-z][a-z0-9_$#]*", normalized_alias):
-        # pragma: no cover reason: unreachable, `alias` already matched `identifier`'s charset
-        return None  # pragma: no cover
-    return f"{normalized_alias}.{column}"
-
-def _normalize_simple_view_identifier(name: str) -> str:
-    name = name.strip()
-    quoted_match = re.fullmatch(r'"([A-Za-z][A-Za-z0-9_$#]*)"', name)
-    if quoted_match:
-        return quoted_match.group(1).lower()
-    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_$#]*", name):
-        return name.lower()
-    # pragma: no cover reason: both callers only pass a name matching one of the two patterns above
-    return name.strip('"')  # pragma: no cover
+    names = [plain_column_name(name) for name in match.group("alias", "column") if name]
+    # A name that keeps its quotes (`"createdAt"`, the reserved `"COMMENT"`) is
+    # Oracle's only spelling of it, so the item stays as written (ADT #923).
+    if any(name.startswith('"') for name in names):
+        return None
+    return ".".join(names)

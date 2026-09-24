@@ -146,6 +146,8 @@ Without them the command says `WARNING - MINIFIERS NOT INSTALLED:` once at the s
 
 The behaviour is a port of old ADT's `live_upload`, and one thing is deliberately not carried over. Old ADT sent JavaScript through the CSS minifier and left its own CSS branch unreachable, so `.css` was never minified and `.js` was minified by the wrong tool. Here each suffix goes to its own minifier.
 
+Like old ADT, it skips every name below the folder that starts with a dot, so Finder's `.DS_Store` and an editor's swap files are never uploaded.
+
 ADT.ai shipped it as a command of its own, `adtai live_upload`, until it folded into `patch` as the verb above. The old spelling stops parsing; there is no fallback.
 
 <br>

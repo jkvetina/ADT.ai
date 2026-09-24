@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     # Annotation only: `patch/staleness.py` imports `patch/files.py`, which
     # imports this module, so a runtime import here would close the cycle.
     from adt_ai.patch.staleness import StaleExport
+    from adt_ai.shared.apexlang_line_endings import PrecheckIssue
 
 
 class PatchError(Exception):
@@ -252,6 +253,10 @@ class DatabasePatchResult:
     # Owners whose mirrored DDL times carry no recorded database UTC offset, so
     # the comparison above could not be made for them at all (ADT #394, #468).
     unclocked_schemas: list[str] = field(default_factory=list)
+    # Files neither UTF-8 nor the declared `repo_encoding`, with where the first
+    # bad byte sits (ADT #932). Their snapshots ship the repo's exact bytes; they
+    # stopped the build until Jan called that *"stupid that he is blocked"*.
+    undecodable_files: list[tuple[str, str]] = field(default_factory=list)
     # `DEPLOY.sql`, written when the folder holds two or more install scripts,
     # or None (ADT #850). `PATCH FILES:` lists it after the scripts it orders.
     deploy_file: Path | None = None
@@ -322,8 +327,9 @@ class DeploymentRunResult:
     #: APEXlang tree was exported for them (ADT #592). A note rather than a
     #: refusal: the patch may legitimately carry an application nobody has taken
     #: an APEXlang export of, and the `NOTES:` section names the export that
-    #: would change that. Empty on every run that passed no `-app`.
-    apex_notes: list[str] = field(default_factory=list)
+    #: would change that. Empty on every run that passed no `-app`. A tree the
+    #: precheck converted rides here as a `PrecheckIssue` and prints as a warning.
+    apex_notes: list[str | PrecheckIssue] = field(default_factory=list)
     #: One `ApexScanReport` per application this deploy landed (`#676`), each
     #: already written to its own log in the patch folder. Unlike `still_invalid`
     #: this DOES flip the run's status, because it is patch-scoped: the scan

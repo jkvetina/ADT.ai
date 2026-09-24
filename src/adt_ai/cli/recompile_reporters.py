@@ -185,9 +185,12 @@ def _print_compile_error_list(
     stanzas = [(obj, errors) for obj, errors in stanzas if errors]
     if not stanzas:
         return
-    print_adt_header("COMPILE ERRORS:")
-    for obj, errors in stanzas:
-        print()
+    print_adt_header("ERROR - RECOMPILATION FAILED:")
+    for index, (obj, errors) in enumerate(stanzas):
+        # A blank between objects only: the body opens right under the rule, as
+        # every other `ERROR - ` section does (ADT #934).
+        if index:
+            print()
         print(f"{_ERROR_STANZA_INDENT}{_object_label(obj.object_type, obj.object_name)}")
         for (line, position), message in errors:
             for rendered in _compile_error_lines(line, position, message):

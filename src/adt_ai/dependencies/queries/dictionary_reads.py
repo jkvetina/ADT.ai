@@ -275,6 +275,17 @@ END;
 # which `export_db` and `recompile` read too; the name stays for this module's callers.
 DEPSCAN_CLEANUP_STATEMENT = DROP_SCAN_HELPERS_STATEMENT
 
+# The repair that was measured and REJECTED (ADT #921), kept because
+# `tests/tools/scan_session_reset_probe.py` is what measured it and a candidate
+# with no name is one the next card re-proposes. A page whose data breaks
+# `APEX_APP_OBJECT_DEPENDENCY.SCAN` leaves the session unable to scan the next
+# page, and a rollback clears only half of that: measured live, it cleared the
+# derivative `ORA-06510` crash and left the genuine `ORA-01427` one standing,
+# so a healthy page was still named for its neighbour's defect. A rollback cannot
+# reach PL/SQL package state. `component_scan.reset_session` opens a new session
+# instead.
+SESSION_ROLLBACK_STATEMENT = "ROLLBACK"
+
 # What the scan above concluded about each fragment it could NOT compile, which
 # is the half `APEX_USED_DB_OBJECTS` cannot report: a fragment that fails to
 # parse resolves to no object at all, so it leaves no dependency row and
@@ -360,8 +371,13 @@ WHERE application_id = :app_id
 # as given -- a page that turns out not to exist is a finding the caller wants,
 # not one to swallow -- but `-page 1-50` cannot be turned into fifty scans of
 # pages that were never there.
+#
+# The name rides along because the page-by-page fallback walks this same list
+# and the warning it prints names each broken page (ADT #929). It is the one
+# read that already has every page of the application in hand, so the name costs
+# a column rather than a second query; a caller wanting ids alone ignores it.
 APEX_APPLICATION_PAGE_IDS_QUERY = """
-SELECT page_id
+SELECT page_id, page_name
 FROM apex_application_pages
 WHERE application_id = :app_id
 ORDER BY page_id

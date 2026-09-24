@@ -5,7 +5,7 @@ banner by `commands_search_graph._term_argument_error`; this module turns them
 into a `TermRequest`, runs it offline, and renders the answer in the sections
 Jan approved on 2026-09-19: the hits, a table per source since ADT #905
 (`APEX HITS`, `DB HITS`, ...), then `USES / USED BY` for the database
-objects hit, `PAGE LINKS` for the pages hit, and `NOT SEARCHED` last, naming a
+objects hit, `PAGE LINKS` for the pages hit, and `WARNING - NOT SEARCHED` last, naming a
 layer nobody refreshed so it never reads as a layer with no hits.
 
 Every table is fitted to the 78-column line by the `diff` screen's own fitter:
@@ -164,7 +164,7 @@ def _term_owners(args: argparse.Namespace, root: Path) -> tuple[str, ...]:
     The default is the one a bare `rebuild` and `export_db` resolve, the
     connection file's `schema_db` for its first environment, read from the file
     and never connected through. A project with no such file, or one naming no
-    default, has no schema to read, and the layer says so under `NOT SEARCHED`.
+    default, has no schema to read, and the layer says so under `WARNING - NOT SEARCHED`.
     """
     named = _resolve_refresh_names(_flatten_arg_groups(args.schema))
     if named:
@@ -183,7 +183,7 @@ def _print_term_result(result: TermResult, term: str) -> None:
     in layer order. With no hit at all, `HITS (0):` and `(none)` still print
     whenever a layer was read, because an empty answer from a searched layer is
     an answer. Nothing prints for them only when nothing was read at all, and
-    then `NOT SEARCHED` is the whole report.
+    then `WARNING - NOT SEARCHED` is the whole report.
     """
     if result.searched:
         by_source: dict[str, list[Hit]] = {}
@@ -202,7 +202,7 @@ def _print_term_result(result: TermResult, term: str) -> None:
         print_adt_header("PAGE LINKS:")
         _print_fitted(_link_rows(result.links), LINK_TIERS)
     if result.not_searched:
-        print_adt_header("NOT SEARCHED:")
+        print_adt_header("WARNING - NOT SEARCHED:")
         for layers, reason in result.not_searched:
             print(f"  {layers}: {reason}")
         print()

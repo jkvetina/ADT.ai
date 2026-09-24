@@ -56,7 +56,8 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.patch import queries, settings
-from adt_ai.patch.apex_signature import read_target_signature
+from adt_ai.patch.apex_signature import LastChange, read_last_change, read_target_signature
+from adt_ai.patch.sql_literal import escape_literal
 from adt_ai.shared import text_files
 from adt_ai.shared.apex_store import ApexStore
 from adt_ai.shared.row_values import row_value
@@ -120,9 +121,12 @@ class BuildStatusLock:
     #: The target's export checksum as it stood BEFORE the status was written
     #: (ADT #745). Setting build status moves that checksum, so this is the only
     #: reading of the target the `#592` drift gate can honestly compare against
-    #: what the export recorded. Empty when nothing was locked, and then the gate
-    #: reads the target itself exactly as it did before ADT #726.
+    #: what the export recorded. Empty when nothing was locked or the read failed,
+    #: and the gate then reads the target itself as it did before ADT #726.
     signature : str = ""
+    #: Who last moved the target, read beside ``signature`` because the status
+    #: write stamps the application with the deploy's own user (ADT #925).
+    last_change : LastChange = LastChange()
     reason    : str = ""
     log_path  : str = ""
 
@@ -188,6 +192,7 @@ def lock_target(
         signature = read_target_signature(gateway, app_id)
     except Exception:  # noqa: BLE001 - the gate re-reads and reports its own failure
         signature = ""
+    last_change = read_last_change(gateway, app_id)
     try:
         _set_status(gateway, app_id, workspace=workspace, status=RUN_ONLY)
     except Exception as error:  # noqa: BLE001 - reported as an outcome, never raised
@@ -205,6 +210,7 @@ def lock_target(
         mode      = mode,
         locked    = True,
         signature = signature,
+        last_change = last_change,
     )
 
 
@@ -269,6 +275,7 @@ def build_status_lock(
     schemas         : dict[int, str],
     target_env      : str,
     log_folder      : Path,
+    moment          : datetime | None = None,
 ) -> Iterator[dict[int, BuildStatusLock]]:
     """Hand out the deploy's lock ledger and release it whatever happens next.
 
@@ -286,6 +293,10 @@ def build_status_lock(
     ``gateways`` are the connections the deploy already opened, preferred over
     ``gateway_factory`` because `test_runner_deploy` pins that a deploy connects
     once per schema and then stops connecting.
+
+    ``moment`` is the deploy's own reading of the clock (`#929`). The release
+    runs last, so a timeline stamped where it is written sorted minutes away from
+    the backup and the scan of the very run it reports on.
     """
     locks: dict[int, BuildStatusLock] = {}
     try:
@@ -305,6 +316,7 @@ def build_status_lock(
                 schemas    = schemas,
                 target_env = target_env,
                 log_folder = log_folder,
+                moment     = moment,
             )
         )
 
@@ -321,7 +333,7 @@ def release_targets(
     moment          : datetime | None = None,
 ) -> dict[int, BuildStatusLock]:
     """Put every locked application on the status this deploy ends on."""
-    terminal = _terminal_status(config, target_env)
+    terminal = settings.apex_terminal_status(config, target_env)
     stamp = moment or datetime.now()
     released: dict[int, BuildStatusLock] = {}
     for app_id, lock in locks.items():
@@ -457,19 +469,11 @@ def _set_status(gateway: Any, app_id: int, *, workspace: str, status: str) -> No
     """
     gateway.execute(
         queries.APEX_SET_BUILD_STATUS_BLOCK.format(
-            workspace    = workspace.replace("'", "''"),
+            workspace    = escape_literal(workspace),
             app_id       = int(app_id),
-            build_status = status.replace("'", "''"),
+            build_status = escape_literal(status),
         )
     )
-
-
-def _terminal_status(config: dict[str, Any], target_env: str) -> str:
-    """`patch_apex_build_status` for this environment, read the way the template reads it."""
-    statuses = config.get("patch_apex_build_status") or {}
-    if not isinstance(statuses, dict):
-        return ""
-    return str(statuses.get(target_env or "") or "")
 
 
 def _workspace(root: Path, app_id: int) -> str:

@@ -26,11 +26,22 @@ from adt_ai.export_apex.postprocess import (
     _strip_app_prefix,
     _target_path,
 )
+from adt_ai.export_apex.prune import (
+    APEXLANG_SUFFIXES,
+    EMBEDDED_SUFFIXES,
+    OWNED_SUFFIXES,
+    SQL_SUFFIXES,
+    YAML_SUFFIXES,
+    prune_folder,
+    prune_plugin_payloads,
+    sweepable,
+)
 from adt_ai.export_apex.recent import WHOLE_APP_ACTIONS, RecentComponentFilter
 from adt_ai.export_apex.rest import export_rest
 from adt_ai.shared import text_files
 from adt_ai.shared.apex_paths import REST_SCHEMA_DEFINITION
 from adt_ai.shared.apex_payloads import link_payloads
+from adt_ai.shared.apexlang_line_endings import lf_bytes
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.row_values import row_value
 from adt_ai.shared.yaml_io import store_yaml_mapping
@@ -41,62 +52,12 @@ class CollectionWriteResult:
     rows: list[dict[str, Any]]
 
 
-def _prune_folder(root: Path, keep: set[Path], suffixes: frozenset[str] | None = None) -> None:
-    """Delete everything under ``root`` this export did not write.
-
-    The replacement for clearing the folder up front: same end state, minus the
-    delete-and-rewrite that gave every surviving file a fresh mtime. Empty
-    folders go too, so a component type that lost its last member leaves no
-    directory behind either.
-
-    ``suffixes`` narrows the sweep to the extensions the action owns, for a root
-    two formats share: `readable/` lands its `.yaml` under the same
-    `application/` tree the split export fills with `.sql`, so a split prune that
-    took every file would delete the readable export beside it.
-    """
-    if not root.is_dir():
-        return
-    for path in sorted(root.rglob("*"), reverse=True):
-        if path.is_file():
-            if path not in keep and (suffixes is None or path.suffix in suffixes):
-                path.unlink()
-        elif path.is_dir() and not any(path.iterdir()):
-            path.rmdir()
-
-
-# Every extension `-apexlang` can put under `apexlang/`, and therefore every one
-# it may delete from there. Read off the writer: the export block collects only
-# CLOB members and drops the `shared-components/static-files/` payloads, so what
-# lands is the `.apx` source plus the `.json` metadata beside it
-# (`.apex/apexlang.json`, `deployments/*.json`) -- the member list a live 26.1
-# probe returned (apps 800 and 808, 2026-07-27) and the one
-# `test_runner_apexlang.py` pins.
-#
-# It used to be `None`, meaning "every file", and that swept a developer's own
-# `NOTES.md` out of the folder on the next unfiltered run; reproduced live on ADT
-# #670. A stale member of some extension APEX has not shipped yet surviving a
-# sweep is the cheaper failure by a wide margin.
-APEXLANG_SUFFIXES = frozenset({".apx", ".json"})
-
-# The same question for `embedded_code/`, which carried the same `None` and so
-# the same defect (ADT #670). APEX's `EMBEDDED_CODE` export is an application's
-# embedded JavaScript, CSS and PL/SQL, and this writer copies each member name
-# verbatim: `postprocess._embedded_relative` only strips the `embedded_code/`
-# prefix and rewrites `pages/p` to `pages/page_`, so the suffix on disk is the
-# suffix APEX emitted. `.sql` and `.js` are the two this suite's own fixtures
-# pin; `.css` is the third member of that triple, listed so a renamed stylesheet
-# does not survive forever.
-#
-# Conservative in the same direction as the APEXlang set above: a stale member
-# of an extension APEX has not shipped yet outliving a sweep costs one diff,
-# where sweeping every file costs a developer whatever they kept in the folder.
-EMBEDDED_SUFFIXES = frozenset({".sql", ".js", ".css"})
-
-# Each action's prunable root, and the extensions it owns there. `full` writes
-# one file, `readable` shares `application/` with `split` and is not swept.
+# Each action's prunable root, and the extensions it owns there (`prune.py`).
+# `full` writes one file, `readable` shares `application/` with `split` and is
+# not swept.
 _PRUNE_ROOTS: dict[str, tuple[str, frozenset[str] | None]] = {
     "apexlang": ("", APEXLANG_SUFFIXES),
-    "split"   : ("application", frozenset({".sql"})),
+    "split"   : ("application", SQL_SUFFIXES),
     "embedded": ("embedded_code", EMBEDDED_SUFFIXES),
 }
 
@@ -160,6 +121,13 @@ class ApexCollectionWriterMixin:
                     rows.append(component_row)
             target = _target_path(resolver, application, action, file_name)
             target.parent.mkdir(parents=True, exist_ok=True)
+            blob = row_value(row, "BLOB_CONTENT") if action == "apexlang" else None
+            if blob is not None:
+                # A plugin or theme static file (ADT #930), written byte for byte:
+                # no line endings, no enrichment, the file APEX holds.
+                text_files.write_bytes(target, _blob_bytes(blob))
+                written.add(target)
+                continue
             content = _payload_for(
                 action,
                 payload,
@@ -172,7 +140,12 @@ class ApexCollectionWriterMixin:
             )
             if action == "readable" and target == resolver.workspace_root() / "app_groups.yaml":
                 content = _merge_app_groups(target, content)
-            text_files.write_text(target, content)
+            if action == "apexlang":
+                # LF whatever `file_crlf` says: SQLcl's APEXlang compiler reads
+                # nothing else (ADT #928, #936).
+                text_files.write_bytes(target, lf_bytes(content))
+            else:
+                text_files.write_text(target, content)
             written.add(target)
         # A narrowed run wrote a subset on purpose, so pruning would delete every
         # page it was told not to touch. `apexlang` is in `WHOLE_APP_ACTIONS` and
@@ -182,7 +155,9 @@ class ApexCollectionWriterMixin:
         )
         prune_target = _prune_root(resolver, application, action) if unfiltered else None
         if prune_target is not None:
-            _prune_folder(prune_target[0], written, prune_target[1])
+            prune_folder(prune_target[0], written, prune_target[1])
+            if action == "apexlang":
+                prune_plugin_payloads(prune_target[0], written)
         return CollectionWriteResult(rows)
 
     def _write_static_files(
@@ -203,6 +178,7 @@ class ApexCollectionWriterMixin:
         # the application the caller took it off.
         if app_id == 0:
             target_for = resolver.workspace_file
+            homes: tuple[Path, ...] = (resolver.workspace_root(), resolver.rest_root())
         elif application is None:  # pragma: no cover - callers pair the two
             raise ValueError(
                 f"export_apex: static files for application {app_id} "
@@ -210,6 +186,9 @@ class ApexCollectionWriterMixin:
             )
         else:
             target_for = partial(resolver.application_file, application)
+            app_root = resolver.app_root(application)
+            homes = (app_root, *(app_root / folder for folder in OWNED_SUFFIXES))
+        written: set[Path] = set()
         for row in gateway.fetch_all(self.APEX_FILES_QUERY, {"app_id": app_id}):  # type: ignore[attr-defined]
             file_name = str(row_value(row, "FILENAME") or "")
             payload = _blob_bytes(row_value(row, "BLOB_CONTENT"))
@@ -218,6 +197,13 @@ class ApexCollectionWriterMixin:
             # Through the shared writer, so a static file whose bytes have not
             # moved keeps its mtime like every other exported artifact (`#593`).
             text_files.write_bytes(target, payload)
+            written.add(target)
+        # Old ADT emptied this folder before every export of it (ADT #923). A
+        # completed read is every file APEX holds, so one it did not return was
+        # deleted there. Swept before the links below, so the APEXlang tree does
+        # not link the deleted file back in either.
+        if sweepable(target_for(""), *homes):
+            prune_folder(target_for(""), written)
         if application is not None:
             # ADT #765: an `-apexlang` tree beside these payloads is validatable and
             # importable as it sits, so the links are reconciled as part of writing
@@ -278,8 +264,16 @@ class ApexCollectionWriterMixin:
             }
         comments_root = resolver.app_root(application) / "comments"
         comments_root.mkdir(parents=True, exist_ok=True)
+        written: set[Path] = set()
         for page_id, payload in comments.items():
-            store_yaml_mapping(comments_root / f"p{page_id:05d}.yaml", payload)
+            target = comments_root / f"p{page_id:05d}.yaml"
+            store_yaml_mapping(target, payload)
+            written.add(target)
+        # A page whose comments were all cleared returns no row, so its file is
+        # the one this loop never reaches (ADT #923). Only a whole-app read may
+        # sweep: a filtered one read the pages it was told to, on purpose.
+        if recent_filter.selects_whole_app() and explicit_filter.selects_whole_app():
+            prune_folder(comments_root, written, YAML_SUFFIXES)
         return {
             page_id: str(payload.get("page", {}).get("page_name") or "")
             for page_id, payload in comments.items()
@@ -293,17 +287,28 @@ class ApexCollectionWriterMixin:
     ) -> None:
         root = resolver.apex_root()
         root.mkdir(parents=True, exist_ok=True)
-        resolver.rest_export(REST_SCHEMA_DEFINITION).parent.mkdir(parents=True, exist_ok=True)
+        rest_root = resolver.rest_root()
+        rest_root.mkdir(parents=True, exist_ok=True)
         # `export_rest` raises before returning anything on a failed run, so
         # nothing is written for one, the clean modules included: the run
         # reports failure, and half a schema's REST definitions on disk would be
         # a repository nobody can trust (ADT #670).
         export = export_rest(gateway, root, config)
+        written: set[Path] = set()
         for name, text in export.modules.items():
             target = resolver.rest_export(name)
             target.parent.mkdir(parents=True, exist_ok=True)
             text_files.write_text(target, text)
+            written.add(target)
         if export.schema_definition is not None:
             target = resolver.rest_export(REST_SCHEMA_DEFINITION)
             target.parent.mkdir(parents=True, exist_ok=True)
             text_files.write_text(target, export.schema_definition)
+            written.add(target)
+        # Old ADT emptied the REST folder before every export (ADT #923). Only a
+        # transcript that reached its closing `COMMIT;` proves its modules are all
+        # the schema publishes, `-rest` writes nothing but `.sql`, and a folder
+        # another export also writes into is never swept.
+        homes = (root, resolver.workspace_root(), resolver.workspace_file(""))
+        if export.completed and sweepable(rest_root, *homes):
+            prune_folder(rest_root, written, SQL_SUFFIXES)

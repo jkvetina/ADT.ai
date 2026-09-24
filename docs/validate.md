@@ -91,6 +91,7 @@ TIMER: 20s
 | `EMPTY` | The folder exists but holds no APEXlang files. A broken export, not a quiet success. | non-zero |
 | `UNRECOGNISED` | SQLcl printed something this version cannot read. The raw output is shown verbatim. | non-zero |
 | a `NOTES:` row | An `-app` with no export on disk. | non-zero |
+| `WARNING - APEXLANG PRECHECK ISSUE:` | A tree converted from CRLF, not yet committed. | non-zero |
 
 A run that cannot start at all refuses instead of reporting, on stderr, under the shared `ERROR - INPUT NOT FOUND:` header every ADT.ai refusal takes ([console.md](console.md#failure-screens)). The lead line under it says which of the two cases you are in:
 
@@ -111,7 +112,7 @@ Both are chrome rather than a result, so nothing suppresses them: a refusal that
 
 An `-apexlang` export deliberately omits the `shared-components/static-files/` payloads, so the repository never holds two copies of every static file. The compiler does not accept that: `shared-components/static-files.apx` names each payload in a `file "<path>"` declaration, and every missing one is a `REFERENCE_NOT_FOUND`.
 
-So the export's own tree is completed rather than copied. The payloads are **hardlinked** from the sibling `files/` export into `apexlang/shared-components/static-files/`, and kept in step with it on every export, validate and deploy. The compiler opens the folder that is committed.
+So the export's own tree is completed rather than copied. The payloads are **hardlinked** from the sibling `files/` export, the folder `apex_path_files` names, into `apexlang/shared-components/static-files/`, and kept in step with it on every export, validate and deploy. The compiler opens the folder that is committed.
 
 A hardlink is one inode with two names, so this copies no bytes. ADT adds the payload-folder pattern to the checkout's private `.git/info/exclude`, so the links are neither tracked nor reported as untracked and no housekeeping file enters the compiler input tree. Nothing in your project's tracked `.gitignore` changes.
 
@@ -123,6 +124,17 @@ Reconciliation also removes the retired nested `.gitignore`; exports strip its s
 - **`-input` is never completed.** That mode reads no project config by contract and may point at a zip or a single `.apx`, so it validates exactly what you gave it. Use it to see the raw committed tree.
 
 An application with no `files/` export gets a `NOTES:` row naming `export_apex -files`, because eight `REFERENCE_NOT_FOUND` messages say what is missing but not how to get it.
+
+An exported tree with Windows line endings (CRLF) is converted to LF in place before the compiler reads it, and `WARNING - APEXLANG PRECHECK ISSUE:` lists the folder with the count and the commit it asks for one line under it, so the run still fails until the fix is committed:
+
+```text
+WARNING - APEXLANG PRECHECK ISSUE:
+----------------------------------
+  webcrm/apex/430_OPPORTUNITY/apexlang
+    499 file(s) converted from CRLF to LF, which the APEXlang compiler needs - commit them
+``` An `-input` path is compiled as given and never rewritten.
+
+The compiler cannot read a `\r`: on a whole application it crashed with a `NullPointerException` instead of reporting.
 
 There used to be a staging tree here, assembled under `config/temp/apexlang/<app-folder>/` and compiled in place of the real one. It was named after the app folder alone, so two `apexlang/` trees sharing that name, an export and a patch snapshot of it, resolved to one directory and overwrote each other before either was compiled.
 

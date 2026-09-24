@@ -395,6 +395,7 @@ def verify_applications(
     apex_version   : str | None,
     log_folder     : Path,
     config         : dict[str, Any],
+    moment         : datetime | None = None,
 ) -> list[ApexScanReport]:
     """Scan every application this deploy landed, writing one log each.
 
@@ -409,12 +410,19 @@ def verify_applications(
     connects to every schema up front and then stops connecting; a verification
     step that reached for the factory again would open a second connection per
     application and break that contract for a gateway it already had.
+
+    ``moment`` is the deploy's own reading of the clock (`#929`), so the reports
+    written here sort beside the backup and the import of the run that asked for
+    them. It defaults to now for a caller scanning outside a deploy, which is
+    what `back_up_targets` and `revert_failed_scans` already do beside it.
     """
+    stamp = moment or datetime.now()
     return [
         _written(
             scan_application(gateway_for_app(app_id), app_id, apex_version=apex_version),
             log_folder = log_folder,
             config     = config,
+            moment     = stamp,
         )
         for app_id in sorted(set(app_ids))
     ]
@@ -437,12 +445,23 @@ def scanned_app_ids(results: Sequence[Any]) -> list[int]:
     )
 
 
-def _written(report: ApexScanReport, *, log_folder: Path, config: dict[str, Any]) -> ApexScanReport:
-    """Write the report beside the deploy's own logs, and record where."""
+def _written(
+    report     : ApexScanReport,
+    *,
+    log_folder : Path,
+    config     : dict[str, Any],
+    moment     : datetime,
+) -> ApexScanReport:
+    """Write the report beside the deploy's own logs, and record where.
+
+    ``moment`` is handed in rather than read here (`#929`): a stamp taken at the
+    moment of writing is a different second from the one the backup folder
+    carries, and the two are supposed to sort together.
+    """
     try:
         log_folder.mkdir(parents=True, exist_ok=True)
         path = log_folder / settings.apex_scan_log_name(
-            config, moment=datetime.now(), app_id=report.app_id
+            config, moment=moment, app_id=report.app_id
         )
         text_files.write_text(path, scan_log_text(report))
     except OSError as error:

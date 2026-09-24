@@ -48,7 +48,7 @@ def _app_selection_error(raw: list[list[str]] | None) -> str | None:
     if selection is not None:
         for app_id in selection.explicit_ids:
             if not app_id.isdigit():
-                return f"invalid APP_ID: {app_id}"
+                return f"INVALID APP_ID: {app_id}"
     return None
 
 
@@ -66,7 +66,7 @@ def _page_selection_error(raw: list[list[str]] | None) -> str | None:
             _parse_apex_page_selection([token])
         except ValueError as error:
             message = str(error)
-            return message if message.startswith("invalid -page") else f"invalid PAGE_ID: {token}"
+            return message if message.startswith("INVALID -page") else f"INVALID PAGE_ID: {token}"
     return None
 
 

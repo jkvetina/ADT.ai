@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from adt_ai.export_db.normalizer_identifiers import normalize_identifier_part
 from adt_ai.export_db.normalizers import (
     NormalizationContext,
     _constraint_column_names,
@@ -132,12 +133,21 @@ def _format_partition_suffix(suffix: str) -> list[str]:
     return lines
 
 def _format_inmemory_suffix(suffix: str) -> list[str]:
+    """The table's INMEMORY clause, kept as written; `NO INMEMORY` is the default.
+
+    A bare `\\bINMEMORY\\b` also matched inside `NO INMEMORY`, so a table held out
+    of the column store exported as `INMEMORY;`, the opposite setting. Old ADT
+    dropped exactly ` NO INMEMORY` (export_db.py:593), and so does this: the
+    first match naming the table-level setting decides. A column exclusion,
+    `NO INMEMORY ("NOTE")`, only follows a table-level INMEMORY and is kept with
+    it (ADT #923).
+    """
     match = re.search(
-        r"\bINMEMORY\b(?P<body>.*?)(?=;|\bCREATE\b|\bALTER\b|$)",
+        r"\b(?P<no>NO\s+)?INMEMORY\b(?P<body>.*?)(?=;|\bCREATE\b|\bALTER\b|$)",
         suffix,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    if not match:
+    if not match or match.group("no"):
         return []
 
     raw = suffix[match.start() : match.end()].strip()
@@ -170,7 +180,8 @@ def _trailing_table_statements(suffix: str) -> list[str]:
     return [line.rstrip() for line in suffix[match.start():].strip().splitlines()]
 
 def _extract_partition_name(suffix: str) -> str:
-    match = re.search(r"\(\s*PARTITION\s+(\S+)", suffix, flags=re.IGNORECASE)
+    match = re.search(r'\(\s*PARTITION\s+("[^"]*"|\S+)', suffix, flags=re.IGNORECASE)
     if not match:
         return "p00"
-    return match.group(1).strip('"').lower()
+    name = match.group(1)
+    return normalize_identifier_part(name) if name.startswith('"') else name.lower()

@@ -57,7 +57,7 @@ The mirror declares no foreign keys; the lines follow the `APPLICATION_ID` and `
 
 ## Tables
 
-Nullable is No where the column is declared NOT NULL or belongs to the primary key.
+Nullable is No where the column is declared NOT NULL or belongs to the primary key. SQLite enforces only the declaration, so a key column can still hold NULL, as `COMPONENT_ID` does from APEX 24.2.
 
 <br>
 
@@ -82,12 +82,14 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | USED_DB_OBJECT_ID   | INTEGER | No       | PK  | The used object, as above.                                          |
 | USED_DB_OBJECT_NAME | TEXT    | Yes      |     | The object's name, repeated for the lookup index.                   |
 | PAGE_ID             | INTEGER | Yes      |     | The page the component is on; NULL for a shared component.          |
-| COMPONENT_ID        | INTEGER | No       | PK  | APEX's internal id of the component.                                |
+| COMPONENT_ID        | INTEGER | No       | PK  | APEX's internal id of the component; NULL on APEX 24.2 and later.   |
 | COMPONENT_NAME      | TEXT    | Yes      |     | The component's name or label.                                      |
 | COMPONENT_TYPE      | TEXT    | Yes      |     | Region, item, process, list and the rest of APEX's component types. |
 | PROPERTY_ID         | INTEGER | No       | PK  | APEX's id of the property that references the object.               |
 | PROPERTY_NAME       | TEXT    | Yes      |     | The property's display name.                                        |
 | PROPERTY_VALUE      | TEXT    | Yes      |     | The property's value, the SQL or PL/SQL that names the object.      |
+
+APEX 24.2 and later give a component no id, so there `COMPONENT_ID` is NULL and `search -app` tells components apart by page, type and name.
 
 <br>
 

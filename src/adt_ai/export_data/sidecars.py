@@ -17,11 +17,13 @@ from __future__ import annotations
 import hashlib
 import json
 import unicodedata
+from collections.abc import Mapping
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from adt_ai.export_data.intervals import ds_interval_iso, is_ym_interval, ym_interval_iso
 from adt_ai.export_data.inventory import DataColumn
 from adt_ai.export_data.lob_update_scripts import write_lob_update_script
 from adt_ai.shared import text_files
@@ -80,6 +82,7 @@ def _write_sidecar_values(
     written: set[Path],
     claimed_row_keys: dict[str, str],
     sql_table_name: str | None = None,
+    column_types: Mapping[str, str] | None = None,
 ) -> list[str]:
     """`sql_table_name` is how the generated UPDATE names the table.
 
@@ -88,6 +91,9 @@ def _write_sidecar_values(
 
     `claimed_row_keys` is the export's filename-collision ledger, shared across
     the rows of one table; see `_sidecar_row_key`.
+
+    `column_types` is the table's inventory, upper-case name to Oracle type, and
+    it types the key the UPDATE finds its row by (`#923`).
     """
     folder_created = False
     row_key = _sidecar_row_key(row, key_columns, row_number, claimed_row_keys)
@@ -115,13 +121,14 @@ def _write_sidecar_values(
         )
         written.add(file_path)
         update_script = write_lob_update_script(
-            folder      = folder,
-            table_name  = sql_table_name or table_name,
-            row_key     = row_key,
-            row         = row,
-            key_columns = key_columns,
-            column      = column,
-            payload     = payload,
+            folder       = folder,
+            table_name   = sql_table_name or table_name,
+            row_key      = row_key,
+            row          = row,
+            key_columns  = key_columns,
+            column       = column,
+            payload      = payload,
+            column_types = column_types,
         )
         if update_script:
             update_scripts.append(update_script)
@@ -167,12 +174,16 @@ def _json_ready(value: Any) -> Any:
       is lossy past a double's digits, so it is **verified rather than
       assumed**: a value that does not survive the round trip raises instead of
       writing a number that is quietly not the one in the database. Same stance
-      as `_ExactNumber` in the runner, which keeps a NUMBER's digits in the CSV
-      rather than letting `str()` shorten them;
+      as `_ExactNumber` in `csv_cells.py`, which keeps a NUMBER's digits in the
+      CSV rather than letting `str()` shorten them;
     * **binary** arrives as `bytes` and is hex-encoded, the convention this
       module's CSV half already uses for RAW so `HEXTORAW` reads it back;
     * a **date, timestamp or interval** is written in ISO 8601, which is what
-      Oracle's own JSON reader accepts back.
+      Oracle's own JSON reader accepts back. An interval is the duration
+      Oracle's `JSON_SERIALIZE` prints, `P1DT2H` or `-P2M` (`#923`): this used
+      to write `str(timedelta)`, `1 day, 2:00:00`, which `JSON_VALUE ...
+      RETURNING INTERVAL` refuses (ORA-61724), and an `IntervalYM`, being a
+      named tuple, came out as a JSON array.
 
     Anything else raises and names its type. A silent `str()` fallback here
     would turn an unknown scalar into a quoted string that reloads as different
@@ -188,7 +199,7 @@ def _json_ready(value: Any) -> Any:
         rendered = float(value)
         if Decimal(repr(rendered)) != value:
             raise ValueError(
-                f"JSON number {value!r} cannot be written without losing digits"
+                f"JSON NUMBER {value!r} WOULD LOSE DIGITS"
             )
         return rendered
     if isinstance(value, bytes | bytearray | memoryview):
@@ -196,7 +207,10 @@ def _json_ready(value: Any) -> Any:
     if isinstance(value, datetime | date | time):
         return value.isoformat()
     if isinstance(value, timedelta):
-        return str(value)
+        return ds_interval_iso(value)
+    if is_ym_interval(value):
+        # Before the tuple test below: `IntervalYM` is a named tuple.
+        return ym_interval_iso(value)
     if isinstance(value, dict):
         return {key: _json_ready(item) for key, item in value.items()}
     if isinstance(value, list | tuple):
@@ -204,7 +218,7 @@ def _json_ready(value: Any) -> Any:
     if value is None or isinstance(value, str | int | float):
         return value
     raise ValueError(
-        f"a JSON column holds a {type(value).__name__} this export cannot render"
+        f"A JSON COLUMN HOLDS AN UNRENDERABLE {type(value).__name__}"
     )
 
 
@@ -272,7 +286,14 @@ def _sidecar_name_part(value: Any) -> str:
     `Plzeň.body.txt` on one that does not, and the accentless name collided with
     the row that really is spelled `Plzen`. Composing is the same "one export,
     identical on every platform" promise the case fold above already makes.
+
+    A RAW key, where a `SYS_GUID()` primary key lives, arrives as `bytes` and is
+    named by the hex its CSV cell and its `HEXTORAW` carry (`#923`). `str()` of
+    it is Python's `b'\\x1f.=L'` repr, which folded to a name like `b__x1f._L`
+    that nobody could match back to the row.
     """
+    if isinstance(value, bytes | bytearray | memoryview):
+        value = bytes(value).hex().upper()
     text = "" if value is None else unicodedata.normalize("NFC", str(value)).strip()
     if not text:
         return "null"

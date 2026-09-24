@@ -86,7 +86,7 @@ An identity value is numbered by the environment the row was inserted in, so the
 
 A primary key column is never in the MERGE's UPDATE SET, so matching on a unique key cannot renumber the target's row.
 
-Each MERGE statement covers at most `merge_batch_size` rows (project `config.yaml`, default `10000`); a larger export becomes consecutive MERGE statements in the same file.
+Each MERGE statement covers at most `merge_batch_size` rows (project `config.yaml`, default `10000`); a larger export becomes consecutive MERGE statements in the same file. Only the first of them runs the DELETE that `delete: true` asks for, so a later batch never removes the rows an earlier one loaded.
 
 The MERGE, the DELETE beside it and the per-row LOB UPDATEs all name the table without its schema, so the file installs into whichever schema the session connects as. Set `keep_owner` to write `owner.table` in every one of them instead; see [config.md](config.md#naming-the-owning-schema) for when that is the right trade.
 
@@ -107,9 +107,13 @@ Each value is written so that reading it back does not depend on the session it 
 | DATE | `YYYY-MM-DD HH24:MI:SS` | `TO_DATE(...)` with that format |
 | TIMESTAMP | ISO text with fractional seconds | `TO_TIMESTAMP(...)` with `FF6` |
 | TIMESTAMP WITH TIME ZONE | ISO text with the offset | `TO_TIMESTAMP_TZ(...)` with `TZH:TZM` |
+| INTERVAL DAY TO SECOND | `+D HH:MI:SS.FF6`, Oracle's own form | `TO_DSINTERVAL('...')` |
+| INTERVAL YEAR TO MONTH | `+YY-MM`, Oracle's own form | `TO_YMINTERVAL('...')` |
 | SDO_GEOMETRY | `SRID=<srid>;<WKT>` | `SDO_GEOMETRY('<WKT>', <srid>)` |
 
 Dates and timestamps carry their own format model, so a MERGE script runs the same whatever `NLS_DATE_FORMAT` the target session has. Numbers are fetched as exact decimals, so a `NUMBER(16,2)` or an integer above 2^53 keeps the value it had in the source table.
+
+An interval carries its sign on the whole value, the way Oracle writes it, so minus one hour is `-0 01:00:00.000000` and minus two months is `-00-02`. Inside a JSON sidecar an interval is the ISO 8601 duration Oracle's own `JSON_SERIALIZE` prints, such as `P1DT2H` or `-P2M`.
 
 A column type that is not in this table and has no plain text form stops the export and names the column, rather than writing something that reloads as different data. That is what a user-defined object column or a collection does: leave it out with `ignored_columns` if the rest of the table is worth exporting.
 
@@ -176,13 +180,15 @@ BLOB, CLOB, XMLTYPE and JSON columns are never dropped and never squeezed into a
 
 A null or empty value writes no file. Every non-empty payload also gets a SQL-only import script beside it, `<key>.<column>.sql`, which stores the value as base64 and decodes it in Oracle, so a payload imports with no Python helper in the loop.
 
+The script finds its row by the key, written the way the MERGE writes that column: `HEXTORAW('...')` for a RAW key such as a `SYS_GUID()`, `TO_DATE(...)` for a DATE. So it runs whatever NLS settings the target session has.
+
 The table MERGE prints `PROMPT <table>/<filename>` before calling each one with `@@"<table>/<filename>";`. `@@` resolves beside the MERGE itself, so the file runs the same from the repository and from a patch snapshot. A patch links only the MERGE: the CSV, the value files and the per-row scripts travel in its snapshot and are never run on their own.
 
 The decode uses `UTL_ENCODE`, `UTL_RAW`, `UTL_I18N` and `DBMS_LOB`, which every Oracle database has. `apex_web_service.clobbase642blob` would do it in one call, but it needs APEX installed in the target, and a data reload must not.
 
 A text payload is cut into chunks on whole characters, so an accented letter or an emoji at a chunk boundary reloads intact.
 
-`<row-key>` keeps the letters the key actually holds, accents included: a row keyed `Plzeň` writes `Plzeň.body.txt`, not `Plzen.body.txt`. Only a character a filename cannot carry folds to `_`.
+`<row-key>` keeps the letters the key actually holds, accents included: a row keyed `Plzeň` writes `Plzeň.body.txt`, not `Plzen.body.txt`. Only a character a filename cannot carry folds to `_`. A RAW key is named by its upper-case hex, the same text its CSV cell holds.
 
 Accented letters are composed first, so the same key spells the same filename whether the database handed it back as `ň` or as `n` followed by a combining caron. One export, identical on every platform. Two keys that still fold to one name are disambiguated by a short digest of the second, so no row overwrites another's sidecar.
 

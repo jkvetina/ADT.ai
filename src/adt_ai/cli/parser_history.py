@@ -96,7 +96,8 @@ def add_history_parsers(subparsers: SubParsers) -> None:
         # run resolves the default itself.
         default = None,
         metavar = "N",
-        help    = f"max commits to print (default {REVEAL_DEFAULT_LIMIT}; 0 = all)",
+        help    = f"max commits to print, or with -data rows per object "
+                  f"(default {REVEAL_DEFAULT_LIMIT}; 0 = all)",
     )
     search.add_argument(
         "--files",
@@ -143,7 +144,7 @@ def add_history_parsers(subparsers: SubParsers) -> None:
         action = "append",
         nargs  = "+",
         help   = "object name pattern (SQL LIKE), repeatable, comma- or "
-                 "space-separated; also narrows -app",
+                 "space-separated; also narrows -app and the objects -data searches",
     )
     search.add_argument(
         "--by",
@@ -217,6 +218,17 @@ def _add_search_term_arguments(search: argparse.ArgumentParser) -> None:
         help    = "with TERM, only these layers: APEX, STATIC, DB, GIT or FILES, "
                   "repeatable, comma- or space-separated (default all five)",
     )
+    # Jan's spelling and scope, asked with chips (ADT #879): `-data` searches the
+    # rows of the tables in the database INSTEAD of the five offline layers,
+    # narrowed by `-schema`, `-name` and `-limit`. `store_true`, the shape
+    # `diff -data` already has. `#920` widened it to what a SELECT reads.
+    search.add_argument(
+        "--data",
+        "-data",
+        action = "store_true",
+        help   = "find TERM in the rows of the tables, views, mviews and synonyms "
+                 "instead of the five layers, narrowed by -schema, -name and -limit",
+    )
 
 
 def _add_search_graph_arguments(search: argparse.ArgumentParser) -> None:
@@ -282,7 +294,7 @@ def _add_search_graph_arguments(search: argparse.ArgumentParser) -> None:
         action = "append",
         nargs  = "+",
         help   = "owner schema(s) of the object asked about, of the objects -app "
-                 "lists, or of the exported files TERM searches (default the "
+                 "lists, or of the files or tables TERM searches (default the "
                  "configured schemas), repeatable, comma- or space-separated",
     )
     search.add_argument(

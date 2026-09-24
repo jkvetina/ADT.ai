@@ -73,7 +73,7 @@ class CalendarRunner:
 
         refs = _branch_refs(root, request.branch)
         if not refs:
-            raise CalendarError("no branches found to build the calendar from")
+            raise CalendarError("NO BRANCHES TO BUILD THE CALENDAR FROM")
         default_ref, default_short = default_branch_ref(root)
 
         month = request.month or _offset_month(date.today(), request.offset)

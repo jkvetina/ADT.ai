@@ -95,6 +95,11 @@ def apex_deploy_artifact(
     Four names now render from one pair of tokens, so the stamp they sort on is
     read from `today_deploy` in one place rather than in four copies that can
     drift on the next format added.
+
+    ``moment`` is the run's own reading of the clock, taken once in `deploy_run`
+    (`#929`). One format read in one place was never enough on its own: the four
+    events are minutes apart on a real deploy, so four callers reading the clock
+    for themselves sorted together only on a run that finished inside a second.
     """
     from adt_ai.patch.settings import text_value
 
@@ -103,6 +108,23 @@ def apex_deploy_artifact(
     for token, value in (("TIMESTAMP", stamp), ("APP", str(app_id))):
         name = name.replace(f"{{${token}}}", value).replace(f"#{token}#", value)
     return name
+
+
+def apex_terminal_status(config: dict[str, Any], target_env: str) -> str:
+    """`patch_apex_build_status` for one environment, read as the template reads it.
+
+    A key reader, so it belongs beside the other three rather than inside the
+    lock that asks the question (`#929`): `templates` renders a block per
+    configured environment from the same map, and a second reading of that map
+    living in `apex_lock` was one more place for the two to drift apart.
+
+    Anything that is not a per-environment map answers "", which is the
+    unconfigured case: locking an application is never a tool default.
+    """
+    statuses = config.get("patch_apex_build_status") or {}
+    if not isinstance(statuses, dict):
+        return ""
+    return str(statuses.get(target_env or "") or "")
 
 
 def verify_deploy_scan(config: dict[str, Any]) -> bool:
@@ -194,6 +216,7 @@ __all__ = [
     "apex_deploy_artifact",
     "apex_revert_log_name",
     "apex_scan_log_name",
+    "apex_terminal_status",
     "deploy_build_status",
     "revert_on_scan_failure",
     "verify_deploy_scan",

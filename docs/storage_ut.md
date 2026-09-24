@@ -1,6 +1,6 @@
 # Run History (adtai ut)
 
-`ut` records every run in `config/internal/ut.db`: one row per run per schema, and one row per package the run measured, so `-verbose` can say what moved since the last run that differed. The last twenty runs per schema are kept, and a root that cannot be written skips the history and runs normally.
+`ut` records every run in `config/internal/ut.db`: one row per run per schema, and one row per package the run measured, so `-verbose` can say what moved since the last run that differed. The last twenty runs per schema and `-name` selection are kept, and a root that cannot be written skips the history and runs normally.
 
 <br>
 
@@ -67,4 +67,6 @@ The file is at version 2. A file from before version 1 is lifted in place with e
 
 A version 1 file loses the columns no comparison read, the run's `recorded_at` and each package's `lines`, `blocks_total` and `blocks_covered`, and keeps every run and every percent.
 
-After each write the store keeps the newest twenty runs of that schema and deletes the rest with their package rows. Delete the file to start over; the next run recreates it and the comparison table stays empty until a second run differs.
+After each write the store keeps the newest twenty runs of that schema and `-name` selection, the key a comparison reads them by, and deletes the rest with their package rows. Twenty `-name` runs therefore never push out the full runs' baseline.
+
+Delete the file to start over; the next run recreates it and the comparison table stays empty until a second run differs.

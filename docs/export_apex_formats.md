@@ -25,13 +25,21 @@ ADT.ai exports only the formats named on the command line. There are no configur
 
 ## A full export leaves no stale file behind
 
-`-split`, `-embedded` and `-apexlang` each own a folder, and an unfiltered run of one of them deletes the files in that folder it did not write. A page or component deleted in App Builder therefore leaves no orphan `.sql`, report file or `.apx` in the repository.
+`-apexlang` writes LF line endings whatever the database returns and whatever `file_crlf` says, because SQLcl's APEXlang compiler cannot read CRLF.
 
-`-split` sweeps the `.sql` files under `application/`, `-embedded` sweeps the `.sql`, `.js` and `.css` files under `embedded_code/`, `-apexlang` sweeps the `.apx` and `.json` files under `apexlang/`. Every other export folder is left alone, and so is the `.yaml` a `-readable` export writes under the same `application/` tree.
+`-split`, `-embedded`, `-apexlang`, `-files`, `-files_ws` and `-rest` each own a folder, and an unfiltered run of one of them deletes the files in that folder it did not write, as does the page comment export under `comments/`. A page, component, static file or REST module deleted in APEX therefore leaves no orphan in the repository.
 
-Each sweep is limited to the extensions its format writes, so a file of your own kept beside an export, a `NOTES.md` next to the APEXlang tree or inside `embedded_code/`, is never deleted.
+`-split` sweeps the `.sql` files under `application/`, `-embedded` the `.sql`, `.js` and `.css` files under `embedded_code/`, `-apexlang` the `.apx`, `.json`, `.sql` and `.rtf` files under `apexlang/`, the page comments the `.yaml` files under `comments/`, and `-rest` the `.sql` files under its folder. `-files` and `-files_ws` sweep every file in theirs, since a static file can have any extension.
+
+Every other export folder is left alone, and so is the `.yaml` a `-readable` export writes under the same `application/` tree.
+
+Apart from the static files, each sweep is limited to the extensions its format writes, so a file of your own kept beside an export, a `NOTES.md` next to the APEXlang tree or inside `embedded_code/`, is never deleted. `diff -restore` deletes by the same rules.
 
 The sweep runs against what the export actually wrote rather than clearing the folder first, so an unchanged file keeps its modification time. A run narrowed by `-page`, `-component` or `-recent` wrote a subset on purpose and never sweeps, except `-apexlang`, which those flags do not narrow.
+
+`-rest` sweeps only once the export reached its closing `COMMIT;`, the one proof that no module is missing. No sweep runs in a folder another export also writes into, such as the application folder that `apex_path_files: ./` names.
+
+On a disk that ignores case, as macOS's does by default, a component renamed only in case keeps its file, renamed to the new spelling rather than deleted.
 
 `-full` and `-readable` write no folder of their own and delete nothing.
 
@@ -45,11 +53,13 @@ Version handling reads the one APEX version the connection block already printed
 
 ## APEXlang is a whole-app format
 
-`-apexlang` writes the folder tree beside `readable/` and `embedded_code/`: `application.apx`, `pages/`, `shared-components/`, `workspace-components/`, and the deployment and project metadata. Members land verbatim, since `.apx` is compiler input, so none of the SQL-export postprocessing applies.
+`-apexlang` writes the folder tree beside `readable/` and `embedded_code/`: `application.apx`, `pages/`, `shared-components/`, `workspace-components/`, `supporting-objects/`, and the deployment and project metadata. Members land verbatim, since `.apx` is compiler input, so none of the SQL-export postprocessing applies.
 
-The folder is swept on every export, so a component deleted in App Builder leaves no stale `.apx`. The sweep covers the `.apx` and `.json` members the format writes and nothing else, so anything else you keep in that folder stays. `-page`, `-component` and `-recent` never filter it, and an APEXlang run never advances a `-recent` watermark.
+The folder is swept on every export, so a component deleted in App Builder leaves no stale `.apx`. The sweep covers the `.apx`, `.json`, `.sql` and `.rtf` members the format writes and nothing else, so anything else you keep in that folder stays. `-page`, `-component` and `-recent` never filter it, and an APEXlang run never advances a `-recent` watermark.
 
-**Static files are deliberately left out.** An APEXlang export carries the application's static files as binary payloads, and ADT.ai skips those members so the repository never holds two copies, `-files` being the single static-file channel. The metadata that references them is still exported.
+**The application's own static files are deliberately left out.** An APEXlang export carries them as binary payloads under `shared-components/static-files/`, and ADT.ai skips those members so the repository never holds two copies, `-files` being the single static-file channel. The metadata that references them is still exported.
+
+**Plugin and theme files are written into the tree**, under each plugin's and each theme's own `static-files/` folder, byte for byte as APEX holds them. `-files` never exports those, so the tree is their only copy, and the import refuses a tree that names one and lacks it. A file APEX no longer holds is swept from those folders like any other member.
 
 The tree is still directly validatable and importable. `-files` hardlinks each payload into the tree's own `shared-components/static-files/` as it writes it, one inode under two names.
 

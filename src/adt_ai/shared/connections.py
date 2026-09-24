@@ -106,13 +106,15 @@ class ConnectionResult:
     files        : list[Path]
     wallet_roots : list[Path]
     key          : str | None = None
+    # The project a relative `wallet_path` is written against (#924 F64).
+    project_root : Path | None = None
 
     @property
     def default_environment(self) -> str:
         try:
             return next(iter(self.data))
         except StopIteration as error:
-            raise ConnectionNotFoundError("No connection environments configured") from error
+            raise ConnectionNotFoundError("NO CONNECTION ENVIRONMENTS CONFIGURED") from error
 
     def default_schema(self, environment: str | None = None, kind: str = "db") -> str:
         return self.default_schemas(environment=environment, kind=kind)[0]
@@ -136,7 +138,8 @@ class ConnectionResult:
             raise ConnectionNotFoundError(
                 "\n".join(
                     [
-                        f"Default {kind} schema not configured for environment: {environment_name}",
+                        f"NO DEFAULT {kind.upper()} SCHEMA FOR ENVIRONMENT: {environment_name}",
+                        "",
                         *self._source_lines(),
                         self._available_schema_line(environment_name),
                     ]
@@ -181,7 +184,8 @@ class ConnectionResult:
             raise ConnectionNotFoundError(
                 "\n".join(
                     [
-                        f"Schema not configured: {environment_name}.{schema_name}",
+                        f"SCHEMA NOT CONFIGURED: {environment_name}.{schema_name}",
+                        "",
                         *self._source_lines(),
                         self._available_schema_line(environment_name),
                     ]
@@ -253,6 +257,7 @@ class ConnectionResult:
             wallet_path     = _resolve_wallet_path(
                 db.get("wallet_path") or db.get("wallet"),
                 self.wallet_roots,
+                self.project_root,
             ),
             wallet_password = Secret(wallet_password),
             client_lib_dir  = db.get("client_lib_dir") or db.get("lib_dir"),
@@ -292,7 +297,8 @@ class ConnectionResult:
             raise ConnectionNotFoundError(
                 "\n".join(
                     [
-                        f"Environment not configured: {name}",
+                        f"ENVIRONMENT NOT CONFIGURED: {name}",
+                        "",
                         *self._source_lines(),
                         self._available_environment_line(),
                     ]
@@ -326,10 +332,12 @@ class ConnectionLoader:
         search_paths: list[Path] | tuple[Path, ...],
         wallet_roots: list[Path] | tuple[Path, ...] = (),
         key: str | None = None,
+        project_root: Path | None = None,
     ) -> None:
         self.search_paths = [Path(path) for path in search_paths]
         self.wallet_roots = [Path(path).expanduser() for path in wallet_roots]
         self.key = key
+        self.project_root = None if project_root is None else Path(project_root).expanduser()
 
     def load(
         self,
@@ -352,7 +360,7 @@ class ConnectionLoader:
                 file_rows([str(path) for path in candidates], nested=False)
             )
             raise ConnectionNotFoundError(
-                "Connection file not found. Searched:\n" + searched_text
+                "CONNECTION FILE NOT FOUND\n\nSearched:\n" + searched_text
             )
 
         # First match wins: load only the first existing candidate, no layering.
@@ -362,17 +370,18 @@ class ConnectionLoader:
             # Route a hand-edit syntax error through the friendly connection
             # banner instead of the generic UNEXPECTED ERROR catch-all.
             raise InvalidConnectionError(
-                f"Connection file is not valid YAML: {chosen}\n{error}"
+                f"CONNECTION FILE IS NOT VALID YAML: {chosen}\n\n{error}"
             ) from error
         if not isinstance(loaded, dict):
             raise InvalidConnectionError(
-                f"Connection file must contain a YAML mapping: {chosen}"
+                f"CONNECTION FILE IS NOT A YAML MAPPING: {chosen}"
             )
         return ConnectionResult(
             data         = loaded,
             files        = [chosen],
             wallet_roots = self.wallet_roots,
             key          = self.key,
+            project_root = self.project_root,
         )
 
 
@@ -390,10 +399,14 @@ def _available_list(label: str, values: Any) -> str:
     return "\n".join([f"{label}:", *file_rows(items, nested=False)])
 
 
-def _resolve_wallet_path(value: Any, wallet_roots: list[Path]) -> str | None:
+def _resolve_wallet_path(
+    value: Any,
+    wallet_roots: list[Path],
+    project_root: Path | None = None,
+) -> str | None:
     if not value:
         return None
-    if not wallet_roots:
+    if not wallet_roots and project_root is None:
         return str(value)
     wallet = Path(str(value)).expanduser()
     candidates = [root / wallet.name for root in wallet_roots]
@@ -402,6 +415,11 @@ def _resolve_wallet_path(value: Any, wallet_roots: list[Path]) -> str | None:
             candidates.append(wallet)
     else:
         candidates.extend(root / wallet for root in wallet_roots)
+        # A relative path is written against the project, the way `sqlcl_connect`
+        # anchors it too, so the project root is tried before the process cwd,
+        # which only matches when the run happens to start there (#924 F64).
+        if project_root is not None:
+            candidates.append(project_root / wallet)
         candidates.append(wallet)
     for candidate in candidates:
         if candidate.exists():
@@ -438,9 +456,12 @@ def _decrypt_if_enabled(
         return value
 
     def cannot_decrypt(error: Exception) -> CredentialUnavailableError:
-        return CredentialUnavailableError(
-            f"Could not decrypt {context}; pass -key or set {crypto.KEY_ENV}: {error}"
-        )
+        # The crypto error's own headline leads, and the secret it was reading
+        # goes on the line under it (ADT #934): a headline wrapped inside another
+        # sentence reads as shouting mid-line.
+        headline, _, rest = str(error).partition("\n")
+        remedy = rest.strip() or f"Pass -key or set {crypto.KEY_ENV}."
+        return CredentialUnavailableError(f"{headline}\n\nFor {context}.\n{remedy}")
 
     try:
         resolved_key = crypto.resolve_key(key)
@@ -464,9 +485,10 @@ def _decrypt_if_enabled(
 
     if expected and actual != expected:
         raise CredentialUnavailableError(
-            f"Wrong encryption key for {context}: the stored value carries key "
-            f"fingerprint {expected}, the key in use fingerprints as {actual}. "
-            f"Pass -key or set {crypto.KEY_ENV} to the key this value was encrypted with."
+            f"WRONG ENCRYPTION KEY FOR {context}\n\n"
+            f"The stored value carries key fingerprint {expected}, the key in use\n"
+            f"fingerprints as {actual}. Pass -key or set {crypto.KEY_ENV} to the key\n"
+            "this value was encrypted with."
         )
 
     try:

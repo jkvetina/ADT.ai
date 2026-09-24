@@ -24,10 +24,11 @@ are missing; the workspace's files are read beside them. Both through
 file compares equal exactly when that export would write the same bytes.
 
 **A CHANGED application is then exported on both sides and compared component
-by component** (`apex_components`). Jan rejected the first cut on the pair it was
-built for: *-verbose says only that the app changed, not WHICH page, WHICH
-components, WHAT the change is.* The fingerprint stays the gate, so only an
-application whose fingerprints differ costs the two exports.
+by component** (`apex_export` reads it, `apex_components` compares it). Jan
+rejected the first cut on the pair it was built for: *-verbose says only that the
+app changed, not WHICH page, WHICH components, WHAT the change is.* The
+fingerprint stays the gate, so only an application whose fingerprints differ
+costs the two exports.
 
 **Everything an application differs in is reported under it** (ADT #893). Jan:
 *"I am always comparing specific app(s), so only things which can change outside
@@ -44,16 +45,18 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 
 from adt_ai.diff.apex_components import (
-    APEXLANG,
     READABLE,
     SPLIT,
-    Component,
     ComponentChange,
     compare_components,
     export_format,
-    parse_components,
 )
+from adt_ai.diff.apex_export import read_both
 from adt_ai.diff.inventory import CHANGED, EXTRA, MISSING
+
+# Named `as` itself because `diff/pull_apex.py` imports it from here too: the
+# block lives in the module's SQL home (#923), and this keeps it exported.
+from adt_ai.diff.queries import WORKSPACE_START_QUERY as WORKSPACE_START_QUERY
 
 # The name-by-name comparison `-rest` already runs, so both modes read MISSING,
 # EXTRA and CHANGED by one rule; and the pattern match `-name` narrows by.
@@ -61,7 +64,7 @@ from adt_ai.diff.rest import _compare
 from adt_ai.diff.summary import DiffSummary, _matches_name, _wildcards
 from adt_ai.export_apex import queries
 from adt_ai.export_apex.inventory import ApexDiscovery
-from adt_ai.export_apex.postprocess import _bind_params, _blob_bytes, _checksum_value
+from adt_ai.export_apex.postprocess import _blob_bytes, _checksum_value
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.queries.versions import APEX_VERSION_QUERY
 from adt_ai.shared.row_values import row_value
@@ -75,30 +78,6 @@ APEX_WORKSPACE_FILE_TYPE = "APEX WORKSPACE FILE"
 
 #: The application id `wwv_flow_files` files a workspace's own static files under.
 WORKSPACE_FILES_APP_ID = 0
-
-# `wwv_flow_files` answers nothing until a workspace is set, and a schema hosting
-# no application has no `EXPORT_START_QUERY` to set one for it. The schema's own
-# mapping answers which workspace that is: the configured `apex.workspace` when
-# there is one, else the first by name. A schema mapped to none sets nothing, and
-# the read after it answers no files, which is the truth about that schema.
-WORKSPACE_START_QUERY = """
-BEGIN
-    FOR c IN (
-        SELECT w.workspace
-        FROM apex_workspace_schemas s
-        JOIN apex_workspaces w
-            ON w.workspace_id = s.workspace_id
-        WHERE UPPER(s.schema) = UPPER(:owner)
-            AND (UPPER(w.workspace) = UPPER(:workspace) OR :workspace IS NULL)
-        ORDER BY w.workspace
-        FETCH FIRST 1 ROW ONLY
-    ) LOOP
-        APEX_UTIL.SET_WORKSPACE (
-            p_workspace => c.workspace
-        );
-    END LOOP;
-END;
-""".strip()
 
 
 @dataclass(frozen=True)
@@ -217,29 +196,6 @@ class ApexDiff:
         return ApexDiff(DiffSummary(changes, filtered=self.summary.filtered), tuple(applications))
 
 
-#: The export each format runs, and the options it is bound with. Every option
-#: is off: dates, comments, translations and audit stamps are what two
-#: environments holding one application disagree about, and original ids would
-#: only put back the ids the comparison ignores.
-_EXPORT_QUERIES = {
-    APEXLANG : queries.EXPORT_APEXLANG_QUERY,
-    READABLE : queries.EXPORT_READABLE_QUERY,
-    SPLIT    : queries.EXPORT_SPLIT_QUERY,
-}
-_EXPORT_OPTIONS = {
-    "originals"               : "N",
-    "with_comments"           : "N",
-    "with_date"               : "N",
-    "with_ir_public_reports"  : "N",
-    "with_ir_private_reports" : "N",
-    "with_ir_notifications"   : "N",
-    "with_translations"       : "N",
-    "with_no_subscriptions"   : "N",
-    "with_acl_assignments"    : "N",
-    "with_audit_info"         : "",
-}
-
-
 def application_label(app_id: int, alias: str) -> str:
     """`100 ORDERS`: the id pairs the two sides, the alias says which one it is."""
     return f"{app_id} {alias}".strip()
@@ -325,38 +281,6 @@ def read_snapshot(side: ApexSide, app_ids: Sequence[int]) -> ApexSnapshot:
         app_file_sizes       = app_sizes,
         workspace_file_sizes = workspace_sizes,
     )
-
-
-def read_components(
-    side: ApexSide, app_ids: Sequence[int], export: str
-) -> dict[int, dict[str, Component]]:
-    """Each named application exported in `export` and read as components.
-
-    The runner reads both sides in one format, since two formats never compare,
-    and reads an application again as split SQL when its readable export came
-    back empty on either side (Jan: *"if you dont have readable, you should use
-    -split"*).
-    """
-    return {
-        app_id: _export_components(side.gateway, side.own_id(app_id), export)
-        for app_id in app_ids
-    }
-
-
-def _export_components(gateway: QueryGateway, app_id: int, export: str) -> dict[str, Component]:
-    gateway.execute(queries.EXPORT_START_QUERY, {"app_id": app_id})
-    sql = _EXPORT_QUERIES[export]
-    gateway.execute(sql, _bind_params(sql, {"app_id": app_id, **_EXPORT_OPTIONS}))
-    files = {
-        str(row_value(row, "FILE_NAME") or ""): str(row_value(row, "CLOB_CONTENT") or "")
-        for row in gateway.fetch_all(queries.FETCH_FILES_QUERY)
-    }
-    return parse_components(export, {_relative(name, app_id): text for name, text in files.items()})
-
-
-def _relative(name: str, app_id: int) -> str:
-    """The member name without its `f<id>/` root, which only split and readable carry."""
-    return name.removeprefix(f"f{app_id}/")
 
 
 def _apex_version(gateway: QueryGateway) -> str | None:
@@ -481,7 +405,7 @@ class ApexDiffRunner:
                 export = export_format(
                     source_snapshot.apex_version, target_snapshot.apex_version
                 )
-                components = _read_both(pool, source, target, changed, export)
+                components = read_both(pool, source, target, changed, export)
                 if export == READABLE:
                     # An instance without READABLE_YAML answers an empty export,
                     # and an application with no component at all does not exist.
@@ -489,7 +413,7 @@ class ApexDiffRunner:
                         app for app in changed if not all(side[app] for side in components)
                     ]
                     if fallback:
-                        split = _read_both(pool, source, target, fallback, SPLIT)
+                        split = read_both(pool, source, target, fallback, SPLIT)
                         for side, again in zip(components, split, strict=True):
                             side.update(again)
                 compared = {
@@ -510,18 +434,6 @@ class ApexDiffRunner:
                 )
             ),
         )
-
-
-def _read_both(
-    pool: ThreadPoolExecutor,
-    source: ApexSide,
-    target: ApexSide,
-    app_ids: Sequence[int],
-    export: str,
-) -> tuple[dict[int, dict[str, Component]], dict[int, dict[str, Component]]]:
-    source_read = pool.submit(read_components, source, app_ids, export)
-    target_read = pool.submit(read_components, target, app_ids, export)
-    return source_read.result(), target_read.result()
 
 
 __all__ = [name for name in globals() if not name.startswith("_")]

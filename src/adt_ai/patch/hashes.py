@@ -219,15 +219,17 @@ def read_baseline(path: Path) -> Baseline:
             # a project that HAS a baseline is told it has none, which reads as
             # a defect rather than as a one-command move (`#453`).
             raise PatchError(
-                f"no baseline at {path.name}, but {legacy.parent.name}/{legacy.name} is "
-                "still there from the folder-per-environment layout: the environment "
-                "moved onto the filename, so record it again with "
+                f"NO BASELINE AT {path.name}\n\n"
+                f"{legacy.parent.name}/{legacy.name} is still there from the "
+                "folder-per-environment layout.\n"
+                "The environment moved onto the filename, so record it again with\n"
                 "adtai patch -target <ENV> -baseline"
             )
         raise PatchError(
-            f"no baseline at {path.name}: hash mode compares the working tree against "
-            "a recorded baseline, and there is none yet "
-            "- run adtai patch -target <ENV> -baseline to record one"
+            f"NO BASELINE AT {path.name}\n\n"
+            "Hash mode compares the working tree against a recorded baseline, and\n"
+            "there is none yet.\n"
+            "Run: adtai patch -target <ENV> -baseline to record one"
         )
     hashes, commits, stamp, source = _parse_hash_lines(path)
     return Baseline(
@@ -509,8 +511,9 @@ def _candidate_files(root: Path) -> list[str]:
         untracked = run_git_paths(root, ["ls-files", "--others", "--exclude-standard"])
     except Exception as error:
         raise PatchError(
-            f"git ls-files failed inside {root}, so the baseline cannot tell "
-            f"which files are ignored: {error}\n"
+            "GIT LS-FILES FAILED\n\n"
+            f"Inside {root}, so the baseline cannot tell which files are ignored:\n"
+            f"{error}\n"
             "Run: fix the git failure (PATH, a stale index lock) before "
             "baselining a real checkout"
         ) from error

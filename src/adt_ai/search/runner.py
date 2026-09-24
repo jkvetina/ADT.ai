@@ -137,8 +137,8 @@ class SearchRunner:
         with open_store(root, branch, request.cache_file_template) as store:
             if store.ceiling() is None:
                 raise SearchError(
-                    f"commit store not found or empty for branch '{branch}', "
-                    "and git could not fill it"
+                    f"NO COMMIT STORE FOR BRANCH '{branch}'\n\n"
+                    "It is missing or empty, and git could not fill it."
                 )
             criteria = _sql_filter(request, aliases)
             page = max(request.commit_limit or 0, PAGE_SIZE)
@@ -228,7 +228,9 @@ class SearchRunner:
         payloads: dict[str, bytes] = {}
         for record in records:
             for file_path in record.files:
-                if file_path in payloads:
+                # A deletion holds no version to put back, so the newest match
+                # that does wins; asking git for it read as a stale store (#923).
+                if file_path in payloads or file_path in record.deleted:
                     continue
                 try:
                     payloads[file_path] = run_git_bytes(
@@ -256,7 +258,7 @@ class SearchRunner:
             # still a restore either way: what the row reports is that the path
             # now carries that commit's content. Every destination is
             # overwritten unconditionally (ADT #732): what stood there is in
-            # the WIP commit, and `COULD NOT RESTORE:` reports only what git
+            # the WIP commit, and `WARNING - COULD NOT RESTORE:` reports only what git
             # could not resolve.
             text_files.write_bytes(target, payload)
             restored.append(target)

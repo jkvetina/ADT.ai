@@ -13,10 +13,13 @@ OTHER APEX_EXPORT COUNTDOWN, you dont have the timer on first run there
 either"*. The answer to an unmeasured first run is `export_apex`'s answer, a
 fallback constant that keeps the bar crawling; it is not a different column.
 
-**The key is the schema PAIR plus the filter.** A comparison's cost is a
-property of the two schemas being walked, not of either one, and the same source
-measured against a near-empty target and against a full one are jobs of different
-sizes. Keying on the source alone would let one seed the other's countdown.
+**The key is the PAIR of sides plus the filter**, a side being an environment
+and its schema. A comparison's cost is a property of the two schemas being
+walked, not of either one, and the same source measured against a near-empty
+target and against a full one are jobs of different sizes. Keying on the source
+alone would let one seed the other's countdown, and keying on the schemas alone
+did exactly that across environments: DEV -> UAT and DEV -> PROD on one schema
+shared a figure (#923).
 
 The filter belongs in the key for the same reason, and `#790` is what made it
 matter: `-name` and `-type` now narrow the EXPORT rather than only the screen, so
@@ -60,8 +63,9 @@ def pair_key(
     *,
     types: Iterable[str] = (),
     names: Iterable[str] = (),
+    environments: tuple[str, str] = ("", ""),
 ) -> str:
-    """The two schemas and the filter as one stable key, upper-cased.
+    """The two sides and the filter as one stable key, upper-cased.
 
     ADT.ai learns a schema from a connection-file key or a `-schema` argument,
     where `app_owner` is as likely as `APP_OWNER`, so folding the case here is
@@ -69,14 +73,29 @@ def pair_key(
     the artifact is written against the source, so `A -> B` and `B -> A` are
     different jobs and must not share a figure.
 
+    Each side is `<environment>.<schema>`, the spelling of the screen's own
+    comparison row, whenever the caller names the environments (#923): `APP`
+    walked against UAT and against PROD is two jobs on two databases, and a key
+    of the schemas alone let whichever ran last set the other's countdown. A
+    figure stored before the environments joined the key sits under the old
+    `APP -> APP` spelling, which nothing reads any more: the first run of each
+    pair counts down from the fallback and records under its own key, and the
+    old entry stays in the file untouched, since `record_seconds` rewrites the
+    mapping without pruning it.
+
     The filter is appended as `[<types>|<names>]`, sorted and de-duplicated for
     the reason `ut.variant_key` does the same: neither order nor spelling changes
     which objects a run walks, so two spellings of one job must not accumulate two
     histories. An unfiltered run stores under `[%|%]`, so it is a variant like any
     other rather than a special case the readers have to know about.
     """
-    pair = f"{str(source or '').upper()} -> {str(target or '').upper()}"
+    pair = f"{_side(environments[0], source)} -> {_side(environments[1], target)}"
     return f"{pair} [{_variant(types)}|{_variant(names)}]"
+
+
+def _side(environment: str, schema: str) -> str:
+    schema = str(schema or "").upper()
+    return f"{environment.upper()}.{schema}" if environment else schema
 
 
 def _variant(patterns: Iterable[str]) -> str:

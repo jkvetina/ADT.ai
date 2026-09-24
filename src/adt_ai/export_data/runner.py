@@ -4,12 +4,10 @@ import csv
 import io
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
-from decimal import Decimal
 from pathlib import Path
 from typing import Any, Protocol
 
-from adt_ai.export_data.csv_formulas import neutralized
+from adt_ai.export_data.csv_cells import csv_cell
 from adt_ai.export_data.groups import GroupRules, group_for, resolve_data_group_rules
 from adt_ai.export_data.inventory import DataColumn, DataDiscovery, DataTable
 from adt_ai.export_data.lob_update_scripts import include_update_scripts
@@ -181,7 +179,7 @@ class ExportDataRunner:
         claimed_row_keys: dict[str, str] = {}
         for row_number, row in enumerate(rows, start=1):
             writer.writerow([
-                _csv_cell(row_value(row, column), column)
+                csv_cell(row_value(row, column), column)
                 for column in csv_columns
             ])
             update_scripts.extend(_write_sidecar_values(
@@ -194,6 +192,7 @@ class ExportDataRunner:
                 written          = written_sidecars,
                 sql_table_name   = sql_table_name,
                 claimed_row_keys = claimed_row_keys,
+                column_types     = column_types,
             ))
             row_count += 1
         text_files.write_bytes(path, buffer.getvalue().encode("utf-8"))
@@ -223,61 +222,6 @@ class ExportDataRunner:
                     merge_sql + include_update_scripts(update_scripts),
                 )
         return path, row_count
-
-
-class _ExactNumber(Decimal):
-    """A NUMBER the CSV writer prints in full rather than in exponent notation.
-
-    `csv.QUOTE_NONNUMERIC` leaves a Decimal unquoted, which is what keeps a
-    number a number in the file, and prints it with `str()`, which switches to
-    `1E+3` once the exponent leaves a narrow window. The CSV is read back by
-    the MERGE builder and by people, so the plain form is pinned here (`#670`).
-    """
-
-    def __str__(self) -> str:
-        return format(self, "f")
-
-
-#: Every Python type `csv.writer` renders as the value itself rather than as a
-#: description of the object holding it. A type outside this list has no CSV form
-#: this export can vouch for, and `_csv_cell` refuses it rather than guessing.
-_CSV_SCALARS = (str, int, float, Decimal, datetime, date, time, timedelta)
-
-
-def _csv_cell(value: Any, column_name: str = "") -> Any:
-    """One CSV cell, rendered by its type or refused (`#670`, `#695`).
-
-    A RAW arrives as `bytes`, whose `str()` is Python's `b'\\x01\\xffA'` repr, so
-    it is hex-encoded the way `HEXTORAW` reads it back. A NUMBER arrives as a
-    `Decimal` (see `shared/db.fetch_all`) and keeps every digit it was stored
-    with, unquoted. A LOB arrives as a handle and is read, which is how the
-    spatial columns' WKT -- a CLOB, built by the SELECT itself -- reaches the row.
-    Text is neutralized so a spreadsheet cannot run it, and `merge_script` takes
-    the prefix back off on the way in (`#707`, `export_data/csv_formulas.py`).
-
-    Everything else raises, and that is the point of the function (`#695`). This
-    used to end in `return value`, so a driver object the writer had no rendering
-    for was handed to `str()` and became its `repr()`: an `SDO_GEOMETRY` column
-    exported as `<oracledb.DbObject MDSYS.SDO_GEOMETRY at 0x10c9b2e40>` on every
-    row, the geometry never left the database, and the hex is CPython's `id()`,
-    so two runs of one export wrote different bytes for identical data. A memory
-    address that reloads as a text literal is worse than a stopped export, which
-    is the same stance `_json_ready` takes in `sidecars.py` for a JSON scalar.
-    """
-    value = _read_lob_value(value)
-    if isinstance(value, bytes | bytearray | memoryview):
-        return bytes(value).hex().upper()
-    if isinstance(value, Decimal):
-        return _ExactNumber(value)
-    if isinstance(value, str):
-        return neutralized(value)
-    if value is None or isinstance(value, _CSV_SCALARS):
-        return value
-    raise ValueError(
-        f"column {column_name or '?'} holds a {type(value).__name__} that has no text "
-        "form this export can write back; a spatial column is exported as WKT, and "
-        "anything else has to be left out with the ignored_columns setting"
-    )
 
 
 def _always_identity_columns(columns: list[DataColumn]) -> set[str]:
@@ -495,6 +439,10 @@ _merge_config = merge_config
 # the old private names so no call site moved.
 _merge_sql_from_csv = merge_sql_from_csv
 _commented_where_filter = commented_where_filter
+
+# The CSV cell renderer, lifted out by `#923` the same way; `diff -data` still
+# imports it from here under the old private name.
+_csv_cell = csv_cell
 
 
 

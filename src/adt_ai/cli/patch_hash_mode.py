@@ -36,6 +36,7 @@ from adt_ai.patch.hashes import (
     resolve_baseline_path,
     write_baseline,
 )
+from adt_ai.patch.layout import is_apex_comment
 from adt_ai.shared.commit_discovery import CommitRecord
 from adt_ai.shared.file_list import print_file_rows
 
@@ -62,7 +63,7 @@ def hash_mode_error(args: argparse.Namespace) -> str | None:
     # body is indented two columns into an 80-column terminal.
     if args.hash is not None and args.baseline is not None:
         return (
-            "Pass one of -hash, -baseline, not both.\n"
+            "-hash AND -baseline CANNOT BE COMBINED\n\n"
             "-hash reads a baseline to build a patch from, -baseline replaces it."
         )
     # `-target` names the environment whose baseline this is, so it is required
@@ -71,14 +72,14 @@ def hash_mode_error(args: argparse.Namespace) -> str | None:
     for flag, value in (("-hash", args.hash), ("-baseline", args.baseline)):
         if value is not None and not value and not args.target:
             return (
-                f"{flag} needs a target: pass -target TARGET,\n"
-                f"or name the baseline directly with {flag} FILE."
+                f"{flag} NEEDS A TARGET\n\n"
+                f"Pass -target TARGET, or name the baseline directly with {flag} FILE."
             )
     if args.hash is not None:
         refused = [flag for flag in ("-head", "-nosnap") if getattr(args, flag[1:], False)]
         if refused:
             return (
-                f"Pass -hash without {', '.join(refused)}.\n"
+                f"-hash CANNOT BE COMBINED WITH {', '.join(refused)}\n\n"
                 "Hash mode compares the working tree against the baseline,\n"
                 "so the working tree is what it ships."
             )
@@ -190,12 +191,14 @@ def apply_hash_mode(
         nested = False,
     )
     print()
-    diff = diff_against_baseline(baseline, hash_working_tree(root, config))
+    diff = without_page_comments(
+        diff_against_baseline(baseline, hash_working_tree(root, config)), config
+    )
     if diff.is_empty:
         if create_requested:
             raise PatchError(
-                "no hash-changed files to patch: the working tree matches "
-                f"{baseline.path.name} in every file the layout resolves"
+                "NO HASH-CHANGED FILES TO PATCH\n\n"
+                f"The working tree matches {baseline.path.name} in every file the layout resolves."
             )
         return HashSelection(records=[], keep_going=False, diff=diff, commits={})
     commits = _diff_commits(diff, records)
@@ -206,6 +209,23 @@ def apply_hash_mode(
         keep_going = True,
         diff       = diff,
         commits    = commits,
+    )
+
+
+def without_page_comments(diff: HashDiff, config: dict[str, Any]) -> HashDiff:
+    """The diff with every `comments/` file of an application taken out (ADT #935).
+
+    A page comment is a reader's note `export_apex` writes, never installed, so
+    hash mode neither lists it under `CHANGED FILES:` nor patches it, whether it
+    was added, edited or deleted. Taken out of the DIFF rather than out of the
+    hashed tree, because a baseline written before this still holds them, and
+    dropping them from the tree alone would list every one as deleted.
+    """
+    def kept(files: dict[str, str]) -> dict[str, str]:
+        return {path: value for path, value in files.items() if not is_apex_comment(path, config)}
+
+    return replace(
+        diff, modified=kept(diff.modified), added=kept(diff.added), deleted=kept(diff.deleted)
     )
 
 

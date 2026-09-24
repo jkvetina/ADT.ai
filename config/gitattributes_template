@@ -1,14 +1,4 @@
-# Line endings belong to this repository, not to each machine's git config.
-#
-# ADT.ai writes every generated text file with LF on every platform, the shipped
-# `file_crlf: False` (docs/config.md, "Line endings"), so one export produces
-# identical bytes on macOS, Linux and Windows. Without these rules a checkout
-# running `core.autocrlf=true` converts them back on the way out, and that
-# promise holds only where somebody configured git by hand.
-#
-# Scaffolded by `adtai doctor -init`. A project that sets `file_crlf: True`
-# swaps `eol=lf` for `eol=crlf` here, so the two keep saying the same thing.
-
+# Pins follow file_crlf; add project rules below the managed block
 *.sql       text eol=lf
 *.apx       text eol=lf
 *.json      text eol=lf
@@ -16,8 +6,10 @@
 *.csv       text eol=lf
 *.md        text eol=lf
 
-# APEX static file payloads are mirrored byte for byte, images and archives
-# included, so nothing inside the `apex_path_files` folder is translated. It
-# sits under the application folder, hence the leading `**/`.
-
+# APEX static files are mirrored byte for byte
 **/files/** -text
+
+# SQLcl reads APEXlang as LF only, whatever file_crlf says
+**/apexlang/**/*.apx            text eol=lf
+**/apexlang/**/*.json           text eol=lf
+**/apexlang/**/static-files/**  -text

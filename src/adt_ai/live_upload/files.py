@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import stat
 from pathlib import Path
 
 from adt_ai.shared.mime import guess_mime_type
@@ -17,12 +18,25 @@ DEFAULT_MIME_TYPE = "text/plain"
 
 
 def scan(folder: Path) -> dict[Path, float]:
-    """Every file under `folder`, mapped to its modification time."""
-    return {
-        path: path.stat().st_mtime
-        for path in sorted(folder.rglob("*"))
-        if path.is_file()
-    }
+    """Every file under `folder`, mapped to its modification time.
+
+    A name below `folder` starting with a dot is not a static file: old ADT's
+    glob never saw one, and this scan uploaded Finder's `.DS_Store` and every
+    write of vim's swap file (ADT #923). A file gone between the listing and its
+    stamp, which is how vim probes a folder on each save, is skipped: raising
+    here ended the watch, whose loop catches only Control+C.
+    """
+    found: dict[Path, float] = {}
+    for path in sorted(folder.rglob("*")):
+        if any(part.startswith(".") for part in path.relative_to(folder).parts):
+            continue
+        try:
+            status = path.stat()
+        except OSError:
+            continue
+        if stat.S_ISREG(status.st_mode):
+            found[path] = status.st_mtime
+    return found
 
 
 def changed(folder: Path, known: dict[Path, float]) -> dict[Path, float]:

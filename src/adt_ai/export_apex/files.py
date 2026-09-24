@@ -134,25 +134,30 @@ class ApexFileResolver:
             if not contains_run(path.parent.relative_to(root).parts, files_parts)
         ]
 
+    def rest_root(self) -> Path:
+        """The folder `-rest` writes every module file into."""
+        return self.apex_root() / _clean_relative(self.path_rest)
+
     def rest_export(self, module_name: str) -> Path:
         name = module_name.strip("/")
         if not name.endswith(".sql"):
             name = f"{name}.sql"
-        return self.apex_root() / _clean_relative(self.path_rest) / _clean_relative(name)
+        return self.rest_root() / _clean_relative(name)
+
+    def files_root(self, owner_root: Path) -> Path:
+        """The `apex_path_files` folder under an application's or the workspace's folder.
+
+        `validate` holds an APEXlang tree it found on disk rather than an
+        application, and the tree's parent is the application's folder, so it
+        asks here instead of spelling `files/` itself (ADT #923).
+        """
+        return owner_root / _clean_relative(self.path_files)
 
     def application_file(self, application: ApexApplication, relative_path: str) -> Path:
-        return (
-            self.app_root(application)
-            / _clean_relative(self.path_files)
-            / _clean_relative(relative_path)
-        )
+        return self.files_root(self.app_root(application)) / _clean_relative(relative_path)
 
     def workspace_file(self, relative_path: str) -> Path:
-        return (
-            self.workspace_root()
-            / _clean_relative(self.path_files)
-            / _clean_relative(relative_path)
-        )
+        return self.files_root(self.workspace_root()) / _clean_relative(relative_path)
 
 
 def _render_app_folder(template: str, application: ApexApplication) -> Path:

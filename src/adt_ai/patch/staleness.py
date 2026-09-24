@@ -84,16 +84,20 @@ class GraphFreshness:
         return not self.graph_missing and not self.stale
 
     def failure_message(self) -> str:
+        """A short uppercase headline, then the reason and the fix (ADT #934)."""
         if self.is_fresh:
             return ""
         if self.graph_missing:
             return (
-                f"No readable {GRAPH_FILE}: objects cannot be ordered from a graph "
-                f"that is absent or unreadable, and name order is not a runnable "
-                f"script.\nRun: {REFRESH_COMMAND}"
+                f"NO READABLE {GRAPH_FILE}\n\n"
+                "Objects cannot be ordered from a graph that is absent or unreadable,\n"
+                "and name order is not a runnable script.\n"
+                f"Run: {REFRESH_COMMAND}"
             )
         lines = [
-            f"Stale {GRAPH_FILE}: the graph is older than the objects it would order."
+            f"STALE {GRAPH_FILE}",
+            "",
+            "The graph is older than the objects it would order.",
         ]
         for scope in self.stale:
             refreshed = scope.last_refresh or "never"
@@ -166,6 +170,30 @@ def graph_freshness(
     return GraphFreshness(graph_missing=False, stale=stale)
 
 
+def patch_scopes(root: Path, config: dict[str, Any], files: Any) -> list[str] | None:
+    """The schemas whose object trees hold ``files``, the scope a `-create` orders.
+
+    ADT #933: the graph orders a patch's own objects, so only their schemas have
+    to be current. Measured over every schema folder on disk, a patch for one
+    application refreshed schemas it carries nothing from. Jan, 2026-09-24:
+    *"it is fetching dependencies for schemas I am not asking for!"*
+
+    ``[]`` is a patch with no database object at all, an APEX-only one, which
+    the graph orders nothing for. ``None`` is a patch touching a layout with no
+    ``<schema>`` placeholder, whose one tree spans every owner, so there is
+    nothing narrower than the whole project to measure.
+    """
+    paths = [str(file) for file in files]
+    touched: set[str] = set()
+    for target in _install_targets(root, config):
+        base = target.root.relative_to(root).as_posix() if target.root != root else ""
+        if any(not base or path.startswith(f"{base}/") for path in paths):
+            touched.add(target.schema)
+    if "" in touched:
+        return None
+    return sorted(touched)
+
+
 def require_forced_refresh(folder: Path, *, force: bool) -> None:
     """Refuse to rebuild a patch folder that has already been deployed.
 
@@ -202,8 +230,9 @@ def require_forced_refresh(folder: Path, *, force: bool) -> None:
     if status is None:
         return
     raise PatchError(
-        f"{folder.name} has already been deployed ({status}), so rebuilding it "
-        "would leave its deploy logs describing scripts that no longer exist.\n"
+        f"{folder.name} IS ALREADY DEPLOYED ({status})\n\n"
+        "Rebuilding it would leave its deploy logs describing scripts that no\n"
+        "longer exist.\n"
         "Run with -force to refresh it; the logs are kept and patch_scripts/ is\n"
         "rebuilt, hand-written scripts going back to the project folder first."
     )

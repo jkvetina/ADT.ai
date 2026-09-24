@@ -3,7 +3,11 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
-from adt_ai.export_db.normalizer_clauses import strip_default_clauses
+from adt_ai.export_db.normalizer_clauses import is_foreign_owner, strip_default_clauses
+from adt_ai.export_db.normalizer_identifiers import (
+    normalize_identifier_part,
+    unquote_simple_identifiers,
+)
 from adt_ai.export_db.normalizers import (
     NormalizationContext,
     _code_positions,
@@ -142,9 +146,10 @@ def _cleanup_table_item(item: str, context: NormalizationContext) -> str:
     item = re.sub(r"\s+ENABLE\b", "", item, flags=re.IGNORECASE)
     item = re.sub(r"\s+USING\s+INDEX\b.*", "", item, flags=re.IGNORECASE)
     item = re.sub(r"\s+TABLESPACE\s+\S+", "", item, flags=re.IGNORECASE)
-    item = re.sub(r"\s+MAXVALUE\s+9{10,}(?!\d)", "", item, flags=re.IGNORECASE)
+    # Oracle's default is exactly 28 nines, as `sequence.py` strips it; `9{10,}`
+    # also took a limit the user had set, such as `MAXVALUE 9999999999` (#923).
+    item = re.sub(r"\s+MAXVALUE\s+9{28}(?!\d)", "", item, flags=re.IGNORECASE)
     item = strip_default_clauses(item, _IDENTITY_DEFAULTS)
-    item = item.replace("NUMBER(*,0)", "INTEGER")
     item = re.sub(r"\bNUMBER\(\*,0\)", "INTEGER", item, flags=re.IGNORECASE)
     item = re.sub(r"TIMESTAMP\s+\((\d+)\)", r"TIMESTAMP(\1)", item)
     item = re.sub(
@@ -166,7 +171,7 @@ def _cleanup_table_item(item: str, context: NormalizationContext) -> str:
         flags=re.IGNORECASE,
     )
     item = re.sub(r"\s+START WITH 1\b", "", item)
-    item = _strip_sequence_nextval(item)
+    item = _strip_sequence_nextval(item, context)
     return re.sub(r"\s+", " ", item).strip()
 
 _SEQUENCE_IDENT = r'(?:"[A-Za-z0-9_$#]+"|[A-Za-z0-9_$#]+)'
@@ -199,48 +204,44 @@ def _strip_domain_owner(item: str, context: NormalizationContext) -> str:
         name = _normalize_sql_identifier(match.group("name"), context)
         if owner is None:
             return f"DOMAIN {name}"
-        if context.keep_owner:
-            return f"DOMAIN {_normalize_sql_identifier(owner, context)}.{name}"
-        if context.object_owner and _identifier_key(owner) != _identifier_key(
-            context.object_owner
-        ):
+        if context.keep_owner or is_foreign_owner(owner, context.object_owner):
             return f"DOMAIN {_normalize_sql_identifier(owner, context)}.{name}"
         return f"DOMAIN {name}"
 
     return _COLUMN_DOMAIN.sub(replace, item)
 
 
-def _identifier_key(identifier: str) -> str:
-    return identifier.strip().strip('"').upper()
+#: `"SCHEMA"."SEQ"."NEXTVAL"`, the form DBMS_METADATA writes a sequence default
+#: in, or the same reference without its owner.
+_SEQUENCE_NEXTVAL = re.compile(
+    rf"(?:(?P<owner>{_SEQUENCE_IDENT})\.)?(?P<sequence>{_SEQUENCE_IDENT})"
+    r"\.(?:\"NEXTVAL\"|NEXTVAL\b)",
+    flags=re.IGNORECASE,
+)
 
-def _strip_sequence_nextval(item: str) -> str:
-    """Normalize sequence defaults to bare ``sequence.nextval`` like old ADT.
+def _strip_sequence_nextval(item: str, context: NormalizationContext) -> str:
+    """Write a sequence default as ``seq.nextval``, the way old ADT did.
 
-    DBMS_METADATA emits column defaults as a fully qualified, double-quoted
-    reference (``"SCHEMA"."SEQ"."NEXTVAL"``). Old ADT dropped the schema and the
-    quotes and lowercased the identifier so the default reads ``seq.nextval``.
-    Handle the 3-part (schema-qualified) and 2-part forms.
+    The owner follows the `#652` rule every other reference does: it goes only
+    when it is the table's own and `keep_owner` is off. It used to go whoever
+    owned the sequence, so `"SALES"."SHIP_SEQ"."NEXTVAL"` on `HR.ORDERS` read the
+    deploying schema's `ship_seq`, and a `keep_owner` export kept `hr.orders`
+    but not its own `hr.orders_seq` (ADT #923).
     """
 
-    def _repl(match: re.Match[str]) -> str:
-        return f"{match.group(1).strip(chr(34)).lower()}.nextval"
+    def replace(match: re.Match[str]) -> str:
+        sequence = f"{normalize_identifier_part(match.group('sequence'))}.nextval"
+        owner = match.group("owner")
+        if owner and (context.keep_owner or is_foreign_owner(owner, context.object_owner)):
+            return f"{normalize_identifier_part(owner)}.{sequence}"
+        return sequence
 
-    item = re.sub(
-        rf"{_SEQUENCE_IDENT}\.({_SEQUENCE_IDENT})\.(?:\"NEXTVAL\"|NEXTVAL\b)",
-        _repl,
-        item,
-        flags=re.IGNORECASE,
-    )
-    item = re.sub(
-        rf"({_SEQUENCE_IDENT})\.(?:\"NEXTVAL\"|NEXTVAL\b)",
-        _repl,
-        item,
-        flags=re.IGNORECASE,
-    )
-    return item
+    return _SEQUENCE_NEXTVAL.sub(replace, item)
 
 def _format_table_column(item: str) -> list[str]:
-    match = re.match(r"(?P<name>\S+)\s+(?P<body>.*)", item, flags=re.IGNORECASE)
+    # A quoted name is one token whatever it holds: `"Order Id"` split at its
+    # space exported as `Order` over `Id" NUMBER` (ADT #923).
+    match = re.match(r'(?P<name>"[^"]*"|\S+)\s+(?P<body>.*)', item)
     if not match:
         return [f"    {item}"]
 
@@ -459,7 +460,7 @@ def _dedent_lines(lines: list[str]) -> list[str]:
 def _normalize_constraint_expression(expression: str) -> str:
     return _replace_outside_sql_strings(
         expression.strip(),
-        lambda chunk: re.sub(r'"([A-Z][A-Z0-9_$#]*)"', r"\1", chunk),
+        lambda chunk: unquote_simple_identifiers(chunk, lower=False),
     )
 
 def _format_constraint_columns(

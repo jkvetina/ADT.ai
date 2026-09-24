@@ -1,25 +1,30 @@
-- **New command: `search` replaces `search_repo` and answers the dependency graph and page links as well as commit history.** The `dependencies` and `flow` commands are gone and `rebuild` owns every refresh they ran. There is no `search_repo` alias.
-- **`search TERM` finds where a piece of text lives, offline, across five layers**, and lists its hits in a table per layer. It reads the `DB` layer from the files `export_db` wrote, and refreshes the stores it answers from instead of naming the rebuild.
-- **`search -restore` puts each matching version back over its original path**, and `-stage` is gone.
-- **New command: `rebuild` owns the commit, dependency and page-link caches.** `rebuild -app` reads an application through any configured schema that reaches it, keeps no copy of a schema's source, and mirrors the source text `search TERM` reads.
-- **`rebuild -app` survives an APEX id past 64 bits and a component scan the database refuses.** A refused scan no longer ends the run, and a schema that reached the application is not reported as a warning.
-- **`diff -apex` compares the APEX applications and static files two schemas own.** It opens on a summary per application, blanks zero counts and drops the application section, and prints one changed property per line.
-- **`diff -apex -verbose` lists one line per changed component, pages first**, with one section per page and one for the application, and names the component on every property line.
-- **`diff -apex -page` compares only the pages you name, and `-apex -target-app ID` compares the `-app` application with another id on the target**, such as a working copy.
-- **`diff -restore` writes the target's version of everything that differs into your checkout, in every mode**, and `-limit N` works in every mode.
-- **Every help screen files its flags by one rule, and modes get their own `MODES:` section, right after `ACTIONS:`.** `recompile`'s six report modes, `export_apex -reveal`, `validate -scan` and `diff`'s `-rest`, `-data` and `-apex` render there.
-- **Tuning flags filed as actions move to `MODIFIERS:`**, among them `ut`'s `-refresh`, `doctor -offline`, `export_db -delete` and `export_apex -owners`. `-page` reads beside `-app` on `export_apex` and `validate`.
-- **`export_apex` no longer warns when it exported an application through another configured schema.** `export_apex -reveal` still names the unconfigured owner and every schema that reaches the application.
-- **`live_upload` is a `patch` verb, `patch -upload`.**
-- **A commit's number is its position on the branch's first-parent line**, and a merge counts as one commit.
+- **`search` reads your data: `search TERM -data` finds a text or a number in the rows of tables, views, materialized views and synonyms**, one list per object type. An object the database refuses to read is named under `WARNING - NOT SEARCHED:`, and the rest are still searched.
+- **Every error, in `calendar` as everywhere else, opens on a short uppercase headline with no trailing period**, the detail below it in sentence case. Every failure section opens on `ERROR - ` with its body indented two columns, and more warning headers carry the `WARNING - ` prefix.
+- **`doctor`: `-init -sync` keeps a project's `.gitattributes` and `.gitignore` current inside an ADT-managed block**, leaving every line outside it alone. The new `auto_sync_git` key, on by default, makes every export do the same on disk before it writes. Large repositories no longer crash it.
+- **`doctor`: `-init` writes files with the project's `file_crlf` line ending**, and the scaffolded `.gitignore` carries only what ADT writes into a project.
+- **`export_apex`: `-apexlang` always writes LF and carries the plugin and theme static files.** `validate` and `patch -deploy` convert a tree committed with CRLF before SQLcl reads it, and a converted tree still skips its next deploy.
+- **`patch` ships an APEXlang application as its folder**, and an APEXlang-only export builds a patch that carries its application. `patch -deploy` refuses up front when a static file the tree names is missing.
+- **`patch -create -app <id>` names the target application in `DEPLOY.sql`, its scripts and its logs**, with a comment between the two halves saying which application is imported as which id. An application's `comments/` files are no part of any patch.
+- **A patch no longer depends on the target it was created for.** `patch -deploy -target X` switches on that environment's lines and spools into its log folder.
+- **A drift refusal in `patch -deploy -app` says who changed the application, when, and how old your base is.**
+- **`patch -create` refreshes dependencies only for the schemas the patch carries.** A text file that is not UTF-8 warns instead of failing the patch, and a binary file ships silently.
+- **A patch carries the LOB scripts its data MERGE calls**, so a table exported with LOB values deploys through a patch.
+- **`export_db` carries on past an object the database refuses** and lists it under a `WARNING` section. Quoted names keep their quotes unless Oracle reads them the same without, an object named with a trailing `$` or `#` loses its owner, and grants are written one statement per grantee.
+- **`export_data` round-trips more types.** `delete: true` deletes once before the first MERGE batch, LOB scripts find rows keyed on RAW or DATE columns, and INTERVAL values are written the way Oracle writes them.
+- **`rebuild`: `-app` falls back to page-by-page scans when the whole-application scan fails**, and names only the broken pages, by id and name, below the progress list.
+- **`connection`: `-set-wallet-pwd` replaces a legacy `wallet_password`**, and a symlinked connection file stays a link when ADT saves it.
+- **`diff` reads schemas more exactly.** `-target-schema` no longer reports a grant as missing only because it names the schema, a lower-case `-name` matches, and `-apex -verbose` on APEX 26.1 lists changed supporting-objects scripts.
+- **`discovery`: `-file` writes a line break inside a cell as `<br>`**, so a value can no longer close its result block early.
+- **`recompile` leaves recycle-bin (`BIN$`) objects out**, and a name its compile statement refuses fails alone instead of ending the pass.
+- **`ut` keeps twenty runs per schema and `-name` selection**, and rounds `COVERAGE` half up.
 
 ## Verification
 
 | Suite          | Passed | Failed | Unverified | Coverage | Cores | Time |
 | -------------- | -----: | -----: | ---------: | -------: | ----: | ---: |
-| Unit tests     |   9108 |        |            |     100% |    14 | 1:05 |
-| User stories   |    174 |        |          2 |          |     3 | 0:02 |
-| Security audit |     25 |        |            |          |     1 | 0:17 |
+| Unit tests     |   9897 |        |            |     100% |    14 | 2:02 |
+| User stories   |    180 |        |          2 |          |     3 | 0:01 |
+| Security audit |     26 |        |            |          |     1 | 1:03 |
 
 The 2 unverified user stories are Windows-only contracts, and every release is built on macOS.
 

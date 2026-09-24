@@ -32,6 +32,7 @@ from adt_ai.export_db.content import (
     _render_grants_received,
     _render_user_privileges,
 )
+from adt_ai.export_db.failures import ExportObjectsFailedError, ObjectExportFailure
 from adt_ai.export_db.files import (
     ObjectFileResolver,
     ObjectFileWriter,
@@ -65,9 +66,11 @@ from adt_ai.export_db.render import (
     print_adt_table,
 )
 from adt_ai.export_db.request import ExportDbRequest
+from adt_ai.export_db.schema_objects import export_objects, stamp_schema
 from adt_ai.export_db.timers import SegmentTimer, estimate_for
 from adt_ai.export_db.watermarks import advance_watermark, is_narrowed, stored_watermark
 from adt_ai.shared.config import is_enabled
+from adt_ai.shared.connection_errors import ConnectFailedError
 from adt_ai.shared.dates import is_sub_day_window
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.diff_tables import drop_diff_tables
@@ -86,9 +89,15 @@ class ExportDbRunner:
         self,
         gateway_factory: GatewayFactory,
         normalizer_registry: NormalizerRegistry | None = None,
+        fatal_error: Callable[[Exception], bool] | None = None,
     ) -> None:
         self.gateway_factory = gateway_factory
         self.normalizer_registry = normalizer_registry or NormalizerRegistry.builtin()
+        # What stops the run instead of being recorded (`#917`): a lost
+        # connection, which every remaining object would repeat.
+        self.fatal_error = fatal_error or (
+            lambda error: isinstance(error, ConnectFailedError)
+        )
 
     def run(self, request: ExportDbRequest) -> list[ObjectWritePlan]:
         gateway_factory = _cached_gateway_factory(self.gateway_factory)
@@ -104,12 +113,14 @@ class ExportDbRunner:
         # Read by `_contents` under each schema's own overview table, written
         # here once that schema's objects are out. See the call site.
         grant_contents: list[tuple[DatabaseObject, str]] = []
+        failures: list[ObjectExportFailure] = []
         object_contents = self._contents(
             request,
             resolver        = resolver,
             gateway_factory = gateway_factory,
             writer          = writer,
             grant_contents  = grant_contents,
+            failures        = failures,
         )
         # The whole mode is this one seam: `-baseline` hashes where a normal run
         # writes, and everything above is identical, which is what makes a
@@ -128,6 +139,9 @@ class ExportDbRunner:
                 fix_path.unlink()
         for database_object, content in grant_contents:
             plans.append(emit(ObjectWriteRequest(database_object, content)))
+        if failures:
+            # After every write, chained to the first refusal for `-debug`.
+            raise ExportObjectsFailedError(failures, plans) from failures[0].error
         return plans
 
     def _resolve_group_rules(
@@ -144,6 +158,7 @@ class ExportDbRunner:
         gateway_factory: GatewayFactory,
         writer: ObjectFileWriter,
         grant_contents: list[tuple[DatabaseObject, str]],
+        failures: list[ObjectExportFailure],
     ) -> Iterable[tuple[DatabaseObject, str, str | None]]:
         reporter = request.reporter or ExportDbReporter()
         narrowed = is_narrowed(request)
@@ -187,10 +202,6 @@ class ExportDbRunner:
             # once the read says there is something to drop, so running it above
             # the header left that read on a blank screen (`#372`).
             dropped_diff_tables = drop_diff_tables(gateway)
-            if is_bare_recent(request.recent) and stored is None:
-                reporter.recent_note(
-                    f"{request.environment or '?'}/{schema}, exporting all objects"
-                )
             # Clock BEFORE the listing, so an object changed mid-run stays at or
             # after the candidate and is re-selected next time. A sub-day run
             # already has it from above, so the round trip still happens once.
@@ -324,125 +335,36 @@ class ExportDbRunner:
                     ignore       = request.ignore or _split_patterns(schema_export.get("ignore")),
                 )
             timer.setup_done()
-            reports_objects = reporter.reports_objects
-            add_if_not_exists = is_enabled(request.config.get("add_if_not_exists", True))
-            keep_owner = is_enabled(request.config.get("keep_owner", False))
-            keep_view_column_names = is_enabled(
-                request.config.get("keep_view_column_names", False)
+            # The object loop and the stamps after it live in `schema_objects`
+            # (`#923`); what it hands back is this schema's refusals.
+            refused = yield from export_objects(
+                request,
+                schema,
+                database_objects,
+                discovery    = discovery,
+                resolver     = resolver,
+                reporter     = reporter,
+                registry     = self.normalizer_registry,
+                fatal_error  = self.fatal_error,
+                timer        = timer,
+                overtaken_by = overtaken_by,
+                failures     = failures,
             )
-            dropped_job_arguments: list[str] = []
-            for index, database_object in enumerate(database_objects):
-                if reports_objects:
-                    # A filename sitting in more than one place under the type
-                    # subtree is reported on the object's own row rather than
-                    # aborting the export: the run still finishes, and the user
-                    # sees which objects carry stale clones to clean up by hand.
-                    reporter.export_object(
-                        database_object,
-                        duplicates = [
-                            resolver.display_path(location)
-                            for location in resolver.duplicate_locations(database_object)
-                        ],
-                        changed_by = overtaken_by.get(database_object.name.upper()),
-                    )
-                failed = True
-                try:
-                    raw_ddl = discovery.ddl(database_object)
-                    failed = False
-                finally:
-                    # The row opened above closes here, whether the pull came
-                    # back or raised: an unterminated row would otherwise be
-                    # welded to the error banner's first line (`#232`). Which of
-                    # the two happened is passed on because `-compact`'s row is a
-                    # bar: a failure completes it with `FAILED` rather than
-                    # advancing it over an object that was never written.
-                    reporter.finish_object(failed=failed)
-                if not failed:
-                    timer.record(database_object.object_type)
-                # Whatever casing the object's file already carries, resolved
-                # HERE so it is part of the content itself: `-baseline` hashes
-                # this same string and must agree with what a real run writes
-                # (`#452`). Recasing after the write would leave the two modes
-                # measuring different bytes for the same object.
-                display_name = resolver.file_object_name(database_object)
-                content = normalize_ddl(
-                    raw_ddl,
-                    object_type         = database_object.object_type,
-                    object_name         = database_object.name,
-                    registry            = self.normalizer_registry,
-                    add_if_not_exists   = add_if_not_exists,
-                    keep_owner          = keep_owner,
-                    keep_view_column_names = keep_view_column_names,
-                    object_display_name = display_name,
-                    table_retention     = discovery.table_retention(database_object),
-                )
-                fix_content = (
-                    build_table_fix_sql(raw_ddl, database_object.name, display_name)
-                    if database_object.object_type == "TABLE"
-                    else None
-                )
-                if database_object.object_type == "JOB":
-                    arguments = discovery.job_arguments(database_object)
-                    if _job_arguments_dropped(content, arguments):
-                        dropped_job_arguments.append(database_object.name)
-                    content = _append_job_arguments(content, arguments)
-                content = _append_comments(
-                    content,
-                    database_object,
-                    discovery.comments(database_object)
-                    if _has_comments(database_object.object_type, request.config)
-                    else [],
-                    include_columns = _has_column_comments(
-                        database_object.object_type,
-                        request.config,
-                    ),
-                    ignored_columns = _ignored_comment_columns(request.config),
-                    object_display_name = display_name,
-                )
-                yield database_object, content, fix_content
-                next_object = (
-                    database_objects[index + 1]
-                    if index + 1 < len(database_objects)
-                    else None
-                )
-                if (
-                    reports_objects
-                    and (
-                        next_object is None
-                        or next_object.object_type != database_object.object_type
-                    )
-                ):
-                    reporter.finish_type(schema, database_object.object_type)
-            # Every object of this schema is written, so `-compact`'s bar has
-            # nothing left to count: close it at 100% before the segment's TIMER.
-            # One bar per schema, never a grand total across them, the same split
-            # the shared per-schema section helper applies to every other output.
-            reporter.finish_export(schema)
-            reporter.job_arguments_not_exported(schema, dropped_job_arguments)
             # What this segment cost, folded into the rates the next run prices
             # itself from. Reached only on a completed segment, for the same
             # reason the watermark below is: a run that raised half way through
             # measured half a schema and would teach the store a rate no later
             # run can reproduce.
             timer.store(request.root, request.environment, schema)
-            # **A measured run advances neither** (`#452`): both record what an
-            # export WROTE, and this one wrote nothing, so stamping either would
-            # make the next real `-recent` run skip what this one only read.
-            if request.baseline:
-                continue
-            # Reached only when every object of this schema was written, so a
-            # schema that raised mid-export keeps its old watermark while the
-            # schemas that finished keep theirs (per-schema isolation).
-            advance_watermark(request, schema, candidate, stored, narrowed=narrowed)
-            # Same placement and the same reason as the watermark above: the
-            # baseline moves only once this schema's files are all written, so a
-            # schema that raised mid-export re-offers its jobs on the next run
-            # instead of recording a signature for a file that never landed.
-            advance_job_signatures(
+            stamp_schema(
                 request,
                 schema,
-                discovery.last_job_signatures.get(schema),
-                narrowed = narrowed,
+                database_objects,
+                refused,
+                candidate      = candidate,
+                stored         = stored,
+                narrowed       = narrowed,
+                job_signatures = discovery.last_job_signatures.get(schema),
             )
 
 

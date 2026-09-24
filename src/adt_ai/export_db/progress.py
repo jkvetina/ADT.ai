@@ -135,7 +135,12 @@ class ObjectProgressBar:
         self._draw()
 
     def advance(self) -> None:
-        """One more object written: redraw the same row in place."""
+        """One more object done: redraw the same row in place.
+
+        A failed object counts as done too (`#917`): the export carries on past
+        it, so the bar does, and the failure is listed under its own warning
+        once the bar has closed.
+        """
         self._done = min(self._total, self._done + 1)
         self._draw()
 
@@ -146,6 +151,10 @@ class ObjectProgressBar:
         replaces it. The row itself carries no newline while it crawls, so the
         close owes one, plus the blank that separates this section from the
         `TIMER` footer under it.
+
+        It closes this way with a failed object in it as well (`#917`): the
+        elapsed time is the figure the reader watches for, and the objects that
+        failed are listed under their own warning straight after.
         """
         self._bar.print_line(self._label, 100, int(self.elapsed), close=True)
         print()

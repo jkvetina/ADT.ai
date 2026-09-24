@@ -111,13 +111,16 @@ def _rebuild_argument_error(args: argparse.Namespace) -> str | None:
         *rest, last = steering
         named = f"{', '.join(rest)} and {last}" if rest else last
         verb = "refresh" if rest else "refreshes"
+        # The headline's joiner is uppercase with the rest of it (ADT #934).
+        headline = f"{', '.join(rest)} AND {last}" if rest else last
         return (
-            f"{named} {verb} the database caches and cannot be combined with {mode}"
+            f"{headline} CANNOT BE COMBINED WITH {mode}\n\n"
+            f"{named} {verb} the database caches."
         )
     if args.reveal is None and getattr(args, "switch", None) is not None:
-        return "-switch only works with -reveal"
+        return "-switch NEEDS -reveal"
     if mode is None and since is not None and args.limit is not None:
-        return "-since and -limit cannot be combined"
+        return "-since AND -limit CANNOT BE COMBINED"
     return _app_selection_error(args.app) if args.app else None
 
 
@@ -212,7 +215,7 @@ def plan_database_refresh(
         selection, connections, environment, plan.gateway_factory
     )
     if selection is not None and selection.has_ranges and not plan.apps:
-        print_adt_error("INPUT NOT FOUND", "-app range matched no applications.")
+        print_adt_error("INPUT NOT FOUND", "-app RANGE MATCHED NO APPLICATIONS")
         return exit_code_for("INPUT NOT FOUND")
 
     plan.app_schema = _app_schema(args, plan, root, connections, environment)

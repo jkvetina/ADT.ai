@@ -204,12 +204,16 @@ def stale_full_apps(
 def stale_full_app_message(stale: list[StaleFullApp]) -> str:
     """The refusal, in the shape the other two build gates already print.
 
-    A lead line, one indented row per application, and a `Run:` line naming the
-    command that fixes it, exactly as `GraphFreshness.failure_message` reads.
+    A headline, the reason under it, one indented row per application, and a
+    `Run:` line naming the command that fixes it, exactly as
+    `GraphFreshness.failure_message` reads. The headline is short and uppercase
+    and the reason sits below it (ADT #934).
     """
     lines = [
-        "Stale full app export: the application changed after the export this "
-        "patch would ship, so those changes are not in it."
+        "STALE FULL APP EXPORT",
+        "",
+        "The application changed after the export this patch would ship,",
+        "so those changes are not in it.",
     ]
     for item in stale:
         exported = (

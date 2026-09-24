@@ -53,7 +53,6 @@ reasoned rather than measured.
 from __future__ import annotations
 
 import contextlib
-import re
 import threading
 import time
 from collections.abc import Callable
@@ -66,11 +65,21 @@ from adt_ai.shared.oracle_session import DDL_LOCK_TIMEOUT_STATEMENT
 from adt_ai.shared.sqlcl_connect import sqlcl_connect
 from adt_ai.shared.sqlcl_console import open_console
 from adt_ai.shared.sqlcl_script import (
-    _connect_secrets,
     _ran_without_a_session,
     _scrub_secrets,
     _sqlcl_environment,
 )
+from adt_ai.shared.sqlcl_script_file import _connect_secrets, console_body
+
+# Split out to `sqlcl_transcript` by ADT #923 and still importable from here,
+# which is where callers have always found them.
+from adt_ai.shared.sqlcl_transcript import (
+    _PROMPT,
+    _clean_line,
+    _is_sentinel,
+)
+from adt_ai.shared.sqlcl_transcript import _clean as _clean
+from adt_ai.shared.sqlcl_transcript import error_in as error_in
 
 SQLCL_LAUNCHER = ("sql", "-S", "/nolog")
 
@@ -90,7 +99,6 @@ STATEMENT_TIMEOUT_SECONDS = 1_200.0
 PUMP_JOIN_SECONDS = 5.0
 
 _SENTINEL = "<<<ADT-SQLCL-{n}>>>"
-_PROMPT = "SQL>"
 
 # `SET LONG` is the knob that truncates a large value, measured: at 80 a 30000
 # character CLOB came back 80 characters long, while `SET LONGCHUNKSIZE 80` with a
@@ -118,22 +126,6 @@ alter session set nls_timestamp_tz_format = 'YYYY-MM-DD HH24:MI:SS.FF6 TZR';
 alter session set nls_numeric_characters = '.,';
 {DDL_LOCK_TIMEOUT_STATEMENT};
 """
-
-# SQLcl's own noise, dropped before anything tries to read a reply. The memory
-# warning is what a large `SET LONG` earns, and the JVM prints its own notice when
-# JAVA_TOOL_OPTIONS is set in the environment.
-_NOISE = re.compile(
-    r"^(Picked up JAVA_TOOL_OPTIONS|Warning: This LONG setting|It is recommended to reduce)"
-)
-
-# An Oracle error in SQLcl's own report block. Matched on the report markers rather
-# than on the code alone: `recompile` and `ut` both SELECT error text containing
-# `ORA-` and `PLS-` codes, so a bare code search would read a successful query's
-# own rows as a failure.
-_ERROR_REPORT = re.compile(
-    r"^(Error starting at line|Error report -|Error at Command Line|SP2-\d+|USAGE:)"
-)
-_ERROR_CODE = re.compile(r"\b(ORA-\d{5}|PLS-\d{5}|SP2-\d{4})\b")
 
 
 class SqlclSessionError(RuntimeError):
@@ -399,10 +391,10 @@ class SqlclSession(DrivenSqlcl):
                 # configuration one; the class selects the shared database
                 # banner and its credential advice (ADT #407).
                 raise ConnectFailedError(
-                    "SQLcl did not connect: "
+                    "SQLCL DID NOT CONNECT\n\n"
                     + (connected.strip().splitlines() or ["no output"])[-1]
-                    + ". A named connection resolves only from SQLcl's own store; "
-                    "register it once with a run that has the password, or give the "
+                    + "\nA named connection resolves only from SQLcl's own store; "
+                    "register it once\nwith a run that has the password, or give the "
                     "connection file one."
                 )
             self._exchange(_SESSION_PRELUDE, timeout_seconds=START_TIMEOUT_SECONDS)
@@ -425,7 +417,11 @@ class SqlclSession(DrivenSqlcl):
         )
 
     def _exchange(self, body: str, *, timeout_seconds: float, scrub: bool = False) -> str:
-        text, ending = self._collect(body, timeout_seconds=timeout_seconds)
+        # A terminal drops a line past its canonical limit, and SQLcl then never
+        # sees the statement end (ADT #923). Such a body crosses as an `@` file,
+        # the path every `sqlcl_request` script takes; everything else is typed.
+        with console_body(body, self.project_root) as sent:
+            text, ending = self._collect(sent, timeout_seconds=timeout_seconds)
         if ending == "timeout":
             self.close()
             raise SqlclSessionError(
@@ -435,63 +431,3 @@ class SqlclSession(DrivenSqlcl):
             self._abort()
             raise SqlclSessionError("SQLcl exited mid-statement")
         return _scrub_secrets(text, self._secrets) if scrub else text
-
-
-
-def _is_sentinel(line: str, marker: str) -> bool:
-    """True for the marker SQLcl printed, never for the `prompt` line we wrote.
-
-    This used to be a plain `marker in line`, which is correct exactly as long as
-    the terminal does not echo. Measured on 2026-08-21, a Windows pseudo console
-    does: the echoed `prompt <<<ADT-SQLCL-n>>>` matched first, the exchange ended
-    before SQLcl had answered, and the caller got an empty string as its reply.
-
-    The two are told apart by shape rather than by timing. What we write is a
-    `prompt` COMMAND; what SQLcl writes back is the bare marker. The `SQL>`
-    fragments come off first because the prompt carries no newline, so a marker
-    can arrive with one glued to its front.
-    """
-    text = line.strip()
-    while text.startswith(_PROMPT):
-        text = text[len(_PROMPT):].strip()
-    return marker in text and not text.lower().startswith("prompt")
-
-
-def _clean_line(line: str) -> str | None:
-    """One line with its prompt fragments off, or ``None`` for SQLcl's own noise.
-
-    Per line rather than per transcript so a live reader sees exactly what the
-    returned transcript will carry (ADT #760); a reader shown the raw line and a
-    caller handed the cleaned one is two answers to one question.
-    """
-    text = line
-    while text.lstrip().startswith(_PROMPT):
-        text = text.lstrip()[len(_PROMPT):]
-    if _NOISE.match(text.strip()):
-        return None
-    return text
-
-
-def _clean(lines: list[str]) -> list[str]:
-    """Drop the prompt fragments and SQLcl's own startup noise."""
-    return [cleaned for line in lines if (cleaned := _clean_line(line)) is not None]
-
-
-def error_in(output: str) -> str | None:
-    """The Oracle error SQLcl reported, or ``None``.
-
-    Keyed on SQLcl's own report markers rather than on a bare code search: a
-    successful `recompile` or `ut` query returns rows whose text carries `ORA-`
-    and `PLS-` codes, and reading those as a failure would break the two commands
-    most likely to be run against a broken schema.
-    """
-    lines = output.splitlines()
-    for index, line in enumerate(lines):
-        if not _ERROR_REPORT.match(line.strip()):
-            continue
-        for candidate in lines[index:]:
-            found = _ERROR_CODE.search(candidate)
-            if found:
-                return candidate.strip()
-        return line.strip()
-    return None

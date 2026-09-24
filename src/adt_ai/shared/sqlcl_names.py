@@ -5,10 +5,13 @@ password in the OS secure store). ADT registers one named connection per
 (connection file, environment, schema) tuple so generated SQLcl scripts connect
 by name instead of embedding cleartext credentials on every call.
 
-The name is ``ADT_`` + the connection-file basename, qualified with ``_<ENV>``
-only when the file defines more than one environment and ``_<SCHEMA>`` only
-when that environment defines more than one schema, every tuple gets a unique
-deterministic name while single-purpose files keep the bare ``ADT_<BASENAME>``.
+The name is ``ADT_`` + the connection-file basename (its parent folder for the
+generic ``connections.yaml``), then ``_<ENV>`` only when the file defines more
+than one environment, ``_<SCHEMA>`` only when that environment defines more than
+one schema, and always six hex characters of the file's resolved path
+(``path_discriminator``, ADT #660). So every tuple gets a unique deterministic
+name, and a single-purpose file gets ``ADT_<BASENAME>_<hex>``, never the bare
+basename. A name already recorded as ``sqlcl:`` wins over this derivation.
 The assigned name and a credential fingerprint are recorded back into the
 connection YAML (round-trip, comments preserved) so the user can see, and
 override, the SQLcl name in use, and so a credential change is detected and
@@ -44,9 +47,9 @@ _GENERIC_FILE_STEMS = {"connections"}
 
 # SQLcl's CONNMGR subcommand is ``DELETE -conn <name>``, there is no ``DEL``
 # abbreviation, it fails with "Expected a subcommand" (verified against SQLcl
-# 26.1's own bundled help text). One shared constant so both the named-connection
-# re-registration path (db.py) and diff's ephemeral-connection cleanup
-# (diff/queries/commands.py) can't drift onto two different wrong strings again.
+# 26.1's own bundled help text). A constant because two paths once built this
+# line and drifted onto two different wrong strings; the re-registration
+# preamble in ``sqlcl_connect`` is the one that builds it today.
 CONNMGR_DELETE_COMMAND = "CONNMGR DELETE -conn {name}"
 
 
@@ -185,6 +188,35 @@ def record_sqlcl_registration(
         text_files.write_private_text(path, buffer.getvalue())
     except Exception:
         return
+
+
+def read_sqlcl_registration(
+    source_file: Path | str,
+    environment: str,
+    schema: str,
+) -> dict[str, str]:
+    """The ``sqlcl`` / ``sqlcl_sync`` the schema's ``db:`` block holds NOW.
+
+    A gateway is built once per command from a `Connection` loaded at start, and
+    the registration it records mid-run (or one a second gateway on the same file
+    records) never reached that frozen copy, so every later request registered
+    again with the password in its script (#924 F59). Only the keys present are
+    returned; best-effort like the writer, so an unreadable file answers ``{}``
+    and the caller keeps the values it loaded.
+    """
+    try:
+        data = pyyaml.safe_load(Path(source_file).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    schema_node = _schema_node(data, environment, schema)
+    db_node = schema_node.get("db") if schema_node is not None else None
+    if not isinstance(db_node, dict):
+        return {}
+    return {
+        key: str(db_node[key])
+        for key in ("sqlcl", "sqlcl_sync")
+        if db_node.get(key)
+    }
 
 
 def _schema_node(data: Any, environment: str, schema: str) -> Any:

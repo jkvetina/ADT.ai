@@ -34,6 +34,7 @@ from __future__ import annotations
 import contextlib
 import sqlite3
 from collections.abc import Iterable, Mapping
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +57,7 @@ LEGACY_APEX_FILES: tuple[str, ...] = (
 #: The `recent.yaml` key whose watermarks belong here.
 RECENT_MODULE = "export_apex"
 
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 
 _RETIRED = ("workspace_id",)
 
@@ -64,10 +65,12 @@ _RETIRED = ("workspace_id",)
 #: other table keys by, and `_meta.value` becomes NOT NULL like every store's.
 #: Version 2 to 3 (ADT #725): `applications` gains the export's merge base.
 #: Version 3 to 4 (ADT #873): `applications` loses the unread `workspace_id`.
+#: Version 4 to 5 (ADT #925): `applications` gains when its checksum was taken.
 MIGRATIONS: tuple[Migration, ...] = (
     Migration("1", "2", lambda connection: connection.executescript(queries.APEX_STORE_LIFT_1)),
     Migration("2", "3", lambda connection: connection.executescript(queries.APEX_STORE_LIFT_2)),
     Migration("3", "4", lambda connection: drop_columns(connection, "applications", _RETIRED)),
+    Migration("4", "5", lambda connection: connection.executescript(queries.APEX_STORE_LIFT_4)),
 )
 
 #: The application columns, in the order a row is written and read back. This
@@ -82,6 +85,7 @@ APPLICATION_FIELDS: tuple[str, ...] = (
     "pages",
     "updated_at",
     "checksum",
+    "checksum_at",
     "base_commit",
     "mirror_ref",
 )
@@ -186,13 +190,18 @@ class ApexStore:
             )
         return len(rows)
 
-    def store_checksum(self, app_id: Any, checksum: str) -> None:
-        """Record one application's fingerprint beside the rest of its facts."""
+    def store_checksum(self, app_id: Any, checksum: str, *, at: str = "") -> None:
+        """Record one application's fingerprint, and when it was taken (ADT #925).
+
+        The time is what a drift refusal prints as the developer's base, so it
+        is the export's own moment, local and to the minute like APEX's dates.
+        """
         key = _app_key(app_id)
         if key is None or not checksum:
             return
+        stamp = at or datetime.now().strftime("%Y-%m-%d %H:%M")
         with self.connection:
-            self.connection.execute(queries.APEX_CHECKSUM_UPSERT, (key, checksum))
+            self.connection.execute(queries.APEX_CHECKSUM_UPSERT, (key, checksum, stamp))
 
     def store_merge_base(self, app_id: Any, base_commit: str, mirror_ref: str = "") -> None:
         """Record what this export was based on: a commit, and the ref sharing it.
@@ -307,27 +316,35 @@ def migrate_apex_files(root: Path | str) -> list[str]:
     Returns the file names actually converted, empty on a root that has none.
     Never raises and never prints: it runs from the same early CLI hook as
     :func:`~adt_ai.shared.internal_paths.migrate_internal_files`, before the
-    command banner, where a failure would be worse than a stale cache.
+    command banner, where a failure would be worse than a stale cache. Every
+    read is ``quiet`` for that reason: the loud one printed `UNREADABLE FILES`
+    above the banner and let a non-UTF-8 file raise out of ``main`` (ADT #923).
     """
     converted: list[str] = []
     sources = {name: internal_path(root, name) for name in LEGACY_APEX_FILES}
     recent_path = internal_path(root, "recent.yaml")
-    recent = load_yaml_mapping(recent_path) if recent_path.is_file() else {}
+    try:
+        recent = load_yaml_mapping(recent_path, quiet=True)
+    except OSError:
+        # Outside the conversion's own `try` below, so the same posture here:
+        # a watermark file it cannot open leaves the whole root as found.
+        return []
     has_recent_apex = isinstance(recent.get(RECENT_MODULE), dict)
     if not any(path.is_file() for path in sources.values()) and not has_recent_apex:
         return []
     try:
         with ApexStore.load(root) as store:
             if sources["apex_apps.yaml"].is_file():
-                _import_applications(store, load_yaml_mapping(sources["apex_apps.yaml"]))
+                _import_applications(
+                    store, load_yaml_mapping(sources["apex_apps.yaml"], quiet=True)
+                )
                 converted.append("apex_apps.yaml")
             if sources["apex_developers.yaml"].is_file():
-                store.store_developers(
-                    _string_mapping(load_yaml_mapping(sources["apex_developers.yaml"]))
-                )
+                developers = load_yaml_mapping(sources["apex_developers.yaml"], quiet=True)
+                store.store_developers(_string_mapping(developers))
                 converted.append("apex_developers.yaml")
             if sources["apex_timers.yaml"].is_file():
-                store.store_timers(load_yaml_mapping(sources["apex_timers.yaml"]))
+                store.store_timers(load_yaml_mapping(sources["apex_timers.yaml"], quiet=True))
                 converted.append("apex_timers.yaml")
             if has_recent_apex:
                 _import_watermarks(store, recent[RECENT_MODULE])

@@ -164,6 +164,38 @@ def parse_import_output(text: str) -> FolderReport:
     return FolderReport(UNRECOGNISED, (), body, warnings)
 
 
+def import_error_lines(report: FolderReport) -> tuple[str, ...]:
+    """The lines a failed import's error block shows, compiler rows first.
+
+    A report with no parsed rows still owes the reader something, an
+    UNRECOGNISED outcome being the case where the transcript is all there is, so
+    its tail is carried instead of an empty tuple that would render as a failure
+    with no reason attached.
+
+    **A Java exception leads, and its stack frames stay in the log** (ADT #928).
+    The tail alone showed the frames and then the `ORA-01403` of the import block
+    SQLcl ran after its compiler had crashed on a CRLF tree, which is the error Jan
+    was left reading while the cause sat ten lines further up.
+    """
+    if report.errors:
+        return tuple(message_lines(report.errors))
+    lines = [
+        line for line in report.raw.splitlines()
+        if line.strip() and not _JAVA_FRAME_RE.match(line)
+    ]
+    crash = [line.strip() for line in lines if _JAVA_EXCEPTION_RE.match(line.strip())]
+    tail = [line for line in lines[-10:] if line.strip() not in crash]
+    return (*crash[:1], *tail)
+
+
+# `\tat oracle.apexlang.core.APEXLangCompiler.compile(APEXLangCompiler.java:310)`
+_JAVA_FRAME_RE = re.compile(r"^\s+at \S+\(.*\)\s*$")
+# `java.lang.NullPointerException: Cannot invoke ...`, the line naming the cause.
+_JAVA_EXCEPTION_RE = re.compile(
+    r"^(?:[a-z_$][\w$]*\.)+[A-Z][\w$]*(?:Exception|Error)\b(?::.*)?$"
+)
+
+
 def _parse_block(text: str, marker: str, closing_field: str) -> tuple[CompileMessage, ...]:
     """Collect one block's records, stopping where the next block begins.
 

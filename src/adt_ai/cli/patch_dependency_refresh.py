@@ -75,7 +75,7 @@ from adt_ai.cli.context import (
     _print_connection_block,
 )
 from adt_ai.cli.gateways import build_gateway, cached_schema_gateway_factory
-from adt_ai.patch.staleness import GraphFreshness, graph_freshness
+from adt_ai.patch.staleness import GraphFreshness, graph_freshness, patch_scopes
 from adt_ai.shared.progress import FixedWidthProgressPrinter, print_adt_header
 
 #: Refresh one schema's mirror. Returns nothing; failures raise, and the caller
@@ -88,6 +88,8 @@ def ensure_fresh_dependency_graph(
     root: Path,
     config: dict[str, Any],
     gateway_factory: GatewayFactory | None = None,
+    *,
+    files: list[str] | None = None,
 ) -> None:
     """Refresh whatever `-create` or `-install` would order from a graph that predates it.
 
@@ -98,8 +100,20 @@ def ensure_fresh_dependency_graph(
     `-schema` narrows the measurement, and so the refresh, to the schemas an
     `-install` run writes for (ADT #804): a schema nobody asked to install is
     not a reason to connect.
+
+    ``files`` does the same for `-create` (ADT #933): the schemas the patch's
+    own files live in, and nothing at all for a patch carrying no database
+    object. It stood before the commit scan until then, measuring every schema
+    folder on disk, so `-create -app 4306000` refreshed CRM_QA, DBADMIN and MATO
+    for a patch that carried none of them.
     """
     wanted = getattr(args, "schema", None)
+    if files is not None:
+        scoped = patch_scopes(root, config, files)
+        if scoped == []:
+            return
+        if scoped is not None:
+            wanted = scoped
     report = graph_freshness(root, config, wanted)
     if report.is_fresh:
         return

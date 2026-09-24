@@ -123,16 +123,17 @@ def block_secret(block: dict[str, Any], kind: str, *, context: str) -> Secret | 
         return None
     if len(present) > 1:
         raise SecretCommandError(
-            f"{context}: {_and_list(present)} are both configured, and they are two "
-            "spellings of one setting. Keep one."
+            f"{context}: {_and_list(present)} ARE BOTH CONFIGURED\n\n"
+            "They are two spellings of one setting. Keep one."
         )
 
     conflicting = [key for key in stored_keys if _present(block, key)]
     if conflicting:
         raise SecretCommandError(
-            f"{context}: {present[0]} is configured beside {_and_list(conflicting)}, so "
-            "the secret has two sources. A block reads its secret from exactly one "
-            f"place: remove {_and_list(conflicting)} to fetch it with the command, or "
+            f"{context}: THE SECRET HAS TWO SOURCES\n\n"
+            f"{present[0]} is configured beside {_and_list(conflicting)}, and a block "
+            "reads its secret\nfrom exactly one place: "
+            f"remove {_and_list(conflicting)} to fetch it with the command, or\n"
             f"remove {present[0]} to keep the stored value."
         )
     return read_secret(block[present[0]], context=context)
@@ -156,7 +157,7 @@ def _argv(command: Any, *, context: str) -> list[str]:
     else:
         argv = shlex.split(str(command))
     if not argv:
-        raise SecretCommandError(f"{context}: the configured command is empty")
+        raise SecretCommandError(f"{context}: THE CONFIGURED COMMAND IS EMPTY")
     return argv
 
 
@@ -184,19 +185,19 @@ def _capture(command: Any, *, context: str, timeout_seconds: float) -> str:
             env            = safe_subprocess_environment(),
         )
     except FileNotFoundError as error:
-        raise SecretCommandError(f"{context}: command not found: {program}") from error
+        raise SecretCommandError(f"{context}: COMMAND NOT FOUND: {program}") from error
     except PermissionError as error:
         raise SecretCommandError(
-            f"{context}: command is not executable: {program}"
+            f"{context}: COMMAND IS NOT EXECUTABLE: {program}"
         ) from error
     except subprocess.TimeoutExpired as error:
         raise SecretCommandError(
-            f"{context}: command timed out after {timeout_seconds:g} seconds: {program}"
+            f"{context}: COMMAND TIMED OUT AFTER {timeout_seconds:g} SECONDS: {program}"
         ) from error
 
     if completed.returncode != 0:
         raise SecretCommandError(
-            f"{context}: command failed with exit status {completed.returncode}: "
+            f"{context}: COMMAND FAILED WITH EXIT STATUS {completed.returncode}: "
             f"{program}"
         )
 
@@ -204,12 +205,12 @@ def _capture(command: Any, *, context: str, timeout_seconds: float) -> str:
         decoded = completed.stdout.decode("utf-8")
     except UnicodeDecodeError as error:
         raise SecretCommandError(
-            f"{context}: command did not return UTF-8 text: {program}"
+            f"{context}: COMMAND DID NOT RETURN UTF-8 TEXT: {program}"
         ) from error
 
     # One line ending, and only one. A password may legitimately end in a space,
     # so a blanket strip would quietly change the credential.
     value = decoded.removesuffix("\n").removesuffix("\r")
     if not value:
-        raise SecretCommandError(f"{context}: command produced no output: {program}")
+        raise SecretCommandError(f"{context}: COMMAND PRODUCED NO OUTPUT: {program}")
     return value

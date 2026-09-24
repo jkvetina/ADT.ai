@@ -29,33 +29,11 @@ a big or minified file is the reader's call, not the mirror's.
 from __future__ import annotations
 
 import re
-from pathlib import PurePosixPath
 from typing import Any
 
 from adt_ai.dependencies import queries
 from adt_ai.shared.db import QueryGateway
-
-#: The extensions that make a file text whatever its MIME type says.
-TEXT_EXTENSIONS = frozenset(
-    {".js", ".mjs", ".css", ".json", ".html", ".htm", ".xml", ".txt", ".md", ".sql", ".svg", ".map"}
-)
-
-#: MIME subtypes that are text outside `text/*`: `application/javascript`,
-#: `application/json`, `image/svg+xml` and the rest of their family.
-TEXT_MIME_MARKERS = ("javascript", "json", "xml")
-
-#: MIME families and types that are binary however their bytes happen to read.
-BINARY_MIME_PREFIXES = ("image/", "audio/", "video/", "font/")
-BINARY_MIME_TYPES = frozenset({"application/zip", "application/pdf"})
-
-#: Extensions that make a file binary, `application/octet-stream` or not.
-BINARY_EXTENSIONS = frozenset(
-    {
-        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp", ".tif", ".tiff",
-        ".woff", ".woff2", ".ttf", ".otf", ".eot", ".zip", ".gz", ".jar", ".pdf",
-        ".mp3", ".mp4", ".wav", ".ogg", ".webm",
-    }
-)
+from adt_ai.shared.mime import TEXT_EXTENSIONS, says_binary, says_text
 
 #: A control character a text file does not carry: every C0 and C1 control
 #: except tab, newline, form feed and carriage return, plus DEL.
@@ -110,25 +88,14 @@ def _file_row(
 
 def decode_text(file_name: str, mime_type: str, charset: Any, payload: bytes) -> str | None:
     """The file's text, or None when it is not text (the module docstring's steps)."""
-    mime = mime_type.lower()
-    suffix = PurePosixPath(file_name.lower()).suffix
-    says_text = (
-        mime.startswith("text/")
-        or any(marker in mime for marker in TEXT_MIME_MARKERS)
-        or suffix in TEXT_EXTENSIONS
-    )
-    says_binary = (
-        mime.startswith(BINARY_MIME_PREFIXES)
-        or mime in BINARY_MIME_TYPES
-        or suffix in BINARY_EXTENSIONS
-    )
-    if (not says_text and says_binary) or b"\x00" in payload:
+    text_named = says_text(file_name, mime_type)
+    if (not text_named and says_binary(file_name, mime_type)) or b"\x00" in payload:
         return None
     try:
         text = payload.decode(str(charset or "utf-8"))
     except (LookupError, UnicodeDecodeError):
         return None
-    if not says_text and _CONTROL_CHARACTER.search(text):
+    if not text_named and _CONTROL_CHARACTER.search(text):
         return None
     return text
 

@@ -23,6 +23,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from adt_ai.shared.commit_file_classes import below_patch_root
+from adt_ai.shared.config import InvalidConfigValueError
 from adt_ai.shared.dates import within_recent_window
 from adt_ai.shared.patch_folders import PATCH_FOLDER_RE
 from adt_ai.shared.sql_like import matches_sql_like
@@ -190,11 +191,28 @@ def _filter_records(records: list[CommitRecord], request: PatchRequest) -> list[
         # missed the pattern built an empty patch and still reported success.
         # That is the same failure `#257` fixed for the patch-code filter, and it
         # gets the same answer, a commit you named is an instruction.
-        expression = re.compile(request.commit_pattern)
+        expression = _commit_pattern(request.commit_pattern)
         filtered = [record for record in filtered if expression.search(record.summary)]
     if request.files_only:
         filtered = [record for record in filtered if record.usable_files or record.deleted_files]
     return filtered
+
+
+def _commit_pattern(pattern: str) -> re.Pattern[str]:
+    """`patch_commit_pattern` compiled, or the config screen naming the key.
+
+    It reached `re.compile` unchecked, so a pattern missing its closing bracket
+    ended `patch` on `UNEXPECTED ERROR` in the regex engine's words, with no
+    mention of the key they were about (ADT #923).
+    """
+    try:
+        return re.compile(pattern)
+    except re.error as error:
+        raise InvalidConfigValueError(
+            "INVALID patch_commit_pattern IN config.yaml\n\n"
+            f"Not a valid regular expression: {error}\n"
+            f"  Value: {pattern}"
+        ) from error
 
 
 def matches_author(author: str, authors: list[str]) -> bool:

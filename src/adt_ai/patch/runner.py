@@ -25,6 +25,7 @@ from adt_ai.patch.create import (
     _write_patch_files,
     table_alter_sql,
 )
+from adt_ai.patch.create_apex import APEXLANG_SOURCE_ROW
 from adt_ai.patch.deploy import (
     _compile_statement,
     _deployment_app_id,
@@ -36,6 +37,7 @@ from adt_ai.patch.deploy import (
     _is_exact_patch_ref,
     _not_deployed_result,
     _recompile_invalid_objects,
+    _script_app_id,
     _select_patch_folder,
     _skipped_deployment_result,
     _verify_view_columns,
@@ -60,7 +62,12 @@ from adt_ai.patch.files import (
 )
 from adt_ai.patch.full_app import require_fresh_full_app_exports, resolve_full_app_ids
 from adt_ai.patch.hashes import write_patch_hashes
-from adt_ai.patch.layout import ensure_deploy_log_folder, is_database_path
+from adt_ai.patch.layout import (
+    ensure_deploy_log_folder,
+    is_apexlang_path,
+    is_database_path,
+    listed_patch_paths,
+)
 from adt_ai.patch.models import (
     AlterHelper,
     DatabasePatchResult,
@@ -98,6 +105,7 @@ from adt_ai.shared.commit_discovery import (
     matches_patch_selector,
     named_patch_refs,
 )
+from adt_ai.shared.patch_folders import script_changed_files
 from adt_ai.shared.queries import diff_tables as shared_diff_queries
 from adt_ai.shared.sql_identifiers import safe_identifier
 
@@ -152,8 +160,9 @@ class PatchWorkspace:
             return None
         candidates = ", ".join(folder.folder for folder in matches)
         raise PatchError(
-            f"{ref!r} matches more than one patch folder: {candidates} "
-            "- name one of them exactly"
+            f"{ref!r} MATCHES MORE THAN ONE PATCH FOLDER\n\n"
+            f"Matches: {candidates}\n"
+            "Name one of them exactly."
         )
 
     def next_folder(self, patch_code: str, *, today: date | None = None) -> Path:
@@ -223,6 +232,20 @@ class PatchWorkspace:
                 for label, path in linked_references(text, self.root, folder.path, config)
                 if label == "FILE" and is_database_path(path, config)
             ]
+            if not files and APEXLANG_SOURCE_ROW in text:
+                # An APEXlang application links nothing, by design: the import
+                # delivers the tree. Read off its `init` half, the one script
+                # naming the source, what that import brings, so `-deploy` stops
+                # printing an empty `PATCH CONTENTS:` over the application the
+                # patch was built for (ADT #926).
+                # As its folder, one row for the whole tree (ADT #928).
+                files = listed_patch_paths(
+                    [
+                        path for path in script_changed_files(text)
+                        if is_apexlang_path(path, config)
+                    ],
+                    config,
+                )
             if not files:
                 continue
             groups.append(
@@ -290,7 +313,9 @@ class PatchWorkspace:
                 order   = index,
                 file    = sql_path.name,
                 schema  = _deployment_schema(sql_path.name, config),
-                app_id  = _deployment_app_id(sql_path.name, config),
+                # The application whose tree the import reads, which a script
+                # named for a retarget states in its header (ADT #935).
+                app_id  = _script_app_id(sql_path, config),
                 files   = _countable_file_total(
                     sql_path.read_text(encoding="utf-8", errors="replace"),
                     self.root,
@@ -303,7 +328,15 @@ class PatchWorkspace:
             for index, sql_path in enumerate(scripts, start=1)
         ]
         if not plan:
-            raise PatchError(f"patch folder has no deployable SQL files: {folder.folder}")
+            # `-create -deploy` ships a folder already on disk and builds nothing,
+            # so a folder whose scripts were deleted lands here with the build
+            # flag still on the line. Name the rebuild, or the refusal reads as a
+            # demand for some SQL file the patch never needed (ADT #926).
+            raise PatchError(
+                "NO DEPLOYABLE SQL FILES\n\n"
+                f"Patch folder: {folder.folder}\n"
+                "Rebuild it with -create -force, then -deploy."
+            )
         return folder, plan
 
     def deploy_patch(
@@ -369,6 +402,7 @@ class PatchWorkspace:
         gateway_factory: Callable[[str], Any] | None = None,
         files_ws: bool = False,
         hash_tables: Mapping[str, str] | None = None,
+        target_app_id: int | None = None,
     ) -> DatabasePatchResult:
         """Build the patch folder and report what went into it.
 
@@ -398,6 +432,7 @@ class PatchWorkspace:
             hash_tables   = hash_tables,
             gateway_factory = gateway_factory,
             files_ws      = files_ws,
+            target_app_id = target_app_id,
         )
 
 __all__ = [

@@ -43,6 +43,7 @@ from adt_ai.diff.timers import pair_key, previous_seconds, record_seconds, timer
 from adt_ai.export_apex.filters import ApexPageSelection
 from adt_ai.export_apex.rest import RestExport, export_rest
 from adt_ai.shared.connections import Connection
+from adt_ai.shared.error_screen import print_adt_error
 from adt_ai.shared.timed_bar import FALLBACK_TARGET_SECONDS, TimedProgressBar
 
 
@@ -102,7 +103,12 @@ def _run_rest_diff(
     summary = _compare_under_a_bar(
         connections,
         root,
-        pair_key(source.schema, target.schema, types=(REST_MODULE_TYPE,)),
+        pair_key(
+            source.schema,
+            target.schema,
+            types        = (REST_MODULE_TYPE,),
+            environments = _environments(connections),
+        ),
         compare,
         debug = debug,
     )
@@ -172,8 +178,9 @@ def _run_apex_diff(
         pair_key(
             source.schema,
             target.schema,
-            types = (APEX_APPLICATION_TYPE, *pages, *copies),
-            names = selection.app_tokens,
+            types        = (APEX_APPLICATION_TYPE, *pages, *copies),
+            names        = selection.app_tokens,
+            environments = _environments(connections),
         ),
         lambda: ApexDiffRunner().run(*sides),
         debug = debug,
@@ -249,7 +256,13 @@ def _run_data_diff(
     result = _compare_under_a_bar(
         connections,
         root,
-        pair_key(source.schema, target.schema, types=variant, names=names),
+        pair_key(
+            source.schema,
+            target.schema,
+            types        = variant,
+            names        = names,
+            environments = _environments(connections),
+        ),
         lambda: DataDiffRunner().run(sides[0], sides[1], config, names=names, options=options),
         debug = debug,
     )
@@ -279,7 +292,7 @@ def _compare_under_a_bar[T](
 ) -> T | None:
     """`COMPARING SCHEMAS:` over one crawling row, for the modes that replace the objects.
 
-    `None` means the comparison failed and `DIFF FAILED:` is already on screen.
+    `None` means the comparison failed and `ERROR - DIFF FAILED:` is already on screen.
     `-debug` compares without the bar and lets a failure raise, the posture
     the object comparison takes.
     """
@@ -299,10 +312,14 @@ def _compare_under_a_bar[T](
     except RuntimeError as error:
         if debug:
             raise
-        print_adt_header("DIFF FAILED:")
-        print(str(error))
+        print_adt_error("DIFF FAILED", str(error))
         return None
     return carried[0]
+
+
+def _environments(connections: tuple[Connection, Connection]) -> tuple[str, str]:
+    """Both sides' environments, which key the countdown beside the schemas (#923)."""
+    return connections[0].environment, connections[1].environment
 
 
 def _comparison_row(source: Connection, target: Connection) -> str:

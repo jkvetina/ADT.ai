@@ -8,9 +8,11 @@ from datetime import date, datetime, timedelta
 
 _FRACTION_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)$")
 
+# The headline names the value and the remedy follows on its own line, so the
+# argument screen opens on a short uppercase line (ADT #934).
 _WINDOW_HELP = (
-    "must be a number of days, or a fraction of a day such as 1/24 "
-    "(one hour) or 5/1440 (five minutes)"
+    "A window must be a number of days, or a fraction of a day such as 1/24\n"
+    "(one hour) or 5/1440 (five minutes)."
 )
 
 
@@ -35,16 +37,16 @@ def recent_window(value: str) -> int | float:
     if fraction:
         numerator, denominator = (float(part) for part in fraction.groups())
         if denominator == 0:
-            raise argparse.ArgumentTypeError(f"'{value}' divides by zero, {_WINDOW_HELP}")
+            raise argparse.ArgumentTypeError(f"'{value}' DIVIDES BY ZERO\n\n{_WINDOW_HELP}")
         return _whole_if_possible(numerator / denominator)
     try:
         window = float(text)
     except ValueError:
-        raise argparse.ArgumentTypeError(f"'{value}' {_WINDOW_HELP}") from None
+        raise argparse.ArgumentTypeError(f"'{value}' IS NOT A WINDOW\n\n{_WINDOW_HELP}") from None
     # `float` also accepts 'nan' and 'inf', which no arithmetic downstream
     # survives: a NaN bind silently matches nothing and never says why.
     if window != window or window in (float("inf"), float("-inf")):
-        raise argparse.ArgumentTypeError(f"'{value}' {_WINDOW_HELP}")
+        raise argparse.ArgumentTypeError(f"'{value}' IS NOT A WINDOW\n\n{_WINDOW_HELP}")
     return _whole_if_possible(window)
 
 
@@ -177,10 +179,11 @@ def resolve_since(value: str, *, option: str = "-since") -> str:
         try:
             datetime.strptime(text, "%Y-%m-%d")
         except ValueError as exc:
-            raise ValueError(f"{option}: '{value}' is not a valid date") from exc
+            raise ValueError(f"{option}: '{value}' IS NOT A VALID DATE") from exc
         return text
     if re.fullmatch(r"\d+", text):
         return (date.today() - timedelta(days=int(text))).isoformat()
     raise ValueError(
-        f"{option}: '{value}' must be a YYYY-MM-DD date or a number of days back"
+        f"{option}: '{value}' IS NOT A DATE\n\n"
+        "Use a YYYY-MM-DD date or a number of days back."
     )

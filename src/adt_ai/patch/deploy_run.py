@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from pathlib import Path
+from datetime import datetime
 from typing import Any
 
 from adt_ai.patch import settings
@@ -42,16 +42,15 @@ from adt_ai.patch.deploy_progress import (
     _deployment_progress,
 )
 from adt_ai.patch.deploy_receipt import (
-    _include_closure,
-    _runs_sql,
     deployment_complete,
     deployment_fingerprint,
+    installed_app_id,
     write_deploy_receipt,
 )
 from adt_ai.patch.deploy_sequence import deployment_sequence
 from adt_ai.patch.layout import deploy_log_folder, ensure_deploy_log_folder
 from adt_ai.patch.models import DeploymentPlanItem, DeploymentResult, DeploymentRunResult
-from adt_ai.patch.templates import _apex_environment_payload
+from adt_ai.patch.templates import for_target
 from adt_ai.shared.sqlcl_errors import SqlclNotConnectedError, SqlclScriptError, SqlclTimeoutError
 
 
@@ -133,6 +132,17 @@ def run_deployment(
             recompiled      = [],
         )
 
+    # **One reading of the clock for the whole run** (`#929`). The backup folder,
+    # the scan report, the revert report and the build-status timeline promise to
+    # sort together in `logs_<TARGET_ENV>/`, and each of them used to render its
+    # name from its own `datetime.now()`. Those four moments are minutes apart on
+    # a real deploy -- the backup is taken before the import, the scan after the
+    # last script, the revert after the scan, the release in the `finally` -- so
+    # the promise held only for a fixture that ran inside one second, and CI
+    # eventually caught even that (`...220555` against `...220556`). Read here
+    # because this is where the run begins for everything it writes; the per-file
+    # deployment log keeps its own reading, see `settings.deploy_log_name`.
+    moment = datetime.now()
     # Before the first script runs, never after: `_write_deployment_log`
     # also creates this folder, but only once SQLcl has already failed to
     # open its spool. Git does not track an empty directory, so a patch
@@ -159,6 +169,7 @@ def run_deployment(
         },
         target_env = target,
         log_folder = log_folder,
+        moment     = moment,
     ) as apex_locks:
         # Before `begin_deploy`, so the streamed table sizes itself on every row it
         # is going to show, and before the first script, so a refused signature check
@@ -212,6 +223,7 @@ def run_deployment(
                                 gateway_factory,
                                 log_folder = log_folder,
                                 config     = config,
+                                moment     = moment,
                             )
                         )
                     results.extend(
@@ -296,6 +308,7 @@ def run_deployment(
                 apex_version = apex_version,
                 log_folder   = folder.path / deploy_log_folder(config, target),
                 config       = config,
+                moment       = moment,
             )
             if settings.verify_deploy_scan(config)
             else []
@@ -326,6 +339,7 @@ def run_deployment(
                 root       = workspace.root,
                 log_folder = log_folder,
                 config     = config,
+                moment     = moment,
             )
             if apex_backups and not continue_on_error
             else []
@@ -393,9 +407,10 @@ def _run_install_script(
     # Read BEFORE the call, not after (ADT #434). These are the same two
     # numbers the result below records; a live reader needs them while the
     # script is running, and reading the install script twice to get them at
-    # two different times is how the two answers start to differ.
+    # two different times is how the two answers start to differ. Read as this
+    # target runs it (#924 F33).
     deployed_total, allowed = _countable_references(
-        item.path.read_text(encoding="utf-8", errors="replace"),
+        for_target(item.path.read_text(encoding="utf-8", errors="replace"), config, target),
         workspace.root,
         folder.path,
         config,
@@ -407,7 +422,9 @@ def _run_install_script(
     execution_failed = False
     try:
         output = gateways[item.schema].sqlcl_request(
-            _deployment_payload(item.path, continue_on_error=continue_on_error),
+            _deployment_payload(
+                item.path, continue_on_error=continue_on_error, config=config, target_env=target,
+            ),
             folder.path,
             **({"on_line": reader} if reader is not None else {}),
         )
@@ -427,7 +444,7 @@ def _run_install_script(
         order   = item.order,
         file    = item.file,
         schema  = item.schema,
-        app_id  = _installed_app_id(item, apex_items, workspace.root, config),
+        app_id  = installed_app_id(item, apex_items, workspace.root, config, target),
         files   = item.files,
         commits = item.commits,
         status  = status,
@@ -465,33 +482,6 @@ def _gateway_for_app(
     }
     fallback = next(iter(gateways.values()), None)
     return lambda app_id: gateways.get(owners.get(app_id, ""), fallback)
-
-
-def _installed_app_id(
-    item: DeploymentPlanItem, imports: list[ApexImportItem], root: Path, config: dict[str, Any],
-) -> int | None:
-    """A tree-only carrier does not install its source application.
-
-    Counts cannot prove this: templates and inline SQL can write an application
-    without contributing a countable file. Only an inert SQLcl carrier, after
-    removing the known workspace-selection block, can omit the source scan.
-    Unknown SQL remains subject to verification of both source and target.
-    """
-    if item.app_id is None or not any(
-        imported.app_id == item.app_id and imported.retargeted for imported in imports
-    ):
-        return item.app_id
-    paths = {item.path.resolve()}
-    if not _include_closure(paths, item.path.parent, config):
-        return item.app_id
-    environment = "\n".join(_apex_environment_payload(root, item.app_id)).strip()
-    for path in paths:
-        text = path.read_text(encoding="utf-8", errors="replace")
-        if environment:
-            text = text.replace(environment, "")
-        if _runs_sql(text):
-            return item.app_id
-    return None
 
 
 __all__ = ["run_deployment"]

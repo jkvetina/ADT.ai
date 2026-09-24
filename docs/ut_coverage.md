@@ -57,6 +57,8 @@ That suite's `COVERAGE` reads `?` because `ut_match` derives `ADT_FIXTURE` from 
 
 `?` is the same marker, and the same argument, as the module column's: a column of short values has no room for a word, and it cannot be mistaken for a figure the way `0` or `-` can.
 
+**A figure prints to one decimal place, a half rounded up.** 1 of 16 blocks is 6.25% and prints `6.3`, what a reader dividing by hand gets. Every printed figure takes the one rounding: suite rows, module rows, the `-gate` list, and `WAS` and `NOW` in the change table.
+
 **Coverage is run-scoped, and that is a deliberate trade.** The report is built from the pairings of the suites that ran, so a package no suite tests appears nowhere: no row, no contribution to any module figure, no total. `ut` does not answer "what in this schema is untested"; it answers "how much of what these suites test did they reach", which is the question the rest of the table is about.
 
 <br>
@@ -112,9 +114,9 @@ The compile-time prerequisites are the ones package bodies already have: an `INT
 
 ## What moved since last time
 
-Every run records what it measured, and `-verbose` prints the difference above the summaries, under `COVERAGE CHANGED SINCE LAST RUN:`. Four columns: the suite package, `WAS`, `NOW`, and the signed `DELTA` between them.
+Every run records what it measured, and `-verbose` prints the difference above the summaries, under `COVERAGE CHANGED SINCE LAST RUN:`. Four columns: the suite package, `WAS`, `NOW`, and the signed `DELTA` between them. `DELTA` is `NOW` minus `WAS` as printed, so the column always adds up on screen.
 
-- **Only the suites that moved.** Two full summaries already list everything, so a third table repeating them would be the second and worse telling of something already told.
+- **Only the suites that moved.** Two full summaries already list everything, so a third table repeating them would be the second and worse telling of something already told. A move too small to change a printed figure is not one.
 - **The comparison is against the last run that was different, not the last run.** Running `ut` changes no coverage, so two runs of unchanged code measure the same thing, and comparing each run against the one immediately before it emptied the table on precisely the run a reader opens it for: the one after a deploy. The walk stops on its first candidate, so a run that follows a real move costs nothing extra.
 - **Ordered by the size of the move, largest first**, drops and gains together, so a regression cannot hide under a long tail of rounding.
 - **`-verbose` only, and `-silent` outranks it.** The history is recorded on every run including quiet ones: a store that only remembered verbose runs would compare against whenever somebody last passed the flag rather than against last time.
@@ -122,7 +124,7 @@ Every run records what it measured, and `-verbose` prints the difference above t
 - **`WAS` and `DELTA` blank together** for a package the baseline run did not measure. A package appearing for the first time has no comparison rather than a gain of its whole figure.
 - **A `-name` run keeps its own history.** It measures the suites it selected and nothing else, so standing it in front of a full run would report every package the filter excluded as having no previous figure. The history is keyed by the selection, the same key the timing estimate uses.
 
-The history lives in `config/internal/ut.db`, gitignored with the other internal stores. It keeps the **last 20 runs per schema** and prunes the rest on every write, and a schema is keyed upper-case so two spellings read one history. A root ADT.ai cannot write still runs, reports and exits normally; only the history is skipped.
+The history lives in `config/internal/ut.db`, gitignored with the other internal stores. It keeps the **last 20 runs per schema and selection** and prunes the rest on every write, and a schema is keyed upper-case so two spellings read one history. A root ADT.ai cannot write still runs, reports and exits normally; only the history is skipped.
 
 Its tables are on [storage_ut.md](storage_ut.md).
 
@@ -141,8 +143,8 @@ adtai ut                # nothing gates
 **The report prints in full first and the gate closes it.** A gate that replaced the numbers with a verdict would be unusable, since the reason a package is under the bar is in the tables above it, so both summaries are untouched and a failing run adds one section:
 
 ```text
-COVERAGE BELOW 80.0:
---------------------
+WARNING - COVERAGE BELOW 80.0:
+------------------------------
 
   PACKAGE       COVERAGE
   -----------   --------

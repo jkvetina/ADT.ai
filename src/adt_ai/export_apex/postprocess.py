@@ -88,8 +88,13 @@ def _payload_for(
         output = _enrich_sql(payload, enrichments)
     elif action == "split" and relative.endswith(".sql"):
         output = _clean_split_sql(payload, relative, application, enrichments, config, developers)
-    elif action == "apexlang" and relative == "shared-components/static-files.apx":
-        output = _drop_adt_payload_ignore(payload)
+    elif action == "apexlang":
+        # LF whatever the database answered: a database whose APEX exports CRLF
+        # wrote a tree SQLcl's compiler cannot read, and on a whole application
+        # it crashed rather than failed (ADT #928, `shared/apexlang_line_endings`).
+        output = _normalize_text_line_endings(payload)
+        if relative == "shared-components/static-files.apx":
+            output = _drop_adt_payload_ignore(output)
     else:
         output = payload
     return _override_apex_release(output, release) if relative.endswith(".sql") else output

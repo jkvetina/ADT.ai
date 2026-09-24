@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from adt_ai.patch import queries
+from adt_ai.patch import queries, stages
 from adt_ai.patch import settings as _settings
 from adt_ai.patch import signatures as _signatures
 from adt_ai.patch.content import (
@@ -20,7 +20,7 @@ from adt_ai.patch.create_apex import (
 from adt_ai.patch.files import (
     _patch_map,
 )
-from adt_ai.patch.generated_helpers import is_alter_helper_filename
+from adt_ai.patch.generated_helpers import is_alter_helper_filename, linked_group
 from adt_ai.patch.helpers import (  # noqa: F401  (re-exported for existing importers)
     _drop_helper_sql,
     _path_is_deleted,
@@ -78,11 +78,18 @@ def _write_patch_files(
     *,
     patch_code: str,
     full_app_ids: list[int] | None,
-    target_env: str | None,
     content_mode: str = CONTENT_MODE_COMMITTED,
     present_files: Mapping[str, bool],
     never_recreated: Mapping[str, str] | None = None,
+    target_app_id: int | None = None,
 ) -> dict[str, Path]:
+    """Write one install script per group, keyed by that group.
+
+    ``target_app_id`` is `-app <id>` (ADT #935): an APEXlang application's two
+    scripts are named for the id the import lands on, still keyed by the group
+    their files are grouped by. Any other script installs itself and keeps its
+    own name.
+    """
     sql_files: dict[str, Path] = {}
     # One store read for the whole write, the same reason `_patch_files` reads it
     # once: the group an APEX file lands in is the application's own schema.
@@ -101,19 +108,21 @@ def _write_patch_files(
     )
     for group in sorted({_patch_group(path, config, owners) for path in files}):
         group_files = [path for path in files if _patch_group(path, config, owners) == group]
+        retarget_to: int | None = None
         if all(_is_apex_application_path(path, config) for path in group_files):
             # An APEXlang application is two scripts around the import that
             # `patch -deploy -app` issues (ADT #735), `init` before it and `end`
             # after it; any other application is one script that installs itself.
             if _is_apexlang_application(group_files, config):
+                retarget_to = target_app_id
                 payloads = _apexlang_patch_payloads(
                     root, folder, group_files, records, config,
                     patch_code    = patch_code,
                     full_app_ids  = full_app_ids,
-                    target_env    = target_env,
                     schema        = group,
                     content_mode  = content_mode,
                     present_files = present_files,
+                    target_app_id = target_app_id,
                 )
             else:
                 payloads = {
@@ -121,8 +130,7 @@ def _write_patch_files(
                         root, folder, group_files, records, config,
                         patch_code    = patch_code,
                         full_app_ids  = full_app_ids,
-                        target_env    = target_env,
-                        schema        = group,
+                            schema        = group,
                         content_mode  = content_mode,
                         workspace     = workspace,
                         present_files = present_files,
@@ -137,7 +145,6 @@ def _write_patch_files(
                     records,
                     config,
                     patch_code=patch_code,
-                    target_env=target_env,
                     schema=group,
                     content_mode=content_mode,
                     signatures=signatures,
@@ -147,7 +154,9 @@ def _write_patch_files(
                 )
             }
         for script_group, payload in payloads.items():
-            sql_path = folder / _settings.group_script_name(script_group, config)
+            sql_path = folder / _settings.group_script_name(
+                stages.retarget(script_group, retarget_to), config
+            )
             text_files.write_text(sql_path, payload)
             sql_files[script_group] = sql_path
     return sql_files
@@ -160,7 +169,6 @@ def _database_patch_payload(
     config: dict[str, Any],
     *,
     patch_code: str,
-    target_env: str | None,
     schema: str,
     content_mode: str = CONTENT_MODE_COMMITTED,
     signatures: list[_signatures.PatchObject] | None = None,
@@ -183,8 +191,8 @@ def _database_patch_payload(
     payload.extend(_settings.session_directives(config))
     payload.extend(_settings.rollback_directives(config))
     if config.get("patch_spooling", True):
-        payload.append(_spool_start(config, target_env, schema))
-    payload.extend(_template_payload(root, folder, config, "db_init", patch_code, target_env))
+        payload.append(_spool_start(config, schema))
+    payload.extend(_template_payload(root, folder, config, "db_init", patch_code))
     # The guard sits here, at the top of the driving file, and is never emitted
     # above an individual object. Jan, 2026-09-02: *"I like 2 clean blocks (lock
     # at the start, unlock at the end) way more."* It is also the only placement
@@ -206,8 +214,8 @@ def _database_patch_payload(
         before_slot = _settings.slot_name(group, "before", config)
         after_slot = _settings.slot_name(group, "after", config)
         before = [
-            *_script_payload(root, folder, config, before_slot, patch_code, target_env),
-            *_template_payload(root, folder, config, before_slot, patch_code, target_env),
+            *_script_payload(root, folder, config, before_slot, patch_code),
+            *_template_payload(root, folder, config, before_slot, patch_code),
         ]
         # The generated ALTERs leave the `after` slot they are WRITTEN to and run
         # ahead of the object files (ADT #753). A table with a generated ALTER
@@ -222,15 +230,15 @@ def _database_patch_payload(
         # A hand-written script in the same slot keeps its place behind the
         # files: that one was put there by a person who meant "after".
         alters = _script_payload(
-            root, folder, config, after_slot, patch_code, target_env,
+            root, folder, config, after_slot, patch_code,
             keep=is_alter_helper_filename,
         )
         after = [
             *_script_payload(
-                root, folder, config, after_slot, patch_code, target_env,
+                root, folder, config, after_slot, patch_code,
                 keep=lambda name: not is_alter_helper_filename(name),
             ),
-            *_template_payload(root, folder, config, after_slot, patch_code, target_env),
+            *_template_payload(root, folder, config, after_slot, patch_code),
         ]
         # Old ADT's own condition (patch.py:1401): a group earns a section when it
         # has object files OR scripts. Keying the section off the object files
@@ -265,7 +273,7 @@ def _database_patch_payload(
     # `--` comment header above (`_change_summary_comment`), exactly as old ADT
     # did it (patch.py:1753-1764). SQLcl echoes every PROMPT, so the invented
     # copy was the only one reaching the deploy log (ADT #263).
-    payload.extend(_template_payload(root, folder, config, "db_end", patch_code, target_env))
+    payload.extend(_template_payload(root, folder, config, "db_end", patch_code))
     # The other half of the pair, after every object is in and before SUCCESS:
     # holding the objects for the rest of the lock's 20 minutes would block the
     # colleague the lock was taken to protect, for no remaining reason.
@@ -316,11 +324,9 @@ def _is_data_companion(root: Path, path: str) -> bool:
 
 
 def _database_patch_group(path: str, config: dict[str, Any]) -> str:
-    object_type = _database_object_type(path, config)
-    for group, object_types in _patch_map(config).items():
-        if object_type in {item.upper() for item in object_types}:
-            return group
-    return "objects"
+    # The reader the helper slots use too (ADT #923), so a generated ALTER and
+    # the table file it serves are placed by one reading of `patch_map`.
+    return linked_group(_database_object_type(path, config), config)
 
 
 __all__ = [

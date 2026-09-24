@@ -25,7 +25,10 @@ def print_startup_failure(error: BaseException) -> None:
     print(file=sys.stderr)
     print(header, file=sys.stderr)
     print("-" * len(header), file=sys.stderr)
-    print(f"  ADT.ai failed to start: {type(error).__name__}: {error}", file=sys.stderr)
+    # A short uppercase headline, the cause on the line under it (ADT #934).
+    print("  ADT.ai FAILED TO START", file=sys.stderr)
+    print(file=sys.stderr)
+    print(f"  {type(error).__name__}: {error}", file=sys.stderr)
     print(file=sys.stderr)
     print("  Use -debug to show the Python traceback.", file=sys.stderr)
     print(file=sys.stderr)

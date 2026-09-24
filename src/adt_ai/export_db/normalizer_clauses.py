@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable
 
+from adt_ai.export_db.normalizer_identifiers import identifier_key
+
 
 def strip_default_clauses(text: str, tokens: Iterable[str]) -> str:
     r"""Drop each default clause from `text`, and only when its value matches whole.
@@ -43,14 +45,17 @@ def owner_qualifier_stripper(object_owner: str | None) -> Callable[[re.Match[str
     """
 
     def replace(match: re.Match[str]) -> str:
-        if not object_owner:
-            return ""
-        if _identifier_key(match.group("owner")) == _identifier_key(object_owner):
-            return ""
-        return match.group(0)
+        return match.group(0) if is_foreign_owner(match.group("owner"), object_owner) else ""
 
     return replace
 
 
-def _identifier_key(identifier: str) -> str:
-    return identifier.strip().strip('"').upper()
+def is_foreign_owner(owner: str, object_owner: str | None) -> bool:
+    """Whether `owner` names a schema other than the object's own (the `#652` rule).
+
+    With no resolved owner nothing counts as foreign, so the qualifier goes, which
+    is what every export without one has always done.
+    """
+    if not object_owner:
+        return False
+    return identifier_key(owner) != identifier_key(object_owner)

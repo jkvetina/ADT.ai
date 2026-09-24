@@ -97,7 +97,8 @@ TIMER: 1s
 - **The whole table waits on those reads.** The header goes up first and the reads run under it. A run where neither an object nor a privilege changed prints its header and stops: no column headings over an empty table, and no `EXPORTING 0 OBJECTS:` under it.
 - A multi-schema run executes schema by schema, with its own connection block and its own `TIMER`, and prints the banner once.
 - Each schema ends with `UPDATING DEPENDENCIES:`, the [mirror](rebuild.md) refreshed for what it wrote.
-- **Exported DDL names no schema.** The `CREATE` line, the object a `GRANT` names and the directories all drop the owner, so a file installs into whichever schema the deploying session connects as. Set `keep_owner` to write `owner.object` in all of them instead; [config.md](config.md#naming-the-owning-schema) covers when that is the right trade.
+- **Exported DDL names no schema.** The `CREATE` line and the object a `GRANT` names both drop the owner, so a file installs into whichever schema the deploying session connects as. Set `keep_owner` to write `owner.object` in both instead; [config.md](config.md#naming-the-owning-schema) covers when that is the right trade. A directory never carries an owner either way: it belongs to no schema, and Oracle refuses `CREATE DIRECTORY hr.data_dir`.
+- **Each grantee gets its own `GRANT` line.** Two grantees of one object are never folded into one statement, because replaying `GRANT DELETE, SELECT ON orders TO app_user, reporting;` would hand `reporting` a `DELETE` it never held.
 - **A materialized view brings its own indexes and none of Oracle's.** An index you created on a materialized view is an ordinary object: it is exported into `indexes/`, and a patch installs it after the view, because `mviews` comes before `indexes` in `patch_map`. What never reaches the repository is what Oracle built to make the view work, the container table under the view's own name, the `MLOG$_<master>` log table, and the `I_SNAP$` / `I_MLOG$` indexes behind them, since a file recreating any of those either duplicates the view definition or conflicts with it. Nothing but the name separates a snapshot index from yours in the dictionary, so the exclusion is by name and never by what the index sits on.
 - **A materialized view and its log end on their semicolon, with no `/` after it.** Both are plain SQL and neither can be created twice, so the `;` runs the statement and a `/` under it would submit the same statement again, which fails the deploy on `ORA-12006` / `ORA-12000`. A view or synonym still carries the `/`, harmlessly, because `CREATE OR REPLACE` is idempotent, and a type still needs it because its body is PL/SQL.
 - **Rename a file and the export keeps your spelling, inside the file as well as on it.** Files are written lowercase by default. Rename `app_users.sql` to `App_Users.sql`, `APP_USERS.sql`, or anything else, and every later run writes to that same file and spells the object's own name the way the file does, on the `CREATE` line and on the `COMMENT ON` lines under it. Nothing else moves: column names, the body of the object, and every reference to another object keep the casing the database gave them, and an unquoted Oracle identifier is case-insensitive, so this changes how the file reads and never what it deploys.
@@ -108,13 +109,13 @@ TIMER: 1s
 
 `-recent DAYS` reaches the query as `SYSDATE - DAYS`, and Oracle counts a `DATE` in days, so a fraction is a shorter window: `1/24` is the past hour and `5/1440` the past five minutes. A whole-day window keeps its `CHANGED SINCE <date>` header; a shorter one reports the instant it starts at, read off the database clock rather than yours.
 
-Bare `-recent` exports everything changed since that schema's last successful covering export, the per-schema watermark in `config/internal/recent.yaml`, shown as `CHANGED SINCE LAST EXPORT AT <timestamp>`. A schema with no watermark yet is exported in full and seeded, with a visible `NO PREVIOUS EXPORT RECORDED:` note. Narrowed runs never advance the watermark.
+Bare `-recent` exports everything changed since that schema's last successful covering export, the per-schema watermark in `config/internal/recent.yaml`, shown as `CHANGED SINCE LAST EXPORT AT <timestamp>`. A schema with no watermark yet is exported in full and seeded. Narrowed runs never advance the watermark.
 
 Every type a window narrows is narrowed by a column that dates a **change**, which for anything in `user_objects` is `LAST_DDL_TIME`. Three types needed looking at separately:
 
 - **An mview log** needs nothing special: its `LOG_TABLE` is an ordinary table, and a table's `LAST_DDL_TIME` is a real DDL timestamp that DML never moves.
 - **An index** is dated by its own `user_objects` row. It is deliberately not dated by `user_indexes.LAST_ANALYZED`, which records when statistics were gathered rather than when the index changed.
-- **A job** has no change timestamp anywhere in the dictionary, so the signal is built: the listing returns a SHA-256 of exactly the columns the exported file is rendered from, hashed inside the database. A windowed run exports the jobs whose signature moved and remembers the rest in `config/internal/job_signatures.yaml`.
+- **A job** has no change timestamp anywhere in the dictionary, so the signal is built: the listing returns a SHA-256 of every column the exported file can be rendered from, hashed inside the database. That covers each attribute the file sets (a non-default `JOB_PRIORITY` included) and every argument value, so changing either one moves the signature. A windowed run exports the jobs whose signature moved and remembers the rest in `config/internal/job_signatures.yaml`. A job the database refused keeps the signature of the last export that wrote it, so a windowed run keeps offering it until its file matches the job again.
 
 The signature narrows a window, never an explicit request. `-type JOB` with no `-recent` exports every matching job with no comparison, which is how to re-pull a whole job tree on demand.
 
@@ -280,6 +281,35 @@ EXPORTING 3 OBJECTS:
 - **The countdown is seeded by what your last export of that schema cost.** Every run records how long an object of each type took, per environment and schema, in `config/internal/recent.yaml`. The unit is per object type on purpose: a sequence costs a fiftieth of what a table with constraint blocks costs.
 - A first export of a schema has no history, so the row reads `0:00:00` until the first object returns. Deleting `config/internal/recent.yaml` resets the rates and the watermarks together.
 - `-silent` outranks `-compact`, since it removes the very rows the bar stands in for.
+
+<br>
+
+## When the database refuses an object
+
+One object Oracle will not describe does not end the export. It is recorded, every other object is still written, the bar keeps its countdown, and the refused objects are listed under a warning straight after the export:
+
+```text
+WARNING - OBJECT EXPORT FAILED:
+-------------------------------
+
+                 JOB | ADT917_LIGHT_JOB                                      
+                     |
+
+
+UPDATING DEPENDENCIES:
+----------------------
+```
+
+`ADT917_LIGHT_JOB` is a lightweight scheduler job: `USER_SCHEDULER_JOBS` lists it, and `DBMS_METADATA` has no DDL for it.
+
+- **The rows are the exported listing's rows**, grouped and sorted by type, so a run that loses a view and a job names both.
+- `-debug` adds each object's error under its row, indented past the `|`. Without it the warning names the objects and nothing else.
+- A failure after the DDL came back, such as a normalizer tripping, is listed the same way, and that object is still the only one lost.
+- **An object dropped while the export runs is listed the same way**, since there is no DDL left to read between the listing and its turn. Nothing is written for it.
+- The run exits `1`, and a multi-schema run still exports the schemas after it.
+- **A lost connection still stops the run where it stands**, since every remaining object would fail the same way.
+- **A refused object does not cost you the run.** The `-recent` watermark and a `-baseline` still record everything that was written, so the next `-recent` run starts from here. Only a schema where every object was refused is left unstamped.
+- **A refused job is offered again.** Its stored signature stays at what the last export that wrote it recorded, so every `-recent` run retries it until its file matches the job.
 
 <br>
 

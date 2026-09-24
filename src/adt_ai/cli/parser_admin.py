@@ -33,6 +33,12 @@ def add_admin_parsers(subparsers: SubParsers) -> None:
         action="store_true",
         help="scaffold project config, ignore and eol rules, patch templates, safe local folders",
     )
+    doctor.add_argument(
+        "-sync",
+        action="store_true",
+        help="with -init, sync the managed block in an existing .gitattributes/.gitignore "
+             "instead of leaving it alone, and renormalize tracked files under it",
+    )
     doctor.add_argument("--root", "-root", default=".", help="project root folder for -init")
     doctor.add_argument(
         "--force",

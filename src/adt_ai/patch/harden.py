@@ -9,8 +9,9 @@ That is what makes `-continue` and a re-deploy mean anything.
 
 Three transforms, all old ADT's:
 
-* a `--` comment line becomes `PROMPT "-- ...";`, so the author's narration
-  reaches the deploy log SQLcl spools instead of being invisible in it;
+* a `--` comment line between statements becomes `PROMPT "-- ...";`, so the
+  author's narration reaches the deploy log SQLcl spools instead of being
+  invisible in it (one inside a statement, a block or a literal stays, #923);
 * a `CREATE` / `ALTER` / `DROP` is wrapped in the matching guard from
   `queries.HARDENING_TEMPLATES`;
 * a comment header names the source file and tabulates what was found, which is
@@ -30,6 +31,7 @@ from typing import Any
 from adt_ai.export_db.normalizers import sql_spans
 from adt_ai.export_db.render import _compute_adt_layout
 from adt_ai.patch.queries import HARDENING_TEMPLATES
+from adt_ai.patch.sql_literal import escape_literal
 
 # The first line of a hardened script, and the sentinel that keeps the transform
 # idempotent. It has to be BOTH: ADT #309 leaves the hardened copy as the only
@@ -39,6 +41,23 @@ from adt_ai.patch.queries import HARDENING_TEMPLATES
 _SOURCE_HEADER = "-- SOURCE FILE: "
 
 _STATEMENT_STARTS = ("CREATE", "DROP", "ALTER")
+
+# SQL that ends on a `;` or a `/` line however many lines it spans (ADT #923), so
+# a `--` line before that end is inside it. Any other first word, `PROMPT`, `SET`
+# or a SQLcl verb, is one line long and keeps the treatment it always had.
+_SQL_STARTS = frozenset({
+    "INSERT", "UPDATE", "DELETE", "MERGE", "SELECT", "WITH", "GRANT", "REVOKE",
+    "COMMENT", "TRUNCATE", "RENAME", "LOCK", "CALL", "COMMIT", "ROLLBACK", "SAVEPOINT",
+})
+
+# PL/SQL, which no `;` ends and its own `/` line always does: an anonymous block,
+# or a `CREATE` of a stored unit.
+_BLOCK_STARTS = frozenset({"DECLARE", "BEGIN"})
+_UNIT_RE = re.compile(
+    r"CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:NON)?EDITIONABLE\s+)?"
+    r"(?:FUNCTION|PROCEDURE|PACKAGE|TRIGGER|TYPE|LIBRARY|JAVA)\b",
+    re.IGNORECASE,
+)
 
 # `<verb> <OBJECT TYPE> [schema.]name`, quoted or not. Old ADT patch.py:2319-2322.
 _QUALIFIED_RE = r'(CREATE|DROP|ALTER)\s+({})\s+"?[A-Z0-9_$-]+"?\."?([A-Z0-9_$-]+)"?'
@@ -59,6 +78,14 @@ def harden_patch_script(text: str, config: dict[str, Any], *, source: str) -> st
 
     ``source`` is the repo-relative path the script came from; it survives only
     in the header once the file has been moved into the patch folder.
+
+    **Only a comment BETWEEN statements becomes a `PROMPT`** (ADT #923). Every
+    `--` line was converted, and a `PROMPT` is a SQLcl command: inside `BEGIN` it
+    is PLS-00103, inside a multi-line `ALTER ... ADD (` it is left in the
+    statement, and inside `q'[...]'` it changes the text an INSERT stores. So the
+    reader tracks what it is inside: a statement until its code `;` or `/` line,
+    PL/SQL until its `/` line, and a literal until it closes. A statement ending
+    at the first line holding any `;` cut `DEFAULT 'a;` off the rest of itself.
     """
     if text.lstrip().startswith(_SOURCE_HEADER):
         return text
@@ -68,29 +95,73 @@ def harden_patch_script(text: str, config: dict[str, Any], *, source: str) -> st
     replacements: dict[int, tuple[int, str]] = {}
     buffer: list[str] = []
     start = 0
+    # What the reader is inside: a SQL statement (`ddl` when it is one this
+    # module wraps), PL/SQL, and the literal an earlier line left open.
+    statement = ddl = block = False
+    carried = ""
     for index, line in enumerate(lines):
-        if line.lstrip().startswith("--"):
-            lines[index] = 'PROMPT "{}";\n'.format(line.strip().replace('"', ""))
-            continue
-        if not buffer:
-            first = line.strip().split(" ", 1)[0].upper()
-            if first not in _STATEMENT_STARTS:
+        stripped = line.strip()
+        if not (statement or block):
+            if stripped.startswith("--"):
+                lines[index] = 'PROMPT "{}";\n'.format(stripped.replace('"', ""))
                 continue
-            start = index
-        buffer.append(line)
-        if ";" not in line:
-            continue
-        statement = _strip_trailing_comment(buffer)
-        parsed = _parse_statement(statement, object_types)
-        rows.append(_overview_row(start, statement, parsed))
-        block = _wrap(statement, parsed)
-        if block:
-            replacements[start] = (index, block)
-        buffer = []
+            word = stripped.split(None, 1)[0].upper() if stripped else ""
+            if word in _BLOCK_STARTS:
+                block = True
+            elif word in _STATEMENT_STARTS:
+                statement = ddl = True
+                start = index
+            elif word in _SQL_STARTS:
+                statement = True
+            else:
+                # One line long: `PROMPT`, `SET`, a SQLcl verb, a stray `/`.
+                continue
+            carried = ""
+        continued = bool(carried)
+        ends, carried = _lex(carried, line)
+        slash = not continued and stripped == "/"
+        if ddl and not slash and (continued or not stripped.startswith("--")):
+            buffer.append(line)
+            # The unit's own word can sit on the second line of `CREATE OR
+            # REPLACE`, so the first few lines are asked, never the whole body.
+            if not block and len(buffer) <= 3:
+                block = bool(_UNIT_RE.match("".join(buffer).lstrip()))
+        if statement and (ends or slash):
+            if ddl:
+                statement_text = _strip_trailing_comment(buffer)
+                parsed = _parse_statement(statement_text, object_types)
+                rows.append(_overview_row(start, statement_text, parsed))
+                wrapped = _wrap(statement_text, parsed)
+                if wrapped:
+                    replacements[start] = (index - 1 if slash else index, wrapped)
+                buffer = []
+            statement = ddl = False
+        if slash:
+            block = False
+            carried = ""
     for begin in sorted(replacements, reverse=True):
-        end, block = replacements[begin]
-        lines[begin:end + 1] = [block]
+        end, wrapped = replacements[begin]
+        lines[begin:end + 1] = [wrapped]
     return _header(source, rows) + "".join(lines)
+
+
+def _lex(carried: str, line: str) -> tuple[bool, str]:
+    """Whether ``line`` holds a statement-ending `;`, and the literal it leaves open.
+
+    ``carried`` is a literal or block comment an earlier line of the same
+    statement opened and did not close. Read in front of ``line`` through
+    `sql_spans()`, like every scanner in this family, so a `;` or a `--` inside
+    `'a;b'` or `q'[...]'` is data rather than structure. Only statement lines are
+    read this way: a `PROMPT don't` line is text, and its apostrophe must not open
+    a literal over the rest of the script.
+    """
+    text = carried + line
+    spans = sql_spans(text, identifiers=True)
+    ends = any(kind == "code" and ";" in text[begin:end] for kind, begin, end in spans)
+    kind, begin, end = spans[-1] if spans else ("code", 0, 0)
+    # A `--` comment never reaches the next line, whatever ends this one.
+    opened = kind != "code" and end == len(text) and not text.startswith("--", begin)
+    return ends, text[begin:] if opened else ""
 
 
 def _object_types(config: dict[str, Any]) -> list[str]:
@@ -240,20 +311,17 @@ def _template_name(parsed: tuple[str, str, str, str, str]) -> str:
     return ""
 
 
-def _literal(value: str) -> str:
-    """A value going into a single-quoted PL/SQL literal, apostrophes doubled.
-
-    Every `{}` slot in `HARDENING_TEMPLATES` except `{header}` lands inside one
-    (`:= '{object_name}';`), and only `{statement}` was escaped. `_first_name`
-    hands back a quoted identifier with its quotes stripped, so `"IT'S"` reached
-    `:= 'IT'S';` and the generated block would not compile (ADT #554). Escaping
-    at the one renderer rather than at each producer, so a name read some other
-    way inherits it (the SOP's one-owner rule).
-    """
-    return value.replace("'", "''")
-
-
 def _wrap(statement: str, parsed: tuple[str, str, str, str, str]) -> str:
+    """The guard for one parsed statement, or "" when no template covers it.
+
+    Every `{}` slot in `HARDENING_TEMPLATES` except `{header}` lands inside a
+    single-quoted literal (`:= '{object_name}';`), and only `{statement}` was
+    escaped. `_first_name` hands back a quoted identifier with its quotes
+    stripped, so `"IT'S"` reached `:= 'IT'S';` and the generated block would not
+    compile (ADT #554). Escaped here, at the one renderer rather than at each
+    producer, so a name read some other way inherits it (the SOP's one-owner
+    rule), and through `sql_literal.escape_literal`, the rule's one home (#923).
+    """
     name = _template_name(parsed)
     if not name:
         return ""
@@ -265,10 +333,10 @@ def _wrap(statement: str, parsed: tuple[str, str, str, str, str]) -> str:
     ).replace('"', "")
     return HARDENING_TEMPLATES[name].format(
         header      = header,
-        statement   = _literal(statement.strip().strip(";").strip()),
-        object_type = _literal(object_type),
-        object_name = _literal(object_name),
-        cc_name     = _literal(cc_name),
+        statement   = escape_literal(statement.strip().strip(";").strip()),
+        object_type = escape_literal(object_type),
+        object_name = escape_literal(object_name),
+        cc_name     = escape_literal(cc_name),
     )
 
 

@@ -45,6 +45,7 @@ __all__ = [
     "ActionReporter",
     "format_action_line",
     "ADT_AI_GITHUB_LATEST_RELEASE_URL",
+    "default_resource_root",
 ]
 
 # Doctor stays project-config-free by design, it must diagnose broken setups
@@ -64,6 +65,20 @@ def _default_package_root() -> Path:
 
 def _is_source_checkout(root: Path) -> bool:
     return (root / "pyproject.toml").is_file() and (root / "src" / "adt_ai").is_dir()
+
+
+def default_resource_root() -> Traversable:
+    """Where doctor's own scaffold resources live: a source checkout when this
+    process runs from one, the wheel-bundled `resources/` folder otherwise.
+
+    Factored out of `DoctorRunner.__init__` so a caller that only needs a
+    resource, not a whole runner (an export's `auto_sync_git` hook, ADT #938),
+    can read one without constructing an instance to get at it.
+    """
+    package_root = _default_package_root()
+    if _is_source_checkout(package_root):
+        return package_root
+    return resources.files("adt_ai.doctor").joinpath("resources")
 
 
 def _run_command(

@@ -20,6 +20,7 @@ included, and only the terminator differs -- see :func:`_run`.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +32,11 @@ from adt_ai.shared.sqlcl_connect import (
     sqlcl_connect,
 )
 from adt_ai.shared.sqlcl_errors import SqlclNotConnectedError
-from adt_ai.shared.sqlcl_names import credential_fingerprint, record_sqlcl_registration
+from adt_ai.shared.sqlcl_names import (
+    credential_fingerprint,
+    read_sqlcl_registration,
+    record_sqlcl_registration,
+)
 from adt_ai.shared.sqlcl_request_session import (
     REQUEST_EPILOGUE,
     SESSION_REUSE_SUPPORTED,
@@ -192,11 +197,34 @@ class SqlclRequestMixin:
 
     def _sqlcl_plan(self, *, force_register: bool = False) -> SqlclConnect:
         return sqlcl_connect(
-            self.connection,
+            self._registered_connection(),
             startup_sql       = self.startup_sql,
             project_root      = self.project_root,
             named_connections = self.sqlcl_named_enabled,
             force_register    = force_register,
+        )
+
+    def _registered_connection(self) -> Connection:
+        """`self.connection` with the SQLcl registration its file records now.
+
+        `self.connection` is loaded once per command, so a registration recorded
+        after that, by this gateway's own first request or by another gateway on
+        the same file, was never seen and each later request registered again
+        (#924 F59). The file's current `sqlcl` / `sqlcl_sync` win; a key it
+        does not hold, or a file that cannot be read, keeps the loaded value.
+        """
+        connection = self.connection
+        if not connection.sqlcl_source or connection.external_auth:
+            return connection
+        recorded = read_sqlcl_registration(
+            connection.sqlcl_source, connection.environment, connection.schema
+        )
+        if not recorded:
+            return connection
+        return replace(
+            connection,
+            sqlcl_name = recorded.get("sqlcl", connection.sqlcl_name),
+            sqlcl_sync = recorded.get("sqlcl_sync", connection.sqlcl_sync),
         )
 
 

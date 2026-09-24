@@ -95,11 +95,11 @@ def install_flag_refusal(args: argparse.Namespace) -> str | None:
     """
     if args.install and args.branch is not None:
         return (
-            "-branch cannot be combined with -install: the install script is built "
-            "from the checked-out files"
+            "-branch CANNOT BE COMBINED WITH -install\n\n"
+            "The install script is built from the checked-out files."
         )
     if args.schema and not (args.install or args.upload):
-        return "-schema applies only to -install and -upload"
+        return "-schema APPLIES ONLY TO -install AND -upload"
     return None
 
 
@@ -127,7 +127,7 @@ def upload_flag_refusal(args: argparse.Namespace) -> str | None:
     """
     if not args.upload:
         stray = [flag for dest, flag in UPLOAD_ONLY_FLAGS if getattr(args, dest, None)]
-        return f"{', '.join(stray)} applies only to -upload" if stray else None
+        return f"{', '.join(stray)} APPLIES ONLY TO -upload" if stray else None
     clashing = [f"-{verb}" for verb in UPLOAD_EXCLUSIVE_VERBS if getattr(args, verb, None)]
     # `-archive` and `-name` are the two that are falsy when given: a bare
     # `-archive` parses as `[]` and only lists, and `-name` carries a string the
@@ -141,15 +141,15 @@ def upload_flag_refusal(args: argparse.Namespace) -> str | None:
     if args.name:
         clashing.append("-name")
     if clashing:
-        return f"-upload cannot be combined with {', '.join(clashing)}"
+        return f"-upload CANNOT BE COMBINED WITH {', '.join(clashing)}"
     if not args.app:
         return APP_REQUIRED_MESSAGE
     schemas = [value for group in (args.schema or []) for value in group]
     if len(schemas) > 1:
         named = ", ".join(schemas)
         return (
-            f"-upload connects through one schema, got {len(schemas)}: {named}. "
-            "One folder is watched through one connection."
+            "-upload CONNECTS THROUGH ONE SCHEMA\n\n"
+            f"Got {len(schemas)}: {named}. One folder is watched through one connection."
         )
     return None
 
@@ -169,7 +169,7 @@ def files_ws_flag_refusal(
     if not getattr(args, "files_ws", False):
         return None
     building = args.create if create_requested is None else create_requested
-    return None if building else "-files_ws applies only to -create"
+    return None if building else "-files_ws APPLIES ONLY TO -create"
 
 
 def missing_patch_name(args: argparse.Namespace, patch_ref: str | None) -> str | None:
@@ -183,7 +183,7 @@ def missing_patch_name(args: argparse.Namespace, patch_ref: str | None) -> str |
     if patch_ref or not (args.create or args.deploy):
         return None
     verb = "-create" if args.create else "-deploy"
-    return f"Missing required patch name: pass -name PATCH_NAME with {verb}"
+    return f"{verb} NEEDS A PATCH NAME\n\nPass -name PATCH_NAME with {verb}."
 
 
 @dataclass(frozen=True)
@@ -247,9 +247,9 @@ def resolve_patch_name_and_folder(
         # patch code. Minting `260811-<seq>-260101_1_NOPE` from it is the silent
         # mangling `#289` forbids whichever way the rewrite question landed.
         raise PatchError(
-            f"{patch_ref!r} looks like a patch folder name but no such "
-            "folder exists - check the name, or pass a patch code to create a "
-            "new patch"
+            f"NO PATCH FOLDER {patch_ref!r}\n\n"
+            "It looks like a patch folder name, but no such folder exists.\n"
+            "Check the name, or pass a patch code to create a new patch."
         )
     return PatchSelection(
         selected_folder = selected_folder,
@@ -281,8 +281,8 @@ def build_flag_refusal(args: argparse.Namespace) -> str | None:
     conflicting = _selected_content_modes(args)
     if len(conflicting) > 1:
         return (
-            f"Pass one of {', '.join(CONTENT_MODE_FLAGS)}, "
-            f"not {' and '.join(conflicting)}"
+            f"{' AND '.join(conflicting)} CANNOT BE COMBINED\n\n"
+            f"Pass one of {', '.join(CONTENT_MODE_FLAGS)}."
         )
     return None
 
@@ -353,6 +353,7 @@ def build_database_patch(
     handed over rather than a gateway, so a patch that carries no table still
     opens no connection.
     """
+    target = resolve_target(args.app)
     result = workspace.create_database_patch(
         config,
         patch_code = (
@@ -361,11 +362,14 @@ def build_database_patch(
             else patch_ref
         ),
         records    = records,
-        # `-app`'s SELECTION half (ADT #592). Its target half never reaches the
-        # build: retargeting moves where the tree lands, not which files ship,
-        # so the two questions stay separable and the build reads the same
-        # `None`/`[]` it always did.
-        full_app_ids = resolve_target(args.app).full_app_ids,
+        # `-app`'s SELECTION half (ADT #592): retargeting moves where the tree
+        # lands, not which files ship, so the build reads the same `None`/`[]`
+        # it always did.
+        full_app_ids = target.full_app_ids,
+        # And its target half since ADT #935, for the NAMES only: a retargeted
+        # APEXlang application's scripts, SPOOL and logs carry the id the tree
+        # lands on, and `DEPLOY.sql` says so between `init` and `end`.
+        target_app_id = target.target_id,
         target_env = args.target,
         # Resolved above, so a re-create rewrites THAT folder rather than
         # minting a second one from the string that selected it (ADT #289).
@@ -400,7 +404,9 @@ def build_database_patch(
         # Every workspace static file rather than only the changed ones (ADT #812).
         files_ws   = bool(getattr(args, "files_ws", False)),
     )
-    print_create_screen(workspace, config, result, records, root)
+    print_create_screen(
+        workspace, config, result, records, root, debug=bool(getattr(args, "debug", False)),
+    )
 
 
 __all__ = [

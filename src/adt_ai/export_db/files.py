@@ -3,15 +3,16 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
-from adt_ai.export_db.config import DEFAULT_EMPTY_LINES
-from adt_ai.export_db.content import close_with_empty_lines
 from adt_ai.export_db.groups import GroupRules, group_for, object_name_from_file, owns_file
 from adt_ai.export_db.inventory import DatabaseObject
-from adt_ai.shared import text_files
+
+# Moved to `writer.py` by `#923`, re-exported for every import from here.
+from adt_ai.export_db.writer import ObjectFileWriter as ObjectFileWriter
+from adt_ai.export_db.writer import ObjectWritePlan as ObjectWritePlan
+from adt_ai.export_db.writer import ObjectWriteRequest as ObjectWriteRequest
 from adt_ai.shared.config import DEFAULT_PATH_OBJECTS, reject_unresolved_placeholders
-from adt_ai.shared.git_files import file_payload_hash
 from adt_ai.shared.object_files import object_stem_for_type
 from adt_ai.shared.path_template import (
     object_type_token,
@@ -37,28 +38,6 @@ class ObjectTypeLayout:
     extension : str
 
 
-@dataclass(frozen=True)
-class ObjectWriteRequest:
-    object  : DatabaseObject
-    content : str
-    path    : Path | None = None
-
-
-@dataclass(frozen=True)
-class ObjectWritePlan:
-    object  : DatabaseObject
-    path    : Path
-    action  : Literal["create", "update", "unchanged", "hashed"]
-    #: Set only by :meth:`ObjectFileWriter.hash_one` (`#452`): the hash of the
-    #: bytes this object WOULD have been written as, so a baseline can be
-    #: measured off a live database without touching the working tree.
-    content_hash: str | None = None
-    #: The text that hash was taken over, also set only by `hash_one`, so a
-    #: measured baseline can store a table exactly as an export writes it
-    #: (ADT #857) without rendering it a second time.
-    rendered: str | None = None
-
-
 class ObjectFileResolver:
     def __init__(
         self,
@@ -78,6 +57,8 @@ class ObjectFileResolver:
         self.object_types = {key.upper(): value for key, value in object_types.items()}
         self._existing_case_paths_by_folder: dict[Path, dict[str, Path]] = {}
         self._duplicate_paths_by_folder: dict[Path, dict[str, list[Path]]] = {}
+        # What `missing_objects` found, the files the delete removes (`#923`).
+        self._missing_paths: dict[DatabaseObject, list[Path]] = {}
 
     @classmethod
     def from_config(
@@ -153,6 +134,21 @@ class ObjectFileResolver:
         path = self.path_for(database_object)
         return path.with_name(f"{path.stem}.fix{path.suffix}")
 
+    def checked_path(self, database_object: DatabaseObject, path: Path | None = None) -> Path:
+        """`path`, or the object's own file, refused when it leaves the project.
+
+        The check `ObjectFileWriter` makes before every compare, write or hash,
+        kept here so a mapping error is always this module's to raise.
+        """
+        try:
+            return under_root(
+                self.root,
+                path or self.path_for(database_object),
+                role = "database object path",
+            )
+        except UnsafePathError as error:
+            raise ObjectFileError(str(error)) from error
+
     def file_object_name(self, database_object: DatabaseObject) -> str:
         """The object's name spelled the way its own FILE spells it.
 
@@ -206,23 +202,29 @@ class ObjectFileResolver:
                         continue
                     if file_path.resolve() in expected:
                         continue
-                    missing.append(
-                        DatabaseObject(
-                            schema or (schemas[0] if schemas else ""),
-                            object_type,
-                            object_name_from_file(file_path, layout.extension),
-                        )
+                    found = DatabaseObject(
+                        schema or (schemas[0] if schemas else ""),
+                        object_type,
+                        object_name_from_file(file_path, layout.extension),
                     )
+                    self._missing_paths.setdefault(found, []).append(file_path)
+                    missing.append(found)
         return sorted(missing, key=lambda item: (item.object_type, item.name))
 
     def delete_missing_objects(self, database_objects: list[DatabaseObject]) -> list[Path]:
+        """Unlink the files `missing_objects` found, never the name resolved again.
+
+        Resolving it again answered the LIVE file whenever a stale clone shared its
+        filename: the clone `tables/old/orders.sql` is what is missing, and
+        `path_for(ORDERS)` is `tables/orders.sql`, so the sweep deleted the file
+        the export was about to write and a refused ORDERS (`#917`) stayed deleted.
+        """
         deleted: list[Path] = []
         for database_object in database_objects:
-            file_path = self.path_for(database_object)
-            if not file_path.exists():
-                continue
-            file_path.unlink()
-            deleted.append(file_path)
+            for file_path in self._missing_paths.pop(database_object, []):
+                if file_path.exists():
+                    file_path.unlink()
+                    deleted.append(file_path)
         return deleted
 
     def delete_configured_object_files(self, schema: str) -> list[Path]:
@@ -402,99 +404,6 @@ class ObjectFileResolver:
             return path
         cache[filename_lower] = folder / filename
         return None
-
-
-class ObjectFileWriter:
-    """Writes an object's file, and owns the one decision about how it ends.
-
-    `empty_lines` is the `file_empty_lines` config key (`#687`). It is applied
-    HERE rather than in the content pipeline because three methods have to agree
-    on the same bytes (the write, the `-baseline` hash, and the
-    `differs_from_disk` comparison the `GRANT` overview row reads), and because
-    every file this class writes then closes the same way, object file, table
-    `.fix` sidecar and grants file alike.
-    """
-
-    def __init__(
-        self,
-        resolver: ObjectFileResolver,
-        empty_lines: int = DEFAULT_EMPTY_LINES,
-    ) -> None:
-        self.resolver = resolver
-        self.empty_lines = empty_lines
-
-    def _closed(self, content: str) -> str:
-        return close_with_empty_lines(content, self.empty_lines)
-
-    def write(self, requests: list[ObjectWriteRequest]) -> list[ObjectWritePlan]:
-        return [self.write_one(request) for request in requests]
-
-    def differs_from_disk(self, request: ObjectWriteRequest) -> bool:
-        """Is the file this request targets absent, or holding other content?
-
-        The same comparison :meth:`write_one` makes, asked without writing
-        anything. `export_db` asks it before printing the `GRANT` overview row,
-        which exists to say those artifacts moved and must not claim a run that
-        rewrites the same bytes (`#437`).
-        """
-        path = request.path or self.resolver.path_for(request.object)
-        try:
-            path = under_root(self.resolver.root, path, role="database object path")
-        except UnsafePathError as error:
-            raise ObjectFileError(str(error)) from error
-        return not text_files.text_matches(path, self._closed(request.content))
-
-    def write_one(self, request: ObjectWriteRequest) -> ObjectWritePlan:
-        """Write the object's file, unless the file already holds these bytes.
-
-        The skip is the shared writer's (`#593`); this reads its answer back to
-        name the action. `export_db` used to build its writer with
-        ``compare_existing=False``, trading a rewrite of every touched file for
-        one skipped read per object, which under a syncing folder re-uploaded
-        the whole export after a run that changed nothing.
-        """
-        path = request.path or self.resolver.path_for(request.object)
-        try:
-            path = under_root(self.resolver.root, path, role="database object path")
-        except UnsafePathError as error:
-            raise ObjectFileError(str(error)) from error
-        existed = path.exists()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        written = text_files.write_text(path, self._closed(request.content))
-        action: Literal["create", "update", "unchanged"] = (
-            ("update" if existed else "create") if written else "unchanged"
-        )
-        return ObjectWritePlan(object=request.object, path=path, action=action)
-
-    def hash_one(self, request: ObjectWriteRequest) -> ObjectWritePlan:
-        """What this object would hash to, without writing anything (`#452`).
-
-        The path is resolved exactly as a write would resolve it, so a measured
-        baseline is keyed the same way the working tree is and the two are
-        directly comparable.
-
-        The bytes are the bytes `write_text` would have produced, which is why
-        the configured line ending is applied here rather than hashing the raw
-        DDL string: `file_payload_hash` canonicalizes line endings (`#454`), so
-        this would agree either way, and pinning it to the writer's own output
-        keeps that agreement a property of the code rather than a coincidence.
-
-        Jan, 2026-08-21: *"when patch calculate the hash of the file, it must be
-        the same as the hash calculated in export_db -baseline mode."*
-        """
-        path = request.path or self.resolver.path_for(request.object)
-        try:
-            path = under_root(self.resolver.root, path, role="database object path")
-        except UnsafePathError as error:
-            raise ObjectFileError(str(error)) from error
-        rendered = self._closed(request.content)
-        return ObjectWritePlan(
-            object       = request.object,
-            path         = path,
-            action       = "hashed",
-            content_hash = file_payload_hash(text_files.rendered_bytes(rendered)),
-            rendered     = rendered,
-        )
 
 
 def _parse_layout(object_type: str, raw_layout: Any) -> ObjectTypeLayout:

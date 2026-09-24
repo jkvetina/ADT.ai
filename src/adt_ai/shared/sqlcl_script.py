@@ -29,25 +29,25 @@ The live-reader transports moved to ``shared.sqlcl_stream`` in the same card,
 when Windows gained a second one and this module went over the context-size
 guard; the error classes moved to ``shared.sqlcl_errors`` so that module can
 raise a timeout without an import cycle. Both are re-exported here, which is
-where callers have always found them.
+where callers have always found them. ADT #923 moved the throwaway script file
+itself, where it lands and how long it may outlive its run, to
+``shared.sqlcl_script_file`` on the same terms.
 """
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
-import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from adt_ai.shared import text_files
 from adt_ai.shared.announce import guard
 from adt_ai.shared.sqlcl_errors import (
     SqlclNotConnectedError,
     SqlclScriptError,
     SqlclTimeoutError,
 )
+from adt_ai.shared.sqlcl_script_file import _connect_secrets, write_sqlcl_script
 from adt_ai.shared.sqlcl_stream import open_stream
 from adt_ai.shared.subprocess_env import safe_subprocess_environment
 
@@ -63,49 +63,6 @@ __all__ = [
     "run_sqlcl_script",
     "write_sqlcl_script",
 ]
-
-_TEMP_GITIGNORE_ENTRY = "config/temp/"
-
-
-def _ensure_temp_ignored(root: Path) -> None:
-    """Idempotently ensure ``config/temp/`` is git-ignored in ``root``.
-
-    Mirrors ``ensure_discovery_ignored`` for ``config/discovery/``, appends the
-    entry to an existing ``.gitignore`` (fixing a missing trailing newline) or
-    creates the file when absent.
-    """
-    gitignore = root / ".gitignore"
-    existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
-    if _TEMP_GITIGNORE_ENTRY in {line.strip() for line in existing.splitlines()}:
-        return
-    prefix = existing
-    if prefix and not prefix.endswith("\n"):
-        prefix += "\n"
-    text_files.write_text(gitignore, prefix + _TEMP_GITIGNORE_ENTRY + "\n")
-
-
-def _sqlcl_temp_dir(project_root: Path | None) -> Path | None:
-    """Return the gitignored scratch dir for throwaway SQLcl scripts.
-
-    SQLcl ``@`` scripts are ephemeral; they must never land beside exported code
-    in the project repo. When the project root is known, route them to
-    ``<project_root>/config/temp/`` and ensure that folder is git-ignored
-    (mirroring ``config/discovery/``). Otherwise fall back to the OS temp dir
-    (``dir=None``) so the script still never touches the repo.
-    """
-    if project_root is None:
-        return None
-    temp_dir = project_root / "config" / "temp"
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    _ensure_temp_ignored(project_root)
-    return temp_dir
-
-
-# Pulls the cleartext password out of a SQLcl ``connect`` line. The connect
-# lines we build all embed it the same way (``user/"password"@dsn``) so we
-# can recover it from the script we are about to run and scrub it from anything
-# SQLcl echoes back into stdout/stderr.
-_CONNECT_PWD_RE = re.compile(r'/"(?P<pwd>[^"\n]+)"@')
 
 # Variables withheld from ordinary SQLcl sessions. ADT's encryption-key names
 # are removed for OCI and thin sessions alike by ``safe_subprocess_environment``.
@@ -236,10 +193,6 @@ def _sqlcl_environment(
     return environment
 
 
-def _connect_secrets(script: str) -> set[str]:
-    return {match.group("pwd") for match in _CONNECT_PWD_RE.finditer(script)}
-
-
 def _scrub_secrets(text: str, secrets: set[str]) -> str:
     """Replace any captured connect-line password with ``***``.
 
@@ -263,32 +216,6 @@ def _sqlcl_command(script_path: Path, oci: bool) -> list[str]:
     three paths out of `run_sqlcl_script` cannot drift on the flags they pass.
     """
     return ["sql", *(["-L", "-oci"] if oci else []), "-S", "/nolog", f"@{script_path}"]
-
-
-def write_sqlcl_script(script: str, project_root: Path | None) -> Path:
-    """``script`` on disk as a throwaway ``.sql``, owner-only, for SQLcl to ``@``.
-
-    Its own function because a reused SQLcl process needs exactly this file and
-    none of the process handling around it (ADT #760): a pty is line disciplined
-    and an exported package body is far past ``MAX_CANON``, so the body goes to
-    SQLcl as a file there too and only its path crosses the terminal. Keeping one
-    writer also keeps one answer about where the file lands and what it is
-    chmod'ed to.
-    """
-    with tempfile.NamedTemporaryFile(
-        "w",
-        encoding = "utf-8",
-        newline  = "\n",
-        suffix   = ".sql",
-        dir      = _sqlcl_temp_dir(project_root),
-        delete   = False,
-    ) as handle:
-        handle.write(script)
-        script_path = Path(handle.name)
-    # The script may embed a cleartext connect credential; pin owner-only perms
-    # even if the platform's tempfile defaults ever differ from mkstemp's 0600.
-    os.chmod(script_path, 0o600)
-    return script_path
 
 
 def run_sqlcl_script(

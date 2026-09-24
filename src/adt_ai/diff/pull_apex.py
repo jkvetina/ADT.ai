@@ -17,8 +17,11 @@ there are none.
   source's id, so `git diff` reads as one application changing.
 * **Only what `export_apex` owns is touched**: `f<id>.sql`, `f<id>.yaml`, and
   the `application/`, `embedded_code/`, `apexlang/`, `comments/` and static
-  files folders. Anything else a user keeps beside them stays. The APEXlang
-  payload links are git-excluded and relinked by `export_apex`'s own helper.
+  files folders. Anything else a user keeps beside them stays, and inside the
+  first four a file is deleted only by the extensions `export_apex`'s own
+  sweep deletes there (`export_apex/prune.py`), so a `NOTES.md` survives a
+  restore as it survives an export (ADT #923). The APEXlang payload links are
+  git-excluded and relinked by `export_apex`'s own helper.
 * **`-page` pulls only the selected pages' files**, in every format, the
   APEXlang and full exports included, which `export_apex -page` would otherwise
   write whole: a page file is named by its number in every format, so the
@@ -49,6 +52,7 @@ from adt_ai.export_apex.files import ApexFileResolver, _clean_relative
 from adt_ai.export_apex.filters import ApexPageSelection
 from adt_ai.export_apex.inventory import ApexApplication, ApexDiscovery
 from adt_ai.export_apex.postprocess import _blob_bytes
+from adt_ai.export_apex.prune import OWNED_SUFFIXES, SameFile, WrittenFiles
 from adt_ai.export_apex.request import ApexExportRequest
 from adt_ai.export_apex.runner import ApexExportRunner
 from adt_ai.shared import text_files
@@ -58,9 +62,6 @@ from adt_ai.shared.row_values import row_value
 
 #: The formats `export_apex` takes as flags, as `ApexExportRequest.actions` names them.
 FORMATS = ("full", "split", "readable", "embedded", "apexlang", "files")
-
-#: The folders under an application's own folder that `export_apex` writes.
-_OWNED_FOLDERS = ("application", "embedded_code", APEXLANG_DIR, "comments")
 
 #: A page's number in any format's file name: `pages/page_00010.sql`,
 #: `pages/p00010-orders.apx`, `comments/p00010.yaml`.
@@ -166,7 +167,7 @@ def _owner(
         if parts[: len(payload)] == payload:
             return False
         exported = (
-            parts[0] in _OWNED_FOLDERS
+            parts[0] in OWNED_SUFFIXES
             or parts[: len(files)] == files
             or (len(parts) == 1 and top.fullmatch(parts[0]) is not None)
         )
@@ -193,22 +194,36 @@ def mirror(
     checkout: Path,
     owned: Callable[[Path], bool],
     rename: Callable[[Path], Path] = _same,
+    same: SameFile | None = None,
 ) -> None:
-    """Make the owned part of `checkout` hold exactly what `exported` holds."""
-    kept: set[Path] = set()
+    """Make the owned part of `checkout` hold exactly what `exported` holds.
+
+    A file is copied when `owned`, and deleted only when `export_apex`'s own
+    sweep would delete it too (`_swept`). The delete pass recognises a copy a
+    case-folding disk kept under its old spelling as the copy it is, through the
+    export's own `WrittenFiles`; `same` stands in for the disk in tests.
+    """
+    written: set[Path] = set()
     for path in _files(exported):
         relative = rename(path.relative_to(exported))
         if not owned(relative):
             continue
-        kept.add(relative)
         target = checkout / relative
+        written.add(target)
         target.parent.mkdir(parents=True, exist_ok=True)
         text_files.write_bytes(target, path.read_bytes())
+    keep = WrittenFiles(written, same)
     for path in _files(checkout):
         relative = path.relative_to(checkout)
-        if owned(relative) and relative not in kept:
+        if not keep.claims(path) and owned(relative) and _swept(relative):
             path.unlink()
     _drop_empty_folders(checkout)
+
+
+def _swept(relative: Path) -> bool:
+    """Would `export_apex` delete this file from its own folder? Only its extensions."""
+    suffixes = OWNED_SUFFIXES.get(relative.parts[0])
+    return suffixes is None or relative.suffix in suffixes
 
 
 def _files(root: Path) -> Iterable[Path]:

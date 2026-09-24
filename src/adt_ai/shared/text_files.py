@@ -166,14 +166,24 @@ def open_text(path: Path, mode: str = "w") -> _NormalizingWriter:
     return _NormalizingWriter(handle, _newline)
 
 
-def rendered_bytes(content: str) -> bytes:
+def newline_for(file_crlf: bool) -> str:
+    """The ending ``file_crlf`` asks for, without touching the process-wide one."""
+    return "\r\n" if file_crlf else "\n"
+
+
+def rendered_bytes(content: str, newline: str | None = None) -> bytes:
     """Exactly the bytes :func:`write_text` puts on disk for ``content``.
 
     One renderer, so a comparison, a hash and a write cannot disagree about
     what "the file's content" is (`export_db`'s `-baseline` hashing reads it
     for the same reason, card #452).
+
+    ``newline`` overrides the process-wide ending for one caller that holds
+    the project config itself: `doctor` never runs the startup that calls
+    :func:`apply_config`, so every file `-init` copied landed LF under a
+    `.gitattributes` it had just rendered as `eol=crlf` (ADT #944).
     """
-    return normalize(content).replace("\n", _newline).encode("utf-8")
+    return normalize(content).replace("\n", newline or _newline).encode("utf-8")
 
 
 def bytes_match(path: Path, payload: bytes) -> bool:
@@ -221,7 +231,16 @@ def write_private_text(path: Path, content: str) -> bool:
     The destination is forced to ``0600`` even when its bytes are unchanged,
     and the temporary starts private, so there is no interval in which a new
     secret file follows a permissive process umask.
+
+    A symlinked destination is written at its target (#924 F63). The atomic
+    rename replaces whatever directory entry it is given, so a linked
+    `connections.yaml` became a regular file holding the password inside the
+    project, and the file the link named, the one kept outside it, never saw
+    the change. The temporary is placed beside the target, which is what keeps
+    the rename atomic.
     """
+    if path.is_symlink():
+        path = path.resolve()
     return _write_bytes(path, rendered_bytes(content), private=True)
 
 
@@ -248,9 +267,12 @@ def _write_bytes(path: Path, payload: bytes, *, private: bool) -> bool:
     return True
 
 
-def write_text(path: Path, content: str) -> bool:
-    """Write ``content`` to ``path`` with the configured line ending (UTF-8)."""
-    return write_bytes(path, rendered_bytes(content))
+def write_text(path: Path, content: str, newline: str | None = None) -> bool:
+    """Write ``content`` to ``path`` with the configured line ending (UTF-8).
+
+    ``newline`` overrides that ending for this one write (:func:`rendered_bytes`).
+    """
+    return write_bytes(path, rendered_bytes(content, newline))
 
 
 def _open_atomic_temporary(path: Path, *, mode: int = 0o666) -> tuple[Path, int]:

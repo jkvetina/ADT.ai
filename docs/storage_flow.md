@@ -91,7 +91,7 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 | component_id  | TEXT    | Yes      |                          | APEX's id of the component, kept as text because the ids exceed a signed 64-bit integer.                                  |
 | component     | TEXT    | Yes      |                          | The component's name or label.                                                                                            |
 | raw_target    | TEXT    | Yes      |                          | The link target as APEX stores it, with `&APP_ID.` replaced by the application id.                                        |
-| target_app_id | INTEGER | Yes      |                          | The resolved target application: the application itself for a `PAGE` link, the named one for `CROSS_APP`, NULL otherwise. |
+| target_app_id | INTEGER | Yes      |                          | The resolved target application: itself for `PAGE`, the one `CROSS_APP` names by id or alias, else NULL (unknown alias).  |
 | target_page   | INTEGER | Yes      |                          | The resolved target page.                                                                                                 |
 | flag          | TEXT    | No       |                          | How far the target resolved: `PAGE`, `CROSS_APP`, `DYNAMIC`, `OTHER` or `NONE`, enforced by a check constraint.           |
 

@@ -3,8 +3,8 @@ name: adt
 description: "Lean ADT.ai command router for Oracle/APEX work. Invoke only when the user explicitly asks an agent to use the ADT skill by name; never auto-load it for repository work, general discussion, development, review, command lookup, or incidental mentions of ADT."
 metadata:
   created: "2026-06-10"
-  updated: "2026-09-19 13:46"
-  version: "2.5.0"
+  updated: "2026-09-24 00:00"
+  version: "2.5.1"
   tags: [oracle, apex, deployment, cli, database]
 ---
 # ADT.ai
@@ -20,7 +20,7 @@ The executable is `adtai`; `adt` and `python -m adt_ai` are aliases. Run it from
 3. Preserve the user's environment, schema, application, branch, patch, and output scope. Never invent a deployment target or broaden a selector.
 4. Distinguish a preview/read from a write. If the requested action writes files, changes Git state, modifies connection data, or changes a database/APEX application, make that effect clear before running it.
 5. Run one understandable shell command at a time and return its meaningful output. Use `-debug` only when diagnosis needs resolved parameters and SQL.
-6. Read the outcome from the exit code. A refusal prints `ERROR - <CODE>:` on stderr and exits `2` for what was typed, `1` for what happened during the work; `0` is success. A named section such as `PATCH FAILED:` is a finding inside a run that reached its work, not a refusal. Shapes: [docs/console.md](../../docs/console.md).
+6. Read the outcome from the exit code. A refusal prints `ERROR - <CODE>:` and an uppercase headline on stderr, exiting `2` for what was typed, `1` for a runtime failure; `0` is success. A failed `patch` or `diff` prints `ERROR - PATCH FAILED:` or `ERROR - DIFF FAILED:` there too. Shapes: [docs/console.md](../../docs/console.md).
 
 Do not preload every linked page. The repository's [documentation index](../../docs/README.md) owns the detailed behavior, full flag tables, and output descriptions. Install, prerequisites, and machine repair belong to `adt-setup` or [SETUP.md](../../SETUP.md).
 
@@ -58,7 +58,7 @@ adtai discovery -sql "SELECT object_type, COUNT(*) FROM user_objects GROUP BY ob
 
 ## doctor: setup checks, updates, and project bootstrap
 
-Read [docs/doctor.md](../../docs/doctor.md). Bare `doctor` checks the machine. `-init`, `-update`, `-sqlcl`, and `-force` change the project or installed tools, so use them only when that change was requested. A project that exports APEXlang fails on a SQLcl older than 26.2.2; that is a prerequisite to repair, not an upgrade offer to decline.
+Read [docs/doctor.md](../../docs/doctor.md). Bare `doctor` checks the machine. `-init`, `-update`, `-sqlcl`, `-force`, and `-sync` (requires `-init`) change the project or installed tools, so use them only when that change was requested. A project that exports APEXlang fails on a SQLcl older than 26.2.2; that is a prerequisite to repair, not an upgrade offer to decline.
 
 ```bash
 adtai doctor
@@ -123,7 +123,7 @@ adtai recompile -schema APP
 
 ## search: history, graph and text
 
-Read [docs/search.md](../../docs/search.md). Read-only; refreshes a missing or stale store first. `-from`/`-to` show what an object uses or what uses it, or a page's links as `APP.PAGE`; `-impact`/`-constraint` walk further; `-app` lists the objects an application uses. A TERM written first finds text in APEX, static files, DB source, commits and files; `-layer` narrows. `-restore` writes the newest matching version over each original path, first committing any uncommitted work locally as `WIP`.
+Read [docs/search.md](../../docs/search.md). Read-only; refreshes missing or stale stores first. `-from`/`-to` show what an object uses or what uses it, or a page's links as `APP.PAGE`; `-impact`/`-constraint` walk further; `-app` lists an application's objects. A TERM written first finds text in APEX, static files, DB source, commits and files; `-layer` narrows; `-data` searches live rows instead. `-restore` writes the newest matching version over each original path, first committing uncommitted work locally as `WIP`.
 
 ```bash
 adtai search -name APP_ORDERS -files

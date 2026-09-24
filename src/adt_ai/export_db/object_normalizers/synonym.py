@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import re
 
+from adt_ai.export_db.normalizer_identifiers import identifier_key
 from adt_ai.export_db.normalizers import (
     NormalizationContext,
     _ensure_sql_terminator,
-    _identifier_key,
     _normalize_sql_identifier,
 )
 
@@ -36,6 +36,6 @@ def _normalize_synonym_target(target: str, context: NormalizationContext) -> str
     name = match.group("name")
     suffix = match.group("suffix") or ""
     normalized_name = _normalize_sql_identifier(name)
-    if context.object_owner and _identifier_key(owner) == context.object_owner:
+    if context.object_owner and identifier_key(owner) == context.object_owner:
         return normalized_name + suffix + ";"
     return f"{_normalize_sql_identifier(owner)}.{normalized_name}{suffix};"

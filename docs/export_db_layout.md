@@ -10,11 +10,12 @@ What an exported file looks like, the folder tree it lands in, how to reorganize
 
 Normalization is where the export earns a readable diff. Bodies are preserved; only the parts old ADT rewrote are rewritten:
 
-- **Definition lines** for `PACKAGE`, `PACKAGE BODY`, `PROCEDURE`, `FUNCTION`, `TRIGGER`, `TYPE`, `TYPE BODY` and `SYNONYM` lose the owner qualifier, a simple quoted uppercase name is unquoted and lowercased, and the terminator is cleaned. Body text is never touched.
-- **Views** drop the metadata header's column list and default collation, and format quoted select-list items lowercased, one per line, preserving expression text and layout from `FROM` onward. A select list carrying a comment is left exactly as the database returned it.
-- **Tables** render constraints as `--`-separated blocks (CHECK, PK, UNIQUE, FK), strip only the exported owner, keep FK `ON DELETE` actions, `INTERVAL` alignment and trailing `INMEMORY`, and drop generated `ENABLE` / `USING INDEX`.
-- **Indexes** use `CREATE INDEX IF NOT EXISTS`, unquote simple identifiers and reflow multi-column lists, preserving string literals inside expression indexes.
-- **Recycle-bin objects** (`BIN$...`) are ignored everywhere, scheduler job arguments are preserved, and an explicit sequence `MAXVALUE` is never stripped as noise. A job whose DDL has no `CREATE_JOB` block to carry its arguments is listed after the schema's export under `WARNING - JOB ARGUMENTS NOT EXPORTED:`.
+- **Definition lines** for `PACKAGE`, `PACKAGE BODY`, `PROCEDURE`, `FUNCTION`, `TRIGGER`, `TYPE`, `TYPE BODY` and `SYNONYM` lose the owner qualifier and have their terminator cleaned. A quoted plain uppercase name such as `"ORDERS"` is unquoted and lowercased unless it is a reserved word. Every other quoted name keeps its quotes, since `"createdAt"` unquoted names a different object and a bare `COMMENT` fails to parse. Body text is never touched.
+- **Views** drop the metadata header's column list and default collation, and format quoted select-list items lowercased, one per line, preserving expression text and layout from `FROM` onward. A mixed-case, lowercase or reserved column name keeps its quotes, and a select-list item naming one stays exactly as written. A select list carrying a comment is left exactly as the database returned it.
+- **Tables** render constraints as `--`-separated blocks (CHECK, PK, UNIQUE, FK), strip only the exported owner, keep FK `ON DELETE` actions, `INTERVAL` alignment and a trailing `INMEMORY` clause, and drop generated `ENABLE` / `USING INDEX` as well as a table-level `NO INMEMORY`. A sequence default keeps its owner when the sequence belongs to another schema, and under `keep_owner` its own schema's name too, so `sales.ship_seq.nextval` never deploys as the deploying schema's `ship_seq`. An identity column's `MAXVALUE` is dropped only at Oracle's default of 28 nines.
+- **Indexes** use `CREATE INDEX IF NOT EXISTS`, and a `UNIQUE`, `BITMAP` or `MULTIVALUE` index carries the same guard after its kind, as in `CREATE BITMAP INDEX IF NOT EXISTS`. A `VECTOR` or `SEARCH` index keeps its kind and goes without the guard, since Oracle's syntax for those two shows no such clause. Simple identifiers other than reserved words are unquoted and multi-column lists reflowed, preserving string literals inside expression indexes.
+- **Materialized views** keep their `BUILD` and `REFRESH` clauses and, of the query options, only those that differ from the default: `USING TRUSTED CONSTRAINTS`, `ENABLE QUERY REWRITE`, `ENABLE ON QUERY COMPUTATION` and `ENABLE CONCURRENT REFRESH`.
+- **Recycle-bin objects** (`BIN$...`) are ignored everywhere, scheduler job arguments are preserved, and a `MAXVALUE` the user set, on a sequence or on an identity column, is never stripped as noise. A job whose DDL has no `CREATE_JOB` block to carry its arguments is listed after the schema's export under `WARNING - JOB ARGUMENTS NOT EXPORTED:`.
 
 A trigger's status arrives as an `ALTER TRIGGER` appended inside the `CREATE TRIGGER` block. The `ENABLE` form is dropped as the default state and the `DISABLE` form is moved below the block's `/`, so a disabled trigger exports as a runnable file:
 
@@ -102,7 +103,8 @@ Old ADT's `{$NAME}` substitution syntax means nothing here. A template such as `
 ```text
 CONFIGURATION INVALID
 ---------------------
-Unresolved placeholder in config path_objects: {$INFO_SCHEMA}
+UNRESOLVED PLACEHOLDER IN CONFIG path_objects: {$INFO_SCHEMA}
+
   Value: {$INFO_SCHEMA}/database/
   ADT.ai substitutes only <schema>, <SCHEMA> and <object_type> in path_objects; '{$NAME}' is old ADT syntax and would be written out as a literal folder name.
   A schema token carries its own case, so '<schema>' writes 'app_owner/' and '<SCHEMA>' writes 'APP_OWNER/'. An object type folder is spelled by object_types in config.yaml, so '<object_type>' has no cased form.
@@ -127,7 +129,7 @@ There are three forms:
 2. **Single prefix, `-groups INV_BILLING`.** Routes only the files whose name starts with that prefix.
 3. **Prefix list, `-groups INV_BILLING ORD, AP`.** Takes a space- and comma-separated list and routes only those.
 
-Naming the prefixes also narrows the listing. Bare `-groups` proposes a layout for the whole export, so the files it left flat are part of the proposal and appear under `UNMATCHED (LEFT IN PLACE):`.
+Naming the prefixes also narrows the listing. Bare `-groups` proposes a layout for the whole export, so the files it left flat are part of the proposal and appear under `WARNING - UNMATCHED FILES, LEFT IN PLACE:`.
 
 ```bash
 adtai export_db -groups

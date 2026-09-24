@@ -110,7 +110,9 @@ APEX DEPLOYMENT TOOL - EXPORT_DB
 
 ERROR - CONFIGURATION NOT FOUND:
 --------------------------------
-  Connection file not found. Searched:
+  CONNECTION FILE NOT FOUND
+
+  Searched:
     - ./connections.yaml
     - ./connections/app.yaml
 
@@ -121,6 +123,8 @@ ERROR - CONFIGURATION NOT FOUND:
 
 TIMER: 0s
 ```
+
+**The description opens on a short uppercase headline.** It names the problem in a few words, with no closing period, and the detail follows below it in sentence case. What you typed keeps its case inside the headline: a flag, a path, a quoted name, an id. Text ADT.ai relays from Oracle, SQLcl or Git stays as that tool wrote it.
 
 The code is chosen by what your next move is rather than by which layer raised the error:
 
@@ -136,20 +140,22 @@ The code is chosen by what your next move is rather than by which layer raised t
 | `DATABASE QUERY FAILED` | A statement failed after a successful connect. The error leads and the offending SQL follows it under `Query:`. | The `-debug` hint. |
 | `SQLCL SCRIPT FAILED` | SQLcl exited non-zero. The description is the captured transcript. | The `-debug` hint. |
 | `GIT COMMIT FAILED` | `diff -restore` or `search -restore` could not save your uncommitted work as a local `WIP` commit, so nothing was written. | Git's own message. |
+| `PATCH FAILED` | `patch` started and stopped on its own work: no commit matched, a baseline or dependency graph is missing or stale, a sandbox is not yours to drop. | None. The message names the cause and the flag or command that clears it. |
+| `DIFF FAILED` | `diff` started and the comparison, the read or the restore failed. | None. The message is the failure, SQLcl's own output where there is one. |
 | `STARTUP FAILED` | ADT.ai could not import itself. The banner carries no command, because none resolved. | The `-debug` hint. |
 | `UNEXPECTED ERROR` | Anything ADT.ai could not classify. | The `-debug` hint. |
 
-The set is closed: a code outside it is refused, and all twelve headers are held in the checked-in console inventory, so adding one is a reviewed console change like any other section header.
+The set is closed: a code outside it is refused, and all fourteen headers are held in the checked-in console inventory, so adding one is a reviewed console change like any other section header.
 
 **Every refusal goes to stderr**, and the `TIMER` footer follows it there. **The exit code is a property of the code**: `2` for `ARGUMENT INVALID` and `UNKNOWN COMMAND`, which are about what you typed, `1` for every other, which happened during the work.
 
 **The `-debug` hint prints on four codes only**, the ones where a Python traceback is the next thing worth reading. A screen that names its own cause and its own remedy does not carry it: the hint above a located config file or a refused connect is advice that leads nowhere. `-debug` itself re-raises for the traceback on any command whose parser declares it, and `calendar`, `doctor`, `rebuild` and `search` never did, so the hint never prints there either.
 
+**A run that carries on past a failure is not a refusal.** `export_db` records an object the database refuses, writes the rest, and lists the refused objects under `WARNING - OBJECT EXPORT FAILED:` straight after the export, as `TYPE | NAME` rows with no query and no hint; `-debug` adds each error under its row ([export_db](export_db.md#when-the-database-refuses-an-object)). The run exits `1` all the same.
+
 The description is indented plain text, not a bullet list, and a nested list stays a nested list where the content genuinely is one: the searched-paths rows above are the case that shape is for.
 
-A section that says something failed is not the same thing as a refusal, and the `ERROR - ` prefix is what tells them apart. `COMPILE ERRORS:`, `INVALID OBJECTS:`, `DEPLOYMENT ERROR:`, `PATCH FAILED:` and `DIFF FAILED:` are findings inside a run that reached its work.
-
-An `ERROR - ` header is the run declining to start at all, which is why those sections keep their own names rather than joining the family.
+**Every section that says something failed opens on `ERROR - `**, the same way every warning opens on `WARNING - `, and its body sits two columns in. `patch` and `diff` stopping on their own work take the shared screen above (`PATCH FAILED`, `DIFF FAILED`). A failure reported per item keeps its own section under the same prefix: `ERROR - DEPLOYMENT FAILED:` puts each failed script on a `FILE:` row with what SQLcl refused two columns further in, and `ERROR - RECOMPILATION FAILED:` lists each object's compiler messages. `INVALID OBJECTS:` is a list of what the database holds, not a failure of the run, so it carries no prefix.
 
 The project-folder remedy belongs to `CONFIGURATION NOT FOUND` alone. When every connection failure took that screen, a hand-edited YAML typo, an unauthenticated vault CLI and a failed SQLcl connect all reported it and advised running from a folder holding the file that had just been read.
 

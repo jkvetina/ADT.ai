@@ -138,9 +138,11 @@ LOADING BASELINE:
 -----------------
   - patch_hashes/baseline.DEV.log (11 files, snapshot 2026-08-22 15:02)
 
-PATCH FAILED:
--------------
-no hash-changed files to patch: the working tree matches baseline.DEV.log in every file the layout resolves
+ERROR - PATCH FAILED:
+---------------------
+  NO HASH-CHANGED FILES TO PATCH
+
+  The working tree matches baseline.DEV.log in every file the layout resolves.
 ```
 
 The folder, its snapshots and its `hashes.log` are all still on disk, so re-deploying it and reading back what it carried are unaffected.
@@ -200,11 +202,12 @@ UPDATING BASELINE:
    TOTAL         412
 ```
 
-`ADVANCED` is the files whose hash actually moved. The rest of the baseline is untouched by design, which is the point of the four rules below, so the table says so rather than leaving one number beside a header to be interpreted.
+`ADVANCED` is the files whose hash actually moved. The rest of the baseline is untouched by design, which is the point of the rules below, so the table says so rather than leaving one number beside a header to be interpreted.
 
 - **Only a hash-built patch advances anything.** `hashes.log` is written by `-create -hash` alone and its presence is the marker, so a commit-built patch leaves the baseline exactly as it found it. The two modes are not meant to be mixed.
 - **Only the files that patch shipped move.** Work done between `-create` and `-deploy` stays pending, which a re-read of the working tree could not have managed.
 - **Only the files whose own install script succeeded.** Under `-continue` a run can land one schema and fail another, and advancing the whole patch there would mark the failed schema's objects live.
+- **An APEXlang application moves only where its import landed in place.** Its `end` script runs whatever the import did, so the application's own `> BUILDING APP` row has to succeed on its own id too, with no failing scan, a waived one included, and no revert. A run without `-app` never imports, and `-app` with another id lands on a sandbox the baseline does not track, so both leave the application pending for the next patch.
 - **`SKIPPED` and `ERROR` advance nothing.**
 - **A shipped table moves its stored file too**, read off the working tree where it still holds the bytes that shipped. A table edited since `-create` keeps its old file, which the log line no longer agrees with, so the next patch falls back to the history lookup instead of trusting it.
 

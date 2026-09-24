@@ -36,7 +36,10 @@ def deploy_log_folder(config: dict[str, Any], target_env: str | None) -> str:
     """
     raw = str(config.get("patch_deploy_logs") or "logs_{$TARGET_ENV}").strip("/")
     if not target_env:
-        return _TARGET_ENV_TOKEN_RE.sub("", raw)
+        # A token that was a whole path segment leaves its slashes behind, and
+        # every `-create` renders this folder since #924 F33, so they go too:
+        # `deploy_logs/{$TARGET_ENV}` is `deploy_logs`, never `deploy_logs/`.
+        return re.sub(r"/{2,}", "/", _TARGET_ENV_TOKEN_RE.sub("", raw)).strip("/")
     return (
         raw
         .replace("{$TARGET_ENV}", target_env)

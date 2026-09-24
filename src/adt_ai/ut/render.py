@@ -250,7 +250,7 @@ def print_coverage_gate(packages: tuple[PackageCoverage, ...], threshold: float)
     """
     if not packages:
         return
-    print_adt_header(f"COVERAGE BELOW {threshold:.1f}:")
+    print_adt_header(f"WARNING - COVERAGE BELOW {threshold:.1f}:")
     print_adt_table(
         [
             {"PACKAGE": package.name, "COVERAGE": percent_cell(package.percent)}

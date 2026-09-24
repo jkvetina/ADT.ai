@@ -47,7 +47,7 @@ def run_groups_move(
     if forced_group and not prefixes:
         print_adt_error(
             "ARGUMENT INVALID",
-            f"-force {forced_group} needs the prefixes it renames.",
+            f"-force {forced_group} NEEDS THE PREFIXES IT RENAMES",
             f"Name them on -groups, as in -groups APP_VPD APP_ABC -force {forced_group}.",
         )
         return exit_code_for("ARGUMENT INVALID")

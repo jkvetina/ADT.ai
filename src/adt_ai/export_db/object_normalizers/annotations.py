@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 
+from adt_ai.export_db.normalizer_identifiers import unquote_simple_identifiers
 from adt_ai.export_db.normalizers import (
     _code_positions,
     _matching_parenthesis_index,
@@ -24,8 +25,6 @@ from adt_ai.export_db.normalizers import (
 
 # The keyword opening an annotation list, wherever it sits.
 ANNOTATIONS_RE = re.compile(r"\bANNOTATIONS\b\s*\(", flags=re.IGNORECASE)
-
-_SIMPLE_QUOTED_IDENTIFIER_RE = re.compile(r'"([A-Z][A-Z0-9_$#]*)"')
 
 
 def annotation_clause_spans(payload: str) -> list[tuple[int, int]]:
@@ -76,12 +75,10 @@ def lower_simple_quoted_identifiers(payload: str) -> str:
     pieces: list[str] = []
     cursor = 0
     for start, end in annotation_clause_spans(payload):
-        pieces.append(_replace_outside_sql_strings(payload[cursor:start], _unquote_simple))
+        pieces.append(
+            _replace_outside_sql_strings(payload[cursor:start], unquote_simple_identifiers)
+        )
         pieces.append(payload[start:end])
         cursor = end
-    pieces.append(_replace_outside_sql_strings(payload[cursor:], _unquote_simple))
+    pieces.append(_replace_outside_sql_strings(payload[cursor:], unquote_simple_identifiers))
     return "".join(pieces)
-
-
-def _unquote_simple(chunk: str) -> str:
-    return _SIMPLE_QUOTED_IDENTIFIER_RE.sub(lambda match: match.group(1).lower(), chunk)

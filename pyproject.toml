@@ -85,10 +85,8 @@ adtai = "adt_ai.cli:console_main"
 path = "src/adt_ai/__init__.py"
 
 [tool.hatch.build.targets.wheel.force-include]
-".gitignore" = "adt_ai/doctor/resources/.gitignore"
-# The scaffolded `.gitattributes`, which is NOT this repo's own root file: that
-# one is the CHANGELOG merge driver, while this pins the line endings a
-# project's own exports are written with (#733).
+# A project's git files, never this repo's own (#733, #946)
+"config/gitignore_template" = "adt_ai/doctor/resources/config/gitignore_template"
 "config/gitattributes_template" = "adt_ai/doctor/resources/config/gitattributes_template"
 "requirements.txt" = "adt_ai/doctor/resources/requirements.txt"
 "config/patch_template" = "adt_ai/doctor/resources/config/patch_template"

@@ -233,7 +233,39 @@ class DoctorLatestVersionMixin(DoctorHost):
         # the repository advances. Returning a synthetic greater version lets the
         # normal comparison mark the row as UPDATE without exposing a commit SHA
         # in the version column.
-        return "999999" if remote_head and remote_head != local_head else self.package_version
+        behind = (
+            bool(remote_head)
+            and remote_head != local_head
+            and self._behind_remote(repo_root, local_head, remote_head)
+        )
+        return "999999" if behind else self.package_version
+
+    def _behind_remote(self, repo_root: Path, local_head: str, remote_head: str) -> bool:
+        """Whether `-update`'s pull would move this checkout forward (ADT #923).
+
+        Any difference used to read as behind, so a checkout ahead of origin or
+        on a feature branch showed UPDATE for good: the pull changed nothing.
+        Behind means local HEAD is an ancestor of origin's. A remote head this
+        checkout has never fetched is not in its history, so it cannot be
+        ahead of it: that reads as behind, and the pull's fetch settles it.
+        """
+        try:
+            self.command_runner(
+                ["git", "cat-file", "-e", f"{remote_head}^{{commit}}"],
+                repo_root,
+                self._command_env(),
+            )
+        except Exception:
+            return True
+        try:
+            self.command_runner(
+                ["git", "merge-base", "--is-ancestor", local_head, remote_head],
+                repo_root,
+                self._command_env(),
+            )
+        except Exception:
+            return False
+        return True
 
     def _latest_pypi_version(self, package: str) -> str:
         payload = json.loads(

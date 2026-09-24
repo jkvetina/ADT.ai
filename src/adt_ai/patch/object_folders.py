@@ -55,9 +55,32 @@ def object_folder_resolver(config: dict[str, Any]) -> Callable[[str], str | None
     layouts = object_layouts(config.get("object_types", {}))
 
     def resolve(path: str) -> str | None:
-        return _type_folder(path, config, layouts) or parent_folder(path)
+        return (
+            _shared_component_kind(path)
+            or _type_folder(path, config, layouts)
+            or parent_folder(path)
+        )
 
     return resolve
+
+
+#: The APEXlang folder whose children are component KINDS (`plugins/`, `lists/`).
+_SHARED_COMPONENTS = "/apexlang/shared-components/"
+
+
+def _shared_component_kind(path: str) -> str | None:
+    """``.../apexlang/shared-components/<kind>/`` for a file below it (ADT #934).
+
+    The kind is the anchor, so every plugin's files share one root row. The
+    default anchor put each plugin's own `static-files/` parent on a root row of
+    its own, one full application path per plugin. Jan: *"plugins should have a
+    common parent/node in the list, so it is readable"*.
+    """
+    head, found, rest = path.partition(_SHARED_COMPONENTS)
+    kind, slash, below = rest.partition("/")
+    if not found or not slash or not below:
+        return None
+    return f"{head}{_SHARED_COMPONENTS}{kind}/"
 
 
 def _type_folder(

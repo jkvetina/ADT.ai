@@ -23,6 +23,36 @@ FROM   TABLE(APEX_EXPORT.GET_APPLICATION(
            p_type           => 'CHECKSUM-SH256'))
 """.strip()
 
+# Who last moved a live application, and when (ADT #925), so a drift refusal
+# can name the person whose work the developer is about to merge. The newer of
+# the application row and its newest page, because neither alone is the answer.
+# Measured on SANDBOX app 100 (APEX 26.1.0, 2026-09-23): a build-status write
+# stamps the APPLICATION row and moves no page, while a Builder save lands on
+# the page it edited. A page wins a tie, since it says where the change is.
+#
+# An import leaves both columns empty on every row, so no rows is the ordinary
+# answer for an application nobody has touched since it was imported.
+#
+# `db_now` rides along because APEX's dates are the DATABASE's clock, and the
+# refusal prints them beside the export time, which is the developer's clock.
+# Measured on the local container: UTC against a +02:00 laptop, so a change made
+# before the export read two hours after it until the offset was applied.
+APEX_LAST_CHANGE_QUERY = """
+SELECT page_id, changed_by,
+       TO_CHAR(changed_on, 'YYYY-MM-DD HH24:MI:SS') AS changed_on,
+       TO_CHAR(SYSDATE,    'YYYY-MM-DD HH24:MI:SS') AS db_now
+FROM  (SELECT NULL AS page_id, last_updated_by AS changed_by, last_updated_on AS changed_on
+       FROM   apex_applications
+       WHERE  application_id = :app_id
+       UNION ALL
+       SELECT page_id, last_updated_by, last_updated_on
+       FROM   apex_application_pages
+       WHERE  application_id = :app_id)
+WHERE  changed_on IS NOT NULL
+ORDER  BY changed_on DESC, page_id NULLS LAST
+FETCH  FIRST 1 ROWS ONLY
+""".strip()
+
 # The build status `-app` reads off a live application before it locks one (ADT
 # #726). `APEX_APPLICATIONS` rather than `APEX_APPLICATION_ADMIN.GET_BUILD_STATUS`,
 # and the choice is the version floor: the view is as old as APEX and the deploy
@@ -182,6 +212,32 @@ BEGIN
 END;
 /
 """.strip()
+
+# The audit stamp `apex_import.build_import_script` runs in the import's own
+# SQLcl session (ADT #682). The workspace is read off the application row rather
+# than passed in: the stamp needs one and the row already names it, so nothing
+# new has to be configured or threaded down for the block to run. The version
+# is read for the same reason -- it is handed back unchanged, which is all APEX
+# needs to stamp. Moved here from `apex_import.py` by ADT #923, the SQL home.
+APEX_IMPORT_STAMP_BLOCK = """DECLARE
+    l_workspace     apex_applications.workspace%TYPE;
+    l_version       apex_applications.version%TYPE;
+BEGIN
+    SELECT workspace, version
+    INTO   l_workspace, l_version
+    FROM   apex_applications
+    WHERE  application_id = {app_id};
+    --
+    APEX_UTIL.SET_WORKSPACE(p_workspace => l_workspace);
+    APEX_CUSTOM_AUTH.SET_USER('{account}');
+    --
+    APEX_APPLICATION_ADMIN.SET_APPLICATION_VERSION(
+        p_application_id    => {app_id},
+        p_version           => l_version
+    );
+    COMMIT;
+END;
+/"""
 
 # `DIFF_TABLES_QUERY` lived here until ADT #356 moved the sweep to
 # `shared/queries/diff_tables.py`. Three commands run it now, the `diff`

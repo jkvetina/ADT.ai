@@ -106,7 +106,7 @@ class DiffRunner:
             # the project and the store does not, so a fresh fingerprint on a new
             # machine names nothing locally and the guarded connect exits failure.
             # Re-register both sides and retry once; a second failure is real and
-            # propagates to the CLI, which prints it under `DIFF FAILED:`.
+            # propagates to the CLI, which prints it under `ERROR - DIFF FAILED:`.
             if not plan.by_name:
                 raise
             attempt = self._compare(
@@ -370,6 +370,7 @@ def _move_artifact(artifact: Path, request: DiffRequest) -> Path:
             shutil.copy2(artifact, target)
         except OSError as error:
             raise RuntimeError(
+                "DIFF ARTIFACT NOT WRITTEN\n\n"
                 f"The comparison finished but its artifact could not be written to "
                 f"{target}: {error}"
             ) from error

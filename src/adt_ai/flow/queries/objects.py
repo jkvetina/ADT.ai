@@ -35,8 +35,9 @@ ORDER  BY p.page_id
 # KNOWLEDGEBASE/APEX/page_navigation_flow_map, UNION ALL'd, with the f?p app/page
 # token regex and the flag CASE. The note's two `define`s become the :app_id bind;
 # raw_target keeps the original link string so DYNAMIC/OTHER stay meaningful; no
-# target filter, so every flag (PAGE/CROSS_APP/DYNAMIC/OTHER/NONE) is returned and
-# the Python layer resolves target_app_id.
+# target filter, so every flag (PAGE/CROSS_APP/DYNAMIC/OTHER/NONE) is returned.
+# target_app is the link's own token and target_app_id the application it names,
+# an alias resolved here (#923); the Python layer answers PAGE with its own id.
 NAV_EDGES_QUERY = """
 WITH raw_edges AS (
   -- 1) Branches: "Branch to Page" (server-side redirect after processing)
@@ -119,35 +120,55 @@ WITH raw_edges AS (
   FROM   apex_application_pages
   WHERE  application_id = :app_id AND on_dup_submission_goto_url IS NOT NULL
 ),
+-- The linking application's own workspace and alias. An aggregate, so it is one
+-- row even for an id the dictionary lacks, and the CROSS JOIN below never drops
+-- an edge.
+own_app AS (
+  SELECT MAX(workspace) AS workspace, MAX(alias) AS alias
+  FROM   apex_applications
+  WHERE  application_id = :app_id
+),
+-- Same application: no app token, a substitution string (APP_ID, FLOW_ID), the
+-- application's own id or its own alias. Any other token names another
+-- application, by id or by alias (f?p=HR:5), which resolves through
+-- apex_applications in the same workspace; MIN keeps it one row per edge.
 edges AS (
-  SELECT src_type, src_page, component_id, component, raw_target,
-         app_token AS target_app,
-         CASE WHEN regexp_like(page_token,'^\\d+$')
-              THEN to_number(page_token) END AS target_page,
+  SELECT r.src_type, r.src_page, r.component_id, r.component, r.raw_target,
+         r.app_token AS target_app,
+         CASE WHEN regexp_like(r.page_token,'^\\d+$')
+              THEN to_number(r.page_token) END AS target_page,
          CASE
-           WHEN page_token IS NULL THEN 'NONE'
-           WHEN regexp_like(page_token,'^\\d+$')
-                AND (app_token IS NULL
-                     OR NOT regexp_like(app_token,'^\\d+$')
-                     OR app_token = to_char(:app_id))
+           WHEN r.page_token IS NULL THEN 'NONE'
+           WHEN regexp_like(r.page_token,'^\\d+$')
+                AND (r.app_token IS NULL
+                     OR r.app_token LIKE '&%'
+                     OR r.app_token = to_char(:app_id)
+                     OR upper(r.app_token) = upper(o.alias))
                 THEN 'PAGE'
-           WHEN regexp_like(page_token,'^\\d+$')
-                AND regexp_like(app_token,'^\\d+$')
-                AND app_token <> to_char(:app_id)
+           WHEN regexp_like(r.page_token,'^\\d+$')
                 THEN 'CROSS_APP'
-           WHEN page_token LIKE '&%' THEN 'DYNAMIC'
+           WHEN r.page_token LIKE '&%' THEN 'DYNAMIC'
            ELSE 'OTHER'
-         END AS flag
-  FROM   raw_edges
+         END AS flag,
+         CASE
+           WHEN regexp_like(r.app_token,'^\\d+$') THEN to_number(r.app_token)
+           ELSE (SELECT MIN(x.application_id)
+                 FROM   apex_applications x
+                 WHERE  x.workspace = o.workspace
+                 AND    upper(x.alias) = upper(r.app_token))
+         END AS target_app_id
+  FROM   raw_edges r
+  CROSS  JOIN own_app o
 )
-SELECT src_type     AS src_type,
-       src_page     AS src_page,
-       component_id AS component_id,
-       component    AS component,
-       raw_target   AS raw_target,
-       target_app   AS target_app,
-       target_page  AS target_page,
-       flag         AS flag
+SELECT src_type      AS src_type,
+       src_page      AS src_page,
+       component_id  AS component_id,
+       component     AS component,
+       raw_target    AS raw_target,
+       target_app    AS target_app,
+       target_app_id AS target_app_id,
+       target_page   AS target_page,
+       flag          AS flag
 FROM   edges
 ORDER  BY src_type, src_page, component_id
 """.strip()

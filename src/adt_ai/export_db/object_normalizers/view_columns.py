@@ -25,7 +25,8 @@ from __future__ import annotations
 
 import re
 
-from adt_ai.export_db.normalizers import sql_spans
+from adt_ai.export_db.normalizer_identifiers import normalize_identifier_part
+from adt_ai.export_db.normalizers import _code_positions, sql_spans
 from adt_ai.export_db.object_normalizers.annotations import annotations_index
 
 _SIMPLE_IDENTIFIER_RE = re.compile(r"[A-Za-z][A-Za-z0-9_$#]*")
@@ -52,7 +53,7 @@ def find_column_list(line: str) -> tuple[int, int] | None:
     missing left parenthesis when specifying ANNOTATIONS` to, so the export
     will not deploy (ADT #761).
     """
-    code = code_positions(line)
+    code = set(_code_positions(line, identifiers=True))
     tail = _tail_keyword_index(line, code)
     if tail is None:
         return None
@@ -124,17 +125,22 @@ def normalize_column_name(token: str) -> str:
     name = token.strip()
     index = annotations_index(name)
     if index is None:
-        return _plain_column_name(name)
-    return f"{_plain_column_name(name[:index].strip())} {name[index:].strip()}".strip()
+        return plain_column_name(name)
+    return f"{plain_column_name(name[:index].strip())} {name[index:].strip()}".strip()
 
 
-def _plain_column_name(name: str) -> str:
-    quoted = re.fullmatch(r'"([^"]*)"', name)
-    if quoted and _SIMPLE_IDENTIFIER_RE.fullmatch(quoted.group(1)):
-        return quoted.group(1).lower()
+def plain_column_name(name: str) -> str:
+    """A column name as a view file spells it: bare names lowercased, quotes kept where needed.
+
+    A quoted name goes through the one quote rule (`normalizer_identifiers`), so
+    `"createdAt"` and the reserved `"COMMENT"` keep their quotes. This used to
+    lowercase any quoted letters-and-digits name, which made `"createdAt"` the
+    column `CREATEDAT` and FORCE-created the view invalid (ADT #923). The select
+    list reflow in `view.py` spells its names through here too.
+    """
     if _SIMPLE_IDENTIFIER_RE.fullmatch(name):
         return name.lower()
-    return name
+    return normalize_identifier_part(name)
 
 
 def split_top_level_items(payload: str) -> list[str]:
@@ -150,7 +156,7 @@ def split_top_level_items(payload: str) -> list[str]:
     items: list[str] = []
     start = 0
     depth = 0
-    code = code_positions(payload)
+    code = set(_code_positions(payload, identifiers=True))
     for index, char in enumerate(payload):
         if index not in code:
             continue
@@ -177,19 +183,3 @@ def collapse_spaces(payload: str) -> str:
         re.sub(r" {2,}", " ", payload[start:end]) if kind == "code" else payload[start:end]
         for kind, start, end in sql_spans(payload, identifiers=True)
     ).strip()
-
-
-def code_positions(payload: str) -> set[int]:
-    """Every index of `payload` that is SQL rather than string, comment or identifier.
-
-    The one scan for every question this package asks of DDL text (ADT #474). A
-    quoted identifier is opaque on purpose: a `(`, a top-level `,` and the `from`
-    keyword are all SQL structure, and `"A(B"`, `"X,Y"` and `"FROM"` are names
-    that merely look like it.
-    """
-    return {
-        index
-        for kind, start, end in sql_spans(payload, identifiers=True)
-        if kind == "code"
-        for index in range(start, end)
-    }

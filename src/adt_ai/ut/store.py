@@ -52,7 +52,7 @@ from pathlib import Path
 from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.sqlite_store import Migration, drop_columns, open_store
 from adt_ai.ut import queries
-from adt_ai.ut.inventory import PackageCoverage, SuitePackage
+from adt_ai.ut.inventory import PackageCoverage, SuitePackage, tenths
 
 #: The store's filename under ``config/internal/``.
 STORE_NAME = "ut.db"
@@ -71,7 +71,7 @@ SCHEMA_VERSION = "2"
 #: comparison rather than an error anybody could act on.
 LEGACY_STORE_NAME = "ut3.db"
 
-#: How many runs per schema the store keeps.
+#: How many runs per schema and `-name` selection the store keeps.
 #:
 #: Jan's call, 2026-08-17: retention is by run count rather than by age. A count
 #: is the bound a reader can predict, twenty runs is twenty runs whether they
@@ -237,7 +237,7 @@ def record_run(
     variant: str = ALL_SUITES_VARIANT,
     retain: int = DEFAULT_RETAINED_RUNS,
 ) -> int | None:
-    """Store what this run measured, then prune to the last ``retain`` runs.
+    """Store what this run measured, then prune its selection to the last ``retain`` runs.
 
     Returns the new run id, or ``None`` when the store could not be written. A
     project root that is read-only still gets its test run, its report and its
@@ -263,7 +263,7 @@ def record_run(
                     for package in packages
                 ],
             )
-            _prune(connection, _key(schema), retain)
+            _prune(connection, _key(schema), variant, retain)
             connection.commit()
             return run_id
     except (sqlite3.Error, OSError):
@@ -304,6 +304,13 @@ def coverage_changes(
     long tail of rounding. Packages with no previous figure sort last: they carry
     no movement to rank and the reader has nothing to act on beyond their
     presence.
+
+    **A move is what the printed figures show** (ADT #923). `DELTA` is `NOW`
+    minus `WAS`, each rounded as its cell prints it, so the column always adds
+    up on screen and a move too small to change either figure is not listed.
+    `round(now - was, 1)` rounded a half to even on the binary difference:
+    6.00 to 6.25 read `+0.2` beside cells printing 6.0 and 6.3, and 53.10 to
+    53.15 was not listed at all.
     """
     measured = {package.name.upper(): package for package in current}
     changes: list[CoverageChange] = []
@@ -327,7 +334,7 @@ def coverage_changes(
                 )
             )
             continue
-        delta = round(now - was, 1)
+        delta = float(tenths(now) - tenths(was))
         if delta == 0:
             continue
         changes.append(
@@ -393,11 +400,13 @@ def _key(schema: str) -> str:
     return (schema or "").upper()
 
 
-def _prune(connection: sqlite3.Connection, schema: str, retain: int) -> None:
-    """Drop all but the newest ``retain`` runs for one schema.
+def _prune(connection: sqlite3.Connection, schema: str, variant: str, retain: int) -> None:
+    """Drop all but the newest ``retain`` runs for one schema and selection.
 
     Per schema, never globally: a project testing two schemas would otherwise
-    have each run halve the other's history.
+    have each run halve the other's history. Per selection too, the key the
+    history is read by: counted together, twenty `-name` runs evicted the only
+    full run, and the full runs' comparison with it (ADT #923).
     """
     if retain <= 0:
         return
@@ -405,7 +414,7 @@ def _prune(connection: sqlite3.Connection, schema: str, retain: int) -> None:
         row[0]
         for row in connection.execute(
             queries.EXPIRED_RUNS_QUERY,
-            (schema, retain),
+            (schema, variant, retain),
         )
     ]
     if not doomed:

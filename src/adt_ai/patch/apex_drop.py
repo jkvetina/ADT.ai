@@ -209,11 +209,16 @@ def ownership_refusal(
     )
     # Every refused sandbox records a creator: `droppable_by` lets an unrecorded
     # one through, so the no-creator wording this loop used to carry is gone
-    # along with the refusal it explained.
+    # along with the refusal it explained. One short uppercase headline, then a
+    # row per sandbox saying whose it is (ADT #934).
     lines = [
-        f"APP {sandbox.target.app_id} ({sandbox.target.alias}) was created by "
-        f"{sandbox.target.created_by}, and {you}, so it is not yours to drop."
-        for sandbox in refused
+        "NOT YOUR SANDBOX TO DROP",
+        "",
+        *(
+            f"APP {sandbox.target.app_id} ({sandbox.target.alias}) was created by "
+            f"{sandbox.target.created_by}, and {you}."
+            for sandbox in refused
+        ),
     ]
     ids = " ".join(str(sandbox.target.app_id) for sandbox in refused)
     lines.append(
@@ -236,8 +241,9 @@ def read_release(gateway: Any) -> ApexRelease:
         if release and version:
             return ApexRelease(version=version, release=release)
     raise ValueError(
-        "This connection reports no APEX release, so the drop has no version to "
-        "declare.\nRun: check that the target schema is APEX enabled"
+        "NO APEX RELEASE REPORTED\n\n"
+        "This connection reports none, so the drop has no version to declare.\n"
+        "Run: check that the target schema is APEX enabled"
     )
 
 
@@ -254,8 +260,8 @@ def resolve_sandbox(
     target = applications.get(target_id)
     if target is None:
         raise ValueError(
-            f"APP {target_id} holds no application this schema can see, so there "
-            "is nothing to drop.\n"
+            f"APP {target_id} NOT FOUND\n\n"
+            "This schema sees no application with that id, so there is nothing to drop.\n"
             "Run: adtai patch -target <ENV> -drop <the id the deploy reported>"
         )
     expected: list[str] = []
@@ -269,15 +275,16 @@ def resolve_sandbox(
         expected.append(f"{source.app_id} ({source.alias}) would carry {derived}")
     if expected:
         raise ValueError(
-            f"APP {target_id} carries alias {target.alias}, which no sandbox "
-            "import derived, so it is a real application rather than a copy.\n"
+            f"APP {target_id} IS NOT A SANDBOX\n\n"
+            f"It carries alias {target.alias}, which no sandbox import derived,\n"
+            "so it is a real application rather than a copy.\n"
             + "\n".join(f"  {line}" for line in expected)
             + f"\nRun: {DEPLOY_COMMAND} <id> creates a droppable sandbox; remove "
             "anything else in the Builder"
         )
     raise ValueError(
-        f"APP {target_id} is not a derived sandbox id: it is application "
-        f"{target.alias} in workspace {target.workspace}.\n"
+        f"APP {target_id} IS NOT A SANDBOX ID\n\n"
+        f"It is application {target.alias} in workspace {target.workspace}.\n"
         "Run: -drop the <application><task> id a sandbox deploy reported, never "
         "an application's own id"
     )

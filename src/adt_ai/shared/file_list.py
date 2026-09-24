@@ -119,6 +119,29 @@ def plain_row(text: str, depth: int = 1) -> str:
     return f"{INDENT * max(depth, 0)}{text}"
 
 
+#: How many rows a capped list prints before its count row. The figure
+#: `apexlang_static_refs.missing_refusal` has shown since `#934`; `#943` made it
+#: this one constant when `doctor -init -sync` printed 20 000 renormalized files.
+CAPPED_ROWS = 10
+
+
+def capped(items: Sequence[str], shown: int = CAPPED_ROWS) -> tuple[list[str], int]:
+    """The first ``shown`` items, and how many were left out.
+
+    For a list whose length is set by the repository rather than by ADT: the
+    screen needs the pattern, not the inventory.
+    """
+    return list(items[:shown]), max(len(items) - shown, 0)
+
+
+def more_row(remaining: int, depth: int = 1) -> str:
+    """`... and <N> more` at ``depth``, under the rows `capped` kept.
+
+    No marker, like `plain_row`: the count is not one of the listed files.
+    """
+    return plain_row(f"... and {remaining} more", depth)
+
+
 def file_rows(
     paths: Sequence[str] | Iterable[str],
     *,
@@ -224,13 +247,16 @@ def _folder_chain(path: str, base: str | None) -> tuple[list[str], str]:
     if base and not path.startswith(base):
         return [base], path
     rest = path.removeprefix(base) if base else path
-    parts = rest.split("/")
+    # A row that names a folder, `apex/1000/apexlang/` (ADT #928), keeps that
+    # folder as its leaf: split plainly, the trailing slash left an empty one.
+    folder_row = rest.endswith("/")
+    parts = rest.removesuffix("/").split("/")
     chain = [base] if base else []
     prefix = base or ""
     for part in parts[:-1]:
         prefix = f"{prefix}{part}/"
         chain.append(prefix)
-    return chain, parts[-1]
+    return chain, parts[-1] + ("/" if folder_row else "")
 
 
 def _closest_parent(folder: str, known: set[str]) -> str | None:

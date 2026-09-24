@@ -17,6 +17,7 @@ from collections.abc import Sequence
 
 from adt_ai.export_db.render import _compute_adt_layout
 from adt_ai.export_db.table import _AdtTableLayout
+from adt_ai.patch.apex_deploy import BUILDING_APP_ROW
 from adt_ai.patch.models import DeploymentPlanItem, DeploymentResult
 
 # The columns the deploy table carries, in the order it prints them. `COMMITS`
@@ -83,6 +84,11 @@ DEPLOY_NUMERIC = ("BLOCKS", "TIMER")
 # (ADT #284). Old ADT sized it 5 too (patch.py:518).
 
 
+def import_blocks(files: int | None) -> str:
+    """An APEXlang import's BLOCKS cell, running or finished: the bare count."""
+    return "" if files is None else str(files)
+
+
 def _blocks_cell(result: DeploymentResult) -> str:
     """`n/m` blocks reached, blank when the run reported no progress at all.
 
@@ -90,7 +96,13 @@ def _blocks_cell(result: DeploymentResult) -> str:
     the script's live `@` references. A script that died before its first one
     has nothing measured, and `0/0` would read as a finished empty deploy rather
     than an unknown one (ADT #254).
+
+    The APEXlang import reads the bare count of its tree's files (ADT #930):
+    SQLcl compiles the folder in one call and reports nothing per file, so a
+    fraction there could only ever say `0/523` until it jumped.
     """
+    if getattr(result, "file", "") == BUILDING_APP_ROW:
+        return import_blocks(getattr(result, "files", None))
     deployed = getattr(result, "deployed", None)
     total    = getattr(result, "deployed_total", None)
     return "" if deployed is None or total is None else f"{deployed}/{total}"

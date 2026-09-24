@@ -14,6 +14,7 @@ decides to require APEX on every target (`#811`).
 from __future__ import annotations
 
 import base64
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,7 @@ def write_lob_update_script(
     key_columns: list[str],
     column: DataColumn,
     payload: str | bytes,
+    column_types: Mapping[str, str] | None = None,
 ) -> str | None:
     if not key_columns:
         return None
@@ -44,11 +46,12 @@ def write_lob_update_script(
     text_files.write_text(
         script_path,
         lob_update_sql(
-            table_name  = table_name,
-            column      = column,
-            payload     = payload,
-            row         = row,
-            key_columns = key_columns,
+            table_name   = table_name,
+            column       = column,
+            payload      = payload,
+            row          = row,
+            key_columns  = key_columns,
+            column_types = column_types,
         ),
     )
     return f"{folder.name}/{script_path.name}"
@@ -60,11 +63,21 @@ def lob_update_sql(
     payload: str | bytes,
     row: dict[str, Any],
     key_columns: list[str],
+    column_types: Mapping[str, str] | None = None,
 ) -> str:
+    """`column_types` maps an upper-case column name to its Oracle data type.
+
+    It types the key values the WHERE finds the row by, through the same
+    renderer the MERGE loads that row with (`#923`). Untyped, a RAW(16)
+    `SYS_GUID()` key was compared with Python's `b'...'` repr (ORA-01465) and a
+    DATE key with a bare string only one NLS date format parses (ORA-01861), so
+    every LOB script of such a table failed and its LOBs never reloaded.
+    """
     data_type = column.data_type.upper()
+    where = _where_clause(row, key_columns, column_types or {})
     if data_type == "BLOB":
-        return _blob_update_sql(table_name, column.name, payload, row, key_columns)
-    return _text_update_sql(table_name, column.name, data_type, payload, row, key_columns)
+        return _blob_update_sql(table_name, column.name, payload, where)
+    return _text_update_sql(table_name, column.name, data_type, payload, where)
 
 
 def include_update_scripts(paths: list[str]) -> str:
@@ -87,32 +100,16 @@ def _blob_update_sql(
     table_name: str,
     column_name: str,
     payload: str | bytes,
-    row: dict[str, Any],
-    key_columns: list[str],
+    where: str,
 ) -> str:
     table = _sql_table_name(table_name)
     column = _sql_name(column_name)
-    where = _where_clause(row, key_columns)
     writes = "\n".join(
         f"    {_raw_decode_line(chunk)}\n"
         "    DBMS_LOB.WRITEAPPEND(v_blob, UTL_RAW.LENGTH(v_raw), v_raw);"
         for chunk in _base64_chunks(payload)
     )
-    return f"""DECLARE
-    v_blob  BLOB;
-    v_raw   RAW(32767);
-BEGIN
-    DBMS_LOB.CREATETEMPORARY(v_blob, TRUE);
-{writes}
-    --
-    UPDATE {table}
-    SET {column} = v_blob
-    WHERE {where};
-    --
-    DBMS_LOB.FREETEMPORARY(v_blob);
-END;
-/
-"""
+    return queries.BLOB_UPDATE_BLOCK.format(writes=writes, table=table, column=column, where=where)
 
 
 def _text_update_sql(
@@ -120,35 +117,18 @@ def _text_update_sql(
     column_name: str,
     data_type: str,
     payload: str | bytes,
-    row: dict[str, Any],
-    key_columns: list[str],
+    where: str,
 ) -> str:
     table = _sql_table_name(table_name)
     column = _sql_name(column_name)
     value = _text_assignment(column, data_type)
-    where = _where_clause(row, key_columns)
     writes = "\n".join(
         f"    {_raw_decode_line(chunk)}\n"
         "    v_text := UTL_I18N.RAW_TO_CHAR(v_raw, 'AL32UTF8');\n"
         "    DBMS_LOB.WRITEAPPEND(v_clob, LENGTH(v_text), v_text);"
         for chunk in _text_base64_chunks(payload)
     )
-    return f"""DECLARE
-    v_clob  CLOB;
-    v_raw   RAW(32767);
-    v_text  VARCHAR2(32767);
-BEGIN
-    DBMS_LOB.CREATETEMPORARY(v_clob, TRUE);
-{writes}
-    --
-    UPDATE {table}
-    SET {value}
-    WHERE {where};
-    --
-    DBMS_LOB.FREETEMPORARY(v_clob);
-END;
-/
-"""
+    return queries.CLOB_UPDATE_BLOCK.format(writes=writes, table=table, value=value, where=where)
 
 
 def _text_assignment(column: str, data_type: str) -> str:
@@ -193,18 +173,22 @@ def _text_base64_chunks(payload: str | bytes) -> list[str]:
     return chunks or [""]
 
 
-def _where_clause(row: dict[str, Any], key_columns: list[str]) -> str:
+def _where_clause(
+    row: dict[str, Any],
+    key_columns: list[str],
+    column_types: Mapping[str, str],
+) -> str:
     return " AND ".join(
-        _where_condition(column, row_value(row, column))
+        _where_condition(column, row_value(row, column), column_types.get(column.upper(), ""))
         for column in key_columns
     )
 
 
-def _where_condition(column_name: str, value: Any) -> str:
+def _where_condition(column_name: str, value: Any, data_type: str) -> str:
     column = _sql_name(column_name)
     if value is None:
         return f"{column} IS NULL"
-    return f"{column} = {queries.sql_value(value)}"
+    return f"{column} = {queries.sql_value(value, data_type)}"
 
 
 def _sql_name(name: str) -> str:

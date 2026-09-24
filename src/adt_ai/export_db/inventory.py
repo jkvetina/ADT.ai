@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from adt_ai.export_db import queries
-from adt_ai.export_db.dictionary_ddl import ASSEMBLED_OBJECT_TYPES, assemble_ddl, with_owner
+
+# Reading an object's DDL moved to `ddl_reads.py` with `#923`; the retention
+# renderer keeps its old private name here for whatever imported it from here.
+from adt_ai.export_db.ddl_reads import read_ddl
+from adt_ai.export_db.ddl_reads import render_retention as _render_retention
 
 # The runtime filters moved to their own module when `#740` took this file past
 # the 24 KB context cap; re-exported under their old private names so nothing
@@ -410,23 +414,8 @@ class ObjectDiscovery:
         return self._retention_by_schema[schema].get(database_object.name.upper(), "")
 
     def ddl(self, database_object: DatabaseObject) -> str:
-        object_type = database_object.object_type.upper()
-        if object_type in ASSEMBLED_OBJECT_TYPES:
-            # Three of the four types `DBMS_METADATA` refuses are more than one row
-            # of one view, so their statement is assembled rather than selected
-            # (`#738`). Everything downstream still sees a plain DDL string.
-            return with_owner(
-                assemble_ddl(object_type, database_object.name, self.gateway),
-                database_object.schema,
-            )
-        query, params = _ddl_query(database_object)
-        rows = self.gateway.fetch_all(
-            query,
-            params,
-        )
-        if not rows:
-            return ""
-        return str(rows[0].get("DDL") or rows[0].get("ddl") or "")
+        """The object's DDL; `ObjectDroppedError` once it is gone (`#923`)."""
+        return read_ddl(self.gateway, database_object)
 
     def setup_dbms_metadata(self) -> None:
         self.gateway.execute(self.DBMS_METADATA_SETUP_QUERY)
@@ -438,52 +427,6 @@ class ObjectDiscovery:
                 "job_name": database_object.name,
             },
         )
-
-
-def _retention_value(row: dict[str, Any], column: str) -> Any:
-    return row.get(column.upper(), row.get(column.lower()))
-
-
-def _render_retention(row: dict[str, Any]) -> str:
-    """Spell the dictionary's four retention columns the way Oracle spells them.
-
-    Measured against `DBMS_METADATA.GET_DDL` with `SEGMENT_ATTRIBUTES` on, on
-    Oracle AI Database 23.26.3.0.0, so the exported file is byte-for-byte the
-    clause the database itself would write:
-
-        NO DROP UNTIL 0 DAYS IDLE NO DELETE UNTIL 16 DAYS AFTER INSERT LOCKED
-        VERSION "V1"
-
-    A NULL `ROW_RETENTION` is an unlimited one, which Oracle writes as a bare
-    `NO DELETE`; `LOCKED` reflects `ROW_RETENTION_LOCKED` and means the
-    retention can never be shortened, so losing it would export a weaker table.
-
-    A blockchain table spells its version as part of the hashing clause --
-    `HASHING USING "SHA2_512" VERSION "V1"` -- and rejects the bare `VERSION`
-    an immutable table takes, with `ORA-02000: missing HASHING keyword`. The
-    `HASH_ALGORITHM` column exists only on the blockchain view, so its presence
-    is what tells the two apart here.
-    """
-    parts: list[str] = []
-    inactivity = _retention_value(row, "table_inactivity_retention")
-    if inactivity is not None:
-        parts.append(f"NO DROP UNTIL {int(inactivity)} DAYS IDLE")
-    retention = _retention_value(row, "row_retention")
-    delete = (
-        "NO DELETE"
-        if retention is None
-        else f"NO DELETE UNTIL {int(retention)} DAYS AFTER INSERT"
-    )
-    if str(_retention_value(row, "row_retention_locked") or "").upper() == "YES":
-        delete += " LOCKED"
-    parts.append(delete)
-    algorithm = str(_retention_value(row, "hash_algorithm") or "").strip()
-    if algorithm:
-        parts.append(f'HASHING USING "{algorithm}"')
-    version = str(_retention_value(row, "table_version") or "").strip()
-    if version:
-        parts.append(f'VERSION "{version}"')
-    return " ".join(parts)
 
 
 def _comment_object_type(row: dict[str, Any]) -> str:
@@ -508,44 +451,3 @@ def _comment_query_params(
         "objects_prefix": _query_pattern_list(_normalize_patterns(prefix), default="%"),
         "objects_ignore": _query_pattern_list(ignore, default=""),
     }
-
-
-def _ddl_query(database_object: DatabaseObject) -> tuple[str, dict[str, str]]:
-    object_type = database_object.object_type.upper()
-    if object_type == "JOB":
-        return (
-            queries.JOB_DDL_QUERY,
-            {"object_name": database_object.name},
-        )
-    if object_type == "MVIEW LOG":
-        return (
-            queries.MVIEW_LOG_DDL_QUERY,
-            {"object_name": database_object.name},
-        )
-    if object_type == "SCHEDULE":
-        return (
-            queries.SCHEDULE_DDL_QUERY,
-            {"object_name": database_object.name},
-        )
-    if object_type == "ASSERTION":
-        # `DBMS_METADATA` has no handler for the type at all (`ORA-31600`), so the
-        # dictionary's own `DEFINITION_SQL` is the source rather than a fallback.
-        return (
-            queries.ASSERTION_DDL_QUERY,
-            {"object_name": database_object.name},
-        )
-    if object_type == "MLE MODULE":
-        # Same `ORA-31600` refusal, and the same answer: `user_mle_modules` carries
-        # the language, the version and the source, so one row is the whole
-        # statement and no assembly is needed (`#738`).
-        return (
-            queries.MLE_MODULE_DDL_QUERY,
-            {"object_name": database_object.name},
-        )
-    return (
-        queries.DDL_QUERY,
-        {
-            "object_type": object_type,
-            "object_name": database_object.name,
-        },
-    )

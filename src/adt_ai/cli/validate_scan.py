@@ -78,14 +78,14 @@ def _scan_argument_error(args: argparse.Namespace) -> str | None:
     scanning = bool(getattr(args, "scan", False))
     if scanning:
         if args.input:
-            return "-input validates exported files and cannot be combined with -scan"
+            return "-input CANNOT BE COMBINED WITH -scan\n\n-input validates exported files."
         if not args.app:
-            return "-scan needs -app to say which application to scan"
+            return "-scan NEEDS -app\n\n-app says which application to scan."
         return _app_selection_error(args.app) or _page_selection_error(args.page)
     if args.page:
-        return "-page narrows a -scan and needs it"
+        return "-page NEEDS -scan\n\n-page narrows a -scan."
     if args.env:
-        return "-env names the connection a -scan reads through and needs it"
+        return "-env NEEDS -scan\n\n-env names the connection a -scan reads through."
     return None
 
 
@@ -118,12 +118,12 @@ def _scan_applications(
         selection, connections, environment, selected_gateway_factory
     )
     if selection is not None and selection.has_ranges and not apps:
-        print_adt_error("INPUT NOT FOUND", "-app range matched no applications.")
+        print_adt_error("INPUT NOT FOUND", "-app RANGE MATCHED NO APPLICATIONS")
         return exit_code_for("INPUT NOT FOUND")
 
     schema = _scan_schema(root, connections, environment, apps)
     if schema is None:
-        print_adt_error("INPUT NOT FOUND", "No schema to scan through.")
+        print_adt_error("INPUT NOT FOUND", "NO SCHEMA TO SCAN THROUGH")
         return exit_code_for("INPUT NOT FOUND")
 
     pages = _parse_apex_page_selection(_flatten_arg_groups(args.page))

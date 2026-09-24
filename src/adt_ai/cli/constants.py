@@ -83,6 +83,7 @@ from adt_ai.shared.config import ConfigError, ConfigLoader
 from adt_ai.shared.connections import ConnectionError as ConnectionConfigError
 from adt_ai.shared.connections import ConnectionLoader, ConnectionResult
 from adt_ai.shared.db import OracleGateway, QueryGateway
+from adt_ai.shared.error_screen import argument_headline
 from adt_ai.shared.progress import DROPBOX_PATH_RE, DottedProgressBar, print_module_banner
 from adt_ai.shared.queries import (
     APEX_VERSION_QUERY,
@@ -230,7 +231,9 @@ class AdtArgumentParser(argparse.ArgumentParser):
         return help_text if help_text.endswith("\n\n") else f"{help_text}\n"
 
     def error(self, message: str) -> NoReturn:
-        raise AdtArgumentError(message)
+        # argparse's sentence opens on an uppercase headline like every other
+        # refusal (ADT #934).
+        raise AdtArgumentError(argument_headline(message))
 
 
 # The console runtime's stream wrappers moved to `cli/stream_tracker.py` with

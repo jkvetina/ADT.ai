@@ -41,7 +41,7 @@ Two deliberate differences from what ``DIFF`` does:
   ``__adt_diff_tgt`` and drop them afterwards, which is what put the
   ``CONNMGR DELETE`` / ``Connection ... has been deleted`` noise at the top of a
   failing transcript. A ``project`` command runs against whatever session is
-  open, so ``save_as`` is ``None`` on every phase here. A connection the project
+  open, so no phase here saves an alias. A connection the project
   YAML already names in the store is still used by name -- that path keeps
   credentials out of the generated script and is the only way a file with no
   ``pwd:`` connects at all (ADT #396).
@@ -191,17 +191,15 @@ def _connect_plan(
 ) -> SqlclConnect:
     """One side's connect block, built once and reused by both of its phases.
 
-    ``save_as`` is deliberately absent, and that is the whole of ADT #780's
-    cleanup: a `project` command addresses no connection by name, so no
-    throwaway alias has to be saved in the SQLcl store and none has to be
-    dropped afterwards.
+    No throwaway alias is saved, and that is the whole of ADT #780's cleanup: a
+    `project` command addresses no connection by name, so nothing has to be
+    saved in the SQLcl store and nothing has to be dropped afterwards.
     """
     return sqlcl_connect(
         connection,
         startup_sql       = startup_sql,
         project_root      = project_root,
         named_connections = named_connections,
-        save_as           = None,
         force_register    = force_register,
     )
 
