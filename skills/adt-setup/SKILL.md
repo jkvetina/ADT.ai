@@ -1,6 +1,6 @@
 ---
 created: 2026-06-10
-updated: 2026-09-07
+updated: 2026-09-24
 name: adt-setup
 version: 1.0.0
 tags: [oracle, apex, deployment, setup, doctor]
@@ -62,7 +62,7 @@ export ORACLE_HOME="$HOME/instantclient_19_16"
 export PATH="$PATH:$ORACLE_HOME:$HOME/sqlcl/bin"
 ```
 
-Optional ADT-compatible defaults:
+Optional, carried over from an older ADT setup. ADT.ai reads neither for its work: `doctor` displays `ADT_ENV`, and nothing reads `ADT_SCHEMA`.
 
 ```bash
 export ADT_ENV="DEV"
@@ -81,9 +81,9 @@ On Windows use `setx NAME "value"` for each of these (takes effect in new shells
 
 Claude Code, Codex, and similar agents spawn a non-login, non-interactive shell, which never sources `~/.zshrc`, so none of the variables above reach ADT.ai, and you see encrypted connections failing to open, thick mode unavailable, and SQLcl reported as `not found`.
 
-You do not have to do anything about it. On every run, if `ADT_ENV` or `ORACLE_HOME` is unset, ADT.ai reads your shell startup file itself and fills in the ADT/Oracle variables, appending `$ORACLE_HOME` and `$ORACLE_HOME/sqlcl/bin` to `PATH`. A variable you set explicitly is never overwritten. This is macOS/Linux only, on Windows, set the variables yourself. Full behavior: [config.md](../../docs/config.md#environment-variables) §Environment variables.
+You do not have to do anything about it. On every run, if neither `ADT_KEY` nor `ADT_KEY_CMD` is set, or `ORACLE_HOME` is unset, ADT.ai reads your shell startup file itself and fills in the ADT/Oracle variables, appending `$ORACLE_HOME` and `$ORACLE_HOME/sqlcl/bin` to `PATH`. A variable you set explicitly is never overwritten. Apart from its `doctor` row, nothing reads `ADT_ENV`. This is macOS/Linux only, on Windows, set the variables yourself. Full behavior: [config.md](../../docs/config.md#environment-variables) §Environment variables.
 
-So if a command fails under an agent with a missing-credential or missing-client error, run `adtai doctor -offline` first and read the `ENVIRONMENT:` section: the values on those rows are what the process actually holds, so an empty `ADT_ENV` or `ORACLE_HOME` there tells you your startup file was never found.
+So if a command fails under an agent with a missing-credential or missing-client error, run `adtai doctor -offline` first and read the `ENVIRONMENT:` section: the values on those rows are what the process actually holds, so an empty `ADT_KEY` or `ORACLE_HOME` there tells you your startup file was never found.
 
 ## Connections and wallets
 
@@ -115,11 +115,11 @@ When a requested environment or schema is missing, ADT.ai prints the connection 
 adtai doctor
 ```
 
-It reports current versions (ADT.ai, Python, Git, Java, `oracledb`, Instant Client, SQLcl), an `ENVIRONMENT:` section (`ARCH`, `JAVA_TOOL_OPTIONS`, `LANG`, `NLS_LANG`, `ORACLE_HOME`, resolved `SQLCL` launcher, `ADT_ENV`, `ADT_KEY`), and online update availability for ADT.ai, Java, SQLcl, `oracledb`, and Instant Client.
+It reports current versions (ADT.ai, Python, Git, Java, `oracledb`, Instant Client, SQLcl), an `ENVIRONMENT:` section (`ARCH`, `JAVA_TOOL_OPTIONS`, `LANG`, `NLS_LANG`, `ORACLE_HOME`, resolved `SQLCL` launcher, `ADT_ENV` (displayed only, no command reads it), `ADT_KEY`), and online update availability for ADT.ai, Java, SQLcl, `oracledb`, and Instant Client.
 
 Row statuses:
 - `UPDATE`, a newer version is available online.
-- `WARN`, read-only doctor still runs, but optional setup is missing/uncertain (Java, SQLcl, Instant Client, `ADT_ENV`, `ADT_KEY`, `JAVA_TOOL_OPTIONS`).
+- `WARN`, read-only doctor still runs, but optional setup is missing/uncertain (Java, SQLcl, Instant Client, `ADT_KEY`, `JAVA_TOOL_OPTIONS`).
 - `FAIL`, a required prerequisite is missing or broken (Git, `oracledb`); doctor exits non-zero.
 - A plain version row with no tag means the value was detected and no newer version was found online (or online checks were skipped).
 
@@ -151,7 +151,7 @@ After install, scaffold a project config template:
 adtai doctor -init
 ```
 
-It writes the project config template, repo ignore rules for generated artifacts, a `.gitattributes` pinning the exported file types to LF, and safe `connections/.gitkeep` / `connections/wallets/.gitkeep` placeholders. It never writes connection YAML secrets, wallet contents, generated-cache folders, or APEX credentials folders. Existing generated files are skipped; `-force` overwrites generated templates.
+It writes the project config template, repo ignore rules for generated artifacts, a `.gitattributes` pinning the exported file types to LF (the APEXlang tree on lines of its own, which a `file_crlf` swap leaves at LF), and safe `connections/.gitkeep` / `connections/wallets/.gitkeep` placeholders. It never writes connection YAML secrets, wallet contents, generated-cache folders, or APEX credentials folders. Existing generated files are skipped; `-force` overwrites generated templates. Every file it writes takes the project's `file_crlf` line ending; `-init -sync` also rewrites a scaffolded file whose only difference from the template is its line endings.
 
 ## Troubleshooting
 

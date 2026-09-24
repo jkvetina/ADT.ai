@@ -139,11 +139,6 @@ def internal_path(root: Path | str, name: str) -> Path:
     return internal_dir(root) / name
 
 
-def legacy_path(root: Path | str, name: str) -> Path:
-    """Where ``name`` used to live, straight under ``config/``."""
-    return config_dir(root) / name
-
-
 def migrate_internal_files(root: Path | str) -> list[str]:
     """Relocate stragglers from ``config/`` into ``config/internal/``.
 
@@ -188,11 +183,17 @@ def ensure_internal_ignored(root: Path) -> None:
     the reason the first live sweep exposed: a project scaffolded before `#316`
     carries an older copy of the shipped ``.gitignore``, so relocating the files
     turned a folder git had never seen into an untracked entry, a 273 MB SQLite
-    store one `git add .` away from a commit. Only called when something actually
-    moved, so an already-migrated root writes nothing.
+    store one `git add .` away from a commit. Called whenever the internal folder
+    exists, and idempotent, so an already-migrated root writes nothing.
     """
     gitignore = root / ".gitignore"
-    existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    try:
+        existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    except (OSError, ValueError):
+        # A file this cannot read or decode (a cp1250 comment) is left exactly
+        # as found: rewriting it would lose what could not be read, and a raise
+        # here escaped `main` as a traceback before any banner (ADT #923).
+        return
     if GITIGNORE_ENTRY in {line.strip() for line in existing.splitlines()}:
         return
     prefix = existing
@@ -293,6 +294,5 @@ __all__ = [
     "ensure_internal_ignored",
     "internal_dir",
     "internal_path",
-    "legacy_path",
     "migrate_internal_files",
 ]

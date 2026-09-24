@@ -51,11 +51,12 @@ def _parse_range_token(token: str, flag: str) -> tuple[int, int | None] | None:
         high = int(closed_match.group(2))
         if low > high:
             raise ValueError(
-                f"invalid {flag} range '{token}': min {low} is greater than max {high}"
+                f"INVALID {flag} RANGE '{token}'\n\n"
+                f"Min {low} is greater than max {high}."
             )
         return (low, high)
     if "-" in token or "+" in token:
-        raise ValueError(f"invalid {flag} range '{token}': use MIN-MAX or MIN+")
+        raise ValueError(f"INVALID {flag} RANGE '{token}'\n\nUse MIN-MAX or MIN+.")
     return None
 
 def _parse_apex_page_selection(tokens: list[str] | None) -> ApexPageSelection | None:
@@ -92,7 +93,7 @@ def _parse_apex_component_filters(
         component_type, separator, name_pattern = token.partition(":")
         if not separator or not component_type.strip() or not name_pattern.strip():
             raise ValueError(
-                f"invalid -component filter '{token}': use TYPE:NAME_PATTERN"
+                f"INVALID -component FILTER '{token}'\n\nUse TYPE:NAME_PATTERN."
             )
         filters.append(ApexComponentFilter(component_type.strip(), name_pattern.strip()))
     return tuple(filters)

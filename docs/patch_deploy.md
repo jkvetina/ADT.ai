@@ -17,7 +17,9 @@ adtai patch -target DEV -name 12 -deploy
 
 The patch-building arguments (`-create`, `-hash`, `-baseline`, `-local`, `-head`, `-nosnap`) are accepted alongside `-deploy` and ignored, reported under an `IGNORING WITH -deploy:` header naming them, so a run never silently deploys something other than what the flags asked for.
 
-The one thing `-deploy` adds to the script is the session defaults. Before the script's first line it sends `SET DEFINE OFF`, `SET TIMING OFF` and `SET SQLBLANKLINES ON`, and the script's own copy runs after and still wins. A folder built by an older tool, or by hand, carries none, and `-deploy` replays whatever is on disk.
+`-deploy` adds two things to the script. Before its first line it sends the session defaults, `SET DEFINE OFF`, `SET TIMING OFF` and `SET SQLBLANKLINES ON`, and the script's own copy runs after and still wins. A folder built by an older tool, or by hand, carries none, and `-deploy` replays whatever is on disk.
+
+It also resolves the script for its `-target`. The script names no target, so one patch deploys anywhere, and `-deploy` switches on that target's `--[ENV] ` lines and points the `SPOOL` at its log folder ([patch_templates.md](patch_templates.md#one-script-for-every-target)).
 
 What a deploy does write, besides its logs, is the baseline, and only for a patch built with `-hash`. Full rules on [patch_hash.md](patch_hash.md).
 
@@ -36,11 +38,8 @@ The SQL itself lives in shared scripts under `config/patch_template/locks/`, whi
 A patch folder holding two or more install scripts also gets `DEPLOY.sql`, one line per script in the order `-deploy` runs them:
 
 ```sql
--- DEPLOY ORDER
 --
--- patch -deploy runs the install scripts below in the order of these @ lines.
--- Reorder the lines to change it. Every install script in this folder must
--- appear exactly once, and a line naming no script here refuses the deploy.
+-- PATCH DEPLOY ORDER
 --
 
 @"./APP.sql"
@@ -51,16 +50,37 @@ A patch folder holding two or more install scripts also gets `DEPLOY.sql`, one l
 
 The order `-create` writes is the default one: schema scripts first, then each application's `init` half, then its `end` half. Run by hand in SQLcl, the file deploys the whole patch in that order too. A patch with a single install script gets none.
 
+**`-create -app <id>` names the application's scripts for the id its tree lands on**, and says between them what the deploy does there. Application 100's APEXlang tree built with `-app 100926`:
+
+```sql
+@"./APP.100926.init.sql"
+
+--
+-- APEX APP IMPORT HERE:
+--
+-- patch -deploy -app 100926 imports the APEXlang application 100 as 100926
+-- from apex/100_ORDERS/apexlang on the fly.
+-- Running this file by hand does not import it!
+--
+
+@"./APP.100926.end.sql"
+```
+
+Their SPOOL and their deploy logs carry `100926` too, and each script's header adds `PROMPT -- SOURCE APP ID 100`, which is how `-deploy` still finds and imports application 100's tree. Bare `-app`, or an id equal to the application's own, keeps the `APP.100.*` names and writes no comment.
+
 **Reorder the lines to change the order.** `-deploy` runs the `@` lines as they stand, and the APEX import still follows its application's `init` half wherever you moved it. `@./APP.sql` without quotes and a trailing `;` are read the same; blank lines and `--` comments are ignored.
 
-**A re-create keeps your order.** Scripts no longer generated lose their line, new ones are added at the end in the default order, and `-create -force` writes the default order again.
+**A re-create keeps your order.** Scripts no longer generated lose their line, new ones are added at the end in the default order, and `-create -force` writes the default order again. A driver an earlier release wrote opens on `-- DEPLOY ORDER` and five lines of rules instead; it deploys the same, and a re-create writes the new header.
 
 **A driver that disagrees with the folder refuses the deploy before any script runs**: a script in the folder it does not list, a line naming a script that is not there, a script listed twice, or a line that is not a script link. The refusal names each one:
 
 ```text
-PATCH FAILED:
--------------
-DEPLOY.sql does not match patch folder 260914-1-12: not listed: CORE.sql - fix its @ lines, or rebuild it with -create -force
+ERROR - PATCH FAILED:
+---------------------
+  DEPLOY.sql DOES NOT MATCH PATCH FOLDER 260914-1-12
+
+  Not listed: CORE.sql
+  Fix its @ lines, or rebuild it with -create -force.
 ```
 
 `DEPLOY.sql` is never an install script itself, so it gets no row under `DEPLOYING PATCH:` and adds nothing to `PATCH CONTENTS:`.
@@ -178,6 +198,7 @@ DEPLOYING PATCH: 260822-1-12
 - **The table is written as the deploy runs, not after it.** The header and the rule print before the first script; `FILE` and `SCHEMA` appear when that script starts, `BLOCKS`, `TIMER` and `STATUS` when it finishes.
 - **On a terminal the open row is repainted** rather than left half-written. It opens on `0/n` and `IN PROGRESS`, the total being read off the install script before SQLcl launches, and the timer ticks once a second.
 - **`BLOCKS` counts linked blocks finished**, so it reaches `n/n` only when the script returns. The count comes from the `PROMPT -- FILE:` markers SQLcl echoes, and a marker echoes just before its block runs.
+- **An APEXlang import's `> BUILDING APP` row reads its tree's file count bare**, `523` rather than `0/523`. SQLcl imports the folder in one call and reports no progress through it.
 - **A redirected run, a pipe and a CI job** print one finished line per script with no repaints, and carry the exact bytes the batch render writes.
 - **A script the run never started** is reported `NOT RUN` rather than left out of the table. `BLOCKS` is blank when the run reported no progress at all, and `TIMER` is blank for any script that never ran, because `0s` would claim a measurement nobody took.
 
@@ -190,33 +211,33 @@ On Windows the row fills as the deploy runs too: the transport is a pipe rather 
 Every `ERROR` row prints why. The table says *that* a script failed; the stanza under it says what SQLcl refused, and names the log holding the full transcript:
 
 ```text
-DEPLOYMENT ERROR: APP.sql
--------------------------
-  Error starting at line : 214 in command -
-  CREATE OR REPLACE PACKAGE BODY app_ledger AS
-  Error report -
-  ORA-00942: table or view does not exist
-
+ERROR - DEPLOYMENT FAILED:
+--------------------------
+  FILE: APP.sql
+    Error starting at line : 214 in command -
+    CREATE OR REPLACE PACKAGE BODY app_ledger AS
+    Error report -
+    ORA-00942: table or view does not exist
   LOG: patch/260810-1-65/logs_DEV/20260810-121200_APP_ERROR.log
 ```
 
 The excerpt is bounded, since a deploy transcript runs to thousands of lines and the log already holds every one. A `... truncated, n more error line(s) in the log` marker says when there were more.
 
-A failure that opens no `Error starting at line` block is still reported: `SP2-0556` and other `ORA-`, `PLS-` and `SP2-` codes are picked up on their own. Under `-continue` each failed script gets its own stanza.
+A failure that opens no `Error starting at line` block is still reported: `SP2-0556` and other `ORA-`, `PLS-` and `SP2-` codes are picked up on their own. Under `-continue` every failed script gets its own `FILE:` block under the one header.
 
 **An object that compiles with errors is a failure too, even though SQLcl says it compiled.** A package body calling something undeclared is accepted by the database and left `INVALID`, so the transcript reads `Package Body APP_LEDGER compiled` with no warning of any kind and the compiler's own diagnosis arrives underneath it, indented, below an `Errors for PACKAGE BODY APP_LEDGER:` heading. That heading is what marks the script `ERROR` and exits non-zero, and the stanza then carries the `PLS-` line under it. A deploy that installs an invalid object has not delivered the patch, so it does not report success.
 
 Not every deploy dies with an Oracle error, so when nothing in the transcript parses as one the stanza falls back to its **tail**, because whatever killed the run is at the end of the output whatever it is called:
 
 ```text
-DEPLOYMENT ERROR: APP.sql
------------------
-  (no error code in the output, last lines of the transcript)
-  Package Body APP_ARRIVAL compiled
-  Package Body APP_IMPORT compiled
-  Substitution cancelled
-  Exception in thread "JLine Mask Thread" java.lang.IllegalStateException: Terminal has been closed
-
+ERROR - DEPLOYMENT FAILED:
+--------------------------
+  FILE: APP.sql
+    (no error code in the output, last lines of the transcript)
+    Package Body APP_ARRIVAL compiled
+    Package Body APP_IMPORT compiled
+    Substitution cancelled
+    Exception in thread "JLine Mask Thread" java.lang.IllegalStateException: Terminal has been closed
   LOG: patch/260809-1-65/logs_DEV/20260810-113136_APP_ERROR.log
 ```
 
@@ -232,11 +253,11 @@ The tail carries the last object that did compile, which is what locates the fai
 
 ## Where the logs go
 
-Deployment logs live under `patch_deploy_logs` (`logs_{$TARGET_ENV}`, so `logs_DEV/`) inside the patch folder. The install script's `SPOOL` writes there directly, so a hand-run in SQLcl lands beside a deploy.
+Deployment logs live under `patch_deploy_logs` (`logs_{$TARGET_ENV}`, so `logs_DEV/`) inside the patch folder. `-deploy` points the install script's `SPOOL` there directly. A hand-run in SQLcl has no target, so it spools into `logs/`.
 
 Each installer stamps its transcript with its outcome. The name is `patch_deploy_log_file`, `{$TIMESTAMP}_{$SCHEMA}_{$STATUS}.log` by default. SQLcl execution failures retain an `ERROR` transcript too.
 
-**The folder is part of the patch.** Both `-create` and `-deploy` ensure it exists: SQLcl cannot spool into a missing directory, and git does not track empty ones.
+**The folder is part of the patch.** `-create` ensures `logs/` exists and `-deploy` its own `logs_<ENV>/`: SQLcl cannot spool into a missing directory, and git does not track empty ones.
 
 The latest-log display still shows the newest script outcome. Skipping requires a separate completed-run receipt, `deployment.json`, for the same payload, target and verification policy. A partial failure, interrupted execution or failed scan cannot complete that receipt. A missing, corrupt or outdated receipt runs again; `-force` also reruns a completed deployment.
 
@@ -258,7 +279,7 @@ WARNING - VIEW COLUMNS MISMATCHED:
 
 `SCHEMA` is there because every schema in the deploy plan is verified, not one per run.
 
-A successful deploy also recompiles invalid objects in each touched target schema. Those connections inherit the shared `DDL_LOCK_TIMEOUT = 10` default from connection bootstrap, immediately before `STARTUP.sql`, and a project can override the wait in its own `STARTUP.sql`.
+Every deploy also recompiles invalid objects in each touched target schema, one that stopped on a failed script included. Those connections inherit the shared `DDL_LOCK_TIMEOUT = 10` default from connection bootstrap, immediately before `STARTUP.sql`, and a project can override the wait in its own `STARTUP.sql`.
 
 The recompile is one `ALTER ... COMPILE` per object and a compile that fails raises nothing, so the run reads the invalid objects back afterwards. Whatever is still invalid is listed under `INVALID OBJECTS:`, the same header and the same rows `recompile` prints, and nothing prints when everything came back valid.
 

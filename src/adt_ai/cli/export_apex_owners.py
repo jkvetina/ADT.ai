@@ -67,7 +67,7 @@ def apex_lookup_schema(
         return default_schemas[0]
     if not schemas:
         raise ConnectionNotFoundError(
-            f"No schemas configured for environment: {environment}"
+            f"NO SCHEMAS CONFIGURED FOR ENVIRONMENT: {environment}"
         )
     return schemas[0]
 

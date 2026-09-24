@@ -28,7 +28,9 @@ connections:
   wallet_path: /secure/path/connections/wallets
 ```
 
-Wallets are searched in the ADT.ai `connections/wallets/` folder first, then in configured wallet paths and project-local wallet folders. Where a `Wallet_NAME.zip` is present but `Wallet_NAME/tnsnames.ora` is missing, the zip is extracted before connecting.
+Wallets are searched in the ADT.ai `connections/wallets/` folder first, then in configured wallet paths and project-local wallet folders. A relative `wallet_path` such as `config/Wallet_NAME` is then tried against the project root, and last against the folder the command runs from.
+
+Where a `Wallet_NAME.zip` is present but `Wallet_NAME/tnsnames.ora` is missing, or older than the zip, the zip is extracted before connecting. The zip is always named after the full folder name, so a folder `Wallet_NAME.v2` pairs with `Wallet_NAME.v2.zip`.
 
 A command naming an environment or schema that is not configured shows the loaded connection file to edit, then the environments or schemas that do exist, as a sorted indented list.
 
@@ -87,7 +89,9 @@ Those two bound the Python driver. SQLcl is a separate child process and is deli
 
 The one exception is `rest_timeout_seconds`, which bounds `export_apex -rest`, whose SQLcl call could otherwise sit for many minutes showing nothing but a crawling bar. Past the budget SQLcl is killed and the run reports the timeout with whatever it printed first.
 
-A missing, non-numeric or non-positive value falls back to the default rather than removing the bound.
+**`0` means no timeout** for `connect_timeout_seconds` and `query_timeout_seconds`. A query then runs as long as it takes, and a connection attempt waits until the operating system's own TCP timeout gives up. A missing or non-numeric value falls back to the default, and a value below `0` is refused as a configuration error naming the file and the key.
+
+`rest_timeout_seconds` keeps the opposite rule, because it exists to end an unbounded run: a missing, non-numeric or non-positive value falls back to its default of 60.
 
 <br>
 
@@ -101,13 +105,13 @@ Set `keep_owner` to write the owner in front of every generated object name inst
 keep_owner              : False
 ```
 
-Under `true` the prefix appears in four places, so a repository is consistent rather than half-qualified: the `CREATE` line of every exported object, the `MERGE`/`DELETE` and per-row LOB `UPDATE` statements `export_data` writes, the object a `GRANT` names, and directories.
+Under `true` the prefix appears in three places, so a repository is consistent rather than half-qualified: the `CREATE` line of every exported object, the `MERGE`/`DELETE` and per-row LOB `UPDATE` statements `export_data` writes, and the object a `GRANT` names. Directories never carry it: a directory belongs to no schema, and Oracle refuses `hr.data_dir`.
 
 Pick it by how the deployment targets a schema. Leave it `false` where the connection or an `ALTER SESSION SET CURRENT_SCHEMA` already selects the target. That is the common case, and the only one that survives being deployed into a differently-named schema.
 
 Turn it `true` where the deploying user is not the owner and installs into several schemas in one session, so each statement carries its own target and nothing depends on session state.
 
-Flipping the key rewrites the definition line of every object on the next export, so it is a one-time whole-repository diff rather than a per-object choice. Directories are the one object type that carried the owner before this key existed and now follow it like everything else.
+Flipping the key rewrites the definition line of every object on the next export, so it is a one-time whole-repository diff rather than a per-object choice. Directories stay out of that diff, since they carry no owner under either setting.
 
 <br>
 
@@ -173,7 +177,15 @@ Two deliberate details. Raw LOB sidecar files are never translated, mirroring th
 
 **Git can still undo it on the way out**, since a checkout running `core.autocrlf=true` converts what the exporter wrote, and that setting is per machine rather than per repository.
 
-So [`doctor -init`](doctor.md#scaffolding-a-project) scaffolds a `.gitattributes` pinning `*.sql`, `*.apx`, `*.json`, `*.yaml`, `*.csv` and `*.md` to `text eol=lf`, leaving the `files/` payloads untranslated. Flipping this key to `True` means swapping `eol=lf` for `eol=crlf` there as well.
+<br>
+
+## Syncing git metadata before export
+
+`auto_sync_git: True` (default) runs the same block-and-EOL sync as `doctor -init -sync`, on disk, before every export; `patch` skips it. `False` disables it. Contract: [doctor.md](doctor.md#syncing-the-managed-block).
+
+So [`doctor -init`](doctor.md#scaffolding-a-project) scaffolds a `.gitattributes` pinning `*.sql`, `*.apx`, `*.json`, `*.yaml`, `*.csv` and `*.md` to `text eol=lf`, leaving the `files/` payloads untranslated. The managed block follows this key: `True` renders those pins `eol=crlf` on the next sync.
+
+**The APEXlang tree is the one exception.** `export_apex -apexlang` writes it with LF whatever this key says, because SQLcl's APEXlang compiler reads nothing else, and the block pins its `.apx` and `.json` files to `eol=lf` either way.
 
 <br>
 
@@ -233,9 +245,11 @@ The order is `DDL_LOCK_TIMEOUT`, then the automatic session identifier from `con
 
 It is authored as an ordinary SQLcl script and may mix three statement kinds:
 
-- **SQL\*Plus directives** (`SET SERVEROUTPUT ON`, `SET DEFINE OFF`) are client-side and the database never sees them. On the Python path they are filtered out, with `SET SERVEROUTPUT` emulated server-side. SQLcl deploys read the file natively.
-- **`ALTER SESSION` and plain SQL** end with `;`. `SET TRANSACTION` is real SQL rather than a directive, and is sent to the database.
+- **SQL\*Plus and SQLcl directives** (`SET SERVEROUTPUT ON`, `SET DEFINE OFF`, `SET SQLFORMAT ANSICONSOLE`, `VAR`, `PRINT`, `PROMPT`) are client-side and the database never sees them. On the Python path they are filtered out, with `SET SERVEROUTPUT` emulated server-side and `EXEC call` run as `BEGIN call; END;`, the block SQL\*Plus wraps it in. SQLcl deploys read the file natively.
+- **`ALTER SESSION` and plain SQL** end with `;`. `SET TRANSACTION`, `SET ROLE` and `SET CONSTRAINTS` are real SQL rather than directives, and are sent to the database.
 - **PL/SQL blocks** end with a lone `/` on its own line.
+
+Running another script with `@file`, `@@file` or `START file` works only in SQLcl. On the Python path the database refuses that line and the connection fails naming it, so put those statements in `STARTUP.sql` itself.
 
 ```sql
 ALTER SESSION SET NLS_NUMERIC_CHARACTERS = '. ';
@@ -269,7 +283,9 @@ That cuts both ways while you are testing a change, since a default matching the
 
 ## Environment variables
 
-`ADT_KEY` decrypts passwords; `ADT_KEY_CMD` prints that key. Set one, preferably an owner-only file path or safe provider command. ADT.ai reads `ADT_ENV`, `ADT_REPO`, `ADT_CLIENT`, `ADT_PROJECT`, `ADT_BRANCH` and `ADT_SCHEMA`.
+`ADT_KEY` decrypts passwords; `ADT_KEY_CMD` prints that key. Set one, preferably an owner-only file path or safe provider command.
+
+ADT.ai also picks up `ADT_ENV`, `ADT_REPO`, `ADT_CLIENT`, `ADT_PROJECT`, `ADT_BRANCH` and `ADT_SCHEMA`, though no command reads them for its work: `ADT_ENV` is shown in the `ENVIRONMENT:` section of [`adtai doctor`](doctor.md#output), while the other five are carried along unread.
 
 It also reads the Oracle variables an Instant Client setup exports: `ORACLE_HOME`, `TNS_ADMIN`, `NLS_LANG`, `DBVERSION`, `DYLD_LIBRARY_PATH`, `LD_LIBRARY_PATH`, `OCI_LIB_DIR`, `OCI_INC_DIR` and `JAVA_TOOL_OPTIONS`.
 
@@ -277,16 +293,16 @@ In a terminal those come from your shell startup file and everything works. They
 
 ADT.ai would then start with none of them, so encrypted connections fail to open, thick mode is unavailable and SQLcl is not on `PATH`, all of which read like a config bug rather than a missing environment.
 
-So ADT.ai fills them in itself. On every run, when `ADT_ENV` or `ORACLE_HOME` is unset, it reads your shell startup file and hydrates the variables above, then appends the client folder and its `sqlcl/bin` to `PATH`:
+So ADT.ai fills them in itself. On every run, when neither `ADT_KEY` nor `ADT_KEY_CMD` is set, or `ORACLE_HOME` is unset, it reads your shell startup file and hydrates the variables above, then appends the client folder and its `sqlcl/bin` to `PATH`:
 
-- **An explicit value always wins.** A variable already in the environment is never overwritten, so a value you set on the command line or in CI behaves as you expect. When both `ADT_ENV` and `ORACLE_HOME` are already set, nothing is read at all.
-- **Your startup file is parsed, not executed.** `export VAR=value` lines are read as text, with `~` and `$VAR` expansion. Only when a sentinel is still unresolved afterwards does ADT.ai fall back to running your shell, which also sees variables set inside a function, a conditional or an `eval`.
+- **An explicit value always wins.** A variable already in the environment is never overwritten, so a value you set on the command line or in CI behaves as you expect. When a key source and `ORACLE_HOME` are both already set, nothing is read at all.
+- **Your startup file is parsed, not executed.** `export VAR=value` lines are read as text, with `~` and `$VAR` expansion. Only when neither key variable is resolved afterwards does ADT.ai fall back to running your shell, which also sees variables set inside a function, a conditional or an `eval`. A thin-mode setup with no `ORACLE_HOME` therefore never starts a shell once its key is found, and a `TNS_ADMIN`, `NLS_LANG` or `JAVA_TOOL_OPTIONS` set only inside a function arrives only when the key is missing too.
 - **Which file follows `$SHELL`.** zsh reads `~/.zshrc`, `~/.zprofile` and `~/.zshenv`; bash reads `~/.bash_profile`, `~/.bashrc` and `~/.profile`. An unknown shell falls back to all three of the common ones.
 - **Nothing here can fail your command.** A missing file, an unreadable one, or a shell that will not run leaves the environment untouched and the command proceeds.
 - **Encryption keys are not printed or inherited.** [`doctor`](doctor.md) shows only whether a source exists; ordinary child processes receive neither key variable.
 - **macOS and Linux only.** On Windows hydration is a no-op, so set the variables yourself.
 
-Hydration announces nothing of its own. What it did is visible where it matters: [`adtai doctor`](doctor.md#output) prints the values the process actually holds, so an `ENVIRONMENT:` section carrying your real `ADT_ENV` and `ORACLE_HOME` under an AI tool is hydration having worked.
+Hydration announces nothing of its own. What it did is visible where it matters: [`adtai doctor`](doctor.md#output) prints the values the process actually holds, so an `ENVIRONMENT:` section carrying your `ADT_KEY` source and real `ORACLE_HOME` under an AI tool is hydration having worked.
 
 Which variable does the real work, in case you are debugging a connection rather than reading for pleasure:
 

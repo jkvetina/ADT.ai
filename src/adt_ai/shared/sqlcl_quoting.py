@@ -35,14 +35,25 @@ def quote_sqlcl_argument(value: str | Path, *, role: str) -> str:
 
 
 def reject_unquotable(value: str, *, role: str) -> None:
-    """Raise when `value` holds a character SQLcl's quoting cannot carry."""
+    """Raise when `value` holds a character SQLcl's quoting cannot carry.
+
+    The refusal reaches `ERROR - PATCH FAILED:` through the import script, so it
+    opens on a short uppercase headline (ADT #934). A password is never echoed:
+    `sqlcl_connect` passes one through here, and the screen is not where a secret
+    belongs, so the refusal says what is wrong with it and not what it is.
+    """
+    secret = "password" in role.lower()
     if '"' in value:
+        shown = "" if secret else f": {value}"
         raise SqlclQuotingError(
-            f'The {role} contains a double quote, which SQLcl cannot quote: {value}\n'
+            f"SQLCL CANNOT QUOTE THE {role.upper()}\n\n"
+            f"It contains a double quote{shown}\n"
             "Rename it, or move it somewhere without one."
         )
     if "\n" in value or "\r" in value:
+        shown = "" if secret else f": {value!r}"
         raise SqlclQuotingError(
-            f"The {role} contains a line break, which SQLcl cannot quote: {value!r}\n"
+            f"SQLCL CANNOT QUOTE THE {role.upper()}\n\n"
+            f"It contains a line break{shown}\n"
             "Rename it, or move it somewhere without one."
         )

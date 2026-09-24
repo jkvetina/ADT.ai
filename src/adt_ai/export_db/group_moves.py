@@ -264,7 +264,7 @@ def execute_group_move(
     print_adt_header("PLANNED MOVES:")
     _emit_planned_moves(plan.moves, emit)
     if show_unmatched and leftovers:
-        print_adt_header("UNMATCHED (LEFT IN PLACE):")
+        print_adt_header("WARNING - UNMATCHED FILES, LEFT IN PLACE:")
         _emit_labels(leftovers, emit)
 
     if not force:

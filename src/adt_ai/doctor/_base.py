@@ -95,28 +95,28 @@ def format_status_line(label: str, value: str, status: str | None = None) -> str
     return f"{line} {'.' * dots}{suffix}"
 
 
-def _init_group_lines(label: str, root: Path, paths: Sequence[Path]) -> list[str]:
-    """`doctor -init`'s `CREATED:`/`SKIPPED:` groups, one file per row.
+def _init_group_lines(
+    label: str, paths: Sequence[str], *, nested: bool, ordered: bool = False
+) -> list[str]:
+    """One `doctor -init` group (`CREATED:`, `SKIPPED (use -force to overwrite):`, ...).
 
     The rows go through the shared renderer since ADT #504, at the depth below
     the group label, so this block and the `patch` sections share one indent rule.
-    Flat rather than grouped by folder: a scaffold is a handful of root-relative
-    paths and the reader is checking that each one exists, which a folder line
-    would put a level further from the eye.
+    Root-relative and grouped by folder like every other file list, under the
+    project's `nested_files` (ADT #944). Jan, on `APEXDEV_JANK/.gitattributes`
+    rows: nothing above and including the project folder is printed, since the
+    reader is already standing in it; and the flat list this used to be hid
+    the folder structure the rest of ADT shows.
+
+    Sorted here, case-insensitively with a leading dot stripped, so a folder's
+    files arrive together and the renderer prints each folder once. A caller
+    that has already put the rows in the order it means passes ``ordered``.
     """
     if not paths:
         return []
-    root_name = root.name or root.anchor.rstrip("/") or "."
-    ordered = sorted(paths, key=lambda path: path.as_posix().lstrip(".").lower())
-    return [
-        "",
-        f"  {label}:",
-        *file_rows(
-            [f"{root_name}/{path.as_posix()}" for path in ordered],
-            nested = False,
-            depth  = 2,
-        ),
-    ]
+    if not ordered:
+        paths = sorted(paths, key=lambda path: path.lstrip(".").lower())
+    return ["", f"  {label}:", *file_rows(paths, nested=nested, depth=2)]
 
 
 @dataclass(frozen=True)
@@ -128,6 +128,10 @@ class DoctorRequest:
     sqlcl : bool = False
     offline: bool = False
     init  : bool = False
+    # `doctor -init -sync` (ADT #938): also syncs the ADT-owned block in the
+    # root `.gitattributes`/`.gitignore` and renormalizes tracked files under
+    # it. The CLI refuses `-sync` without `-init` before this is ever built.
+    sync  : bool = False
     root  : Path | None = None
     force : bool = False
     # The project config, when the caller could load one. Doctor diagnoses a

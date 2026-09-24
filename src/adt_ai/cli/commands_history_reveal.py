@@ -110,7 +110,7 @@ def _run_rebuild_switch(
 
     if switch < 1 or switch > len(result.branches):
         upper = len(result.branches)
-        print_adt_error("ARGUMENT INVALID", f"-switch {switch} is out of range (1..{upper})")
+        print_adt_error("ARGUMENT INVALID", f"-switch {switch} IS OUT OF RANGE (1..{upper})")
         return exit_code_for("ARGUMENT INVALID")
     target = result.branches[switch - 1]
 

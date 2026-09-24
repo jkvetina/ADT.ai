@@ -22,8 +22,9 @@ def author_aliases(config: Mapping[str, Any]) -> dict[str, str]:
         return {}
     if not isinstance(raw, Mapping):
         raise ValueError(
-            f"{CONFIG_KEY} must map a personal address to a company address, "
-            f"got {type(raw).__name__}"
+            f"INVALID {CONFIG_KEY} IN CONFIG\n\n"
+            "It must map a personal address to a company address, "
+            f"got {type(raw).__name__}."
         )
     return {
         str(personal).strip().lower(): str(company).strip()

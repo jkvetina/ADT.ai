@@ -87,7 +87,12 @@ def merge_sql_from_csv(
     ) + "\n"
     updates = queries.update_assignments(update_columns, skip_update)
     statements = []
-    for batch in batches:
+    for index, batch in enumerate(batches):
+        # The DELETE empties the table for the whole reload, so only the first
+        # batch runs it (`#923`). Each batch commits, and a DELETE in every one
+        # took away the rows the batch before it had just loaded, so a reload
+        # past `merge_batch_size` kept only its last batch.
+        batch_skip_delete = skip_delete if index == 0 else "--"
         statements.append(
             queries.merge_statement(
                 table          = table,
@@ -95,10 +100,10 @@ def merge_sql_from_csv(
                 csv_selects    = batch,
                 primary_join   = primary_join,
                 updates        = updates,
-                skip_delete    = skip_delete,
+                skip_delete    = batch_skip_delete,
                 skip_insert    = skip_insert,
                 skip_update    = skip_update,
-                where_filter   = commented_where_filter(where_filter, skip_delete),
+                where_filter   = commented_where_filter(where_filter, batch_skip_delete),
                 insert_columns = insert_columns,
             )
         )

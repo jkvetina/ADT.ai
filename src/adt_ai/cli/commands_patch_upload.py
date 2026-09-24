@@ -50,7 +50,9 @@ MINIFIERS_HEADER = "WARNING - MINIFIERS NOT INSTALLED:"
 QUIT_HINT = "press Control+C to quit"
 UPLOADED_LABEL = "UPLOADED"
 
-APP_REQUIRED_MESSAGE = "-upload needs the application to upload into: pass -app N."
+APP_REQUIRED_MESSAGE = (
+    "-upload NEEDS AN APPLICATION\n\nPass -app N, the application to upload into."
+)
 # The default nap between passes, old ADT's own. A folder a person is editing
 # changes a few times a minute, so anything shorter buys nothing.
 DEFAULT_INTERVAL = 1
@@ -96,7 +98,7 @@ def run_patch_upload(
     print(f"  {_project_relative(folder, root)}")
     if not folder.is_dir():
         print_adt_error(
-            "INPUT NOT FOUND", f"Folder not found: {_project_relative(folder, root)}"
+            "INPUT NOT FOUND", f"FOLDER NOT FOUND: {_project_relative(folder, root)}"
         )
         return exit_code_for("INPUT NOT FOUND")
     if not args.once:
@@ -191,7 +193,7 @@ def _folder(
         return resolver.workspace_file("")
     application = _application(gateway, schema, app_id)
     if application is None:
-        print_adt_error("INPUT NOT FOUND", f"Application {app_id} not found in {schema}.")
+        print_adt_error("INPUT NOT FOUND", f"APP {app_id} NOT FOUND IN {schema}")
         return None
     return resolver.application_file(application, "")
 

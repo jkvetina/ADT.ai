@@ -37,6 +37,12 @@ adtai doctor -init
 adtai doctor -init -root ./new-project
 ```
 
+Sync an already-scaffolded project's `.gitattributes`/`.gitignore` with the current shipped template:
+
+```bash
+adtai doctor -init -sync
+```
+
 <br>
 
 ## Output
@@ -84,12 +90,14 @@ TIMER: 1s
 | Status | Meaning |
 | ------ | ------- |
 | `UPDATE` | A newer version was found online. |
-| `WARN` | Read-only `doctor` still runs, but optional setup is missing, uncertain or contradictory: Java, SQLcl, Instant Client, `ADT_ENV`, the encryption-key source or `JAVA_TOOL_OPTIONS`. |
+| `WARN` | Read-only `doctor` still runs, but optional setup is missing, uncertain or contradictory: Java, SQLcl, Instant Client, the encryption-key source or `JAVA_TOOL_OPTIONS`. `ADT_ENV` is displayed only and never warns. |
 | `FAIL` | A required prerequisite is missing or broken, Git or the `oracledb` module for instance, or a SQLcl too old for this project's APEXlang exports. The run exits non-zero. |
 
 Plain `doctor` is read-only. It never runs `git pull`, never installs anything, never fetches or replaces SQLcl, and never stashes your work. By default it does check online for newer ADT.ai, Java, SQLcl, `oracledb` and Instant Client, which `-offline` turns off.
 
 For ADT.ai itself, an editable or git install is compared against its own configured `origin`, and a normal install against the latest public GitHub release before falling back to PyPI metadata. Update subprocesses force English and UTF-8 settings, so a local language override cannot change what SQLcl, Oracle or pip report back.
+
+A git checkout reads `UPDATE` only when `-update`'s pull would move it: its `HEAD` is an ancestor of `origin`'s, or `origin` holds commits it has never fetched. A checkout ahead of `origin`, or on a feature branch, is current.
 
 A normal wheel installed inside another repository's `.venv` is still a package install. `doctor` does not mistake that enclosing repository for an editable ADT.ai checkout, and therefore cannot pull, stash, or switch the wrong project.
 
@@ -193,11 +201,13 @@ Between two releases that both carry the flag, `-update <version>` and bare `-up
 
 ![Blank folder in. Project out.](images/doctor_init.png)
 
-`-init` writes the project override config and `config/IDENTITY.yaml`, copies ADT.ai's current root `.gitignore` and the `config/patch_template/` scaffold verbatim, writes a `.gitattributes`, and writes the `connections/.gitkeep` and `connections/wallets/.gitkeep` placeholders.
+`-init` writes the project override config and `config/IDENTITY.yaml`, a `.gitignore` and a `.gitattributes` holding only what ADT writes into a project, copies the `config/patch_template/` scaffold verbatim, and writes the `connections/.gitkeep` and `connections/wallets/.gitkeep` placeholders.
 
 Those source files are bundled in the wheel as package resources, so the same scaffold is available from a normal install with no source checkout beside it.
 
-It creates no cache folders, no APEX credential folders, no connection YAML and no wallet contents. Existing generated files are skipped, and `-force` overwrites them.
+It creates no cache folders, no APEX credential folders, no connection YAML and no wallet contents. Existing generated files are listed under `SKIPPED (use -force to overwrite):`, and `-force` overwrites them. Every file it writes takes the project's `file_crlf` line ending.
+
+Its rows are relative to the project folder, whose own name is never printed, and group under their folders like every other ADT file list; [`nested_files: False`](config.md#how-a-list-of-files-reads) flattens them.
 
 `config/IDENTITY.yaml` is prefilled from the project folder's own `git config user.name`/`user.email` where it has one, and ships with a commented `db_schema` placeholder either way, the database half has no git equivalent to read. See [Developer identity](config.md#developer-identity).
 
@@ -205,7 +215,9 @@ It creates no cache folders, no APEX credential folders, no connection YAML and 
 
 What a project gets instead are the pins that make [LF everywhere](config.md#line-endings) a property of the repository rather than of each machine's `core.autocrlf`. `*.sql`, `*.apx`, `*.json`, `*.yaml`, `*.csv` and `*.md` are pinned `text eol=lf`, and anything under a `files/` folder is left untranslated, those being APEX static payloads mirrored byte for byte.
 
-A project that sets `file_crlf: True` swaps `eol=lf` for `eol=crlf` there, so the two keep saying the same thing.
+The pins follow the project's `file_crlf`: a project that sets it `True` gets them rendered `eol=crlf`, at scaffold time and on every sync, so the file and the exporter keep saying the same thing, and the block's own lines take that ending too. Project rules go below the managed block, never inside it.
+
+The `.apx` and `.json` files under an `apexlang/` folder are pinned `text eol=lf` on three lines of their own, below the others, and stay that way under `file_crlf: True`: `export_apex -apexlang` writes LF whatever `file_crlf` says, since SQLcl's APEXlang compiler reads nothing else. Its `static-files/` payloads are left untranslated.
 
 The patch templates are scaffolded because `patch -create` reads them from the **project** root, so a folder that only ships with ADT.ai is a folder nobody has. All six source files land verbatim; see [patch templates](patch_install.md#templates-and-the-project-sql-around-the-objects) for the slots and what each file does.
 
@@ -223,6 +235,56 @@ Oracle publishes no checksum for that archive by any route, so integrity rests o
 
 <br>
 
+## Syncing the managed block
+
+![The managed block stays current on an already-scaffolded project.](images/doctor_init.png)
+
+`-init` alone never touches an existing `.gitattributes`/`.gitignore`: it skips them, and `-force` overwrites them whole. Neither shape reaches a project that scaffolded before a fix to the shipped template landed. `-init -sync` is the third option, and it only ever works alongside `-init`:
+
+```bash
+adtai doctor -init -sync
+```
+
+Both files carry the shipped template inside an ADT-owned block, between two fixed marker lines that never carry a version number:
+
+```text
+# >>> adtai managed
+... the shipped template, verbatim ...
+# <<< adtai managed
+```
+
+A fresh scaffold writes the block WITH its markers already in place, at the top of the file, so the very next `-sync` recognizes it immediately. `-sync` rewrites only the text between the markers; every line outside it, a project's own rules included, is left byte for byte alone, and a second run in a row is a zero-byte diff.
+
+An already-migrated block is rewritten in place wherever it sits, never moved back to the top: a developer who filed their own rules above it keeps them there. A file with no markers at all is a legacy scaffold, and the block is inserted at the top instead.
+
+Any of a legacy file's own lines that exactly (whitespace-trimmed) repeat a non-comment, non-blank block line are dropped as a now-redundant duplicate; the run reports which lines it removed.
+
+**Broken markers refuse the whole file rather than guess.** A start with no matching end, an end with no matching start, or two blocks: nothing is written, and the run names the file and the line the break sits on.
+
+After `.gitattributes` syncs, `-sync` also fixes the line endings of files **already committed** under its patterns: it runs `git add --renormalize` scoped to those patterns, so a `.sql` file committed before the `eol=lf` pin existed picks up the fix.
+
+That step only **stages** the result, and a `.gitattributes` or `.gitignore` the run created or rewrote is staged with it, so the index never carries LF files without their rule. `-sync` never commits. Outside a git work tree staging, renormalizing and the override report below are silent no-ops.
+
+A scaffolded file that differs from the template only in its line endings, a patch template an older ADT copied LF into a `file_crlf: True` project say, is rewritten in the project's ending rather than skipped. Any real edit keeps it skipped.
+
+`-sync` also reports a line a project has added **below** the block that changes the effective value of one of its attributes (`git check-attr` resolves "later line wins" the same way git itself does). Only `-init -sync` reports overrides; the automatic export sync below never does.
+
+The report groups its rows the same way `CREATED:` does above: `SYNCED:`, `UNCHANGED:` and `REFUSED:` per file, then `REMOVED DUPLICATE LINES:`, the `NORMALIZED EOL TO` groups and `OVERRIDES:` where any of those found something. Under `-sync` the two files appear only in those groups, never under `CREATED:` or the skipped group.
+
+`NORMALIZED EOL TO CRLF:` and `NORMALIZED EOL TO LF:` are named by the ending git checks each file out with, so under `file_crlf: True` an APEXlang file still lands under LF. A large repository renormalizes thousands of files, so each lists its first ten and closes on one `... and <N> more` row.
+
+`-sync` with no `-init` is a usage error, the same shape as any other doctor flag combination the parser refuses.
+
+<br>
+
+### Syncing before every export
+
+Set [`auto_sync_git`](config.md#syncing-git-metadata-before-export) to run the same block-and-EOL sync automatically, on disk only, right before `export_db`, `export_apex` or `export_data` writes anything. It rewrites the block in an existing `.gitattributes` and `.gitignore`, never creates either, and converts only files git itself pins to `eol=lf`: `-text` payloads and a project's own CRLF rule are left alone.
+
+An export never stages the result (that is `-sync`'s job alone) and never reports an override; it prints at most one short row, and only when something actually changed. `patch` never runs this sync. It is on by default; set the key `False` to turn it off.
+
+<br>
+
 ## Arguments
 
 | Argument | Repeatable | Default | Description |
@@ -231,6 +293,7 @@ Oracle publishes no checksum for that archive by any route, so integrity rests o
 | `-update [VERSION]` | No | off | Run the full ADT.ai, Python requirements and SQLcl update. A version lands ADT.ai on that release, up or down, instead of the latest. Cannot be combined with `-sqlcl`. |
 | `-sqlcl` | No | off | Upgrade SQLcl only, reading Oracle's own download page for the current release and replacing the resolved install folder. Runs immediately, and cannot be combined with `-update`. |
 | `-init` | No | off | Scaffold the project config, `config/IDENTITY.yaml`, the root `.gitignore` and `.gitattributes`, `config/patch_template/`, and the connection and wallet placeholders. |
+| `-sync` | No | off | With `-init`, sync the ADT-owned block in an existing `.gitattributes`/`.gitignore` instead of leaving it alone, renormalize tracked files under it, and report attribute overrides. Requires `-init`. |
 | `-force`, `--force` | No | off | With `-init`, overwrite generated template files that already exist. |
 
 Shared options (-root, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

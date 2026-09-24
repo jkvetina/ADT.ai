@@ -137,9 +137,9 @@ def rekey_secrets(data: Any, request: ConnectionEditRequest) -> tuple[str, str]:
     and after a suspected leak only the second one matters.
     """
     if not request.old_key:
-        raise ConnectionEditError("-rekey requires -old-key")
+        raise ConnectionEditError("-rekey REQUIRES -old-key")
     if not request.new_key:
-        raise ConnectionEditError("-rekey requires -new-key")
+        raise ConnectionEditError("-rekey REQUIRES -new-key")
     try:
         old_key = crypto.resolve_key(request.plaintext("old_key"))
         new_key = crypto.resolve_key(request.plaintext("new_key"))
@@ -149,9 +149,9 @@ def rekey_secrets(data: Any, request: ConnectionEditRequest) -> tuple[str, str]:
     secrets = marked_secrets(data)
     if not secrets:
         raise ConnectionEditError(
-            f"no encrypted secrets in {request.path.name}: -rekey rewrites values carrying "
-            "pwd!/wallet_pwd!, and this file has none. A cleartext password is changed "
-            "with -set-pwd -encrypt, not with -rekey"
+            f"NO ENCRYPTED SECRETS IN {request.path.name}\n\n"
+            "-rekey rewrites values carrying pwd!/wallet_pwd!, and this file has none.\n"
+            "A cleartext password is changed with -set-pwd -encrypt, not with -rekey."
         )
 
     count = len(secrets)
@@ -172,8 +172,10 @@ def rekey_secrets(data: Any, request: ConnectionEditRequest) -> tuple[str, str]:
             plaintext.append(crypto.decrypt(secret.stored, old_key))
         except crypto.CryptoError as error:
             raise ConnectionEditError(
-                f"{secret.label} did not open with the given -old-key: wrong key, or a "
-                f"damaged value. Nothing was written ({error})"
+                f"{secret.label} DID NOT OPEN WITH THE GIVEN -old-key\n\n"
+                "Wrong key, or a damaged value. Nothing was written.\n\n"
+                # The cause keeps its own headline on its own line (ADT #934).
+                f"{error}"
             ) from error
 
     for secret, value in zip(secrets, plaintext, strict=True):
@@ -207,12 +209,14 @@ def _verify_old_key(
         return
     if len(mismatched) == len(recorded):
         raise ConnectionEditError(
-            f"wrong -old-key: it matches none of the {len(recorded)} recorded key "
-            f"fingerprints in {request.path.name}. Nothing was written"
+            "WRONG -old-key\n\n"
+            f"It matches none of the {len(recorded)} recorded key fingerprints in "
+            f"{request.path.name}.\nNothing was written."
         )
     raise ConnectionEditError(
-        f"{request.path.name} is already under more than one key, so no single -old-key "
-        f"opens all of it: {', '.join(mismatched)} did not match the given -old-key while "
+        f"{request.path.name} IS UNDER MORE THAN ONE KEY\n\n"
+        "No single -old-key opens all of it: "
+        f"{', '.join(mismatched)} did not match the given -old-key while\n"
         f"{len(recorded) - len(mismatched)} other secret(s) did. Settle the odd one out "
-        "first with -set-pwd -encrypt, then rekey the file. Nothing was written"
+        "first with -set-pwd -encrypt,\nthen rekey the file. Nothing was written."
     )

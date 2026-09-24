@@ -48,11 +48,20 @@ writes the commit its tree was exported at, and `-mirror db/<ENV>` puts that
 commit on a ref the whole team shares, which is what turns the refusal's last
 line into `git rebase`. It is not a signature: it moves no verdict, and a tree
 with no recorded commit refuses and passes exactly as it did before.
+
+**And a fifth, also never compared: WHO moved the target, and WHEN** (ADT #925).
+A refusal that ends in a merge sends the developer to somebody else's work, so
+it names that somebody: APEX's own `LAST_UPDATED_BY` / `LAST_UPDATED_ON`, the
+newer of the application row and its newest page. It is read BEFORE the ADT #726
+lock for the reason the checksum is (#745): the lock's build-status write stamps
+the application with the deploy's own user, and a read after it would blame the
+developer being refused. A read that fails answers "unknown" and nothing else.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -98,8 +107,29 @@ class RecordedExport:
     """
 
     checksum    : str = ""
+    checksum_at : str = ""
     base_commit : str = ""
     mirror_ref  : str = ""
+
+
+@dataclass(frozen=True)
+class LastChange:
+    """Who last moved a live application and when, as APEX recorded it.
+
+    Empty on an application nobody has touched since it was imported: an import
+    leaves every row's author and date blank, measured on APEX 26.1.0.
+    """
+
+    by : str = ""
+    on : str = ""
+
+    @property
+    def known(self) -> bool:
+        return bool(self.by or self.on)
+
+    def describe(self) -> str:
+        """`by JAN on 2026-09-23 16:55`, the log row's one-line form."""
+        return f"by {self.by or _NOT_RECORDED} on {self.on or _NOT_RECORDED}"
 
 
 @dataclass(frozen=True)
@@ -116,16 +146,11 @@ class ApexSignatures:
     # refusal names so the way out is a rebase (ADT #725).
     base_commit : str = ""
     mirror_ref  : str = ""
-
-    @property
-    def base(self) -> str:
-        """What the change was made against, as a refusal names it.
-
-        The commit when the export recorded one, and the checksum always: the
-        checksum is what the comparison actually used, so a reader can still see
-        why the two sides disagree on a tree exported before `#725`.
-        """
-        return f"{self.base_commit} {self.based_on}".strip()
+    # Recorded rather than compared, like the two above: who moved the target
+    # and when, so the refusal names whose work the merge is with (ADT #925).
+    last_change : LastChange = LastChange()
+    # When ``based_on`` was taken, so the refusal can say how old the base is.
+    based_at    : str = ""
 
     @property
     def rebase_command(self) -> str:
@@ -175,6 +200,59 @@ def read_target_signature(gateway: Any, app_id: int) -> str:
     return ""
 
 
+def read_last_change(
+    gateway : Any,
+    app_id  : int,
+    *,
+    now     : datetime | None = None,
+) -> LastChange:
+    """Who last moved ``app_id`` and when, or an empty answer when nobody can say.
+
+    Every failure is the empty answer, not only a missing application: the name
+    is a courtesy on a refusal the checksums already decided, and a view a
+    grant hides must not turn that refusal into a database error.
+    """
+    try:
+        rows = gateway.fetch_all(queries.APEX_LAST_CHANGE_QUERY, {"app_id": app_id})
+    except Exception:  # noqa: BLE001 - attribution never fails a deploy
+        return LastChange()
+    for row in rows:
+        return LastChange(
+            by = str(row_value(row, "CHANGED_BY") or "").strip(),
+            on = _local_minute(
+                str(row_value(row, "CHANGED_ON") or "").strip(),
+                str(row_value(row, "DB_NOW") or "").strip(),
+                now or datetime.now(),
+            ),
+        )
+    return LastChange()
+
+
+#: The database clock and this machine's differ by whole time zones plus a few
+#: seconds of round trip, so the offset is snapped to the quarter hour every
+#: real zone sits on.
+_ZONE_STEP = timedelta(minutes=15)
+
+
+def _local_minute(changed_on: str, db_now: str, now: datetime) -> str:
+    """``changed_on`` moved from the database's clock onto this machine's.
+
+    The export stamp YOUR BASE prints is local, so CHANGED ON has to be too or
+    the two cannot be read against each other. A value that does not parse is
+    printed as APEX gave it, to the minute, rather than dropped.
+    """
+    try:
+        changed = datetime.strptime(changed_on, _DB_FORMAT)
+        offset = now - datetime.strptime(db_now, _DB_FORMAT)
+    except ValueError:
+        return changed_on[:16]
+    snapped = round(offset / _ZONE_STEP) * _ZONE_STEP
+    return (changed + snapped).strftime("%Y-%m-%d %H:%M")
+
+
+_DB_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
 def _is_missing_application(error: BaseException) -> bool:
     text = str(error)
     return _NO_APPLICATION_CODE in text and _NO_APPLICATION_MARKER in text
@@ -188,6 +266,7 @@ def recorded_export(root: Path, app_id: int) -> RecordedExport:
         return RecordedExport()
     return RecordedExport(
         checksum    = str(entry.get("checksum") or "").strip(),
+        checksum_at = str(entry.get("checksum_at") or "").strip(),
         base_commit = str(entry.get("base_commit") or "").strip(),
         mirror_ref  = str(entry.get("mirror_ref") or "").strip(),
     )
@@ -228,6 +307,7 @@ def collect_signatures(
     target_id : int,
     tree_root : Path,
     on_target : str | None = None,
+    last_change : LastChange | None = None,
 ) -> ApexSignatures:
     """Read all three before anything is written, which is the whole point.
 
@@ -243,6 +323,9 @@ def collect_signatures(
     recorded, and refuse every guarded deploy (ADT #745). The lock captures the
     target as it stood one statement before it wrote to it, which is the only
     reading of "what is on the target" that means anything here.
+
+    ``last_change`` is taken by the same lock for the same reason: its write
+    stamps the application with the deploy's own user (ADT #925).
     """
     recorded = recorded_export(root, app_id)
     return ApexSignatures(
@@ -253,9 +336,14 @@ def collect_signatures(
             else read_target_signature(gateway, target_id)
         ),
         based_on    = recorded.checksum,
+        based_at    = recorded.checksum_at,
         deploying   = tree_signature(tree_root),
         base_commit = recorded.base_commit,
         mirror_ref  = recorded.mirror_ref,
+        last_change = (
+            last_change if last_change is not None
+            else read_last_change(gateway, target_id)
+        ),
     )
 
 
@@ -281,6 +369,9 @@ def signature_lines(signatures: ApexSignatures, *, forced: bool = False) -> list
         # project not using `-mirror` writes.
         mirror = f" ({signatures.mirror_ref})" if signatures.mirror_ref else ""
         lines.append(f"--   MERGE BASE       | {signatures.base_commit}{mirror}")
+    if signatures.last_change.known:
+        # Only when APEX recorded one, for the reason MERGE BASE above gives.
+        lines.append(f"--   LAST CHANGED     | {signatures.last_change.describe()}")
     lines.append(f"--   DEPLOYING        | {signatures.deploying or '(empty tree)'}")
     if forced:
         # Recorded whenever the flag was SET, not only when it changed the
@@ -299,37 +390,59 @@ def signature_lines(signatures: ApexSignatures, *, forced: bool = False) -> list
 
 
 def drift_message(signatures: ApexSignatures) -> str:
-    """The refusal, in the shape `patch`'s other build gates already print.
+    """The refusal: a headline, who and when on both sides, and the way out.
 
-    A lead line, the two states that disagree, and a `Run:` line naming what
-    clears it, the way `stale_full_app_message` and
-    `GraphFreshness.failure_message` read.
+    Rows a person reads, not values a machine compares (ADT #925, Jan: the
+    checksums do not matter on screen). The import log keeps them. YOUR BASE
+    carries the export's own date so the gap to CHANGED ON reads at a glance,
+    and the commit with its shared ref when the export recorded one, since that
+    is what the `Run:` rebase lands on (ADT #725). Every line sits two spaces in,
+    so the block reads as one; the error screen dedents it before adding its own
+    two, so on screen it sits under `ERROR - PATCH FAILED:` at two (ADT #934).
 
-    The two states are BASE and CURRENT rather than the checksum pair they used
-    to be, because a checksum pair is a diagnosis with no cure: it says the two
-    sides differ and gives the reader nothing to act on but a re-export. BASE
-    carries the commit when the export recorded one, so the `Run:` line can be a
-    rebase (ADT #725).
+    The first line is a short uppercase headline and the reason moves below it
+    (ADT #934). Jan, on the sentence that opened it: *"Should be shorter and
+    uppercased."*
     """
     if signatures.verdict == UNKNOWN:
-        lines = [
-            f"APP {signatures.app_id} has no recorded signature, so this deploy "
-            "cannot tell what the change was based on."
-        ]
-        lines.append(f"Run: {EXPORT_COMMAND} {signatures.app_id}, then commit the export")
-        return "\n".join(lines)
+        return "\n".join(
+            [
+                f"  APP {signatures.app_id} HAS NO RECORDED SIGNATURE",
+                "",
+                "  This deploy cannot tell what the change was based on.",
+                f"  Run: {EXPORT_COMMAND} {signatures.app_id}, then commit the export",
+            ]
+        )
+    change = signatures.last_change
     recovery = signatures.rebase_command or (
         f"{EXPORT_COMMAND} {signatures.app_id}, reconcile the tree"
     )
     return "\n".join(
         [
-            f"APP {signatures.target_id} moved since the tree was exported, so an "
-            "import would overwrite work this patch never saw.",
-            f"  BASE    {signatures.base}",
-            f"  CURRENT {signatures.on_target}",
-            f"Run: {recovery}, then deploy again (or -force to overwrite)",
+            f"  APP {signatures.target_id} CHANGED SINCE YOUR EXPORT",
+            "",
+            "  Deploying now would overwrite that work.",
+            "",
+            f"  CHANGED BY  | {change.by or _NOT_RECORDED}",
+            f"  CHANGED ON  | {change.on or _NOT_RECORDED}",
+            f"  YOUR BASE   | {_base(signatures)}",
+            "",
+            f"  Run: {recovery}, then deploy again (or -force to overwrite)",
         ]
     )
+
+
+#: What a row says when APEX kept no value, which is every row an import wrote.
+_NOT_RECORDED = "(not recorded)"
+
+
+def _base(signatures: ApexSignatures) -> str:
+    """`2026-09-23 16:58 (a5e59eb0 on db/dev)`, each part only when recorded."""
+    commit = signatures.base_commit[:8]
+    if commit and signatures.mirror_ref:
+        commit += f" on {signatures.mirror_ref}"
+    when = signatures.based_at or "(export time not recorded)"
+    return f"{when} ({commit})" if commit else when
 
 
 __all__ = [name for name in globals() if not name.startswith("_")]

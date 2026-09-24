@@ -28,7 +28,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from adt_ai.patch.generated_helpers import ALTER_HELPER_SLOT
+from adt_ai.patch.content import decode_repo_text
+from adt_ai.patch.generated_helpers import alter_helper_slot
 from adt_ai.patch.immutables import immutable_types
 from adt_ai.patch.layout import database_object_stem, database_object_type
 from adt_ai.patch.models import AlterHelper
@@ -152,11 +153,11 @@ def write_sequence_alter_helpers(
         # defensive: `file` already resolved a SEQUENCE type off the same layout
         if not name:  # pragma: no cover
             continue
-        for label, previous, current in _steps(root, file, records, hash_previous, window):
+        for label, previous, current in _steps(root, file, records, hash_previous, window, config):
             sql = sequence_alter_sql(name, previous, current)
             if not sql:
                 continue
-            folder = script_root / ALTER_HELPER_SLOT
+            folder = script_root / alter_helper_slot(config)
             folder.mkdir(parents=True, exist_ok=True)
             helper = folder / f"{Path(file).stem}.{label}.sql"
             text_files.write_text(helper, sql)
@@ -172,12 +173,14 @@ def _steps(
     records: list[CommitRecord],
     hash_previous: Mapping[str, str] | None,
     window: list[CommitRecord] | None,
+    config: dict[str, Any],
 ) -> list[tuple[str, str, str]]:
     """`(helper label, previous text, current text)` for each change to compare.
 
     The same two bases the table writers use: in hash mode the version the
     baseline recorded against the working tree, otherwise the version before the
-    window followed by each in-window version standing in for the next.
+    window followed by each in-window version standing in for the next. Every
+    text is decoded the way the file ships, in `repo_encoding` (ADT #923).
     """
     if hash_previous is not None:
         baseline = hash_previous.get(file)
@@ -185,17 +188,17 @@ def _steps(
         if not baseline or not current.is_file():
             return []
         previous = _body_at_content_hash(
-            root, file, window if window is not None else records, baseline
+            root, file, window if window is not None else records, baseline, config=config
         )
         if previous is None:
             return []
-        return [("hash", previous, current.read_text(encoding="utf-8"))]
-    versions = _table_versions(root, file, records)
+        return [("hash", previous, decode_repo_text(current.read_bytes(), file, config))]
+    versions = _table_versions(root, file, records, config=config)
     # A file the window deleted has no version to reach; its DROP is the answer.
     if not versions:
         return []
     previous_bodies = [
-        _table_baseline(root, file, records),
+        _table_baseline(root, file, records, config=config),
         *(body for _, body in versions[:-1]),
     ]
     return [

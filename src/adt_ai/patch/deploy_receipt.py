@@ -11,11 +11,13 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.patch import settings
-from adt_ai.patch.apex_deploy import _application_facts
+from adt_ai.patch.apex_deploy import ApexImportItem, _application_facts
 from adt_ai.patch.apex_import import ApexTarget
 from adt_ai.patch.deploy_progress import _link_pattern
 from adt_ai.patch.models import DeploymentPlanItem
+from adt_ai.patch.templates import _apex_environment_payload, for_target, unscoped
 from adt_ai.shared import text_files
+from adt_ai.shared.apexlang_line_endings import import_bytes, is_source
 from adt_ai.shared.deploy_status import DEPLOY_RECEIPT, read_deploy_receipt
 from adt_ai.validate.files import resolve_targets
 
@@ -42,7 +44,10 @@ def _include_closure(paths: set[Path], folder: Path, config: dict[str, Any]) -> 
         if not path.is_file():
             return False
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-            line = line.strip()
+            # Every environment's `--[ENV] ` link is followed, not only this
+            # target's (#924 F33): a superset proof re-runs a deploy after any
+            # scoped template changes, and never skips one that should run.
+            line = unscoped(line).strip()
             if re.match(r"^(?:(?:CD|HOST)(?:\s|$)|!)", line, re.I):
                 return False
             match = _INCLUDE_RE.match(line)
@@ -91,6 +96,7 @@ def deployment_fingerprint(
     waive.
     """
     paths = {item.path.resolve() for item in plan}
+    sources: set[Path] = set()
     for name in (settings.snapshots_folder(config), settings.scripts_snap_folder(config)):
         paths.update(path.resolve() for path in (folder / name).rglob("*") if path.is_file())
     if not _include_closure(paths, folder, config):
@@ -103,6 +109,10 @@ def deployment_fingerprint(
         for target in targets:
             for tree in (target.path, target.path.parent / "files"):
                 paths.update(path.resolve() for path in tree.rglob("*") if path.is_file())
+            sources.update(
+                path.resolve() for path in target.path.rglob("*")
+                if path.is_file() and is_source(path.relative_to(target.path))
+            )
     digest = hashlib.sha256()
     policy = {
         "plan": [(item.file, item.schema, item.app_id) for item in plan],
@@ -121,6 +131,11 @@ def deployment_fingerprint(
         # Root-relative identities survive moving/cloning the patch checkout.
         label = Path(os.path.relpath(path, root)).as_posix()
         content = path.read_bytes() if path.is_file() else b"<MISSING>"
+        if path in sources:
+            # The bytes the import reads, after the tree's CRLF-to-LF conversion
+            # (ADT #928), so a run that converted its tree matches its own
+            # receipt next time rather than importing the same tree again (#936).
+            content = import_bytes(content)
         digest.update(json.dumps([label, len(content)]).encode())
         digest.update(content)
     return digest.hexdigest()
@@ -159,3 +174,40 @@ def _runs_sql(text: str) -> bool:
         ):
             return True
     return False
+
+
+def installed_app_id(
+    item: DeploymentPlanItem, imports: list[ApexImportItem], root: Path, config: dict[str, Any],
+    target: str | None = None,
+) -> int | None:
+    """A tree-only carrier does not install its source application.
+
+    Counts cannot prove this: templates and inline SQL can write an application
+    without contributing a countable file. Only an inert SQLcl carrier, after
+    removing the known workspace-selection block, can omit the source scan.
+    Unknown SQL remains subject to verification of both source and target.
+    The script is read as ``target`` runs it (#924 F33).
+
+    It lives here rather than in the deploy loop it is called from (`#929`)
+    because both readers it leans on do: `_include_closure` walks the same
+    `@`/`@@` closure the fingerprint above hashes, and `_runs_sql` answers the
+    same question about the same carrier. The loop kept a third copy of that
+    neighbourhood and crossed the 24 KB context guard holding it.
+    """
+    if item.app_id is None or not any(
+        imported.app_id == item.app_id and imported.retargeted for imported in imports
+    ):
+        return item.app_id
+    paths = {item.path.resolve()}
+    if not _include_closure(paths, item.path.parent, config):
+        return item.app_id
+    environment = "\n".join(_apex_environment_payload(root, item.app_id)).strip()
+    for path in paths:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if path == item.path.resolve():
+            text = for_target(text, config, target)
+        if environment:
+            text = text.replace(environment, "")
+        if _runs_sql(text):
+            return item.app_id
+    return None

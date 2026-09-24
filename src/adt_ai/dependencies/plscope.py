@@ -88,15 +88,24 @@ def ensure_plscope(
     # 3. Recompile each with scope=["ALL"] + REUSE SETTINGS on the same gateway.
     #    The row opens here, in front of the first ``ALTER ... COMPILE``, so the
     #    unbounded half of the work is the half it announces.
-    crawl = _Crawl(bar)
+    crawl = _Crawl(bar, PROGRESS_HEADER)
     recompiled: list[RecompileObject] = []
     total = len(pending)
     for index, database_object in enumerate(pending, start=1):
-        statement = build_compile_statement(
-            database_object.object_type,
-            database_object.object_name,
-            scope=["ALL"],
-        )
+        try:
+            # Built inside the guard (ADT #923): a name the identifier check
+            # refuses cannot be compiled by this statement at all, so it is left
+            # as it is, with no line of its own, and the rest still compile. A
+            # recycle-bin name, the common one, never reaches here: the query
+            # leaves `BIN$` objects out.
+            statement = build_compile_statement(
+                database_object.object_type,
+                database_object.object_name,
+                scope=["ALL"],
+            )
+        except ValueError:
+            crawl.advance(index, total)
+            continue
         try:
             gateway.execute(statement)
         except Exception as exc:
@@ -124,10 +133,16 @@ class _Crawl:
 
     A no-op when there is no bar, so every call site above reads the same with
     or without a console and no branch has to be repeated around each draw.
+
+    ``header`` lets the component scan's page-by-page fallback crawl on this
+    same row under its own label (ADT #865), so the dependencies module keeps
+    one counted crawl rather than growing a second one beside it. It is spelled
+    at every construction, where `tests/helpers/console_surface.py` reads it.
     """
 
-    def __init__(self, bar: DottedProgressBar | None) -> None:
+    def __init__(self, bar: DottedProgressBar | None, header: str) -> None:
         self._bar = bar
+        self._header = header
         self._started_at = time.monotonic()
         self._open = False
         self._done = False
@@ -140,7 +155,9 @@ class _Crawl:
     def advance(self, index: int, total: int) -> None:
         if total <= 0:
             return
-        percent = min(int(((index / total) * 100) + 0.5), 100)
+        # Held at 99 until the last unit is done: 301 of 302 rounds to 100, and
+        # a finished-looking row over a unit still running is a naked wait.
+        percent = min(int(((index / total) * 100) + 0.5), 100 if index == total else 99)
         elapsed = time.monotonic() - self._started_at
         remaining = (elapsed / index) * (total - index) if index else 0.0
         self._draw(percent, int(elapsed if index == total else remaining), close=index == total)
@@ -155,12 +172,19 @@ class _Crawl:
         if not self._done:
             self._draw(100, int(time.monotonic() - self._started_at), close=True)
 
+    def fail(self) -> None:
+        """Close the row on FAILED: the loop ran and produced nothing usable."""
+        if self._bar is not None:
+            self._bar.print_failed(self._header)
+        self._open = False
+        self._done = True
+
     def _draw(self, percent: int, seconds: int, *, close: bool = False) -> None:
         self._last_percent = percent
         if self._bar is None:
             self._open = not close
             self._done = self._done or close
             return
-        self._bar.print_line(PROGRESS_HEADER, percent, seconds, close=close)
+        self._bar.print_line(self._header, percent, seconds, close=close)
         self._open = not close
         self._done = self._done or close

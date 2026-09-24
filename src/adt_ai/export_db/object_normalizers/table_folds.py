@@ -3,10 +3,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from adt_ai.export_db.normalizer_identifiers import identifier_key, split_qualified_name
 from adt_ai.export_db.normalizers import (
     NormalizationContext,
     _constraint_column_names,
-    _identifier_key,
     _matching_parenthesis_index,
     _normalize_sql_identifier,
     sql_spans,
@@ -184,4 +184,4 @@ def _make_fold(parsed: dict[str, str], context: NormalizationContext) -> _Folded
     )
 
 def _index_identity_key(name: str) -> str:
-    return _identifier_key(name.split(".")[-1])
+    return identifier_key(split_qualified_name(name)[-1])

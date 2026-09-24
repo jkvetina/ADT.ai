@@ -167,10 +167,12 @@ def unexportable_object_types_message(object_types: Iterable[str]) -> str:
     on it, and points at the map rather than telling anyone to add a row to it:
     which of the 26ai types ADT should carry is the approval-gated question
     `#738` holds, and `DOMAIN` would not export from a new row anyway.
+
+    A short uppercase headline, the types and the map under it (ADT #934).
     """
     return (
-        "export_db: -type selected object types export_db does not export: "
-        f"{', '.join(object_types)}. Its exported types are the 'object_types' "
+        "-type SELECTS TYPES export_db DOES NOT EXPORT\n\n"
+        f"{', '.join(object_types)}: its exported types are the 'object_types' "
         "keys in config.yaml."
     )
 
@@ -240,15 +242,15 @@ def resolve_author_filter(
         return changed_by, my_changes, None
     if _audit_config(config) is None:
         raise AuthorFilterError(
-            "export_db: -by/-my needs an 'audit:' source "
-            "(source/object_name/changed_by) configured in config.yaml."
+            "-by/-my NEEDS AN 'audit:' SOURCE\n\n"
+            "Configure one (source/object_name/changed_by) in config.yaml."
         )
     authors: list[str] = []
     if my_changes:
         db_schema = session_identifier(load_identity(config_search_paths))
         if not db_schema:
             raise AuthorFilterError(
-                "export_db: -my needs config/IDENTITY.yaml with a db_schema entry."
+                "-my NEEDS A db_schema IN config/IDENTITY.yaml"
             )
         authors.append(db_schema)
     if changed_by is not None:

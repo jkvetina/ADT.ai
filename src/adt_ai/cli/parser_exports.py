@@ -1,8 +1,23 @@
 from __future__ import annotations
 
+import argparse
+
 from adt_ai.cli.parser_common import SubParsers, add_connection_key_argument
 from adt_ai.shared.dates import recent_window
 from adt_ai.shared.recent_state import BARE_RECENT
+
+
+def author(value: str) -> str:
+    """One `-by` AUTHOR, never blank.
+
+    Both export verbs took a bare `-by` as `""`, and `args.by or None` then
+    dropped the filter, so the run exported everything as if `-by` had never
+    been typed. Jan, `#924` F55: refuse it. A bare flag is argparse's own
+    "expected one argument"; a blank value lands here.
+    """
+    if not value.strip():
+        raise argparse.ArgumentTypeError("NEEDS AN AUTHOR")
+    return value
 
 
 def add_export_parsers(subparsers: SubParsers) -> None:
@@ -114,8 +129,7 @@ def add_export_parsers(subparsers: SubParsers) -> None:
     export_db.add_argument(
         "--by",
         "-by",
-        nargs = "?",
-        const = "",
+        type  = author,
         help  = "limit to objects changed by AUTHOR, a database user, resolved "
                 "through the project's configured audit source",
     )
@@ -271,8 +285,7 @@ def add_export_parsers(subparsers: SubParsers) -> None:
     export_apex.add_argument(
         "--by",
         "-by",
-        nargs = "?",
-        const = "",
+        type  = author,
         help  = "limit to components changed by DEVELOPER, an APEX workspace user",
     )
     export_apex.add_argument(

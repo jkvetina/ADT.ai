@@ -29,7 +29,7 @@ Keep the file names. A script `patch -create` wants but cannot find is not linke
 
 ## Environment-specific files
 
-`name.[ENV].sql` is injected only when `-target ENV` matches; an untagged file runs against every environment. Name a file `95_release.[PROD].sql` and it lands in a `-target PROD` patch and nowhere else.
+`name.[ENV].sql` runs only on a `patch -deploy -target ENV`; an untagged file runs against every environment. Name a file `95_release.[PROD].sql` and it runs on PROD and nowhere else. The install script links it behind a `--[PROD] ` comment whatever `-create` was given, so one patch deploys to any target, and a hand-run in SQLcl skips it.
 
 ## Nothing in these files is substituted
 
@@ -48,7 +48,7 @@ Two things you would otherwise hand-edit into a template are generated into the 
 | Emitted                                                                | From                                              | When                                        |
 | ---------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------- |
 | `APEX_UTIL.SET_WORKSPACE` + `APEX_APPLICATION_INSTALL.SET_KEEP_SESSIONS` | the app's `workspace` in `config/internal/apex.db`  | every APEX patch whose app is in that file  |
-| `APEX_UTIL.SET_APP_BUILD_STATUS`                                        | `patch_apex_build_status` in `config.yaml`        | only on a matching `-target`                |
+| `APEX_UTIL.SET_APP_BUILD_STATUS`                                        | `patch_apex_build_status` in `config.yaml`        | only on a matching `-deploy -target`        |
 
 `config/internal/apex.db` is written by `export_apex` and read without connecting, so this costs no database round trip. An app it has never recorded gets no workspace block at all, ADT does not guess one, and your own `apex_init/` file is then in charge.
 

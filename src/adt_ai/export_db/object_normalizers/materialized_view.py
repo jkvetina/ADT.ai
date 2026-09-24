@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from adt_ai.export_db.normalizer_clauses import strip_default_clauses
 from adt_ai.export_db.normalizers import (
     NormalizationContext,
     _drop_create_wrap,
@@ -20,9 +21,23 @@ from adt_ai.export_db.object_normalizers.view_columns import column_block
 # materialized view even with PHYSICAL_PROPERTIES/SEGMENT_ATTRIBUTES suppressed.
 # Old ADT keeps only the BUILD/REFRESH intent, so we allowlist those and drop
 # everything else between the CREATE line and the AS query body.
+#
+# The query-options line joined the allowlist at ADT #923: DBMS_METADATA writes
+# constraint trust, on-query computation, query rewrite and concurrent refresh on
+# one line, and dropping it whole exported an MV built `USING TRUSTED
+# CONSTRAINTS ... ENABLE QUERY REWRITE` as one with neither. Old ADT kept TRUSTED
+# (export_db.py:847). Only the non-default options survive, see below.
 _MVIEW_KEEP_OPTION = re.compile(
-    r"^(BUILD|REFRESH|NEXT|START\s+WITH)\b",
+    r"^(BUILD|REFRESH|NEXT|START\s+WITH|USING\s+(?:ENFORCED|TRUSTED)\s+CONSTRAINTS"
+    r"|(?:ENABLE|DISABLE)\s+(?:ON\s+QUERY\s+COMPUTATION|QUERY\s+REWRITE|CONCURRENT\s+REFRESH))\b",
     flags=re.IGNORECASE,
+)
+# The defaults on that line, which a replay produces without being asked.
+_MVIEW_DEFAULT_OPTIONS = (
+    r"USING\s+ENFORCED\s+CONSTRAINTS",
+    r"DISABLE\s+ON\s+QUERY\s+COMPUTATION",
+    r"DISABLE\s+QUERY\s+REWRITE",
+    r"DISABLE\s+CONCURRENT\s+REFRESH",
 )
 _MVIEW_LOG_KEEP_OPTION = re.compile(
     r"^(WITH|INCLUDING|EXCLUDING)\b",
@@ -63,7 +78,10 @@ def normalize_materialized_view(
         kept = [create_line]
     for line in header[1:]:
         stripped = line.strip()
-        if stripped and _MVIEW_KEEP_OPTION.match(stripped):
+        if not (stripped and _MVIEW_KEEP_OPTION.match(stripped)):
+            continue
+        stripped = strip_default_clauses(f" {stripped}", _MVIEW_DEFAULT_OPTIONS).strip()
+        if stripped:
             kept.append(stripped)
     if annotations:
         kept.append(annotations)

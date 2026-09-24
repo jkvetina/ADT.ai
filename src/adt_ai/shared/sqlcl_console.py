@@ -66,6 +66,7 @@ from __future__ import annotations
 import contextlib
 import os
 import re
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -109,6 +110,18 @@ class PtyConsole:
     module loads for every command while only a `sqlcl_only` project ever opens
     a terminal, and at module scope the pair took the whole CLI down on Windows
     (ADT #449).
+
+    **The child is a process group, and it ends as one (ADT #923).** `sql` is a
+    bash script that starts `java` as its child rather than exec'ing it, so the
+    launcher is spawned into a session of its own and `kill` signals that whole
+    group. Signalling the launcher alone left the JVM running with its database
+    session and the pty slave, and on macOS that wedged `close` as well: closing
+    a pty master waits for a read still in flight on it, and the session's reader
+    only returns once nothing holds the slave. Measured 2026-09-23 on
+    `sql -S /nolog`, see `kill`. On macOS the pty also becomes that session's
+    controlling terminal (`ps` shows `Ss+` on a plain `/bin/sh` spawned this
+    way), so the JVM is hung up when its launcher dies, however it dies. That
+    is also why `open` turns the terminal's signal characters off.
     """
 
     echoes = False
@@ -139,15 +152,19 @@ class PtyConsole:
         writer: Any = None
         try:
             attributes = termios.tcgetattr(slave)
-            attributes[3] &= ~termios.ECHO
+            # No echo, and no signals from typed bytes (ADT #923): bash makes this
+            # pty SQLcl's controlling terminal, so a ^C inside a statement reached
+            # SQLcl as SIGINT and ended it with exit 130, measured 2026-09-23.
+            attributes[3] &= ~(termios.ECHO | termios.ISIG)
             termios.tcsetattr(slave, termios.TCSANOW, attributes)
             process = subprocess.Popen(
                 list(self.launcher),
-                stdin  = slave,
-                stdout = slave,
-                stderr = slave,
-                env    = self.environment,
-                cwd    = self.cwd,
+                stdin             = slave,
+                stdout            = slave,
+                stderr            = slave,
+                env               = self.environment,
+                cwd               = self.cwd,
+                start_new_session = True,
             )
             writer_descriptor = os.dup(master)
             try:
@@ -157,6 +174,10 @@ class PtyConsole:
                 raise
         except BaseException:
             if process is not None:
+                # The whole group, so a JVM the launcher already started goes
+                # too, then the launcher by its own pid as this always did.
+                with contextlib.suppress(Exception):
+                    os.killpg(process.pid, signal.SIGKILL)
                 with contextlib.suppress(Exception):
                     process.kill()
                 with contextlib.suppress(Exception):
@@ -210,10 +231,38 @@ class PtyConsole:
         self._process.wait(timeout=timeout)
 
     def kill(self) -> None:
-        if self._process is not None:
-            self._process.kill()
+        """End the launcher and everything it started, the JVM included.
+
+        One SIGKILL to the group `open` spawned, whose id is the launcher's pid.
+        Sent only while the launcher is unreaped: until then it pins that id, and
+        once it is reaped the number can belong to some other group. Measured
+        2026-09-23 with `sql -S /nolog` at its prompt and a reader in flight. The
+        old spawn and `kill` left the JVM running after its launcher was gone,
+        and the old `close` was still blocked 5 s later, returning only once the
+        JVM was killed by hand. With this one, `kill`, `wait` and `close` took
+        0.001 s together and left nothing in the group; `close` alone, with no
+        `kill` first, did the same.
+        """
+        process = self._process
+        if process is None or process.returncode is not None:
+            return
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        except OSError:
+            process.kill()
 
     def close(self) -> None:
+        # The child goes before the terminal does. A master closed under a live
+        # JVM waits on macOS for the reader still in flight on it, and that read
+        # only ends once nothing holds the slave (ADT #923).
+        if self._process is not None:
+            with contextlib.suppress(Exception):
+                self.kill()
+            with contextlib.suppress(Exception):
+                self._process.wait(timeout=5)
+            self._process = None
         if self._writer is not None:
             with contextlib.suppress(Exception):
                 self._writer.close()
@@ -222,13 +271,6 @@ class PtyConsole:
             with contextlib.suppress(OSError):
                 os.close(self._master)
             self._master = None
-        if self._process is not None:
-            if self._process.poll() is None:
-                with contextlib.suppress(Exception):
-                    self._process.kill()
-            with contextlib.suppress(Exception):
-                self._process.wait()
-            self._process = None
 
 
 class ConPtyConsole:

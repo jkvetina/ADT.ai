@@ -139,7 +139,9 @@ def parse_layers(values: list[str] | None) -> tuple[str, ...]:
     unknown = sorted(chosen - set(LAYERS))
     if unknown:
         vocabulary = ", ".join(LAYERS[:-1]) + f" or {LAYERS[-1]}"
-        raise ValueError(f"-layer {' '.join(unknown)}: a layer is {vocabulary}")
+        raise ValueError(
+            f"UNKNOWN -layer {' '.join(unknown)}\n\nA layer is {vocabulary}."
+        )
     return tuple(layer for layer in LAYERS if layer in chosen)
 
 

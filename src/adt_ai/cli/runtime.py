@@ -41,6 +41,7 @@ from adt_ai.cli.context import (
     _print_sqlcl_error,
     _print_unexpected_error,
 )
+from adt_ai.cli.context_errors import _print_export_failures
 from adt_ai.cli.gateways import gateway_scope
 from adt_ai.cli.help import format_command_help
 from adt_ai.cli.parser import (
@@ -50,8 +51,10 @@ from adt_ai.cli.parser import (
     _removed_compatibility_args,
     build_parser,
 )
+from adt_ai.cli.raw_completion_args import _completion_args_from_raw
 from adt_ai.cli.rebuild_refresh import _rebuild_argument_error
 from adt_ai.cli.validate_scan import _scan_argument_error
+from adt_ai.export_db.failures import ExportObjectsFailedError
 from adt_ai.shared.announce import announced_factory, strict_mode
 from adt_ai.shared.env_bootstrap import hydrate_environment
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
@@ -243,7 +246,7 @@ def main(
             if removed_args:
                 return _run_command_argument_error(
                     raw_argv[0],
-                    f"unrecognized arguments: {' '.join(removed_args)}",
+                    f"UNRECOGNIZED ARGUMENTS: {' '.join(removed_args)}",
                     raw_argv[1:],
                 )
         if raw_argv[0] in PUBLIC_COMMANDS and _has_help_flag(raw_argv[1:]):
@@ -269,7 +272,7 @@ def main(
     # Second hook for every module, same reason as hydrate_environment(): the
     # generated data files belong under config/internal/, and a project root
     # written by an older ADT.ai still has them loose in config/. Relocating
-    # here rather than per command is what makes it hold for all sixteen. It
+    # here rather than per command is what makes it hold for every command. It
     # runs before the banner, so it neither prints nor raises (internal_paths).
     _migrate_internal_files(args)
 
@@ -349,11 +352,15 @@ def _run_command(
         if getattr(args, "debug", False):
             raise
         # `hasattr` rather than the value: the namespace carries the attribute
-        # exactly where the parser declared the flag, so the five commands that
-        # never took `-debug` stop closing their refusals by advising it (`#656`).
+        # exactly where the parser declared the flag, so the commands that never
+        # took `-debug` stop closing their refusals by advising it (`#656`).
         debug_available = hasattr(args, "debug")
         if isinstance(error, SqlclScriptError):
             _print_sqlcl_error(error, debug_available=debug_available)
+        elif isinstance(error, ExportObjectsFailedError):
+            # `diff` and `recompile` pull through the export runner too, and a
+            # refused object reaches them after the rest was written (`#917`).
+            _print_export_failures(error, debug_available=debug_available)
         elif _is_user_database_error(error):
             _print_database_error(error, debug_available=debug_available)
         else:
@@ -432,7 +439,7 @@ def _run_invalid_command(command: str) -> int:
             details = ["Use:", "  adtai doctor -init"]
         elif command in {"update", "upgrade"}:
             details = ["Use one of:", "  adtai doctor -update", "  adtai doctor -sqlcl"]
-        print_adt_error("UNKNOWN COMMAND", f"`{command}` is not an ADT.ai command.", details)
+        print_adt_error("UNKNOWN COMMAND", f"`{command}` IS NOT AN ADT.ai COMMAND", details)
         _print_module_overview(file=sys.stderr)
 
     return _run_static_screen(render, exit_code=exit_code_for("UNKNOWN COMMAND"))
@@ -456,75 +463,6 @@ _MODE_ARGUMENT_CHECKS = {
 def _mode_argument_error(args: argparse.Namespace) -> str | None:
     check = _MODE_ARGUMENT_CHECKS.get(args.command)
     return None if check is None else check(args)
-
-
-def _completion_args_from_raw(raw_args: Sequence[str]) -> argparse.Namespace | None:
-    beep = _raw_beep_value(raw_args)
-    nobeep = _raw_flag_present(raw_args, ("-nobeep", "--nobeep"))
-    if beep is False and not nobeep:
-        return None
-    return argparse.Namespace(
-        beep       = beep,
-        nobeep     = nobeep,
-        root       = _raw_option_value(raw_args, ("-root", "--root"), "."),
-        config_dir = _raw_option_values(raw_args, ("-config-dir", "--config-dir")),
-    )
-
-
-def _raw_beep_value(raw_args: Sequence[str]) -> bool | str:
-    value: bool | str = False
-    index = 0
-    while index < len(raw_args):
-        arg = raw_args[index]
-        if arg in {"-beep", "--beep"}:
-            value = True
-            if index + 1 < len(raw_args) and not raw_args[index + 1].startswith("-"):
-                value = raw_args[index + 1]
-                index += 2
-                continue
-        else:
-            for name in ("-beep", "--beep"):
-                if arg.startswith(f"{name}="):
-                    value = arg.split("=", 1)[1] or True
-                    break
-        index += 1
-    return value
-
-
-def _raw_flag_present(raw_args: Sequence[str], names: tuple[str, ...]) -> bool:
-    return any(arg in names for arg in raw_args)
-
-
-def _raw_option_value(
-    raw_args: Sequence[str],
-    names: tuple[str, ...],
-    default: str,
-) -> str:
-    values = _raw_option_values(raw_args, names)
-    return values[-1] if values else default
-
-
-def _raw_option_values(raw_args: Sequence[str], names: tuple[str, ...]) -> list[str]:
-    values: list[str] = []
-    index = 0
-    while index < len(raw_args):
-        value = raw_args[index]
-        matched = False
-        for name in names:
-            if value == name:
-                if index + 1 < len(raw_args):
-                    values.append(raw_args[index + 1])
-                index += 2
-                matched = True
-                break
-            if value.startswith(f"{name}="):
-                values.append(value.split("=", 1)[1])
-                index += 1
-                matched = True
-                break
-        if not matched:
-            index += 1
-    return values
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

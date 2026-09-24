@@ -38,9 +38,9 @@ DELETED  = "DELETED"
 def checkout_refusal(root: Path, branch: str | None) -> str | None:
     """Why `-restore` cannot write into `root`, or `None` when it can."""
     if git_output(root, ["rev-parse", "--is-inside-work-tree"]) != "true":
-        return f"-restore writes into -root, and {root} is not a git work tree."
+        return f"NOT A GIT WORK TREE: {root}\n\n-restore writes into -root, so -root has to be one."
     if branch is not None and git_output(root, ["check-ref-format", "--branch", branch]) is None:
-        return f"-branch {branch} is not a valid branch name."
+        return f"-branch {branch} IS NOT A VALID BRANCH NAME"
     return None
 
 
@@ -51,7 +51,7 @@ def switch_branch(root: Path, branch: str | None) -> str:
         switch = ["switch", branch] if exists is not None else ["switch", "-c", branch]
         if git_output(root, switch) is None:
             raise RuntimeError(
-                f"git could not switch to {branch} in {root}; the checkout is left as it was."
+                f"GIT COULD NOT SWITCH TO {branch}\n\nIn {root}; the checkout is left as it was."
             )
     name = git_output(root, ["branch", "--show-current"])
     if name:

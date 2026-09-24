@@ -286,7 +286,7 @@ def print_vpd_tables(report: VpdReport, *, opening: str = "") -> None:
             columns=list(_VPD_POLICY_COLUMNS),
         )
     if report.column:
-        print_adt_header(f"VPD MISSING - {report.column}:")
+        print_adt_header(f"WARNING - VPD MISSING FOR {report.column}:")
         print_adt_table(
             [{"TABLE_NAME": name} for name in report.missing()],
             columns=["TABLE_NAME"],
@@ -352,7 +352,7 @@ def print_trailing_updated_objects(
 
 def _print_trailing_failures(trailing_actions: list[TrailingAction]) -> None:
     # a failed rewrite lists its error below the list, keyed by object name and
-    # styled like the COMPILE ERRORS / mview action message lists.
+    # styled like the `ERROR - RECOMPILATION FAILED:` / mview action message lists.
     failed_actions = [action for action in trailing_actions if not action.ok and action.error]
     for action in failed_actions:
         print(f"  {action.object_name}) {action.error}")

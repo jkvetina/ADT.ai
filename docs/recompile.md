@@ -60,6 +60,8 @@ A run reads the overview, recompiles, retries whatever failed on a fresh connect
 
 First it drops any stray `DEPSCAN$<n>#<n>` procedures, silently. APEX's dependency scan generates these helpers, and `rebuild -app`, `validate -scan` and `patch` already remove them after their own scan. They are never compiled, counted or rewritten, here or under `-trailing`, and `export_db` never writes one. The report-only modes leave them alone.
 
+Recycle-bin objects (`BIN$...`) are left out the same way: Oracle takes no DDL on one, so they are not counted, compiled or listed with their errors. An object whose name no plain identifier spells fails on its own and the run carries on, as a failed compile does.
+
 The retry runs in reverse order, and repeats for as long as each pass compiles something new. Reversing alone is enough when the dependencies run with the alphabet, and not enough when they criss-cross.
 
 `A` needs `C`, `C` needs `B`, `B` needs nothing: one retry leaves `A` and `C` invalid on a schema two more passes would finish. A pass that compiles nothing new is where it stops, so a genuinely broken object costs one wasted pass and never a loop.
@@ -84,9 +86,8 @@ INVALID OBJECTS:
   ------------   -----------   ---------   ------
   PACKAGE BODY   APP_BILLING   ORA-00942        2
 
-COMPILE ERRORS:
----------------
-
+ERROR - RECOMPILATION FAILED:
+-----------------------------
   PACKAGE BODY.APP_BILLING
     - 5.46 PL/SQL: ORA-00942: table or view does not exist
 
@@ -105,7 +106,7 @@ The section order is fixed, and the verdict reads last because it belongs under 
 
 - **`VALIDATED` sits beside `INVALID` so the two read as a pair**, what the run fixed and what it could not. It counts objects that were invalid before the run and are not any more, as a set difference over object identity rather than a count delta: recompiling a spec invalidates its dependents, so a run that fixes one object and breaks another leaves `INVALID` unchanged, and a delta would report the repair as nothing happening.
 - Zero renders blank, so only real repairs draw the eye.
-- **`COMPILE ERRORS:` is a list, not a table column.** A compiler message is prose, and the one column left over at 80 characters truncates the very identifier you need to grant.
+- **`ERROR - RECOMPILATION FAILED:` is a list, not a table column.** A compiler message is prose, and the one column left over at 80 characters truncates the very identifier you need to grant.
 
 <br>
 
@@ -200,7 +201,7 @@ Each of these opts into exactly one object class, so it takes no name pattern of
 | `-synonyms` | `SYNONYMS:`, then one `SYNONYMS TO SCHEMA <OWNER>:` table per target owner | no |
 | `-disabled` | `DISABLED CONSTRAINTS:`, `DISABLED INDEXES:` and `DISABLED TRIGGERS:` | no |
 | `-jobs` | today's scheduler runs, one compact table per status | no |
-| `-vpd` | `VPD FUNCTIONS:`, one `VPD POLICIES - <FUNCTION>:` per function, and `VPD COVERAGE:`, plus `VPD MISSING - <COLUMN>:` given a column | no |
+| `-vpd` | `VPD FUNCTIONS:`, one `VPD POLICIES - <FUNCTION>:` per function, and `VPD COVERAGE:`, plus `WARNING - VPD MISSING FOR <COLUMN>:` given a column | no |
 | `-trailing` | rewrites stored source without trailing whitespace | yes |
 
 An empty result still prints a header-only table, so the report is visibly present.
@@ -231,7 +232,7 @@ It reads the string literals the function can return, in a `RETURN` or assigned 
 
 `VPD COVERAGE:` is a one-row table: `TABLES` in scope, `WITH POLICY` and `WITHOUT POLICY`. A schema with a thousand tables and ten policies gets three numbers here, not a list of the 990 tables that have none.
 
-To list them, name the column that makes a table need a policy: `-vpd TENANT_ID` adds `VPD MISSING - TENANT_ID:`, which lists every table that has the column but no policy. The value is a `LIKE` pattern, so `-vpd %TENANT%` also works.
+To list them, name the column that makes a table need a policy: `-vpd TENANT_ID` adds `WARNING - VPD MISSING FOR <COLUMN>:` for `TENANT_ID`, which lists every table that has the column but no policy. The value is a `LIKE` pattern, so `-vpd %TENANT%` also works.
 
 `-type` sets what `-name` matches: `TABLE`, `POLICY` or `FUNCTION`, with the function matched with or without its package. Without `-type`, a row matches when the pattern hits any of the three. The missing list and the counts are about tables, so a `POLICY` or `FUNCTION` pattern leaves them covering the whole schema.
 

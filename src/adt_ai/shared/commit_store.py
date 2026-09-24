@@ -85,7 +85,7 @@ def _lift_2(connection: sqlite3.Connection) -> None:
 def _lift_3(connection: sqlite3.Connection) -> None:
     branches = [str(row[0]) for row in connection.execute(queries.COMMIT_V3_BRANCHES_QUERY)]
     if len(branches) > 1:
-        raise ValueError(f"commit store already contains multiple branches: {branches}")
+        raise ValueError(f"COMMIT STORE HOLDS MORE THAN ONE BRANCH: {branches}")
     connection.executescript(queries.COMMIT_STORE_LIFT_3)
     # The rebuild frees every page the old tables held, and SQLite keeps them.
     # Measured on a real 8,790-commit store: 71 MB before the lift, 87 MB after
@@ -216,8 +216,8 @@ class CommitStore:
             return
         if recorded != branch:
             raise ValueError(
-                f"branch {branch!r} maps to a commit store already owned by {recorded!r}; "
-                "rename one branch to keep cache filenames distinct"
+                f"BRANCH {branch!r} MAPS TO THE COMMIT STORE OF {recorded!r}\n\n"
+                "Rename one branch to keep cache filenames distinct."
             )
 
     def __enter__(self) -> CommitStore:
@@ -510,5 +510,5 @@ def _author_alternatives(clause: AuthorClause) -> tuple[list[str], list[str]]:
         )
         values.extend(clause.addresses)
     if not alternatives:
-        raise ValueError("an author clause needs at least one alternative")
+        raise ValueError("AN AUTHOR CLAUSE NEEDS AT LEAST ONE ALTERNATIVE")
     return alternatives, values

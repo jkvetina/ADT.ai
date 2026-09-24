@@ -14,8 +14,8 @@ out of `helpers.py` for `#499` and `table_alter` for `#494`. What is left in
 `helpers.py` is the writers, which need a repo, a commit window and a config to
 do their work. What is here is a pure naming contract: three spellings and the
 two slots they are written into, no filesystem, no git, no config beyond the
-project's own `object_types`. A reader that only needs to recognise a name has
-no business importing the generator.
+project's own `object_types`, `patch_map` and slot postfixes. A reader that
+only needs to recognise a name has no business importing the generator.
 
 **Filename AND slot, never either alone.** A generated name is a shape, and a
 person writing a one-off can land on the same shape by accident: `foo.2.sql` is
@@ -33,18 +33,53 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from adt_ai.patch import settings
+from adt_ai.patch.files import _patch_map
 from adt_ai.patch.layout import object_layouts
-
-# The two slots the generator writes into. These are its own, never
-# `settings.slot_name`: an ALTER belongs after the table files and a DROP after
-# the objects, whatever a project renamed its configured slots to.
-ALTER_HELPER_SLOT = "tables_after"
-DROP_HELPER_SLOT = "objects_after"
 
 # `<stem>.<commit number>.sql` from the commit walk, `<stem>.hash.sql` from hash
 # mode. Anchored whole, and the stem has to carry something, so a bare `216.sql`
 # a person wrote is not read as a helper.
 _ALTER_HELPER_RE = re.compile(r"^.+\.(?:[0-9]+|hash)\.sql$")
+
+
+def linked_group(object_type: str | None, config: dict[str, Any]) -> str:
+    """The `patch_map` group whose install-script section links this type's files.
+
+    `objects` when no group claims the type, the fallback section every install
+    script can open (`create._payload_groups`). `create._database_patch_group`
+    asks this of a file's type, so a helper slot and the file it serves can
+    never be placed by two readings of the map.
+    """
+    for group, object_types in _patch_map(config).items():
+        if object_type in {item.upper() for item in object_types}:
+            return group
+    return "objects"
+
+
+def alter_helper_slot(config: dict[str, Any]) -> str:
+    """The slot the ALTER writers write into: `after` the group linking tables.
+
+    Read off the config rather than spelled `tables_after` (ADT #923). The slot
+    the install script links is `<group><patch_postfix_after>`, and
+    `scripts._known_slots` reads it the same way since ADT #430, so a fixed name
+    was UNKNOWN on any project with another postfix or its tables in another
+    group: the ALTER stayed in the source folder and the change never shipped.
+    The table group rather than the sequence group for a sequence ALTER too, so
+    one slot keeps holding every generated ALTER (`sequence_alter.py`), and ADT
+    #753 runs each one ahead of that group's files.
+    """
+    return settings.slot_name(linked_group("TABLE", config), "after", config)
+
+
+def drop_helper_slot(config: dict[str, Any]) -> str:
+    """The slot the DROP writer writes into: `after` the `objects` group.
+
+    `objects` is the one group every install script can open, declared or not,
+    so the slot always links; its postfix is the project's, for the reason
+    `alter_helper_slot` gives (ADT #923).
+    """
+    return settings.slot_name("objects", "after", config)
 
 
 def drop_helper_filename(object_type: str, object_name: str) -> str:

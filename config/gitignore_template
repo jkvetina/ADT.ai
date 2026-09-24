@@ -1,0 +1,19 @@
+# ADT runtime metadata
+config/commits/
+config/diff/
+config/discovery/
+config/flow/
+config/internal/
+config/temp/
+config/IDENTITY.yaml
+config/STARTUP.sql
+
+apex/workspace/credentials
+**/data/*/*.sql
+
+# Connection files and wallets hold credentials
+connections/*
+!connections/.gitkeep
+!connections/wallets/
+connections/wallets/*
+!connections/wallets/.gitkeep

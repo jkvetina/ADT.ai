@@ -147,9 +147,5 @@ def grant_contents(
     )
     yield (
         DatabaseObject(schema, GRANT_OBJECT_TYPE, f"{schema.upper()}_directories"),
-        _render_directories(
-            discovery.directories(schema),
-            schema     = schema,
-            keep_owner = keep_owner,
-        ),
+        _render_directories(discovery.directories(schema)),
     )

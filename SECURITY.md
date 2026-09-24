@@ -6,7 +6,7 @@ ADT.ai connects to Oracle databases, reads credentials and wallets from disk, an
 
 | Version | Supported |
 | --- | --- |
-| 1.4.x | Yes |
+| 1.5.x | Yes |
 | Older | No |
 
 One release line is supported: the latest published one. Fixes land in a new release rather than as a patch to an older tag, because there is no separate maintenance branch to put one on.

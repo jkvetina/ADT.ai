@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,10 +36,6 @@ class ConfigNotFoundError(ConfigError):
     """Raised when a requested configuration file cannot be found."""
 
 
-class ConfigCycleError(ConfigError):
-    """Raised when explicit configuration inheritance contains a cycle."""
-
-
 class InvalidConfigValueError(ConfigError):
     """A config file that was found and read, but holds a value ADT cannot use.
 
@@ -47,6 +44,15 @@ class InvalidConfigValueError(ConfigError):
     `CONFIGURATION NOT FOUND` above one sends the reader hunting for a file that
     is sitting right there. The CLI branches its error banner on this class, so
     a new invalid-value error only has to inherit it to be reported correctly.
+    """
+
+
+class ConfigCycleError(InvalidConfigValueError):
+    """Raised when explicit configuration inheritance contains a cycle.
+
+    Every file in the cycle exists, so it is an invalid configuration: as a bare
+    `ConfigError` it took `CONFIGURATION NOT FOUND` and its create-a-folder
+    remedy (ADT #923).
     """
 
 
@@ -67,7 +73,7 @@ class ConfigLoader:
     def load(self, filename: str = "config.yaml") -> ConfigResult:
         candidates = [path / filename for path in self.search_paths if (path / filename).is_file()]
         if not candidates:
-            raise ConfigNotFoundError(f"Config file not found in search paths: {filename}")
+            raise ConfigNotFoundError(f"CONFIG FILE NOT FOUND: {filename}")
 
         result = ConfigResult(data={}, files=[])
         for candidate in candidates:
@@ -77,25 +83,30 @@ class ConfigLoader:
 
     def _load_file(self, path: Path, stack: list[Path]) -> ConfigResult:
         if path in stack:
-            raise ConfigCycleError(f"Config inheritance cycle detected: {path}")
+            raise ConfigCycleError(f"CONFIG INHERITANCE CYCLE: {path}")
 
+        # `ValueError` is two failures that are not a `YAMLError`, both measured
+        # as `UNEXPECTED ERROR` naming no file (ADT #923): a file that is not
+        # UTF-8 (a cp1250 Czech comment) and a value YAML builds and rejects
+        # itself (`2026-13-45` has a date's shape and no date's month).
         try:
             raw_data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        except (OSError, yaml.YAMLError) as error:
+        except (OSError, ValueError, yaml.YAMLError) as error:
             raise InvalidConfigValueError(
-                f"Could not read config file {path}: {error}"
+                f"COULD NOT READ CONFIG FILE: {path}\n\n{error}"
             ) from error
         if not isinstance(raw_data, dict):
             raise InvalidConfigValueError(
-                f"Config file must contain a YAML mapping: {path}"
+                f"CONFIG FILE IS NOT A YAML MAPPING: {path}"
             )
 
         result = ConfigResult(data={}, files=[])
-        for parent in _as_list(raw_data.get("extends")):
+        for parent in _as_list(raw_data.get("extends"), path):
             parent_path = self._resolve_parent(parent, path.parent)
             result = _merge_results(result, self._load_file(parent_path, [*stack, path]))
 
         local_data = {key: value for key, value in raw_data.items() if key != "extends"}
+        _reject_invalid_timeouts(local_data, path)
         local_result = ConfigResult(data=local_data, files=[path])
         return _merge_results(result, local_result)
 
@@ -113,7 +124,7 @@ class ConfigLoader:
             if candidate.is_file():
                 return candidate.resolve()
 
-        raise ConfigNotFoundError(f"Config parent not found: {value}")
+        raise ConfigNotFoundError(f"CONFIG PARENT NOT FOUND: {value}")
 
 
 def reject_unresolved_placeholders(
@@ -172,7 +183,7 @@ def reject_unresolved_placeholders(
         else "'{$APP_ID}_{$APP_ALIAS}'"
     )
     raise UnresolvedPlaceholderError(
-        f"Unresolved placeholder in config {key}: {tokens}\n"
+        f"UNRESOLVED PLACEHOLDER IN CONFIG {key}: {tokens}\n\n"
         f"  Value: {template}\n"
         f"  ADT.ai substitutes only {supported_spelling(allowed, curly_allowed)} in "
         f"{key}; {reason}\n"
@@ -207,14 +218,71 @@ def as_int(value: Any) -> int:
     return int(value)
 
 
-def _as_list(value: Any) -> list[str]:
+#: The driver timeouts `timeout_or_default` reads. `rest_timeout_seconds` is not
+#: one: it keeps its own rule in `export_apex/rest.py`, where 0 is the default.
+TIMEOUT_KEYS = ("connect_timeout_seconds", "query_timeout_seconds")
+
+
+def timeout_or_default(value: Any, default: int, *, key: str) -> int | None:
+    """A timeout key's seconds: ``None`` for no timeout, ``default`` when unset.
+
+    The rule ``docs/config.md`` states for the two driver timeouts:
+
+    - absent or not a number takes the default. The gateway read them through a
+      bare ``int()``, so ``query_timeout_seconds: 20m`` ended every database
+      command on ``UNEXPECTED ERROR`` naming neither the key nor the file (#923);
+    - ``0`` means no timeout at all (#924 F61, Jan 2026-09-23). It used to reach
+      the driver as itself, which was "no timeout" for ``call_timeout`` and a
+      connect that fails at once for ``tcp_connect_timeout``;
+    - below 0 raises ``InvalidConfigValueError`` naming the key. ``ConfigLoader``
+      calls this per file, so the screen names the file as well;
+    - a fraction of a second rounds UP to 1, because ``int(0.5)`` is 0 and would
+      read as no timeout.
+    """
+    if value is None or not isinstance(value, int | float | str):
+        return default
+    try:
+        seconds = float(value)
+    except (ValueError, OverflowError):
+        return default
+    if not math.isfinite(seconds):
+        return default
+    if seconds < 0:
+        raise InvalidConfigValueError(
+            f"{key} IS {value!r}\n\n"
+            "Use 0 for no timeout or a positive number of seconds."
+        )
+    if seconds == 0:
+        return None
+    return max(int(seconds), 1)
+
+
+def _reject_invalid_timeouts(data: dict[str, Any], path: Path) -> None:
+    """Refuse a negative timeout while the file holding it is still known (#924 F61)."""
+    for key in TIMEOUT_KEYS:
+        try:
+            timeout_or_default(data.get(key), 0, key=key)
+        except InvalidConfigValueError as error:
+            # The key's own headline leads and the file joins the detail under
+            # it (ADT #934).
+            headline, _, detail = str(error).partition("\n\n")
+            raise InvalidConfigValueError(
+                f"{headline}\n\nConfig file: {path}\n{detail}"
+            ) from error
+
+
+def _as_list(value: Any, path: Path) -> list[str]:
     if value is None:
         return []
     if isinstance(value, str):
         return [value]
     if isinstance(value, list) and all(isinstance(item, str) for item in value):
         return value
-    raise ConfigError("Config extends must be a string or list of strings")
+    # The file was found and read, so this is its value being wrong, never a
+    # missing configuration (ADT #923).
+    raise InvalidConfigValueError(
+        f"'extends' MUST BE A STRING OR A LIST OF STRINGS\n\nConfig file: {path}"
+    )
 
 
 def _merge_results(base: ConfigResult, overlay: ConfigResult) -> ConfigResult:

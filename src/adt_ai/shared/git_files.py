@@ -229,7 +229,10 @@ def _canonical_payload(payload: bytes | str, encoding: str) -> bytes:
 
 
 def git_output(
-    root: Path, args: list[str], environment: Mapping[str, str] | None = None
+    root: Path,
+    args: list[str],
+    environment: Mapping[str, str] | None = None,
+    stdin: str | None = None,
 ) -> str | None:
     """One git command's stdout, or ``None`` when git refused the command.
 
@@ -242,11 +245,15 @@ def git_output(
     ``environment`` overlays the safe child environment, which is how a caller
     runs git against an index file of its own (`GIT_INDEX_FILE`) rather than
     against the repository's.
+
+    ``stdin`` feeds a ``--pathspec-from-file=-`` form, so a path list of any
+    length never reaches the command line (ADT #943).
     """
     child_environment = safe_subprocess_environment()
     child_environment.update(environment or {})
     completed = subprocess.run(
         ["git", *args],
+        input          = stdin,
         cwd            = root,
         check          = False,
         capture_output = True,
@@ -271,10 +278,13 @@ def run_git(root: Path, args: list[str]) -> str:
     ).stdout
 
 
-def run_git_bytes(root: Path, args: list[str]) -> bytes:
+def run_git_bytes(root: Path, args: list[str], stdin: bytes | None = None) -> bytes:
+    """Raw stdout of one git command; ``stdin`` feeds a ``--stdin`` form
+    (`git check-attr --stdin -z`, ADT #938) without a path-count limit."""
     return subprocess.run(
         ["git", *args],
         cwd=root,
+        input=stdin,
         check=True,
         capture_output=True,
         env=safe_subprocess_environment(),
@@ -433,8 +443,10 @@ class WorkInProgressError(RuntimeError):
 
     @property
     def description(self) -> str:
+        """A short uppercase headline, then where and what it cost (ADT #934)."""
         return (
-            f"The uncommitted changes in {self.root} could not be saved as a WIP "
+            "UNCOMMITTED CHANGES NOT SAVED\n\n"
+            f"The uncommitted changes in {self.root} could not be saved as a WIP\n"
             "commit, so nothing was written."
         )
 

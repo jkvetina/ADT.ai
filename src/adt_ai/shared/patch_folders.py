@@ -288,6 +288,30 @@ def _patch_script_files(sql_files: list[Path]) -> list[str]:
     return [path for path in paths if path]
 
 
+def script_changed_files(text: str) -> list[str]:
+    """The paths one install script's header lists as NEW or MODIFIED, in order.
+
+    `_patch_script_files` reads every section, which is right for a folder's file
+    list and wrong for what a deploy DELIVERS: a deleted file is named in the
+    header and ships nothing (ADT #926).
+    """
+    paths: list[str] = []
+    section: str | None = None
+    for line in text.splitlines():
+        header = _FILE_SECTION_RE.match(line)
+        if header:
+            section = header.group(1)
+            continue
+        if section is None:
+            continue
+        if not line.startswith("--   "):
+            section = None
+            continue
+        if section != "DELETED" and (path := line[5:].strip()):
+            paths.append(path)
+    return paths
+
+
 def _patch_script_commits(sql_files: list[Path]) -> list[str]:
     commits: list[str] = []
     for sql_file in sql_files:

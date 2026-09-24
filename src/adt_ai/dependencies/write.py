@@ -49,5 +49,8 @@ def delete_where(
     columns: tuple[str, ...],
     key: tuple[Any, ...],
 ) -> None:
-    predicate = " AND ".join(f'"{column}" = ?' for column in columns)
+    # `IS`, not `=`: a key column can hold NULL (the 24.2 component-property
+    # read selects no component id at all), and `NULL = NULL` matches nothing,
+    # so a stale row was never deleted and a changed one doubled (ADT #865).
+    predicate = " AND ".join(f'"{column}" IS ?' for column in columns)
     connection.execute(f"DELETE FROM {table} WHERE {predicate}", key)

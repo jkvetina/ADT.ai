@@ -208,6 +208,9 @@ MODIFIER_DESTS = {
     "show",
     "sid",
     "silent",
+    # `doctor -sync` (ADT #938): only makes sense with `-init`, exactly like
+    # `-force` above, and does not switch the run to a mode of its own.
+    "sync",
     "thick",
     "user",
     "verbose",

@@ -6,6 +6,7 @@ from pathlib import Path
 import oracledb
 
 from adt_ai.cli.constants import DROPBOX_PATH_RE
+from adt_ai.export_db.failures import ExportObjectsFailedError
 from adt_ai.shared.config import InvalidConfigValueError
 from adt_ai.shared.connection_errors import (
     ConnectFailedError,
@@ -109,7 +110,39 @@ def _project_relative(path: Path, root: Path) -> str:
         return _display(path)
 
 
-def _print_database_error(error: Exception, *, debug_available: bool = True) -> None:
+def _about(subject: str | None, lines: list[str]) -> list[str]:
+    """The description, nested under the object it is about when there is one.
+
+    `export_db` reports its refusals after the listing (`#917`), where the query
+    alone binds `:object_name` and never says which object that was.
+    """
+    if subject is None:
+        return lines
+    return [subject, *(f"  {line}".rstrip() for line in lines)]
+
+
+def _print_export_failures(
+    error: ExportObjectsFailedError, *, debug_available: bool = True
+) -> None:
+    """One screen per object the export could not write, in listing order.
+
+    Each takes the screen its own error would have taken had it ended the run,
+    so a refused DDL pull is still `DATABASE QUERY FAILED` with its query, and
+    a normalizer defect is still `UNEXPECTED ERROR`. The `-debug` hint closes
+    the last screen only: one flag answers all of them.
+    """
+    last = len(error.failures) - 1
+    for index, failure in enumerate(error.failures):
+        hint = debug_available and index == last
+        if _is_user_database_error(failure.error):
+            _print_database_error(failure.error, debug_available=hint, subject=failure.label)
+        else:
+            _print_unexpected_error(failure.error, debug_available=hint, subject=failure.label)
+
+
+def _print_database_error(
+    error: Exception, *, debug_available: bool = True, subject: str | None = None
+) -> None:
     # A failing query attaches its SQL to the exception (OracleGateway). When the
     # SQL is present the failure happened *after* connecting, so it is a query
     # error, not a connection failure, show the offending query and a query
@@ -131,7 +164,7 @@ def _print_database_error(error: Exception, *, debug_available: bool = True) -> 
         )
     print_adt_error(
         code,
-        _display(error),
+        _about(subject, _display(error).splitlines()),
         details or None,
         debug_available=debug_available,
     )
@@ -174,7 +207,9 @@ def _print_sqlcl_error(error: Exception, *, debug_available: bool = True) -> Non
     print_adt_error("SQLCL SCRIPT FAILED", _display(error), debug_available=debug_available)
 
 
-def _print_unexpected_error(error: Exception, *, debug_available: bool = True) -> None:
+def _print_unexpected_error(
+    error: Exception, *, debug_available: bool = True, subject: str | None = None
+) -> None:
     # Catch-all for any failure that is not a recognised config/database error.
     # The command banner has already printed (it is the first handler statement),
     # so this only adds a friendly framing instead of leaking a raw traceback.
@@ -187,4 +222,6 @@ def _print_unexpected_error(error: Exception, *, debug_available: bool = True) -
         description = [f"{type(error).__name__}:", *message.splitlines()]
     else:
         description = [f"{type(error).__name__}: {message}"]
-    print_adt_error("UNEXPECTED ERROR", description, debug_available=debug_available)
+    print_adt_error(
+        "UNEXPECTED ERROR", _about(subject, description), debug_available=debug_available
+    )

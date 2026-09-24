@@ -109,6 +109,7 @@ def _load_startup_context(args: argparse.Namespace) -> StartupContext:
         connection_search_paths,
         wallet_roots = _wallet_roots(config_result.data, root, repo_root, connection_search_paths),
         key          = getattr(args, "key", None),
+        project_root = root,
     ).load(candidates=connection_file_candidates)
     return StartupContext(
         root                    = root,
@@ -140,12 +141,17 @@ def _completion_config(args: argparse.Namespace) -> dict[str, object] | None:
         config = ConfigLoader(
             _config_search_paths(getattr(args, "config_dir", None), root, _repo_root())
         ).load().data
-    except ConfigError:
+    except Exception:
+        # Any failure, not only a `ConfigError`: this re-read runs in the
+        # `finally` of every command, so a config the run could not load has
+        # already said so on its own screen, and a cp1250 `config.yaml` raised
+        # out of here as a traceback under that screen (ADT #923).
         return None
     _remember_completion_config(args, config)
     return config
 
 def _notify_completion(args: argparse.Namespace, exit_code: int) -> None:
+    """Play the completion chime. Never raises: it runs in every command's `finally`."""
     if getattr(args, "nobeep", False):
         return
     config = _completion_config(args)
@@ -159,7 +165,7 @@ def _notify_completion(args: argparse.Namespace, exit_code: int) -> None:
         return
     try:
         chime = importlib.import_module("chime")
-    except ImportError:
+    except Exception:
         return
     if theme:
         try:

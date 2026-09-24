@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from adt_ai.export_apex.rest_literals import top_level_lines
+
 if TYPE_CHECKING:
     from adt_ai.shared.db import QueryGateway
 
@@ -52,16 +54,21 @@ _SQLCL_ERROR_PREFIXES = ("ORA-", "SP2-", "PLS-")
 
 
 def _rest_export_error(lines: list[str]) -> str | None:
-    """The first SQLcl/Oracle diagnostic in a REST export, if any."""
-    for line in lines:
-        if line.lstrip().startswith(_SQLCL_ERROR_PREFIXES):
+    """The first SQLcl/Oracle diagnostic in a REST export, if any.
+
+    Top-level lines only: a handler source line starting `ORA-` is the
+    developer's text, and it failed the whole export (ADT #923).
+    """
+    for line, top in zip(lines, top_level_lines(lines), strict=True):
+        if top and line.lstrip().startswith(_SQLCL_ERROR_PREFIXES):
             return line.strip()
     return None
 
 # The statement that closes the export's own PL/SQL block, and therefore the only
 # proof SQLcl got to the end of one. Spelled once because two readers depend on
 # it: `_split_rest_modules` ends its walk here, and `_rest_export_completed`
-# decides whether that walk saw a whole export or the front of one.
+# decides whether that walk saw a whole export or the front of one. Both read it
+# at the top level only, never inside a handler's source (`rest_literals.py`).
 _REST_TERMINATOR = "COMMIT;"
 
 
@@ -74,7 +81,10 @@ def _rest_export_completed(lines: list[str]) -> bool:
     a transcript that carries modules but never terminates is untrustworthy, not
     partial, and nothing from it may be written (ADT #670).
     """
-    return any(line.strip() == _REST_TERMINATOR for line in lines)
+    return any(
+        top and line.strip() == _REST_TERMINATOR
+        for line, top in zip(lines, top_level_lines(lines), strict=True)
+    )
 
 # `ORDS.CREATE_ROLE` and `ORDS.DEFINE_PRIVILEGE` close a `rest export`, and both
 # are schema-scoped: one privilege can name several modules, so it belongs to
@@ -95,29 +105,31 @@ def _split_rest_modules(lines: list[str]) -> tuple[list[str], list[list[str]], l
     It stops on the `COMMIT;` statement itself rather than on a lookahead to the
     line after it. The old terminator needed `END;` on the very next line, and a
     real export that carries a trailer puts a blank line between the two, so the
-    test never fired and the split ran on to the end of the transcript.
+    test never fired and the split ran on to the end of the transcript. Every
+    marker counts at the top level only: a committing handler's source carries a
+    `COMMIT;` line of its own (ADT #923).
     """
     preamble: list[str] = []
     modules: list[list[str]] = []
     trailer: list[str] = []
     current: list[str] = []
     state = "preamble"
-    for line in lines:
+    for line, top in zip(lines, top_level_lines(lines), strict=True):
         stripped = line.strip()
         if state == "done":
             continue
-        if stripped == _REST_TERMINATOR:
+        if top and stripped == _REST_TERMINATOR:
             if current:
                 modules.append(current)
                 current = []
             state = "done"
             continue
-        if "ORDS.DEFINE_MODULE" in line:
+        if top and "ORDS.DEFINE_MODULE" in line:
             if state == "modules" and current:
                 modules.append(current)
             current = []
             state = "modules"
-        elif state == "modules" and stripped.startswith(_REST_TRAILER_CALLS):
+        elif top and state == "modules" and stripped.startswith(_REST_TRAILER_CALLS):
             if current:
                 modules.append(current)
                 current = []
@@ -146,13 +158,16 @@ _REST_CALL_RE = re.compile(
 
 
 def _rest_calls(lines: list[str]) -> tuple[list[str], list[tuple[str, list[str]]]]:
-    """Split one module into its ordered ORDS calls without parsing SQL bodies."""
+    """Split one module into its ordered ORDS calls without parsing SQL bodies.
+
+    A handler source line that opens like a call is not one (ADT #923).
+    """
     prefix: list[str] = []
     calls: list[tuple[str, list[str]]] = []
     current_name: str | None = None
     current: list[str] = []
-    for line in lines:
-        match = _REST_CALL_RE.match(line)
+    for line, top in zip(lines, top_level_lines(lines), strict=True):
+        match = _REST_CALL_RE.match(line) if top else None
         if match:
             if current_name is not None:
                 calls.append((current_name, current))
@@ -384,12 +399,16 @@ class RestExport:
     publishes no module at all. `roles` and `privileges` are the schema's own,
     keyed by name, so `diff -rest` can compare them beside the modules (ADT
     #880); `apex_rest_prefixes` narrows modules only, and does not touch them.
+    `completed` says the transcript reached its closing `COMMIT;`, the one proof
+    that no module is missing, so only then may a writer delete a module file
+    the export did not return (ADT #923).
     """
 
     modules           : dict[str, str]
     schema_definition : str | None
     roles             : dict[str, str] = field(default_factory=dict)
     privileges        : dict[str, str] = field(default_factory=dict)
+    completed         : bool = True
 
 
 def export_rest(
@@ -423,7 +442,8 @@ def export_rest(
             f"SQLcl rest export failed: {error}\nFull SQLcl output:\n"
             + "\n".join(lines).strip()
         )
-    if modules and not _rest_export_completed(lines):
+    completed = _rest_export_completed(lines)
+    if modules and not completed:
         raise RuntimeError(
             "SQLcl rest export ended before its closing COMMIT;, so the "
             "modules it printed may be incomplete\nFull SQLcl output:\n"
@@ -444,4 +464,5 @@ def export_rest(
         schema_definition = schema_definition,
         roles             = roles,
         privileges        = privileges,
+        completed         = completed,
     )

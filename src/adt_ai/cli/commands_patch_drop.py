@@ -122,7 +122,7 @@ def run_drop_applications(
     if not args.target:
         print_adt_error(
             "ARGUMENT INVALID",
-            "-drop needs a target, none was given",
+            "-drop NEEDS A TARGET",
             "Use -target TARGET to name the environment to drop from.",
         )
         return exit_code_for("ARGUMENT INVALID")
@@ -187,7 +187,7 @@ def run_drop_applications(
         if refusal is not None:
             raise PatchError(refusal)
     # Above the first DROP and below the rail, so a refused run prints no header
-    # at all rather than an empty section over its `PATCH FAILED:` screen, and the
+    # at all rather than an empty section over its `ERROR - PATCH FAILED:` screen, and the
     # rows fill in behind it, which is the shape §Console output contract
     # prescribes for a wait. `APEX APPLICATIONS:` is `export_apex -reveal`'s own
     # section and no new string is minted for this one (`#372`).

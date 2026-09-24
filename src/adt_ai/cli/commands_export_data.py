@@ -17,6 +17,7 @@ from adt_ai.cli.context import (
     _print_connection_block,
     _print_startup_debug,
 )
+from adt_ai.cli.export_git_sync import sync_git_metadata_before_export
 from adt_ai.cli.export_reporters import ConsoleExportDataReporter
 from adt_ai.cli.gateways import build_gateway, cached_schema_gateway_factory
 from adt_ai.cli.schema_sections import run_schema_sections
@@ -58,10 +59,16 @@ def _run_export_data(
         # it here would be the accepted-but-unused flag §Command surface bans.
         print_adt_error(
             "ARGUMENT INVALID",
-            "-force applies a -groups plan.",
+            "-force APPLIES A -groups PLAN",
             "Add -groups, or drop -force to export.",
         )
         return exit_code_for("ARGUMENT INVALID")
+    # `auto_sync_git` (ADT #938): keeps the root `.gitattributes` block current
+    # and already-tracked CRLF sources on disk in LF before anything below
+    # writes a file. Silent unless something actually changed; never staged.
+    # Past the `-groups`/`-force` early returns, so a move or a refusal never
+    # touches it.
+    sync_git_metadata_before_export(root, config)
     if args.debug:
         _print_startup_debug(startup)
 

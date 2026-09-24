@@ -135,6 +135,20 @@ def file_text(
     return decode_repo_text(payload, path, config) if payload is not None else None
 
 
+class UndecodableText(PatchError):
+    """A file whose bytes are neither UTF-8 nor the declared `repo_encoding`.
+
+    Its own class so a caller that can ship the bytes untouched can tell it from
+    a config error: the snapshot copy does, and reports ``reason`` under
+    `WARNING - NOT UTF-8:` instead of stopping the patch (ADT #932). A misspelled
+    `repo_encoding` stays a plain `PatchError`, because no file can fix it.
+    """
+
+    def __init__(self, message: str, reason: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
 def decode_repo_text(payload: bytes, path: object, config: Mapping[str, Any] | None) -> str:
     """``payload`` as text, with every national character intact, or a refusal.
 
@@ -142,8 +156,8 @@ def decode_repo_text(payload: bytes, path: object, config: Mapping[str, Any] | N
     valid UTF-8 is read in the project's `repo_encoding` and nothing else: the
     `errors="replace"` this replaced (ADT #334) turned `č` into U+FFFD and
     deployed that, which is the damage ADT #834 exists to stop. With no
-    `repo_encoding`, or bytes that do not fit it either, the file is named and
-    the run stops, because a patch cannot guess what the author meant.
+    `repo_encoding`, or bytes that do not fit it either, the file is named in an
+    `UndecodableText`, because a patch cannot guess what the author meant.
     """
     try:
         return payload.decode("utf-8")
@@ -151,21 +165,25 @@ def decode_repo_text(payload: bytes, path: object, config: Mapping[str, Any] | N
         where = f"byte 0x{payload[error.start]:02X} at offset {error.start}"
     encoding = _settings.repo_encoding(dict(config or {}))
     if not encoding:
-        raise PatchError(
-            f"{path} is not valid UTF-8 ({where}). Save it as UTF-8, or set "
-            "repo_encoding in config.yaml to the encoding it uses, e.g. cp1250."
+        raise UndecodableText(
+            f"{path} IS NOT VALID UTF-8\n\n"
+            f"At {where}. Save it as UTF-8, or set repo_encoding in config.yaml\n"
+            "to the encoding it uses, e.g. cp1250.",
+            where,
         )
     try:
         return payload.decode(encoding)
     except LookupError:
         raise PatchError(
-            f"repo_encoding: {encoding} is not an encoding Python knows; "
-            f"{path} is not valid UTF-8 and needs it."
+            f"UNKNOWN repo_encoding: {encoding}\n\n"
+            f"Python knows no such encoding, and {path} is not valid UTF-8 and needs it."
         ) from None
     except UnicodeDecodeError as error:
-        raise PatchError(
-            f"{path} is neither UTF-8 ({where}) nor {encoding} "
-            f"(byte 0x{payload[error.start]:02X} at offset {error.start})."
+        raise UndecodableText(
+            f"{path} IS NEITHER UTF-8 NOR {encoding}\n\n"
+            f"UTF-8 fails at {where}, {encoding} at "
+            f"byte 0x{payload[error.start]:02X} at offset {error.start}.",
+            f"{where}, not {encoding} either",
         ) from None
 
 

@@ -308,6 +308,71 @@ def is_apexlang_path(path: str, config: dict[str, Any]) -> bool:
     return len(parts) > len(root) and parts[len(root)] == APEXLANG_DIR
 
 
+# Folders `export_apex` writes beside an application for a READER rather than for
+# APEX: the page comments (`writers._write_page_comments`) and the code `-embedded`
+# extracts out of the pages (`files.ExportPathResolver`). Neither is an install
+# step, whatever its suffix.
+APEX_COMMENTS_DIR = "comments"
+APEX_EXPORT_SIDECARS = (APEX_COMMENTS_DIR, "embedded_code")
+
+
+def is_apex_export_sidecar(path: str, config: dict[str, Any]) -> bool:
+    """A review file `export_apex` writes beside an application, never linked (ADT #926).
+
+    An install script `@`-links a component, so a `comments/p00100.yaml` linked
+    there is YAML handed to SQLcl as SQL, and in an APEXlang patch that ran in the
+    `init` half, ahead of the import the patch exists for. `embedded_code/` is the
+    same kind of file with a worse failure: its `.sql` is a page process's body,
+    which linked would RUN against the target.
+
+    Keyed on the folder under the application root, the way `is_apexlang_path` is,
+    because the suffix says nothing here: both folders hold `.sql` or `.yaml` and a
+    component export holds `.sql` too. An `embedded_code/` file is still listed
+    and snapshotted, only never linked; a page comment is in no patch (ADT #935).
+    """
+    root = apex_app_root(path, config)
+    if root is None:
+        return False
+    parts = Path(path).parts
+    return len(parts) > len(root) and parts[len(root)] in APEX_EXPORT_SIDECARS
+
+
+def listed_patch_paths(paths: list[str], config: dict[str, Any]) -> list[str]:
+    """The rows a patch listing prints for ``paths``, in order (ADT #928).
+
+    An APEXlang tree is one row, its folder, however many of its files changed:
+    the import reads the folder, so the folder is what the patch ships. Jan,
+    2026-09-23, reading a whole application listed file by file: *"Print just
+    this, not every single fucking file when patching whole app! Dont list
+    comments/ at all."* The page comments are a reader's notes, never installed,
+    so they are not a row at all.
+
+    Listing only. The install script's header keeps every other path, because a
+    commit is audited file by file.
+    """
+    rows: list[str] = []
+    for path in paths:
+        if is_apex_comment(path, config):
+            continue
+        root = apex_app_root(path, config)
+        if root is not None and is_apexlang_path(path, config):
+            path = "/".join([*root, APEXLANG_DIR]) + "/"
+        if path not in rows:
+            rows.append(path)
+    return rows
+
+
+def is_apex_comment(path: str, config: dict[str, Any]) -> bool:
+    """A page comment `export_apex` wrote beside an application (ADT #928).
+
+    Keyed on the folder under the application root, like `is_apex_export_sidecar`,
+    of which it is the half no patch carries at all (ADT #935).
+    """
+    root = apex_app_root(path, config)
+    parts = Path(path).parts
+    return root is not None and len(parts) > len(root) and parts[len(root)] == APEX_COMMENTS_DIR
+
+
 def is_apex_static_file(path: str, config: dict[str, Any]) -> bool:
     """A payload under the configured static-files folder, application or workspace.
 

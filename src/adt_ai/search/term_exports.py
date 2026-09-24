@@ -9,7 +9,7 @@ a table, a view or a sequence has no `USER_SOURCE` lines at all.
 The files are found by `export_db`'s own resolver rather than a second reading
 of the layout, so a type folder two types share answers by the longest
 extension and a `-groups` sub-folder is read where the export put it. A schema
-with no exported file is named under `NOT SEARCHED`, never answered with no
+with no exported file is named under `WARNING - NOT SEARCHED`, never answered with no
 hits, and nothing here connects to Oracle.
 """
 

@@ -92,13 +92,13 @@ COMPARING SCHEMAS:
 ```
 
 - **`COMPARING SCHEMAS:`** opens before the comparison starts and its row counts down while the work runs, so a long run is never a blank screen. The row names both sides in full, `<source env>.<source schema> -> <target env>.<target schema>`, and that is the **only** place the direction is written: every status below is relative to the target, so spelling the target out per row would repeat one word down the page.
-- The countdown runs against what this schema pair, in this mode, cost last time, kept in `config/internal/diff_timers.yaml` and folded through a rolling average; a combination you have never run falls back to a long estimate so the bar still crawls. The row holds at 99% until the run really ends, and the time on the closed row is the true elapsed. `-debug` prints the header and skips the row, leaving the raw transport unobscured.
+- The countdown runs against what this pair of sides, in this mode, cost last time, a side being the environment and its schema (`DEV.APP -> UAT.APP`), so the same schema compared against UAT and against PROD keeps two figures. They are kept in `config/internal/diff_timers.yaml` and folded through a rolling average; a combination you have never run falls back to a long estimate so the bar still crawls, and a figure recorded before the environments joined the key is simply no longer read. The row holds at 99% until the run really ends, and the time on the closed row is the true elapsed. `-debug` prints the header and skips the row, leaving the raw transport unobscured.
 - **Every mode reports the same three statuses.** `MISSING` means the source has it and the target does not; `EXTRA` means the target has it and the source does not; `CHANGED` means both have it and the two differ.
 - **`LEGEND:`** closes the screen whenever something was listed, and spells out only the statuses that actually appeared. It sits last because you meet the tables first and want the definition when a cell puzzles you; a run that found no differences prints no legend.
 - Two sides that already match print `NO DIFFERENCES:`, so an identical pair never looks like an unexamined one.
 - **`-limit N` answers whether anything differs without listing all of it.** Each listing prints its first `N` rows, and one that had more says so on the line under it, `LIMIT: 20 of 57 rows shown`. The counts table is never cut; `-apex` has none, and its summaries are cut like any listing.
 - **No table on this screen runs past 80 characters, and the cap is absolute.** Oracle object names reach 128, so the width is budgeted rather than hoped for: the name columns give up characters first, then the object type, and a trimmed cell ends in `...` so a shortened name can never read as a real one. A row wide enough to exhaust that budget keeps giving until the line fits. `STATUS` and `PRIVILEGE` never give way, a trimmed status would be a guess.
-- A failed run prints `DIFF FAILED:` with SQLcl's own output underneath and exits non-zero.
+- A failed run prints `ERROR - DIFF FAILED:` on stderr with SQLcl's own output underneath and exits non-zero.
 
 <br>
 
@@ -134,7 +134,7 @@ RESTORED FILES:
   BRANCH: uat-review
 ```
 
-A restore that moved nothing says so in one line in place of the table. A restore that fails prints `DIFF FAILED:` under the section and exits non-zero, leaving whatever it already wrote for git to show. A `WIP` commit git refuses prints `ERROR - GIT COMMIT FAILED:` with git's own message instead, writes nothing, and exits `1`.
+A restore that moved nothing says so in one line in place of the table. A restore that fails prints `ERROR - DIFF FAILED:` under the section and exits non-zero, leaving whatever it already wrote for git to show. A `WIP` commit git refuses prints `ERROR - GIT COMMIT FAILED:` with git's own message instead, writes nothing, and exits `1`.
 
 <br>
 

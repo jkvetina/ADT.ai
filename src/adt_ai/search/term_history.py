@@ -25,6 +25,7 @@ from adt_ai.search.term_model import (
 )
 from adt_ai.shared.commit_cache import current_branch, open_store, store_path
 from adt_ai.shared.commit_store import CommitFilter, CommitStore, StoredCommit
+from adt_ai.shared.error_screen import one_line
 from adt_ai.shared.git_files import git_output, run_git
 
 #: Commits read per page of one store query.
@@ -63,7 +64,9 @@ def search_git_layer(request: TermRequest, result: TermResult) -> None:
             result.searched.add("GIT")
             result.hits.extend(_commit_hits(store, request.term))
     except ValueError as error:
-        result.not_searched.append(("GIT", str(error)))
+        # A commit-store refusal is a headline over its detail (ADT #934), and
+        # a NOT SEARCHED row is one line, so the lines join into sentences.
+        result.not_searched.append(("GIT", one_line(str(error))))
 
 
 def _commit_hits(store: CommitStore, term: str) -> Iterator[Hit]:

@@ -58,11 +58,24 @@ PROMPT -- SCRIPT: patch_scripts/REPORTING/tables_after/00_fix.sql
 
 Three things follow, and they are the whole reason the move is safe:
 
-- **Each statement is hardened on the way in.** A bare `ALTER TABLE ... ADD note` fails with `ORA-01430` the second time it meets a database that already has the column, and that stops the whole install script. Every `CREATE`, `ALTER` and `DROP` is rewritten into an existence-checked PL/SQL block, and `--` comment lines become `PROMPT`s so they reach the deploy log. Anything else passes through untouched: making DML idempotent is yours to decide.
+- **Each statement is hardened on the way in.** A bare `ALTER TABLE ... ADD note` fails with `ORA-01430` the second time it meets a database that already has the column, and that stops the whole install script. Every `CREATE`, `ALTER` and `DROP` is rewritten into an existence-checked PL/SQL block, and `--` comment lines between statements become `PROMPT`s so they reach the deploy log. A comment inside a statement, a PL/SQL block or a quoted literal stays as written. Anything else passes through untouched: making DML idempotent is yours to decide.
 - **A re-create recovers what the first one moved.** The second `-create` finds the source folder emptied and carries the scripts forward out of the patch folder. A script you have since re-edited wins over the recovered copy, and hardening is idempotent.
 - **Only what this patch uses moves.** A script no selected commit touched stays where it is, reported under `WARNING - NOT COMMITTED SCRIPTS, IGNORED:`. One in a slot no `patch_map` group can produce stays too, under `WARNING - UNKNOWN SCRIPTS:`. The filter runs before the move, so it cannot see what the folder already holds: `-force` empties it, and without one a re-create adds to the pile and the install script links all of it, so a folder first built from a wide commit range keeps shipping that range's generated `ALTER TABLE` helpers. Clearing loses nothing hand-written, which goes back to `patch_scripts/<CODE>/<slot>/` and faces the filter again.
 
-A `name.[ENV].sql` script moves like any other but is linked only under its own `-target`.
+A `name.[ENV].sql` script moves like any other and runs only under its own `-target`, the same as a `name.[ENV].sql` template.
+
+<br>
+
+## One script for every target
+
+The install script `-create` writes is the same whatever `-target` it was given, so a patch built once deploys to DEV, then UAT, then PROD. Every environment-specific line is written behind a `--[ENV] ` comment, and `-deploy -target ENV` switches on its own in the payload it sends SQLcl:
+
+```text
+--[PROD] PROMPT -- TEMPLATE: config/patch_template/db_end/95_release.[PROD].sql
+--[PROD] @"./../../config/patch_template/db_end/95_release.[PROD].sql";
+```
+
+That covers `name.[ENV].sql` templates and scripts and the `patch_apex_build_status` blocks. The `SPOOL` line names the folder `patch_deploy_logs` resolves to with no target, `logs/` by default, and `-deploy` points it at its own `logs_<ENV>/`. A hand-run in SQLcl knows no target, so it runs only what every environment runs and spools into `logs/`.
 
 <br>
 
@@ -95,7 +108,7 @@ patch_apex_build_status:
   PROD: RUN_ONLY
 ```
 
-On a matching `-target` the install script closes with `APEX_UTIL.SET_APP_BUILD_STATUS`; on any other target nothing is emitted. Locking an application is never a tool default.
+The install script closes with one `APEX_UTIL.SET_APP_BUILD_STATUS` block per listed environment, each behind its `--[ENV] ` comment, and `-deploy` runs only its own target's; a target the map does not name sets nothing. Locking an application is never a tool default.
 
 <br>
 
@@ -124,6 +137,8 @@ Two kinds of one-off are written into `patch_scripts_dir` (default `patch_script
 | ---------------- | ----------------------------------------------------------------------------- |
 | `objects_after/` | the patch window **deleted** an object file, as a `drop.<type>.<name>.sql` |
 | `tables_after/`  | a table file that changed, as the `ALTER TABLE` Oracle itself writes, per version step; a sequence file that changed, as its `ALTER SEQUENCE` |
+
+Those are the shipped names. The folders follow your config: the DROP goes after the `objects` group and the ALTER after the `patch_map` group holding `TABLE` (`objects` when none does), each with your `patch_postfix_after`.
 
 The DROP helper is written for any object your `path_objects` layout resolves, and it runs on deploy, so review it first and delete it if the deletion was a repository-side move rather than a real drop.
 

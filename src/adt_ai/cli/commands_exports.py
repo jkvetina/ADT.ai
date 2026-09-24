@@ -26,6 +26,7 @@ from adt_ai.cli.context import (
     _print_connection_block,
     _print_startup_debug,
 )
+from adt_ai.cli.context_errors import _is_database_connection_error
 from adt_ai.cli.export_apex_owners import (
     apex_lookup_schema,
     resolve_apex_owner_routes,
@@ -38,6 +39,7 @@ from adt_ai.cli.export_db_baseline import (
     write_measured_baseline,
 )
 from adt_ai.cli.export_db_dependencies import refresh_exported_dependencies
+from adt_ai.cli.export_git_sync import sync_git_metadata_before_export
 from adt_ai.cli.gateways import build_gateway, cached_schema_gateway_factory
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.export_db.config import (
@@ -47,6 +49,8 @@ from adt_ai.export_db.config import (
     unexportable_object_types_message,
     unexported_requested_types,
 )
+from adt_ai.export_db.failures import ExportObjectsFailedError
+from adt_ai.export_db.files import ObjectWritePlan
 from adt_ai.export_db.groups import resolve_group_inputs
 from adt_ai.shared import identity
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
@@ -97,10 +101,16 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
         # it here would be the accepted-but-unused flag §Command surface bans.
         print_adt_error(
             "ARGUMENT INVALID",
-            "-force applies a -groups plan.",
+            "-force APPLIES A -groups PLAN",
             "Add -groups, or drop -force to export.",
         )
         return exit_code_for("ARGUMENT INVALID")
+    # `auto_sync_git` (ADT #938): keeps the root `.gitattributes` block current
+    # and already-tracked CRLF sources on disk in LF before anything below
+    # writes a file. Silent unless something actually changed; never staged.
+    # Past the `-groups`/`-force` early returns, so a move or a refusal never
+    # touches it.
+    sync_git_metadata_before_export(root, config)
     # -type resolves onto Oracle's vocabulary at the edge, as recompile does. -name is
     # an identifier pattern: its underscores are real wildcards, so it is left alone.
     flattened_types = _flatten_arg_groups(args.type)
@@ -138,16 +148,41 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
         print_adt_error("ARGUMENT INVALID", str(error))
         return exit_code_for("ARGUMENT INVALID")
 
-    runner = ExportDbRunner(cached_gateway_factory)
+    runner = ExportDbRunner(cached_gateway_factory, fatal_error=_is_database_connection_error)
     measured: dict[str, str] = {}
     # Each table as the export renders it, stored beside the log (ADT #857).
     measured_bodies: dict[str, str] = {}
+    # Schemas worked through to the end, refused objects included (`#917`).
+    completed: list[str] = []
 
     def run_one(schema: str) -> int:
         _print_connection_block(
             cached_gateway_factory(schema), schema_connections[schema], debug=args.debug
         )
-        plans = runner.run(
+        failed: ExportObjectsFailedError | None = None
+        try:
+            plans = run_request(schema)
+        except ExportObjectsFailedError as error:
+            # Everything else in the schema is written (`#917`), and the refused
+            # objects are already listed under their warning. The follow-up
+            # below still runs on the written files, the run exits 1, and the
+            # next schema still runs.
+            failed = error
+            plans = error.plans
+        if measuring:
+            measured.update(measured_hashes(plans, root))
+            measured_bodies.update(measured_tables(plans, root, config))
+        else:
+            # A measured run writes nothing, so it has exported nothing to
+            # bring the mirror level with (`#30`).
+            refresh_exported_dependencies(
+                root, config, schema, plans, cached_gateway_factory, silent=args.silent
+            )
+        completed.append(schema)
+        return 1 if failed is not None else 0
+
+    def run_request(schema: str) -> list[ObjectWritePlan]:
+        return runner.run(
             ExportDbRequest(
                 root          = root,
                 schemas       = [schema],
@@ -161,6 +196,7 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
                 reporter      = ConsoleExportDbReporter(
                     silent  = args.silent,
                     compact = args.compact,
+                    debug   = args.debug,
                 ),
                 group_rules   = group_rules,
                 changed_by    = changed_by,
@@ -169,16 +205,6 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
                 baseline      = measuring,
             )
         )
-        if measuring:
-            measured.update(measured_hashes(plans, root))
-            measured_bodies.update(measured_tables(plans, root, config))
-        else:
-            # A measured run writes nothing, so it has exported nothing to
-            # bring the mirror level with (`#30`).
-            refresh_exported_dependencies(
-                root, config, schema, plans, cached_gateway_factory, silent=args.silent
-            )
-        return 0
 
     try:
         exit_code = run_schema_sections(schemas, run_one, first_started_at=handler_started_at)
@@ -188,7 +214,9 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
         # exit code, and the shared teardown still prints the TIMER footer.
         print_adt_error("ARGUMENT INVALID", str(error))
         return exit_code_for("ARGUMENT INVALID")
-    if measuring and exit_code == 0:
+    # A refused object still lets the baseline land (`#917`); a schema that
+    # raised before its end never reaches `completed`.
+    if measuring and len(completed) == len(schemas):
         write_measured_baseline(
             root, config, environment, schemas, measured,
             override = args.baseline,
@@ -214,13 +242,17 @@ def _run_export_apex(
     reveal = args.reveal is not None
     if args.reveal:
         args.app = [*(args.app or []), args.reveal]
+    if not reveal:
+        # `auto_sync_git` (ADT #938): same pre-write hook `_run_export_db` runs.
+        # `-reveal` only lists applications and writes nothing, so it never syncs.
+        sync_git_metadata_before_export(root, config)
     try:
         app_selection = _parse_apex_app_selection(_flatten_arg_groups(args.app))
         page_selection, component_filters = _parse_apex_export_filter_groups(
             args.page, args.component
         )
         if args.deep and page_selection is None:
-            raise ValueError("-deep requires -page")
+            raise ValueError("-deep REQUIRES -page")
     except ValueError as exc:
         print_adt_error("ARGUMENT INVALID", str(exc))
         return exit_code_for("ARGUMENT INVALID")
@@ -286,7 +318,7 @@ def _run_export_apex(
     # Checked here rather than in the parser because `-all` selects `apexlang`
     # without naming it, and only `_apex_actions` knows that (`#725`).
     if args.mirror and not actions.get("apexlang"):
-        print_adt_error("ARGUMENT INVALID", "-mirror requires -apexlang")
+        print_adt_error("ARGUMENT INVALID", "-mirror REQUIRES -apexlang")
         return exit_code_for("ARGUMENT INVALID")
 
     def default_gateway_factory(schema: str) -> QueryGateway:

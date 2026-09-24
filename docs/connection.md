@@ -71,6 +71,7 @@ TIMER: 0s
 - Re-run with `-go` to apply. The `Mode` row disappears and the run ends on `WROTE:` and the file it wrote.
 - A preview never prompts and never renders a secret, so a password action shows the change without the password.
 - The edit is rewritten with a round-trip YAML parser, so comments and key order in the file survive, and only the targeted block is added or changed.
+- A connection file that is a symbolic link is written at its target, and the link is kept.
 - `-rekey` is the one action not aimed at a single block. It rewrites every encrypted secret in the file at once, and its preview names each one and renders none.
 
 <br>
@@ -100,6 +101,8 @@ printf 'schema-secret\n' | adtai connection -add-schema -env DEV -schema APP -go
 That one is for a machine, not for you. Run it from your own terminal and the prompt reads the terminal, so whatever is on the pipe is ignored and it waits for you to type.
 
 Passwords are written as cleartext by default, and a cleartext write removes the matching encryption marker so the runtime does not try to decrypt plaintext.
+
+`-set-wallet-pwd` writes `wallet_pwd:` and removes an older `wallet_password:` from the environment's `wallet` and `db` blocks, with its marker and key fingerprint. The runtime reads that older spelling first, so left in place it would keep winning over the password just set.
 
 `-encrypt` writes an encrypted value. Its key comes from `-key`, `ADT_KEY`, or `ADT_KEY_CMD`; values and key-file paths are accepted. Prefer a file or secret-manager command. Unlike the prompted database password, literal `-key VALUE` is exposed in shell history and the process list. The formats are on [connection_passwords.md](connection_passwords.md).
 
@@ -157,7 +160,7 @@ With `-like`, the new environment clones the source environment's `db` and `wall
 Every SQLcl script ADT generates, REST export included, connects through a **named SQLcl connection** rather than embedding a username, password and wallet path in the script. The password lives in SQLcl's own store, in the operating system's secure storage, so a per-call script carries `connect -name ADT_…` and nothing else.
 
 - **Naming.** `ADT_` plus the connection file's basename. Where the file defines more than one environment the name gains the environment, and where that environment defines more than one schema it gains the schema, so every environment and schema pair maps to its own name. A project using the generic filename is named after its project folder instead.
-- **Transparency.** The first SQLcl call registers the connection and records the assigned name on that schema's `db:` block as `sqlcl:`, with a credential fingerprint beside it as `sqlcl_sync:`. Edit `sqlcl:` by hand to pin a different name; a recorded name always wins over a generated one.
+- **Transparency.** The first SQLcl call registers the connection and records the assigned name on that schema's `db:` block as `sqlcl:`, with a credential fingerprint beside it as `sqlcl_sync:`. Edit `sqlcl:` by hand to pin a different name; a recorded name always wins over a generated one. Every SQLcl call reads both keys from the file again, so a registration recorded earlier in the same run, by this command or another one, is used rather than repeated.
 - **A failed connect is an error, not an empty result.** Every generated `connect` runs under `WHENEVER SQLERROR EXIT FAILURE`, so a connection that could not be opened fails the command with the SQLcl message rather than running on to its `exit;` and returning `0`.
 - That guard is also what makes the two recorded keys trustworthy: they are written **only after the run that carried the registration actually succeeded**. If an export fails and the keys stay absent, that is the intended behaviour. Deleting them by hand and re-running fixes no credential or network problem, it only re-attempts the registration.
 - **Credential changes.** Every SQLcl call recomputes the fingerprint over the username, password, host and service, wallet path and wallet password. Any change re-registers the named connection on the next call.

@@ -100,10 +100,15 @@ LIFT_1_DROPPED_COLUMNS: dict[str, tuple[str, ...]] = {
     "package_coverage": ("lines", "blocks_total", "blocks_covered"),
 }
 
-#: Every run for this schema older than the newest ``?`` of them. ``LIMIT -1``
-#: is SQLite's "no limit", which is what makes a bare ``OFFSET`` legal.
+#: Every run for this schema and selection older than the newest ``?`` of them.
+#: ``LIMIT -1`` is SQLite's "no limit", which is what makes a bare ``OFFSET`` legal.
+#:
+#: Per selection, as ``RUNS_QUERY`` reads them (ADT #923): counted across every
+#: selection, twenty `-name` runs pushed the schema's only full run out, and
+#: with it the full runs' baseline. ``IS`` so a NULL selection matches itself.
 EXPIRED_RUNS_QUERY = (
-    "SELECT run_id FROM runs WHERE schema_name = ? ORDER BY run_id DESC LIMIT -1 OFFSET ?"
+    "SELECT run_id FROM runs WHERE schema_name = ? AND variant IS ? "
+    "ORDER BY run_id DESC LIMIT -1 OFFSET ?"
 )
 
 #: Both halves of the purge. The ``IN`` list is built from ids this module just

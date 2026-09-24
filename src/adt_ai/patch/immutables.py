@@ -114,7 +114,7 @@ def never_recreated(
         if hash_previous is not None:
             held = bool(hash_previous.get(file))
         else:
-            held = _table_baseline(root, file, records) is not None
+            held = _table_baseline(root, file, records, config=config) is not None
         if not held:
             continue
         text = file_text(root, file, mode=content_mode, records=records, config=config)

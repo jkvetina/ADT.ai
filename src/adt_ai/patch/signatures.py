@@ -189,13 +189,15 @@ def _listed(bind: str, items: list[str]) -> list[str]:
     odd = [item for item in items if LIST_SEPARATOR in item]
     if odd:
         raise PatchError(
-            f"cannot guard {odd[0]!r}: a name carrying a comma cannot be listed in :{bind}"
+            f"CANNOT GUARD {odd[0]!r}\n\n"
+            f"A name carrying a comma cannot be listed in :{bind}."
         )
     size = sum(len(item.encode("utf-8")) + len(LIST_SEPARATOR) for item in items)
     if size > LIST_BIND_BYTES:
         raise PatchError(
-            f":{bind} would hold {size} bytes, over the {LIST_BIND_BYTES} a VARCHAR2 bind "
-            "holds - split the patch into smaller ones"
+            f":{bind} WOULD HOLD {size} BYTES\n\n"
+            f"That is over the {LIST_BIND_BYTES} a VARCHAR2 bind holds.\n"
+            "Split the patch into smaller ones."
         )
     return items
 

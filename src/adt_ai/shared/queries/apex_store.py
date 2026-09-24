@@ -15,6 +15,9 @@ the target moved; these two say what to rebase onto when it did.
 
 Version 4 (ADT #873) drops `applications.workspace_id`, which every export
 fetched and stored and nothing read back.
+
+Version 5 (ADT #925) stamps `checksum_at`, when the checksum was taken, so a
+drift refusal can say how old the developer's base is.
 """
 
 from __future__ import annotations
@@ -42,6 +45,7 @@ CREATE TABLE IF NOT EXISTS applications (
     pages        INTEGER,
     updated_at   TEXT,
     checksum     TEXT,
+    checksum_at  TEXT,
     base_commit  TEXT,
     mirror_ref   TEXT
 );
@@ -89,6 +93,13 @@ ALTER TABLE applications ADD COLUMN mirror_ref TEXT;
 COMMIT;
 """
 
+# Version 4 to 5, one added column, for the reason LIFT_2 gives.
+APEX_STORE_LIFT_4 = """
+BEGIN;
+ALTER TABLE applications ADD COLUMN checksum_at TEXT;
+COMMIT;
+"""
+
 APEX_APPLICATIONS_QUERY = "SELECT * FROM applications ORDER BY app_id"
 
 APEX_APPLICATION_QUERY = "SELECT * FROM applications WHERE app_id = ?"
@@ -108,8 +119,9 @@ def apex_application_upsert(fields: tuple[str, ...]) -> str:
 
 
 APEX_CHECKSUM_UPSERT = (
-    "INSERT INTO applications (app_id, checksum) VALUES (?, ?) "
-    "ON CONFLICT(app_id) DO UPDATE SET checksum = excluded.checksum"
+    "INSERT INTO applications (app_id, checksum, checksum_at) VALUES (?, ?, ?) "
+    "ON CONFLICT(app_id) DO UPDATE SET "
+    "checksum = excluded.checksum, checksum_at = excluded.checksum_at"
 )
 
 # Written verbatim rather than through the COALESCE upsert above, because both

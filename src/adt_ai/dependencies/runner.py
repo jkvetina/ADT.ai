@@ -31,7 +31,14 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from adt_ai.dependencies import plscope, queries, refresh, source_mirror
-from adt_ai.dependencies.component_scan import run_component_scan
+from adt_ai.dependencies.component_scan import (
+    SCAN_SESSION_STATEMENTS,
+    run_component_scan,
+    scan_error_sentence,
+    scan_page_by_page,
+    union_scans,
+)
+from adt_ai.dependencies.plscope import _Crawl
 from adt_ai.dependencies.store import DependencyStore
 from adt_ai.shared.apex_store import ApexStore
 from adt_ai.shared.db import QueryGateway
@@ -53,10 +60,13 @@ APEX_TOO_OLD_HEADER = "WARNING - APEX TOO OLD, SKIPPED:"
 SCAN_HEADER = "SCANNING COMPONENTS"
 SCAN_TIMER_ACTION = "component_scan"
 
-#: ADT #908, the same shape as the header above: the state leads, and what the
-#: run did about it trails. What it did is keep the application's dependency
-#: rows, because the scan clears the cache the `APEX_USED_DB*` views read from.
+#: Both take the shape above, the state leading and the rest trailing. ADT #908
+#: for the application nothing scanned, whose rows the run kept because the scan
+#: clears the cache the `APEX_USED_DB*` views read from; ADT #929, Jan spelling
+#: it live, for the pages a walk could not scan: *"SHOW IT BELOW AS: WARNING -
+#: COMPONENT SCAN FAILED, BROKEN PAGES:"*.
 SCAN_FAILED_HEADER = "WARNING - COMPONENT SCAN FAILED, DEPENDENCIES KEPT:"
+SCAN_FAILED_PAGES_HEADER = "WARNING - COMPONENT SCAN FAILED, BROKEN PAGES:"
 
 
 @dataclass(frozen=True)
@@ -250,6 +260,8 @@ class DependencyIndexRunner:
                     )
                     prepared.add(id(gateway))
                 scan_error = _scan_components(gateway, app, progress, request.root)
+                # Held back until the section below is finished (#929).
+                broken: tuple[BaseException, list[int], dict[int, str]] | None = None
                 if scan_error is None:
                     tables = {}
                     for table, query in queries.apex_table_queries(apex_version).items():
@@ -264,12 +276,37 @@ class DependencyIndexRunner:
                     store.refresh_app_incremental(app, tables, force=request.force)
                     store.record_refresh("app", str(app), refreshed_at)
                 else:
-                    # Not one `APEX_USED_DB*` row is read on this path, and that
-                    # is the point (ADT #908): the scan runs `CLEAR_CACHE` first,
-                    # so after it fails those views answer nothing, and storing
-                    # that answer would wipe a mirror the last good scan filled.
-                    scan_failures.append(app)
-                    _print_scan_failed(label, scan_error)
+                    # No `APEX_USED_DB*` row is read after the failed whole-app
+                    # scan (ADT #908). Its `CLEAR_CACHE` is rolled back with it,
+                    # so the views still hold whatever the previous scan left,
+                    # measured on app 430 (ADT #865: 6865 rows, 285 of 302
+                    # pages), which is neither this scan's answer nor reliably
+                    # the last good one. The page walk below reads them only
+                    # after a page scan that worked, crawling on the scan's own
+                    # label, opened before it reads the application's pages.
+                    walk = scan_page_by_page(
+                        gateway,
+                        app,
+                        queries.apex_table_queries(apex_version),
+                        _Crawl(progress.bar(), SCAN_HEADER),
+                    )
+                    if walk.scans:
+                        failed_pages = [page for page, _error in walk.failed]
+                        tables = union_scans(
+                            app, [store.app_page_rows(app, failed_pages), *walk.scans]
+                        )
+                        for table, rows in tables.items():
+                            progress.begin(table)
+                            progress.finish(table, len(rows))
+                        store.refresh_app_incremental(app, tables, force=request.force)
+                        store.record_refresh("app", str(app), refreshed_at)
+                    if walk.failed or not walk.scans:
+                        scan_failures.append(app)
+                        broken = (
+                            scan_error,
+                            [page for page, _error in walk.failed] if walk.scans else [],
+                            walk.names,
+                        )
                 # Component source and static files, a full replace per app;
                 # the dictionary's column list is read on the first app only.
                 apex_columns = source_mirror.refresh_app_source(
@@ -282,6 +319,14 @@ class DependencyIndexRunner:
                 )
                 if request.on_app_refreshed is not None:
                     request.on_app_refreshed(app)
+                # Below the whole section, never inside the progress list (#929).
+                if broken is not None:
+                    _print_scan_failed(
+                        label,
+                        broken[0],
+                        failed_pages = broken[1],
+                        page_names   = broken[2],
+                    )
         finally:
             store.close()
         return scan_failures
@@ -316,7 +361,7 @@ def _scan_components(
     bar = progress.bar()
     if bar is None:
         try:
-            run_component_scan(gateway, app)
+            run_component_scan(gateway, app, session_statements=SCAN_SESSION_STATEMENTS)
         except Exception as error:  # noqa: BLE001 - returned, reported by the caller
             progress.fail(SCAN_HEADER)
             return error
@@ -334,7 +379,7 @@ def _scan_components(
         elapsed = TimedProgressBar().run(
             SCAN_HEADER,
             previous or FALLBACK_TARGET_SECONDS,
-            lambda: run_component_scan(gateway, app),
+            lambda: run_component_scan(gateway, app, session_statements=SCAN_SESSION_STATEMENTS),
         )
     except Exception as error:  # noqa: BLE001 - returned, reported by the caller
         return error
@@ -347,40 +392,43 @@ def _scan_components(
     return None
 
 
-def _print_scan_failed(label: str, error: BaseException) -> None:
-    """One warning section naming the application and what APEX said (ADT #908).
+def _print_scan_failed(
+    label: str,
+    error: BaseException,
+    *,
+    failed_pages: list[int] | None = None,
+    page_names: dict[int, str] | None = None,
+) -> None:
+    """One warning section naming what APEX could not scan (ADT #908).
 
-    The error's own message and not its stack: a failed scan carries a dozen
-    `ORA-06512: at "APEX_240200.WWV_FLOW_OBJECT_DEPENDENCY_DEV"` frames inside
-    APEX's own package, and a warning a run carries on from is a sentence, not
-    the error screen a run that stops prints.
+    Two blocks, for two questions. Nothing scanned: the application, with the
+    error as `scan_error_sentence` reads it, because a warning a run carries on
+    from is a sentence and not the APEX stack behind it. The page-by-page
+    fallback (#865) got the application and a few pages broke: the LIST, one row
+    per page, its id and its `apex_application_pages` name, ids right aligned so
+    the names start on one column. ADT #929, Jan: *"SHOW IT BELOW AS: 2110
+    PAGE_NAME"*, which withdrew all that was not the list: the `APP.PAGE` prefix
+    the header carries, the per-row `ORA-` sentence repeating one cause, and
+    `#921`'s line saying fixing them restores the whole scan.
 
-    **It ends on its row, not on a blank line**, unlike every warning block that
-    stands alone. This one sits inside the application's own section and the
-    application's source mirror and page links are read under it: a blank line
-    here would retire the header's claim on the screen, and those reads would
-    then be the naked wait `test_no_silent_blocking_phase` exists to catch.
+    **It stands below the application's whole section**, closing on a blank line
+    like every standalone warning. Until #929 it printed the moment the walk
+    came back, wedged between `APEX_USED_DB_OBJECT_COMP_PROPS` and
+    `APEX_COMPONENT_SOURCE`, so one progress list read as two; nothing reads
+    after it now, so the blank retires a spent header.
     """
-    print_adt_header(SCAN_FAILED_HEADER)
-    print(f"  APP {label} kept its previous dependencies: {_error_sentence(error)}")
-
-
-def _error_sentence(error: BaseException) -> str:
-    """The error's own first message, whole, however Oracle broke it up.
-
-    Usually the first line is the message (`ORA-01086: savepoint 'START_SCAN'
-    never established in this session or is invalid`). `ORA-06550` is the one
-    that is not: it opens with a locator, `ORA-06550: line 1, column 7:`, and
-    puts the message on the line under it, so a first-line rule printed the
-    coordinates of the error and never the error. A line ending in a colon is
-    Oracle saying the sentence continues, measured live on SANDBOX 2026-09-20.
-    """
-    lines = [line.strip() for line in str(error).splitlines() if line.strip()]
-    if not lines:
-        return repr(error)
-    if lines[0].endswith(":") and len(lines) > 1:
-        return f"{lines[0]} {lines[1]}"
-    return lines[0]
+    if not failed_pages:
+        print_adt_header(SCAN_FAILED_HEADER)
+        print(f"  APP {label} kept its previous dependencies: {scan_error_sentence(error)}")
+        print()
+        return
+    print_adt_header(SCAN_FAILED_PAGES_HEADER)
+    width = max(len(str(page)) for page in failed_pages)
+    for page in failed_pages:
+        name = (page_names or {}).get(page)
+        row = f"  {page:>{width}}"
+        print(f"{row} {name}" if name else row)
+    print()
 
 
 class DependencyProgress(Protocol):

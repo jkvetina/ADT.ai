@@ -192,11 +192,9 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         # are always the same.
         return [
             "ENVIRONMENT:",
-            format_status_line(
-                "ADT_ENV",
-                self._env_value("ADT_ENV"),
-                self._visible_status(self._env_status("ADT_ENV")),
-            ),
+            # Displayed only: nothing reads ADT_ENV for its work and it gates no
+            # hydration, so an unset one warns about nothing (#924 F69).
+            format_status_line("ADT_ENV", self._env_value("ADT_ENV")),
             format_status_line(
                 "ADT_KEY",
                 self._adt_key_value(),
@@ -316,9 +314,6 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         value = bool(self.env.get("ADT_KEY"))
         command = bool(self.env.get("ADT_KEY_CMD"))
         return "OK" if value ^ command else "WARN"
-
-    def _env_status(self, name: str) -> str:
-        return "OK" if self.env.get(name) else "WARN"
 
     def _command_version(self, command: str, args: list[str]) -> str:
         if not self.executable_resolver(command):

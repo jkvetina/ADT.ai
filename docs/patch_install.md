@@ -74,25 +74,31 @@ The CSV beside it and a LOB table's `data/<table>/` folder, with one file per va
 Both order objects from `config/internal/dependencies.db`, and a graph that is absent, unreadable, or stale produces a script that looks fine and fails in SQLcl. When a refresh cannot run, nothing is written and the message names the fix:
 
 ```text
-PATCH FAILED
-------------
-No readable config/internal/dependencies.db: objects cannot be ordered from a graph that is absent or unreadable, and name order is not a runnable script.
-Run: adtai rebuild
+ERROR - PATCH FAILED:
+---------------------
+  NO READABLE config/internal/dependencies.db
+
+  Objects cannot be ordered from a graph that is absent or unreadable,
+  and name order is not a runnable script.
+  Run: adtai rebuild
 ```
 
 A graph that is present but stale reports one row per affected scope, with the stamp it was measured against and the object that outran it:
 
 ```text
-PATCH FAILED
-------------
-Stale config/internal/dependencies.db: the graph is older than the objects it would order.
-  APP: refreshed 2026-07-30 09:12:44, newest object 2026-07-31 14:02:11 (app/database/tables/app_role.sql)
-Run: adtai rebuild -schema APP
+ERROR - PATCH FAILED:
+---------------------
+  STALE config/internal/dependencies.db
+
+  The graph is older than the objects it would order.
+    APP: refreshed 2026-07-30 09:12:44, newest object 2026-07-31 14:02:11 (app/database/tables/app_role.sql)
+  Run: adtai rebuild -schema APP
 ```
 
-Four things follow, and they are deliberate:
+Five things follow, and they are deliberate:
 
 - **Both refresh rather than refusing.** A scope names a schema, so the run refreshes exactly those schemas itself, prints an `UPDATING DEPENDENCIES:` section, and continues. A graph that was never built is covered too: the schemas come from the files, not the mirror. `-install` never rebuilds the commit history at all, because it reads none.
+- **`-create` measures only the schemas its own files live in.** A schema the patch carries nothing from is never checked and never refreshed, however far behind it is, and a patch with no database object at all, an APEX-only one, connects to nothing here. `-install` measures every schema it writes for, or the ones `-schema` names.
 - **The refusal survives the remedy.** A run that cannot connect, or whose refresh leaves a scope stale anyway, lands on the message above. The gate re-measures instead of trusting its own fix.
 - **A layout naming no schema is still refused**, having no owner to scope a refresh to.
 - **Read-only previews are never gated**, because they order nothing. A layout matching no exported objects reports what it searched and exits `0`.
@@ -131,6 +137,26 @@ WARNING - NO DATABASE CLOCK:
 ```
 
 `adtai rebuild -schema <SCHEMA>` clears it permanently.
+
+<br>
+
+## Files that are not UTF-8
+
+A patch is written in UTF-8. A file saved in another encoding is read in `repo_encoding` from `config.yaml` when you set one, so its national characters arrive intact. A file that fits neither is copied into the patch byte for byte, unconverted, and `-create` names it with the first bad byte and builds the patch anyway:
+
+```text
+WARNING - NOT UTF-8:
+--------------------
+  copied byte for byte; save as UTF-8, or set repo_encoding in config.yaml
+  - sandbox/database/views/
+    - legacy_v.sql
+```
+
+`-debug` adds where the first bad byte sits under each file, `byte 0x93 at offset 3`, which is what finds it in an editor. A plugin's files group under one `apexlang/shared-components/plugins/` row, however many plugins carry one.
+
+**A binary is never on this list.** A font, image or archive, anything holding a NUL byte or named `.woff2`, `.gif`, `.zip` and the like, is not text, so no encoding applies to it: it is copied byte for byte and named nowhere. The warning is for text files only.
+
+A licence or readme inside an APEX plugin is the usual one, and it deploys unharmed. A script that holds `č` saved as Windows-1250 deploys whatever SQLcl makes of those bytes, which is why the warning names it: save it as UTF-8, or set `repo_encoding: cp1250`.
 
 <br>
 

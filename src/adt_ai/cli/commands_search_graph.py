@@ -151,19 +151,21 @@ def _parse_page(value: str) -> tuple[int, int] | None:
         return None
     match = _PAGE_SHAPE.fullmatch(value)
     if match is None:
-        raise ValueError("a page is written APP.PAGE, for example 122.50")
+        raise ValueError("PAGE MUST BE APP.PAGE, LIKE 122.50")
     return int(match.group(1)), int(match.group(2))
 
 
 def _search_argument_error(args: argparse.Namespace) -> str | None:
     """Refuse a flag the chosen mode would ignore, before the banner prints."""
     graph = _graph_flags(args)
-    if args.page and "-app" not in graph:
-        return "-page narrows -app and needs it"
+    if getattr(args, "data", False) and getattr(args, "term", None) is None:
+        return "-data NEEDS A TERM\n\n-data searches table rows for a TERM, written first."
+    if args.page and "-app" not in graph and not getattr(args, "data", False):
+        return "-page NEEDS -app\n\n-page narrows -app."
     if getattr(args, "term", None) is not None:
         return _term_argument_error(args)
     if getattr(args, "layer", None):
-        return "-layer narrows a TERM search and needs a TERM, written first"
+        return "-layer NEEDS A TERM\n\n-layer narrows a TERM search, and the TERM is written first."
     if not graph:
         offenders = [
             flag
@@ -175,12 +177,15 @@ def _search_argument_error(args: argparse.Namespace) -> str | None:
         ]
         if offenders:
             return (
-                f"{' / '.join(offenders)} needs a graph query: "
-                "-from, -to, -impact, -constraint or -app"
+                f"{' / '.join(offenders)} NEEDS A GRAPH QUERY\n\n"
+                "Add -from, -to, -impact, -constraint or -app."
             )
         return None
     if len(graph) > 1:
-        return f"{' / '.join(graph)} are separate actions; pass one per run"
+        return (
+            f"{' / '.join(graph)} CANNOT BE COMBINED\n\n"
+            "They are separate actions; pass one per run."
+        )
     inventory = graph == ["-app"]
     history = [
         flag
@@ -189,8 +194,8 @@ def _search_argument_error(args: argparse.Namespace) -> str | None:
     ]
     if history:
         return (
-            f"{' / '.join(history)} searches commit history and cannot be "
-            f"combined with {graph[0]}"
+            f"{' / '.join(history)} CANNOT BE COMBINED WITH {graph[0]}\n\n"
+            f"{' / '.join(history)} searches commit history."
         )
     if inventory:
         return _app_selection_error(args.app) or _page_selection_error(args.page)
@@ -204,11 +209,11 @@ def _search_argument_error(args: argparse.Namespace) -> str | None:
             return f"{flag} {value}: {exc}"
         if page is not None and args.schema:
             return (
-                "-schema narrows an object's owner and cannot be combined with "
-                f"page {value}"
+                f"-schema CANNOT BE COMBINED WITH PAGE {value}\n\n"
+                "-schema narrows an object's owner."
             )
     if args.constraint is not None and args.schema:
-        return "-schema narrows an object's owner and cannot be combined with -constraint"
+        return "-schema CANNOT BE COMBINED WITH -constraint\n\n-schema narrows an object's owner."
     return None
 
 
@@ -231,7 +236,9 @@ _TERM_FILTER_LAYERS = (
 def _term_argument_error(args: argparse.Namespace) -> str | None:
     """Refuse what a TERM search would ignore, before the banner (ADT #895)."""
     if not args.term.strip():
-        return "TERM is empty; write the text to find first, adtai search TERM"
+        return "TERM IS EMPTY\n\nWrite the text to find first: adtai search TERM"
+    if getattr(args, "data", False):
+        return _data_argument_error(args)
     refused = [
         flag
         for dest, flag in (*GRAPH_FLAGS, *HISTORY_FLAGS)
@@ -241,8 +248,8 @@ def _term_argument_error(args: argparse.Namespace) -> str | None:
         refused.append("-format")
     if refused:
         return (
-            f"{' / '.join(refused)} cannot be combined with TERM; only -layer, -app, "
-            "-page, -schema and -branch narrow it"
+            f"{' / '.join(refused)} CANNOT BE COMBINED WITH TERM\n\n"
+            "Only -layer, -app, -page, -schema and -branch narrow it."
         )
     try:
         layers = parse_layers(_flatten_arg_groups(args.layer))
@@ -250,8 +257,41 @@ def _term_argument_error(args: argparse.Namespace) -> str | None:
         return str(exc)
     for dest, flag, reads in _TERM_FILTER_LAYERS:
         if _present(args, dest) and not set(reads) & set(layers):
-            return f"{flag} narrows {' and '.join(reads)}, which -layer leaves out"
+            return (
+                f"-layer LEAVES OUT WHAT {flag} NARROWS\n\n"
+                f"{flag} narrows {' and '.join(reads)}."
+            )
     return _app_selection_error(args.app) or _page_selection_error(args.page)
+
+
+#: What narrows `TERM -data` (ADT #879), Jan's pick: `-schema` the owners,
+#: `-name` the tables and `-limit` the rows each table returns. `-schema` is in
+#: neither table below, so only these two are let through them.
+DATA_FILTERS = frozenset({"name", "limit"})
+
+
+def _data_argument_error(args: argparse.Namespace) -> str | None:
+    """Refuse what a table-row search would ignore: every offline-layer flag too."""
+    refused = [
+        flag
+        for flag, present in (("-layer", bool(args.layer)), ("-page", bool(args.page)))
+        if present
+    ]
+    refused += [
+        flag
+        for dest, flag in (*GRAPH_FLAGS, *HISTORY_FLAGS)
+        if dest not in DATA_FILTERS and _present(args, dest)
+    ]
+    if args.format != "table":
+        refused.append("-format")
+    if refused:
+        return (
+            f"{' / '.join(refused)} CANNOT BE COMBINED WITH -data\n\n"
+            "Only -schema, -name and -limit narrow it."
+        )
+    if args.limit is not None and args.limit < 0:
+        return "-limit CANNOT BE NEGATIVE\n\n-limit takes 0 or more rows per object."
+    return None
 
 
 def _run_search_graph(
@@ -386,7 +426,7 @@ def _answer_inventory(
         in_ranges = ApexAppSelection(ranges=selection.ranges)
         ranged = {app for app in loaded if _app_in_selection(app, in_ranges)}
         if selection.has_ranges and not ranged:
-            print_adt_error("INPUT NOT FOUND", "-app range matched no applications.")
+            print_adt_error("INPUT NOT FOUND", "-app RANGE MATCHED NO APPLICATIONS")
             return exit_code_for("INPUT NOT FOUND")
         named = {int(app_id) for app_id in selection.explicit_ids}
         answers = [

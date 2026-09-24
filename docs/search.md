@@ -6,7 +6,7 @@
 
 It also answers what is connected to what: what an object uses, what uses it, what a change would break, which database objects an APEX application uses, and which of its pages lead into a page and where it leads next.
 
-And it finds where a piece of text lives, a JavaScript function, a plugin name, a column, across the APEX components, the static files, the database source, the commit history and the project's own files, in one run.
+And it finds where a piece of text lives, a JavaScript function, a plugin name, a column, across the APEX components, the static files, the database source, the commit history and the project's own files, in one run. With `-data` it finds a text or a number in the database's rows instead, on search_data.md.
 
 Every answer comes from a local store [`rebuild`](rebuild.md) keeps: history from the commit store, the graph and the APEX text from the dependency mirror ([storage_dependencies.md](storage_dependencies.md)) and the page links ([storage_flow.md](storage_flow.md)). A graph question refreshes a missing or stale store first ([below](#when-a-store-is-missing-or-stale)). The database source is read from the files [`export_db`](export_db.md) wrote.
 
@@ -203,6 +203,7 @@ TIMER: 0s
 ```
 
 - Rows sort by type, then name. `PAGES` counts the distinct pages whose components use the object and `COMPS` the components, so a shared component adds to `COMPS` alone.
+- APEX 24.2 and later give a component no id, so there `COMPS` tells components apart by page, type and name.
 - The parsing schema is a row of its own, used by the application rather than by a page, so it reads `0` and `0`.
 
 A text search lists its hits, then what each database object hit uses and is used by:
@@ -239,17 +240,17 @@ TIMER: 0s
 - Each layer with a hit gets a table of its own, `APEX HITS`, `STATIC HITS`, `DB HITS`, `GIT HITS` and `FILES HITS`, with only the columns that layer fills. With no hit anywhere, `HITS (0):` reads `(none)`.
 - One row per matching line, and the line itself under it, indented. `LINE` counts from 1 within the object, the component property or the file. A whole-file row has no line and nothing under it. `FLAG` reads `DEFINED` when the line defines something whose name holds the text. A column no row fills is left out, so `FLAG` shows only when a line defines the text.
 - Every column is as wide as its longest value; the names are cut only when one value alone would carry the row past 78 columns, and a path is cut from the left so its file name stays. The line under a row has its whitespace collapsed, and when it is longer than 74 columns it is cut around the text, with `...` where it was cut.
-- `PAGE LINKS` follows for the pages with an APEX hit, and `NOT SEARCHED` closes the report; both are under [Finding a piece of text](#finding-a-piece-of-text).
+- `PAGE LINKS` follows for the pages with an APEX hit, and `WARNING - NOT SEARCHED` closes the report; both are under [Finding a piece of text](#finding-a-piece-of-text).
 
 <br>
 
 ## History or the graph, decided by one rule
 
-**A text before any flag makes the run a text search**, covered under [Finding a piece of text](#finding-a-piece-of-text). Otherwise, **a graph flag makes the run a graph question; without one it searches history.** The graph flags are `-from`, `-to`, `-impact`, `-constraint` and `-app`, and a run asks one of them. Two in one run are refused with `are separate actions; pass one per run`, exit `2`.
+**A text before any flag makes the run a text search**, covered under [Finding a piece of text](#finding-a-piece-of-text). Otherwise, **a graph flag makes the run a graph question; without one it searches history.** The graph flags are `-from`, `-to`, `-impact`, `-constraint` and `-app`, and a run asks one of them. Two in one run are refused with `-from / -to CANNOT BE COMBINED`, exit `2`.
 
-A history filter beside a graph question does nothing there, so it is refused rather than ignored: `-summary searches commit history and cannot be combined with -to`, exit `2`. That covers every history flag, `-type`, `-name` and `-limit` included, except that `-app` reads `-type` and `-name` as filters of its own.
+A history filter beside a graph question does nothing there, so it is refused rather than ignored: `-summary CANNOT BE COMBINED WITH -to`, exit `2`. That covers every history flag, `-type`, `-name` and `-limit` included, except that `-app` reads `-type` and `-name` as filters of its own.
 
-The other way round, `-schema` and a `yaml` or `md` `-format` belong to the graph, so a history search refuses them with `needs a graph query`. `-page` narrows `-app` and is refused without it.
+The other way round, `-schema` and a `yaml` or `md` `-format` belong to the graph, so a history search refuses them with `NEEDS A GRAPH QUERY`. `-page` narrows `-app` and is refused without it.
 
 <br>
 
@@ -269,13 +270,13 @@ The other way round, `-schema` and a `yaml` or `md` `-format` belong to the grap
 
 `-layer` names the layers to search, `-layer DB` or `-layer APEX,STATIC`, and all five are searched without it. `-app` narrows `APEX` and `STATIC` to those applications, while workspace files are always searched. `-page` narrows `APEX` and needs `-app`. `-schema` narrows `DB` and `-branch` picks the commit store `GIT` reads.
 
-Any other flag beside a text is refused before the run starts, and so is a narrowing flag whose layer `-layer` leaves out: `-branch narrows GIT, which -layer leaves out`, exit `2`.
+Any other flag beside a text is refused before the run starts, and so is a narrowing flag whose layer `-layer` leaves out: `-layer LEAVES OUT WHAT -branch NARROWS`, exit `2`.
 
-**A layer is brought up to date before it is read.** `APEX` and `STATIC` read the source [`rebuild -app`](rebuild.md#an-apex-application) stores, and `GIT` the branch's commit store. One missing, or older than the application's last change in the database, is refreshed first, on the same screen. `DB` reads the object files [`export_db`](export_db.md) wrote and never connects. What still could not be read is named under `NOT SEARCHED:` at the end:
+**A layer is brought up to date before it is read.** `APEX` and `STATIC` read the source [`rebuild -app`](rebuild.md#an-apex-application) stores, and `GIT` the branch's commit store. One missing, or older than the application's last change in the database, is refreshed first, on the same screen. `DB` reads the object files [`export_db`](export_db.md) wrote and never connects. What still could not be read is named under `WARNING - NOT SEARCHED:` at the end:
 
 ```text
-NOT SEARCHED:
--------------
+WARNING - NOT SEARCHED:
+-----------------------
   APEX / STATIC: APP 200 is not mirrored, and could not be refreshed
   DB: SCHEMA HR has no exported files
   GIT: no commit store for branch dev, and git could not build it
@@ -291,7 +292,7 @@ After the hits, `USES / USED BY` lists what each database object hit uses and is
 
 `-from` and `-to` take one value either way. **A value that opens on a digit is a page**, written `APP.PAGE`: `122.50` is page 50 of application 122. Oracle names cannot open on a digit, so no object is ever mistaken for one.
 
-A value like `100` with no page is refused as `a page is written APP.PAGE, for example 122.50`.
+A value like `100` with no page is refused as `PAGE MUST BE APP.PAGE, LIKE 122.50`.
 
 Anything else is an object, in the `TYPE.NAME` form the graph uses (`PACKAGE BODY.CORE`, `TABLE.CORE_LOGS`) or as a bare name, which matches every type of that name.
 
@@ -331,8 +332,8 @@ Every link carries a flag saying how far its target resolved:
 
 | Flag | Meaning |
 | ---- | ------- |
-| `PAGE` | A page in the same application. The common case. |
-| `CROSS_APP` | A link into another application (`f?p=<other_app>:<page>`), indexed by the resolved target application and page. |
+| `PAGE` | A page in the same application: the link names no application, a substitution string such as `&APP_ID.`, or the application's own id or alias. The common case. |
+| `CROSS_APP` | A link into another application by its id or its alias (`f?p=HR:5`), indexed by the resolved target application and page. An alias is looked up in the linking application's workspace. |
 | `DYNAMIC` | The target page is computed at runtime, from a substitution string or an item value, and cannot be resolved statically. |
 | `NONE` | The link leaves APEX entirely, or carries no page target at all. |
 
@@ -346,7 +347,7 @@ Every link carries a flag saying how far its target resolved:
 
 `-page` keeps the objects used on those pages, in the same id and range forms, and counts only them. `-type` and `-name` are SQL LIKE patterns on the object, and `-schema` pins its owner.
 
-An id the mirror holds no scan of is named under `WARNING - APP NOT LOADED:` as `APP 999 is not loaded, and could not be refreshed`, above the tables of the ones it does hold, and the run exits `1`. A range matching none exits `1` on `-app range matched no applications.`
+An id the mirror holds no scan of is named under `WARNING - APP NOT LOADED:` as `APP 999 is not loaded, and could not be refreshed`, above the tables of the ones it does hold, and the run exits `1`. A range matching none exits `1` on `-app RANGE MATCHED NO APPLICATIONS`.
 
 <br>
 
@@ -404,9 +405,9 @@ Terms inside one flag are AND-matched, and different flags are AND-matched with 
 
 Anything uncommitted is saved first, as one local commit named `WIP`, untracked files included. It is never pushed and nothing is staged. A clean checkout, or a restore that changes no file, gets no such commit. If git refuses it, the run prints `ERROR - GIT COMMIT FAILED:` with git's own message, writes nothing, and exits `1`.
 
-When a restore matches more than one version of one file, the newest match wins, so name a specific `-commit` or `-hash` to put an older one back.
+When a restore matches more than one version of one file, the newest match wins, so name a specific `-commit` or `-hash` to put an older one back. A commit that deleted the file holds no version of it, so the newest match that still has the file is the one restored.
 
-`COULD NOT RESTORE:` reports one thing: a version git could not resolve, which is what a stale commit store looks like after history was rewritten. Run `adtai rebuild` and try again.
+`WARNING - COULD NOT RESTORE:` reports one thing: a version git could not resolve, which is what a stale commit store looks like after history was rewritten. Run `adtai rebuild` and try again.
 
 <br>
 
@@ -416,6 +417,7 @@ When a restore matches more than one version of one file, the newest match wins,
 | -------- | ---------- | ------- | ----------- |
 | `TERM` | No | none | Text search: the text to find in every layer, written before any flag. |
 | `-layer`, `--layer` | Yes | all five | With `TERM`, the layers to search: `APEX`, `STATIC`, `DB`, `GIT` or `FILES`, case-insensitive, space- or comma-separated. |
+| `-data`, `--data` | No | off | With `TERM`, search the rows of the tables, views, materialized views and synonyms instead of the five layers, narrowed by `-schema`, `-name` and `-limit`. See search_data.md. |
 | `-from`, `--from` | No | none | Graph question: the objects an object depends on, or the pages a page written `APP.PAGE` links to. |
 | `-to`, `--to` | No | none | Graph question: the objects that depend on an object, or the pages linking into a page written `APP.PAGE`. |
 | `-impact`, `--impact` | No | none | Graph question: everything affected if the object changes, walked transitively. |
@@ -424,12 +426,12 @@ When a restore matches more than one version of one file, the newest match wins,
 | `-page`, `--page` | Yes | none | With `-app`, only the objects used on these page ids or ranges, or with `TERM` only the `APEX` hits on them. |
 | `-format`, `--format` | No | `table` | Output of a graph answer: `table`, `yaml` or `md`. `yaml` and `md` keep stdout pure data. |
 | `-branch`, `--branch` | No | current branch | Branch store to search, at the `repo_commits_file` path (default `config/commits/<branch>.db`). With `TERM`, the store `GIT` reads. |
-| `-limit`, `--limit` | No | `20` | Maximum commits to print, newest first. `0` prints all matching commits. |
+| `-limit`, `--limit` | No | `20` | Maximum commits to print, newest first. `0` prints all matching commits. With `-data`, the rows each table returns. |
 | `-files [N]`, `--files [N]` | No | auto with file selectors | Print changed-file rows. `-file`, `-type` or `-name` prints the first 20 per commit automatically; bare `-files` also prints 20; `-files 50` prints 50; `-files 0` prints none. Rows carry `A`, `M` or `D`. |
 | `-summary`, `--summary` | No | none | Commit-subject terms; every word given must match. |
 | `-file`, `--file` | No | none | Changed-file path terms; every word given must match. |
 | `-type`, `--type` | Yes | none | Object type, resolved through your `object_types` config against the `path_objects` layout. Oracle's own spelling: `-type "PACKAGE BODY"`. A SQL LIKE pattern, so `-type "PACKAGE%"` takes both halves of the pair. Space-separated, comma-separated and repeated forms are equivalent. With `-app`, the type of an object the application uses. |
-| `-name`, `--name` | Yes | none | Object name, read through the file's own configured extension, so `packages/core.spec.sql` is `CORE`. A SQL LIKE pattern like `-type`, and takes multiple values the same way. With `-app`, the name of an object the application uses. |
+| `-name`, `--name` | Yes | none | Object name, read through the file's own configured extension, so `packages/core.spec.sql` is `CORE`. A SQL LIKE pattern like `-type`, and takes multiple values the same way. With `-app`, the name of an object the application uses. With `-data`, the tables to search. |
 | `-by`, `--by` | Yes | none | Author email, as a SQL LIKE pattern: `-by bob@example.com` or `-by "bob%"`. Repeatable. |
 | `-my`, `--my` | No | off | Keep commits whose author email equals `git config user.email`. |
 | `-commit`, `-commits`, `--commit`, `--commits` | Yes | none | Commit numbers or hashes. `N` is that commit, `N+` is that one and newer, `N-M` is the inclusive span. Several values inside this flag are OR-matched. |

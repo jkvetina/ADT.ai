@@ -135,15 +135,17 @@ def compare(
 ) -> Inventory:
     """Read both export trees and say which side each object is on.
 
-    The two schema names are only ever used to decide which END of a grant to
-    print and which way it points: the compared schema is on every grant row by
-    definition, so naming it would spend a column saying one word down the page
-    (Jan: *"we dont list the source schema, since that is obvious"*).
+    The two schema names are only ever used on the grants: to decide which END of
+    a grant to print and which way it points, and to pair a grant across a
+    `-target-schema` run. The compared schema is on every grant row by definition,
+    so naming it would spend a column saying one word down the page (Jan: *"we
+    dont list the source schema, since that is obvious"*).
 
     BOTH names are needed, not just the source's. On a `-target-schema` run the
     two trees spell the compared schema differently, so a grant the target side
     owns would read as somebody else's object and land in the wrong table if only
-    the source name were known.
+    the source name were known, and the same grant on both sides would read as
+    missing and extra (`_onto_source`).
     """
     source = _read(source_dir)
     target = _read(target_dir)
@@ -160,7 +162,8 @@ def compare(
         elif source[key] != target[key]:
             objects[key] = CHANGED
     ours = {name.upper() for name in (schema, target_schema) if name}
-    return Inventory(objects=objects, grants=_grant_rows(source, target, ours))
+    paired = _onto_source(target, schema, target_schema)
+    return Inventory(objects=objects, grants=_grant_rows(source, paired, ours))
 
 
 def _read(export_dir: Path) -> dict[tuple[str, str], str]:
@@ -276,6 +279,41 @@ def _parse_grant(
         match["object_type"].replace("_", " ").upper(),
         match["object_name"].upper(),
         owner not in ours,
+    )
+
+
+def _onto_source(
+    target: dict[tuple[str, str], str], schema: str, target_schema: str
+) -> dict[tuple[str, str], str]:
+    """The target's grant keys with the compared schema spelled the source's way.
+
+    `_read` drops the schema FOLDER so a `-target-schema` run pairs its objects,
+    but a grant spells the schema into the file NAME, as its owner going out and
+    as its grantee coming in: `GRANT SELECT ON ORDERS TO APP_RO` is
+    `...APP.TABLE.ORDERS.TO_APP_RO` on one side and `...APP_UAT.TABLE.ORDERS.TO_APP_RO`
+    on the other, which read as MISSING plus EXTRA, the one answer that is never
+    true. Only those two segments are respelled, and only where they name the
+    target schema, so a grant from or to anybody else still pairs by its own name.
+    """
+    theirs, mine = target_schema.lower(), schema.lower()
+    if not theirs or not mine or theirs == mine:
+        return target
+    return {
+        (folder, _respelled(name, theirs, mine) if folder == GRANTS_FOLDER else name): text
+        for (folder, name), text in target.items()
+    }
+
+
+def _respelled(name: str, theirs: str, mine: str) -> str:
+    stem = name.removesuffix(".sql")
+    match = _GRANT_NAME.match(stem)
+    if match is None:
+        return name
+    owner = mine if match["owner"] == theirs else match["owner"]
+    grantee = mine if match["grantee"] == theirs else match["grantee"]
+    return (
+        f"{stem[: match.start('owner')]}{owner}"
+        f"{stem[match.end('owner') : match.start('grantee')]}{grantee}{name[len(stem) :]}"
     )
 
 

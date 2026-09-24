@@ -25,7 +25,7 @@ from adt_ai.patch.content import (
     authoritative_commit,
     newer_commits,
 )
-from adt_ai.patch.create import _patch_group
+from adt_ai.patch.create import _patch_group, apex_owner_schemas
 from adt_ai.patch.helpers import _path_is_deleted
 from adt_ai.patch.models import GeneratedScripts, ProcessedFile, SchemaReport
 from adt_ai.patch.object_identity import _object_identity
@@ -34,10 +34,13 @@ from adt_ai.shared.git_files import git_status_paths
 
 # `PROMPT -- TEMPLATE: <path>` / `PROMPT -- SCRIPT: <path>`, written by
 # `templates._configured_sql_payload`. Read back off the generated script rather
-# than re-derived from config: the writer already resolved `{$PATCH_CODE}` and
-# applied the `[ENV]` filter, and a second derivation of that path is exactly the
-# drift ADT #18 was.
-_INJECTED_RE = re.compile(r"^PROMPT -- (?:TEMPLATE|SCRIPT): (?P<path>.+?)\s*$")
+# than re-derived from config: the writer already resolved `{$PATCH_CODE}`, and a
+# second derivation of that path is exactly the drift ADT #18 was. A `.[ENV].`
+# file's row carries its `--[ENV] ` comment in front (#924 F33) and is listed
+# too: the patch carries it for that target whichever one `-create` was given.
+_INJECTED_RE = re.compile(
+    r"^(?:--\[[^\]\s]+\] )?PROMPT -- (?:TEMPLATE|SCRIPT): (?P<path>.+?)\s*$"
+)
 
 # `MARKER_DELETED` and `MARKER_NEW` stood here until ADT #465. The row markers
 # they spelled are gone from the console: `[DELETED]` became the `DELETED
@@ -67,9 +70,15 @@ def build_reports(
     for script_group in sorted(sql_files):
         group, _stage = stages.split_stage(script_group)
         scripts_by_group.setdefault(group, []).append(sql_files[script_group])
+    # The same owners the scripts were grouped by (`create._write_patch_files`).
+    # Grouped without them, an application the store records reads `APEX.<id>`
+    # here while its scripts are `<OWNER>.<id>`, so the report matched none of its
+    # files and `PATCH CONTENTS:` came out empty for the one application the patch
+    # was built for (ADT #926).
+    owners = apex_owner_schemas(root)
     for group, scripts in scripts_by_group.items():
         schema, app_id = _split_group(group)
-        group_files = [path for path in files if _patch_group(path, config) == group]
+        group_files = [path for path in files if _patch_group(path, config, owners) == group]
         rows = [
             _object_row(
                 root,

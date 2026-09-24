@@ -150,7 +150,7 @@ def answer_without_commits(
         # screen on chips, 2026-09-16, over a one-line refusal.
         number, folder = shipped
         raise PatchError(
-            f'NO NEW COMMITS FOR "{patch_ref}".\n\n'
+            f'NO NEW COMMITS FOR "{patch_ref}"\n\n'
             f"Patch {folder} was committed in commit {number},\n"
             "so every older commit carrying it has already shipped.\n\n"
             "  1) -force                     include the commits that patch shipped\n"
@@ -177,7 +177,7 @@ def answer_without_commits(
         # `%65%` against subjects, so a repository that writes its ticket into
         # the subject never reaches this screen at all.
         raise PatchError(
-            f'NO COMMITS MATCHED "{patch_ref}".\n\n'
+            f'NO COMMITS MATCHED "{patch_ref}"\n\n'
             # The pattern closes its own line: it is the operator's string and
             # can be any length, so nothing after it inherits the overflow.
             "-name is also the commit filter, matched against commit SUBJECTS as\n"
@@ -194,10 +194,11 @@ def answer_without_commits(
     # longer parses.
     # Same option shape as the branch above, so one screen has one vocabulary
     # and the reader is choosing between remedies rather than parsing a
-    # sentence for them (ADT #752).
+    # sentence for them (ADT #752). The headline stops at the name and the scan
+    # depth moves to the line under it (ADT #934).
     raise PatchError(
-        f'NO COMMITS FOUND for "{patch_ref}" in the last '
-        f"{patch_scan_commits(config)} commits scanned.\n\n"
+        f'NO COMMITS FOUND FOR "{patch_ref}"\n\n'
+        f"None in the last {patch_scan_commits(config)} commits scanned.\n\n"
         "  1) patch_scan_commits         raise it in config to reach further back\n"
         "  2) -commit N [-ignore N]      select them by number, hash or range"
     )

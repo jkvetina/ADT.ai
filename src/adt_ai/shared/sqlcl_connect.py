@@ -80,16 +80,15 @@ SQLCL_GUARD_RELEASE = "WHENEVER SQLERROR CONTINUE"
 class SqlclConnect:
     """One opened SQLcl session, ready for a request.
 
-    ``name`` is what a later command in the same script refers to (``diff``
-    names both sides in its ``DIFF -source ... -target ...`` line); it is
-    ``None`` for a plain credentialed connect that was never saved.
-    ``registers`` carries the connection whose ``sqlcl``/``sqlcl_sync``
-    bookkeeping must be written back after the script has actually run.
+    ``name`` is the entry in SQLcl's connection store this block connects
+    through or registers; it is ``None`` for a plain credentialed connect that
+    saves nothing. ``registers`` carries the connection whose
+    ``sqlcl``/``sqlcl_sync`` bookkeeping must be written back after the script
+    has actually run.
     """
 
     lines     : tuple[str, ...]
     name      : str | None
-    ephemeral : bool
     registers : Connection | None
 
     @property
@@ -103,7 +102,7 @@ class SqlclConnect:
         The one failure mode that path has of its own: the store may not hold
         the name at all. Callers retry those with ``force_register=True``.
         """
-        return self.name is not None and not self.ephemeral and self.registers is None
+        return self.name is not None and self.registers is None
 
 
 def sqlcl_connect(
@@ -112,16 +111,12 @@ def sqlcl_connect(
     startup_sql: str | None,
     project_root: Path | None = None,
     named_connections: bool = True,
-    save_as: str | None = None,
     force_register: bool = False,
 ) -> SqlclConnect:
     """Build the block that opens ``connection`` in a generated SQLcl script.
 
-    ``save_as`` is the alias to register an unnamed connection under for the
-    duration of the script, ``diff`` needs one because SQLcl's ``DIFF`` command
-    addresses its two sides by name. Left ``None``, an unnamed connection is
-    opened with a plain credentialed ``connect`` and no cleanup, which is what
-    every single-session caller wants.
+    An unnamed connection is opened with a plain credentialed ``connect`` that
+    saves nothing.
 
     ``force_register`` re-saves a named connection whose fingerprint still
     matches. The SQLcl store does not travel with the project the way the
@@ -139,16 +134,7 @@ def sqlcl_connect(
     name = connection.sqlcl_name if named_connections else None
 
     if not name:
-        if save_as is None:
-            return _plan(_connect_line(connection, project_root), startup_sql)
-        # Ad-hoc side of a multi-connection script: save under a throwaway
-        # alias so the later command can address it, and drop it afterwards.
-        return _plan(
-            _connect_line(connection, project_root, save_name=save_as),
-            startup_sql,
-            name      = save_as,
-            ephemeral = True,
-        )
+        return _plan(_connect_line(connection, project_root), startup_sql)
 
     # A connection file carrying no password cannot register anything, so
     # registration is not a fallback for it: it is a way to write a broken entry
@@ -173,17 +159,12 @@ def sqlcl_connect(
     # never held is the normal first-run case, and aborting on it would make
     # registration impossible.
     return _plan(
-        _connect_line(connection, project_root, save_name=name, savepwd=True),
+        _connect_line(connection, project_root, save_name=name),
         startup_sql,
         pre       = CONNMGR_DELETE_COMMAND.format(name=name),
         name      = name,
         registers = connection,
     )
-
-
-def drop_command(name: str) -> str:
-    """The cleanup line for an alias saved by ``save_as``."""
-    return CONNMGR_DELETE_COMMAND.format(name=name)
 
 
 def _plan(
@@ -192,7 +173,6 @@ def _plan(
     *,
     pre: str | None = None,
     name: str | None = None,
-    ephemeral: bool = False,
     registers: Connection | None = None,
 ) -> SqlclConnect:
     """Assemble one connect block: optional preamble, guarded connect, setup.
@@ -215,7 +195,6 @@ def _plan(
     return SqlclConnect(
         lines     = tuple(lines),
         name      = name,
-        ephemeral = ephemeral,
         registers = registers,
     )
 
@@ -225,8 +204,8 @@ def _connect_line(
     project_root: Path | None,
     *,
     save_name: str | None = None,
-    savepwd: bool = False,
 ) -> str:
+    """The ``connect`` line, saving the connection as ``save_name`` when given."""
     username = connection.username
     password = connection.password.reveal() or ""
     service  = connection.service or connection.sid or ""
@@ -235,18 +214,13 @@ def _connect_line(
     # with a truncated credential or prompts (ADT #653). Refused by name rather
     # than emitted broken; `&` needs nothing, `SET DEFINE OFF` covers it.
     reject_unquotable(password, role="database password")
-    if save_name is None:
-        save = ""
-    elif savepwd:
-        save = f"-save {save_name} -savepwd "
-    else:
-        save = f"-save {save_name} "
+    save = "" if save_name is None else f"-save {save_name} -savepwd "
     if connection.wallet_path:
         wallet_path = _ensure_wallet_folder(
             resolve_wallet_path(connection.wallet_path, project_root)
         )
         wallet_zip = (
-            wallet_path.with_suffix(".zip")
+            _wallet_zip_of(wallet_path)
             if wallet_path.suffix != ".zip"
             else wallet_path
         )
@@ -264,7 +238,7 @@ def resolve_wallet_path(wallet_path: str, project_root: Path | None) -> Path:
 
     Wallet paths in connections.yaml are commonly stored relative to the project
     root (``config/Wallet_X.zip``). A generated SQLcl ``connect -cloudconfig`` line
-    runs from a throwaway script under ``config/temp/`` with ``cwd`` set to the
+    runs from a throwaway script in a temporary folder with ``cwd`` set to the
     export target, so a relative wallet path resolves from neither the script's
     folder nor the cwd and SQLcl silently finds no wallet, ``export_apex -rest``
     then exports nothing (ADT #147). Anchor a relative path to the project root it
@@ -284,11 +258,21 @@ def _ensure_wallet_folder(wallet_path: Path) -> Path:
         zip_path = wallet_path
         wallet_folder = wallet_path.with_suffix("")
     else:
-        zip_path = wallet_path.with_suffix(".zip")
+        zip_path = _wallet_zip_of(wallet_path)
         wallet_folder = wallet_path
     if zip_path.is_file() and _wallet_needs_extract(wallet_folder, zip_path):
         _extract_wallet_zip(zip_path, wallet_folder)
     return wallet_folder
+
+
+def _wallet_zip_of(wallet_folder: Path) -> Path:
+    """The zip beside a wallet folder, named after the folder's FULL name.
+
+    `with_suffix(".zip")` read the part after a dot as a suffix, so a folder
+    `Wallet_CORE.v2` mapped to `Wallet_CORE.zip`, another wallet or none at all
+    (#924 F68).
+    """
+    return wallet_folder.with_name(f"{wallet_folder.name}.zip")
 
 
 def _wallet_needs_extract(wallet_folder: Path, zip_path: Path) -> bool:

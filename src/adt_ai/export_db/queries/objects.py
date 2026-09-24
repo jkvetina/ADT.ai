@@ -194,44 +194,6 @@ AND c.constraint_name IS NULL
 ORDER BY t.index_name
 """.strip()
 
-# A scheduler job carries no change timestamp anywhere in the dictionary, so the
-# window that narrows every other type cannot narrow this one. `user_objects` does
-# hold a JOB row, and its LAST_DDL_TIME is the last RUN rather than the last edit:
-# measured on the local container 2026-08-20 with a dummy job, a scheduler run carrying no
-# DDL at all moved LAST_DDL_TIME from 11:26:31 to 11:27:31 while CREATED stayed put,
-# and an in-place SET_ATTRIBUTE later moved LAST_DDL_TIME again and left CREATED
-# alone. CREATED is therefore reliable but only sees a create or a drop+create, and
-# LAST_DDL_TIME sees everything and fires for every enabled job on every run.
-#
-# So the change signal is built rather than found: SIGNATURE hashes exactly the
-# columns `object_normalizers/job.py` renders into the exported file, and a windowed
-# run exports the jobs whose signature moved. It is computed IN the database so a
-# 4000-char JOB_ACTION never crosses the wire, which is what keeps a 2000-job schema
-# to one fetch of name plus 32 bytes instead of 2000 DBMS_METADATA round trips.
-# CHR(1) separates the fields so two different jobs cannot concatenate to one string,
-# and every column takes NVL because `||` swallows a NULL silently and would collide.
-JOBS_QUERY = """
-SELECT 'JOB' AS object_type, j.job_name AS object_name, j.schedule_type,
-    RAWTOHEX(STANDARD_HASH(
-        NVL(j.job_name, '~')                    || CHR(1) ||
-        NVL(j.job_type, '~')                    || CHR(1) ||
-        NVL(j.job_action, '~')                  || CHR(1) ||
-        NVL(TO_CHAR(j.number_of_arguments), '~')|| CHR(1) ||
-        NVL(j.repeat_interval, '~')             || CHR(1) ||
-        NVL(TO_CHAR(j.end_date), '~')           || CHR(1) ||
-        NVL(j.job_class, '~')                   || CHR(1) ||
-        NVL(j.program_name, '~')                || CHR(1) ||
-        NVL(j.schedule_name, '~')               || CHR(1) ||
-        NVL(j.auto_drop, '~')                   || CHR(1) ||
-        NVL(j.enabled, '~')                     || CHR(1) ||
-        NVL(j.comments, '~')
-    , 'SHA256')) AS signature
-FROM user_scheduler_jobs j
-WHERE (:schema IS NOT NULL)
-AND j.schedule_type != 'IMMEDIATE'
-ORDER BY j.job_name
-""".strip()
-
 DDL_QUERY = """
 SELECT DBMS_METADATA.GET_DDL(REPLACE(o.object_type, ' ', '_'), o.object_name) AS ddl
 FROM user_objects o
@@ -239,8 +201,8 @@ WHERE o.object_type = :object_type
 AND o.object_name = :object_name
 """.strip()
 
-# Unlike a JOB, an mview log needs no invented signal: its LOG_TABLE is an ordinary
-# TABLE in `user_objects`, and a table's LAST_DDL_TIME is a true DDL timestamp that
+# Unlike a JOB (`scheduler.py`), an mview log needs no invented signal: its LOG_TABLE
+# is an ordinary TABLE in `user_objects`, and a table's LAST_DDL_TIME is a true DDL timestamp that
 # DML does not move (measured on a client database 2026-08-20: 123 tables took DML at 05:07 with
 # LAST_DDL_TIME still reading 08-11 / 08-13). So the window binds here exactly as it
 # does for every other type, and this type never needed the widening ADT #414 gave it.
@@ -265,22 +227,6 @@ FROM user_mview_logs l
 WHERE l.master = :object_name
 """.strip()
 
-JOB_DDL_QUERY = """
-SELECT DBMS_METADATA.GET_DDL('PROCOBJ', job_name) AS ddl
-FROM user_scheduler_jobs
-WHERE job_name = :object_name
-""".strip()
-
-# A SCHEDULE hits the same DBMS_METADATA limitation as a JOB above: GET_DDL
-# rejects the literal 'SCHEDULE' object type with ORA-31600, because a
-# scheduler SCHEDULE is stored as a procedural object and fetched through the
-# shared 'PROCOBJ' token like every other DBMS_SCHEDULER object.
-SCHEDULE_DDL_QUERY = """
-SELECT DBMS_METADATA.GET_DDL('PROCOBJ', schedule_name) AS ddl
-FROM user_scheduler_schedules
-WHERE schedule_name = :object_name
-""".strip()
-
 DBMS_METADATA_SETUP_QUERY = """
 BEGIN
     DBMS_METADATA.SET_TRANSFORM_PARAM(DBMS_METADATA.SESSION_TRANSFORM, 'PARTITIONING', TRUE);
@@ -299,6 +245,11 @@ BEGIN
 END;
 """.strip()
 
+# One row per grantee (`#923`). Old ADT listed every grantee of an object in one
+# statement next to every privilege any of them held, so SELECT to REPORTING
+# beside SELECT and DELETE to APP_USER replayed as a DELETE for REPORTING too.
+# It also wrote the statement here, where `keep_owner` never arrived, so the query
+# now returns the parts and `content._render_grants_made` writes every line.
 GRANTS_MADE_QUERY = """
 WITH objects_add AS (
     SELECT /*+ MATERIALIZE CARDINALITY(t 1) */
@@ -313,19 +264,15 @@ objects_ignore AS (
 SELECT
     t.type AS object_type,
     t.table_name AS object_name,
-    APEX_STRING.FORMAT (
-        'GRANT %0 ON %1 TO %2%3;',
-        t.privs,
-        LOWER(t.table_name),
-        LOWER(t.grantee),
-        CASE WHEN t.grantable = 'YES' THEN ' WITH GRANT OPTION' END
-    ) AS sql
+    t.grantee,
+    t.privs AS privileges,
+    t.grantable
 FROM (
     SELECT
         t.type,
         t.table_name,
+        t.grantee,
         LISTAGG(DISTINCT t.privilege, ', ') WITHIN GROUP (ORDER BY t.privilege) AS privs,
-        LISTAGG(DISTINCT t.grantee, ', ') WITHIN GROUP (ORDER BY t.grantee) AS grantee,
         t.grantable
     FROM user_tab_privs_made t
     JOIN objects_add a
@@ -340,16 +287,10 @@ FROM (
     GROUP BY
         t.type,
         t.table_name,
+        t.grantee,
         t.grantable
 ) t
-ORDER BY 1, 2, 3
-""".strip()
-
-JOB_ARGUMENTS_QUERY = """
-SELECT argument_name, argument_position, argument_type, value
-FROM user_scheduler_job_args
-WHERE job_name = :job_name
-ORDER BY argument_position
+ORDER BY t.type, t.table_name, t.grantee, t.grantable
 """.strip()
 
 GRANTS_RECEIVED_QUERY = """

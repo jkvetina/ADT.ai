@@ -118,9 +118,9 @@ def resolve_key(explicit: str | None = None) -> str:
     command = os.getenv(KEY_COMMAND_ENV)
     if raw and command:
         raise CryptoError(
-            f"Both {KEY_ENV} and {KEY_COMMAND_ENV} are set, so which one holds the "
-            f"encryption key is ambiguous. Unset one of them, or pass -key to override "
-            f"both for this run."
+            f"{KEY_ENV} AND {KEY_COMMAND_ENV} ARE BOTH SET\n\n"
+            "Which one holds the encryption key is ambiguous. Unset one of them,\n"
+            "or pass -key to override both for this run."
         )
     if command:
         # The command IS the indirection, so its output is the key itself and is
@@ -133,7 +133,8 @@ def resolve_key(explicit: str | None = None) -> str:
     if raw:
         return _key_from(raw)
     raise CryptoError(
-        f"Encryption key not provided; pass -key or set {KEY_ENV} or {KEY_COMMAND_ENV}"
+        "ENCRYPTION KEY NOT PROVIDED\n\n"
+        f"Pass -key or set {KEY_ENV} or {KEY_COMMAND_ENV}."
     )
 
 
@@ -143,7 +144,7 @@ def _key_from(raw: str) -> str:
     if key_path.is_file():
         value = key_path.read_text(encoding="utf-8").strip()
         if not value:
-            raise CryptoError(f"Encryption key file is empty: {key_path}")
+            raise CryptoError(f"ENCRYPTION KEY FILE IS EMPTY: {key_path}")
         return value
     return raw
 
@@ -165,7 +166,7 @@ def encrypt(value: str, key: str) -> str:
         )
     )
     if decrypt(stored, key) != value:
-        raise CryptoError("Encrypted value failed round-trip verification")
+        raise CryptoError("ENCRYPTED VALUE FAILED ROUND-TRIP VERIFICATION")
     return stored
 
 
@@ -175,7 +176,7 @@ def decrypt(value: bytes | str, key: str) -> str:
         plaintext: bytes = _fernet(key, salt, iterations).decrypt(token)
         return plaintext.decode("utf-8")
     except (InvalidToken, ValueError, TypeError) as error:
-        raise CryptoError("Could not decrypt encrypted value") from error
+        raise CryptoError("COULD NOT DECRYPT ENCRYPTED VALUE") from error
 
 
 def fingerprint(value: bytes | str, key: str) -> str:
@@ -226,14 +227,16 @@ def _split(value: bytes | str) -> tuple[bytes, int, bytes]:
     iterations = ITERATIONS.get(version)
     if iterations is None:
         raise CryptoError(
-            f"Encrypted value is in format adt{version}, which this ADT.ai cannot read. "
-            "Upgrade ADT.ai, or re-encrypt the value with the version you have."
+            f"UNREADABLE ENCRYPTION FORMAT adt{version}\n\n"
+            "This ADT.ai cannot read it. Upgrade ADT.ai, or re-encrypt the value\n"
+            "with the version you have."
         )
     try:
         salt = base64.urlsafe_b64decode(match.group(2))
     except (ValueError, TypeError) as error:
         raise CryptoError(
-            "Could not decrypt encrypted value: the stored salt is not valid base64"
+            "COULD NOT DECRYPT ENCRYPTED VALUE\n\n"
+            "The stored salt is not valid base64."
         ) from error
     return salt, iterations, match.group(3).encode("ascii")
 

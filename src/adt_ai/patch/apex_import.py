@@ -42,6 +42,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from adt_ai.patch import queries
 from adt_ai.patch.sql_literal import escape_literal
 from adt_ai.shared.sqlcl_quoting import reject_unquotable
 
@@ -49,31 +50,6 @@ from adt_ai.shared.sqlcl_quoting import reject_unquotable
 # the line itself, so an unquoted staging path carrying a space truncates in
 # silence.
 IMPORT_COMMAND = 'apex import -input "{input}"'
-
-# The audit stamp, run in the import's own SQLcl session (ADT #682). The
-# workspace is read off the application row rather than passed in: the stamp
-# needs one and the row already names it, so nothing new has to be configured
-# or threaded down for the block to run. The version is read for the same
-# reason -- it is handed back unchanged, which is all APEX needs to stamp.
-STAMP_BLOCK = """DECLARE
-    l_workspace     apex_applications.workspace%TYPE;
-    l_version       apex_applications.version%TYPE;
-BEGIN
-    SELECT workspace, version
-    INTO   l_workspace, l_version
-    FROM   apex_applications
-    WHERE  application_id = {app_id};
-    --
-    APEX_UTIL.SET_WORKSPACE(p_workspace => l_workspace);
-    APEX_CUSTOM_AUTH.SET_USER('{account}');
-    --
-    APEX_APPLICATION_ADMIN.SET_APPLICATION_VERSION(
-        p_application_id    => {app_id},
-        p_version           => l_version
-    );
-    COMMIT;
-END;
-/"""
 
 
 @dataclass(frozen=True)
@@ -105,13 +81,31 @@ def resolve_target(values: list[int] | None) -> ApexTarget:
     if len(values) > 1:
         named = ", ".join(str(value) for value in values)
         raise ValueError(
-            f"-app takes one target application id, got {len(values)}: {named}. "
-            "Several applications cannot land on one id."
+            "-app TAKES ONE TARGET APPLICATION ID\n\n"
+            f"Got {len(values)}: {named}. Several applications cannot land on one id."
         )
     return ApexTarget(
         selected     = True,
         target_id    = values[0] if values else None,
         full_app_ids = [],
+    )
+
+
+def one_target_refusal(target_id: int | None, app_ids: list[int]) -> str:
+    """The message for one numbered `-app` over several applications, else ``""``.
+
+    One wording for the two places that meet it: `-deploy`, whose import would
+    land one application and drop the other, and `-create` since ADT #935, which
+    names both applications' scripts for the one target id and would write the
+    second pair over the first.
+    """
+    if target_id is None or len(app_ids) < 2:
+        return ""
+    named = ", ".join(str(app_id) for app_id in sorted(app_ids))
+    return (
+        f"-app {target_id} NAMES ONE TARGET\n\n"
+        f"This patch ships {len(app_ids)} applications ({named}),\n"
+        "and several applications cannot land on one id."
     )
 
 
@@ -124,11 +118,11 @@ def derive_sandbox_app_id(app_id: int, task: int) -> int:
     belongs to without a lookup.
     """
     if app_id <= 0:
-        raise ValueError(f"application id must be positive, got {app_id}")
+        raise ValueError(f"APPLICATION ID MUST BE POSITIVE, GOT {app_id}")
     if task <= 0:
         # A zero or negative task number produces `1100` back (a collision with
         # the real application) or a `-` in the middle of an integer literal.
-        raise ValueError(f"task number must be positive, got {task}")
+        raise ValueError(f"TASK NUMBER MUST BE POSITIVE, GOT {task}")
     return int(f"{app_id}{task}")
 
 
@@ -179,9 +173,9 @@ def derive_sandbox_alias(alias: str, task: int) -> str:
     workspace.
     """
     if not alias:
-        raise ValueError("cannot derive a sandbox alias from an empty alias")
+        raise ValueError("CANNOT DERIVE A SANDBOX ALIAS FROM AN EMPTY ALIAS")
     if task <= 0:
-        raise ValueError(f"task number must be positive, got {task}")
+        raise ValueError(f"TASK NUMBER MUST BE POSITIVE, GOT {task}")
     return f"{alias}_{task}"
 
 
@@ -198,7 +192,7 @@ def build_import_script(
     trip cannot drift on how a SQLcl script is spelled.
 
     ``account`` is the developer `shared/identity` resolved, and an explicit
-    numbered target carrying one is followed by :data:`STAMP_BLOCK` in the same
+    numbered target carrying one is followed by `queries.APEX_IMPORT_STAMP_BLOCK` in the same
     session (ADT #682, #795). An APEXlang import writes no audit column at all
     -- measured on APEX 26.1, an export taken with `p_with_audit_info` set is
     byte-identical to one
@@ -226,9 +220,9 @@ def build_import_script(
     """
     if target.target_id is not None and not alias:
         raise ValueError(
-            "-alias travels with -id: importing under application id "
-            f"{target.target_id} while keeping the source alias collides with "
-            "the application the tree was exported from"
+            "-alias TRAVELS WITH -id\n\n"
+            f"Importing under application id {target.target_id} while keeping the\n"
+            "source alias collides with the application the tree was exported from."
         )
     path = input_path.as_posix()
     # Refused when the path holds a `"` SQLcl's quoting cannot carry (ADT #653);
@@ -241,7 +235,7 @@ def build_import_script(
         lines = [f'{command} -id {target.target_id} -alias "{alias}"']
         if account.strip():
             lines.append(
-                STAMP_BLOCK.format(
+                queries.APEX_IMPORT_STAMP_BLOCK.format(
                     app_id  = target.target_id,
                     account = escape_literal(account.strip()),
                 )

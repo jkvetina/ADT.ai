@@ -40,7 +40,7 @@ VERIFYING APPLICATIONS:
     LOG: 20260902-194318_apex_scan_1000.txt
 ```
 
-A finding is a stanza line rather than a table column, the same call `DEPLOYMENT ERROR:` makes for the same reason: an `ORA-` message in a cell destroys the layout at 80 columns.
+A finding is a stanza line rather than a table column, the same call `ERROR - DEPLOYMENT FAILED:` makes for the same reason: an `ORA-` message in a cell destroys the layout at 80 columns.
 
 **A finding fails the deploy**, unless the run passed `-continue`. Unlike the invalid-object list on the deploy page, this read is patch-scoped. It asks the application this patch just deployed, so it cannot fail a run over an object somebody else left invalid a month ago. What `-continue` changes is below, in "Waiving the verdict for one run".
 

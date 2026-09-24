@@ -15,8 +15,15 @@ from adt_ai.cli.constants import (
 from adt_ai.cli.context import _config_search_paths, _repo_root
 from adt_ai.cli.context_apex import _flatten_arg_groups
 from adt_ai.cli.validate_scan import _scan_applications
+from adt_ai.export_apex.files import ApexFileResolver
 from adt_ai.shared.apex_paths import APEXLANG_DIR
 from adt_ai.shared.apex_payloads import drop_legacy_staging, link_payloads
+from adt_ai.shared.apexlang_line_endings import (
+    PrecheckIssue,
+    convert_crlf,
+    crlf_issue,
+    print_precheck_issues,
+)
 from adt_ai.shared.db import run_sqlcl_script
 from adt_ai.shared.error_screen import print_adt_error
 from adt_ai.shared.file_list import row as list_row
@@ -28,9 +35,6 @@ from adt_ai.validate.runner import (
     ValidateRequest,
     ValidateRunner,
 )
-
-# The sibling export that owns the static-file payloads `-apexlang` skips.
-FILES_DIR = "files"
 
 # A refusal names what to go and fix, like every other ADT.ai failure screen
 # (`docs/console.md` §Failure screens). Jan chose this shape for both cases over a
@@ -44,8 +48,8 @@ FILES_DIR = "files"
 # headers, so the wording that separates the two survives inside one screen; the
 # `_HEADER` suffix goes with them, because the console inventory holds the
 # family's twelve codes and a lead line is body text rather than furniture.
-INPUT_NOT_FOUND_LEAD     = "These inputs are not on disk:"
-NOTHING_TO_VALIDATE_LEAD = "Nothing to validate:"
+INPUT_NOT_FOUND_LEAD     = "INPUTS NOT ON DISK"
+NOTHING_TO_VALIDATE_LEAD = "NOTHING TO VALIDATE"
 
 
 class ConsoleValidateReporter(ValidateReporter):
@@ -93,13 +97,15 @@ def _run_validate(
     app_ids = _flatten_arg_groups(args.app)
     config = _optional_config(args, root, inputs, app_ids)
 
-    targets, notes = resolve_targets(root, config, inputs=inputs, app_ids=app_ids)
+    targets, missing_trees = resolve_targets(root, config, inputs=inputs, app_ids=app_ids)
+    notes: list[str | PrecheckIssue] = [*missing_trees]
     refusal = _refusal(targets, root, config, inputs, app_ids)
     if refusal is not None:
         _print_refusal(*refusal, debug_available=hasattr(args, "debug"))
         return 1
     drop_legacy_staging(root)
-    notes.extend(_link_payloads(targets))
+    notes.extend(_link_payloads(targets, ApexFileResolver.from_config(root, config)))
+    notes.extend(_convert_crlf(targets))
     reporter = ConsoleValidateReporter(debug=args.debug)
 
     if targets:
@@ -125,20 +131,23 @@ def _run_validate(
         elif folder.report.outcome == UNRECOGNISED:
             # Never swallow output the parser could not read: show it verbatim so
             # the user can see what SQLcl actually said.
-            print_adt_header(f"UNRECOGNISED OUTPUT {folder.target.label}:")
+            print_adt_header(f"WARNING - UNRECOGNISED OUTPUT {folder.target.label}:")
             print(folder.report.raw.rstrip("\n"))
             print()
 
-    if notes:
+    # A precheck issue is a warning and still fails the run: the committed tree
+    # is the broken one until the conversion is committed (ADT #928, #934).
+    plain_notes = print_precheck_issues(notes)
+    if plain_notes:
         print_adt_header("NOTES:")
-        for note in notes:
+        for note in plain_notes:
             reporter.note(note)
         print()
 
     return 0 if not result.failed and not notes else 1
 
 
-def _link_payloads(targets: list[ValidateTarget]) -> list[str]:
+def _link_payloads(targets: list[ValidateTarget], resolver: ApexFileResolver) -> list[str]:
     """Complete every project tree in place, so the compiler reads the real folder.
 
     `apexlang/` alone cannot validate on any app that owns static files: the export
@@ -152,12 +161,17 @@ def _link_payloads(targets: list[ValidateTarget]) -> list[str]:
     message section and the folder the compiler opens are all the one path the user
     asked about, and a tree that was correct on disk cannot be made wrong by what
     another target staged (`shared/apex_payloads.py` carries the full argument).
+
+    The payloads are read from the folder `export_apex -files` writes them to,
+    `apex_path_files` under the application's folder, which is the tree's parent.
+    A hard-coded `files/` made every payload a `REFERENCE_NOT_FOUND` in a
+    project that sets the key (ADT #923).
     """
     notes: list[str] = []
     for target in targets:
         if not target.stageable:
             continue
-        links = link_payloads(target.path, target.path.parent / FILES_DIR)
+        links = link_payloads(target.path, resolver.files_root(target.path.parent))
         if links.linked == 0 and _references_payloads(target.path):
             # The compiler will report one REFERENCE_NOT_FOUND per payload, which
             # says what is missing but not how to get it. This says how.
@@ -168,6 +182,24 @@ def _link_payloads(targets: list[ValidateTarget]) -> list[str]:
                 )
             )
     return notes
+
+
+def _convert_crlf(targets: list[ValidateTarget]) -> list[PrecheckIssue]:
+    """Hand the compiler LF, one warning per tree that had to be converted (ADT #928).
+
+    SQLcl's APEXlang compiler cannot read CRLF, and on a whole application it
+    crashed rather than reported. The same conversion a `patch -deploy` import
+    runs, so the check and the import read the same bytes; the note keeps the
+    run failing until the conversion is committed, because the committed tree is
+    still the broken one.
+    """
+    issues: list[PrecheckIssue] = []
+    for target in targets:
+        if not target.stageable:
+            continue
+        if converted := convert_crlf(target.path):
+            issues.append(crlf_issue(target.label, converted))
+    return issues
 
 
 def _refusal(
@@ -224,10 +256,13 @@ def _print_refusal(
     separates the two cases; both take the same code, because "the folder you
     named is not on disk" and "there is nothing here to validate" are one answer
     to the reader: what you pointed me at is not there.
+
+    The lead is a short uppercase headline, and the rows sit one blank line
+    under it (ADT #934).
     """
     print_adt_error(
         "INPUT NOT FOUND",
-        [lead, *(list_row(text) for text in rows)],
+        [lead, "", *(list_row(text) for text in rows)],
         remedy,
         debug_available=debug_available,
     )

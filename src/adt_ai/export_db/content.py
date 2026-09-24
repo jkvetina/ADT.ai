@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 from adt_ai.export_db.config import _configured_object_types, _split_patterns
@@ -215,8 +214,9 @@ def _render_job_arguments(rows: list[dict[str, Any]]) -> str:
 def _qualified(owner: str, object_name: str, keep_owner: bool) -> str:
     """Render an object name with or without its owner, per `keep_owner`.
 
-    One spelling for every GRANT and DIRECTORY line, so the three renderers
-    below cannot disagree about what the key means.
+    One spelling for every GRANT line, so the two grant renderers below cannot
+    disagree about what the key means. A DIRECTORY never takes it: see
+    `_render_directories`.
     """
     name = object_name.lower()
     if not keep_owner or not owner:
@@ -230,41 +230,42 @@ def _render_grants_made(
     schema: str = "",
     keep_owner: bool = False,
 ) -> str:
-    if any(row.get("SQL") or row.get("sql") for row in rows):
-        return _render_grants_made_sql_rows(rows)
-    filtered = [
-        row for row in rows
-        if _grant_object_matches(str(row.get("OBJECT_NAME") or ""), prefix, ignore)
-    ]
+    """The grants-made file, one statement per grantee, from either row shape.
+
+    `GRANTS_MADE_QUERY` filters and aggregates in SQL, so its rows arrive with a
+    `PRIVILEGES` list and are taken as they come; a row per privilege, the shape
+    `user_tab_privs_made` has, is filtered here first. One loop writes both, so
+    they cannot disagree about `keep_owner` again: the query used to write each
+    statement itself, and SQL never saw the key (`#923`).
+    """
+    if not any(_listed_privileges(row) for row in rows):
+        rows = [
+            row for row in rows
+            if _grant_object_matches(str(row.get("OBJECT_NAME") or ""), prefix, ignore)
+        ]
     lines: list[str] = []
     last_type = ""
-    grouped = _group_grants_made(filtered)
-    for object_type, object_name, grantable in sorted(grouped):
+    grouped = _group_grants_made(rows)
+    ordered = sorted(
+        grouped, key=lambda grant: (*grant[:2], _oracle_name_key(grant[2]), grant[3])
+    )
+    for key in ordered:
+        object_type, object_name, grantee, grantable = key
         if object_type != last_type:
             lines.extend(["", "--", f"-- {object_type}", "--"])
-        privileges, grantees = grouped[(object_type, object_name, grantable)]
         grant_option = " WITH GRANT OPTION" if grantable == "YES" else ""
         lines.append(
-            f"GRANT {', '.join(sorted(privileges))} "
+            f"GRANT {', '.join(sorted(grouped[key]))} "
             f"ON {_qualified(schema, object_name, keep_owner)} "
-            f"TO {', '.join(_sort_oracle_names(grantees))}{grant_option};"
+            f"TO {grantee.lower()}{grant_option};"
         )
         last_type = object_type
     return "\n".join(lines).lstrip() + ("\n\n" if lines else "")
 
-def _render_grants_made_sql_rows(rows: list[dict[str, Any]]) -> str:
-    lines: list[str] = []
-    last_type = ""
-    for row in rows:
-        object_type = str(row.get("OBJECT_TYPE") or row.get("TYPE") or "")
-        sql = str(row.get("SQL") or row.get("sql") or "")
-        if not sql:
-            continue
-        if object_type != last_type:
-            lines.extend(["", "--", f"-- {object_type}", "--"])
-        lines.append(sql)
-        last_type = object_type
-    return "\n".join(lines).lstrip() + ("\n\n" if lines else "")
+def _listed_privileges(row: dict[str, Any]) -> list[str]:
+    """The privileges `GRANTS_MADE_QUERY` aggregated for one grantee, or none."""
+    listed = str(row.get("PRIVILEGES") or "")
+    return [privilege.strip() for privilege in listed.split(",") if privilege.strip()]
 
 def _ignored_comment_columns(config: dict[str, Any]) -> set[str]:
     default_ignored = {
@@ -282,25 +283,28 @@ def _ignored_comment_columns(config: dict[str, Any]) -> set[str]:
         return default_ignored
     return default_ignored | {str(configured).upper()}
 
-def _sort_oracle_names(values: Iterable[str]) -> list[str]:
-    return sorted(
-        (value.lower() for value in values),
-        key=lambda value: value.upper().replace("_", "{"),
-    )
+def _oracle_name_key(value: str) -> str:
+    """Sort key putting `_` after the letters, as Oracle orders an uppercase name."""
+    return value.upper().replace("_", "{")
 
 def _group_grants_made(
     rows: list[dict[str, Any]],
-) -> dict[tuple[str, str, str], tuple[set[str], set[str]]]:
-    grouped: dict[tuple[str, str, str], tuple[set[str], set[str]]] = {}
+) -> dict[tuple[str, str, str, str], set[str]]:
+    """Privileges per (type, object, grantee, grantable), never pooled across grantees.
+
+    Pooling them is what gave every grantee of an object every privilege any of
+    them held once the file was replayed (`#923`).
+    """
+    grouped: dict[tuple[str, str, str, str], set[str]] = {}
     for row in rows:
         key = (
             str(row.get("OBJECT_TYPE") or row.get("TYPE") or ""),
             str(row.get("OBJECT_NAME") or row.get("TABLE_NAME") or ""),
+            str(row.get("GRANTEE") or ""),
             str(row.get("GRANTABLE") or "NO"),
         )
-        grouped.setdefault(key, (set(), set()))
-        grouped[key][0].add(str(row.get("PRIVILEGE") or ""))
-        grouped[key][1].add(str(row.get("GRANTEE") or ""))
+        privileges = _listed_privileges(row) or [str(row.get("PRIVILEGE") or "")]
+        grouped.setdefault(key, set()).update(privileges)
     return grouped
 
 def _render_grants_received(
@@ -388,23 +392,18 @@ def _render_user_privileges(
         lines.extend(schema_lines)
     return "\n".join(lines).lstrip("-\n") + ("\n\n" if lines else "")
 
-def _render_directories(
-    rows: list[dict[str, Any]],
-    schema: str,
-    keep_owner: bool = False,
-) -> str:
-    names = [
-        _qualified(
-            str(row.get("OWNER") or schema),
-            str(row.get("DIRECTORY_NAME") or ""),
-            keep_owner,
-        )
-        for row in rows
-    ]
+def _render_directories(rows: list[dict[str, Any]]) -> str:
+    """One `CREATE OR REPLACE DIRECTORY` per row, the name never owner-qualified.
+
+    A directory is a database-wide object that belongs to no schema, so the
+    statement has no place for one: `keep_owner` used to write `hr.data_dir`
+    and Oracle refuses that name, which left the file unreplayable (`#923`).
+    Nothing but the rows is taken, so no caller can hand the key back in.
+    """
     lines = [
-        f"CREATE OR REPLACE DIRECTORY {name:<31} "
+        f"CREATE OR REPLACE DIRECTORY {str(row.get('DIRECTORY_NAME') or '').lower():<31} "
         f"AS '{_escape_sql_text(str(row.get('DIRECTORY_PATH') or ''))}';"
-        for name, row in zip(names, rows, strict=True)
+        for row in rows
     ]
     return "\n".join(sorted(lines)).lstrip() + ("\n" if lines else "")
 

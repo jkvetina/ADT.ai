@@ -51,6 +51,9 @@ from adt_ai.patch.layout import (
     database_schema as _database_schema,
 )
 from adt_ai.patch.layout import (
+    is_apex_comment as _is_apex_comment,
+)
+from adt_ai.patch.layout import (
     is_apex_path as _is_apex_path,
 )
 from adt_ai.patch.layout import (
@@ -109,9 +112,17 @@ def _patch_files(
     # the key is about. The two environment scripts it drops are re-added below by
     # `_apex_copy_files`, which is `apex_files_copy`'s whole job: old ADT kept the
     # same file out of the CHANGE set and in the snapshot folder.
+    #
+    # The page comments `export_apex` writes beside an application are no part
+    # of any patch (ADT #935), whatever git says about them: not in the header's
+    # file lists, not snapshotted, not reported. Jan, 2026-09-24: *"ignore all
+    # files/changes in da/apex/<app>/comments/"*. ADT #928 had only taken them off
+    # the screens, so the `init` half still listed them under `MODIFIED FILES:`.
     def _wanted(path: str) -> bool:
         if _is_apex_path(path, config):
-            return not _settings.is_ignored_apex_file(path, config)
+            return not (
+                _settings.is_ignored_apex_file(path, config) or _is_apex_comment(path, config)
+            )
         return _is_database_path(path, config)
 
     files = {path for record in records for path in record.usable_files if _wanted(path)}

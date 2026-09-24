@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING
 
 from adt_ai.export_db.grants import GRANT_OBJECT_TYPE
 from adt_ai.export_db.inventory import DatabaseObject
@@ -32,12 +33,16 @@ from adt_ai.shared.object_list import (
     EMPTY_TYPE_CELL,
     NAME_WIDTH,
     ObjectRowFormatter,
+    listing_gap,
     print_listing_gap,
     print_object_rows,
     type_separator,
 )
 from adt_ai.shared.progress import print_adt_header
 from adt_ai.shared.recent_state import parse_timestamp
+
+if TYPE_CHECKING:
+    from adt_ai.export_db.failures import ObjectExportFailure
 
 __all__ = [
     "ADT_TABLE_GUTTER",
@@ -95,9 +100,6 @@ class ExportDbReporter:
     def overview_grants(self, changed: bool, count: int) -> None:
         pass
 
-    def recent_note(self, message: str) -> None:
-        pass
-
     def diff_tables_dropped(self, tables: list[str]) -> None:
         pass
 
@@ -123,6 +125,12 @@ class ExportDbReporter:
     def finish_object(self, failed: bool = False) -> None:
         pass
 
+    def abort_export(self) -> None:
+        pass
+
+    def objects_not_exported(self, schema: str, failures: list[ObjectExportFailure]) -> None:
+        pass
+
     def finish_type(self, schema: str, object_type: str) -> None:
         pass
 
@@ -131,6 +139,10 @@ class ExportDbReporter:
 
     def job_arguments_not_exported(self, schema: str, names: list[str]) -> None:
         pass
+
+#: `#917`, spelled by Jan: *"In a way it is a warning only, we continued."*
+#: The objects the database refused, listed once the schema's export is done.
+OBJECT_EXPORT_FAILED_HEADER = "WARNING - OBJECT EXPORT FAILED:"
 
 #: `#861`, spelled by Jan picking it. The jobs whose arguments had no CREATE_JOB
 #: block to be written into, listed once the schema's export is done.
@@ -143,7 +155,10 @@ JOB_ARGUMENTS_NOT_EXPORTED_HEADER = "WARNING - JOB ARGUMENTS NOT EXPORTED:"
 OVERVIEW_COLUMNS = ("object_type", "count")
 
 class ConsoleExportDbReporter(ExportDbReporter):
-    def __init__(self, silent: bool = False, compact: bool = False) -> None:
+    def __init__(self, silent: bool = False, compact: bool = False, debug: bool = False) -> None:
+        # `-debug` adds each failed object's error under its row (`#917`);
+        # without it the warning names the objects and nothing else.
+        self._debug = debug
         # The shared `TYPE | NAME` builder (`#506`). Scoped per schema because a
         # run renders one listing per schema and each has to open by naming its
         # own type, whatever the segment above it ended on.
@@ -269,13 +284,6 @@ class ConsoleExportDbReporter(ExportDbReporter):
         if not rows:
             return
         print_adt_table(rows, columns=list(OVERVIEW_COLUMNS))
-
-    def recent_note(self, message: str) -> None:
-        # The title is the header; the sentence explaining it is body text. The
-        # whole note used to be the header, so a dashed rule ran the width of a
-        # sentence and the line could not end on a colon (ADT #237).
-        print_adt_header("NO PREVIOUS EXPORT RECORDED:")
-        print(f"  {message}")
 
     def diff_tables_dropped(self, tables: list[str]) -> None:
         # Every dropped table is named. This is the one place `export_db` issues
@@ -410,22 +418,29 @@ class ConsoleExportDbReporter(ExportDbReporter):
     def finish_object(self, failed: bool = False) -> None:
         """Close the row the DDL pull was running under.
 
-        Under `-compact` the row is the bar, so a successful pull bumps it and a
-        failed one completes it with `FAILED` and hands the screen to the error
-        banner. The bar is dropped on failure: nothing after this may redraw a
-        row the error has already printed under.
+        Under `-compact` the row is the bar, and it advances either way: a
+        failed object is recorded and the export carries on past it (`#917`),
+        so the bar keeps its countdown and the failure is listed afterwards.
         """
         if self._bar is not None:
-            if failed:
-                self._bar.fail()
-                self._bar = None
-            else:
-                self._bar.advance()
+            self._bar.advance()
             return
         if not self._row_open:
             return
         self._row_open = False
         print()
+
+    def abort_export(self) -> None:
+        """The run is stopping mid-segment: complete the bar with `FAILED`.
+
+        Only for a failure the export cannot carry on past, a lost connection
+        or an interrupt. The bar is dropped so nothing redraws a row the error
+        screen has already printed under (`#232`).
+        """
+        if self._bar is None:
+            return
+        self._bar.fail()
+        self._bar = None
 
     def finish_type(self, schema: str, object_type: str) -> None:
         if self._silent or self._compact:
@@ -452,6 +467,38 @@ class ConsoleExportDbReporter(ExportDbReporter):
             return
         print_adt_header(JOB_ARGUMENTS_NOT_EXPORTED_HEADER)
         print_object_rows(("JOB", name) for name in names)
+
+    def objects_not_exported(self, schema: str, failures: list[ObjectExportFailure]) -> None:
+        """The objects the database refused, as rows like the ones exported.
+
+        Straight under the export and above the dependency refresh (`#917`).
+        A warning, not an error screen: the run carried on past every one of
+        them. No query and no `-debug` hint, Jan: *"keep it lean"*; the error
+        itself prints under its row only when `-debug` asked for it. Printed
+        under `-silent` too, since an object missing from the repository is not
+        progress chatter.
+        """
+        if not failures:
+            return
+        print_adt_header(OBJECT_EXPORT_FAILED_HEADER)
+        pairs = [
+            (failure.database_object.object_type, failure.database_object.name)
+            for failure in failures
+        ]
+        if not self._debug:
+            print_object_rows(pairs)
+            return
+        errors = {pair: failure.error for pair, failure in zip(pairs, failures, strict=True)}
+        formatter = ObjectRowFormatter()
+        rows: list[str] = []
+        for object_type, object_name in sorted(pairs):
+            rows.extend(formatter.stream_rows(object_type, object_name))
+            rows.extend(
+                f"{EMPTY_TYPE_CELL} |   {line}".rstrip()
+                for line in str(errors[(object_type, object_name)]).splitlines()
+            )
+        for row in [*listing_gap(), *rows, type_separator()]:
+            print(row)
 
 def _overview_header(
     names: list[str] | None,

@@ -11,13 +11,21 @@ def normalize_job(lines: list[str], context: NormalizationContext) -> list[str]:
         return lines
 
     action_match = re.search(
-        r"job_action\s*=>\s*'((?:''|[^'])*)'",
+        r"job_action\s*=>\s*(?P<literal>'(?:''|[^'])*')",
         job_payload,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    job_action = action_match.group(1).strip() if action_match else ""
+    # The WHOLE literal is set aside, quotes and edge newlines included, and only
+    # at the span it was matched. An action stripped first left a line holding
+    # just its quote, which the formatter below padded with `=>` as if it named an
+    # attribute: PLS-00103 on deploy, and an action that read differently (#923).
+    job_action = action_match.group("literal") if action_match else ""
     if action_match:
-        job_payload = job_payload.replace(job_action, "{JOB_ACTION}")
+        job_payload = (
+            job_payload[: action_match.start("literal")]
+            + "{JOB_ACTION}"
+            + job_payload[action_match.end("literal") :]
+        )
 
     job_payload = re.sub(
         r"start_date=>TO_TIMESTAMP_TZ[^)]*[)]",

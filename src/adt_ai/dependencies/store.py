@@ -230,6 +230,28 @@ class DependencyStore(DependencyQueries):
         """Patch one app's ``APEX_*`` rows without wiping unchanged rows."""
         return refresh.refresh_app_incremental(self.connection, app_id, tables, force=force)
 
+    def app_page_rows(
+        self, app_id: int, page_ids: Iterable[int]
+    ) -> dict[str, list[dict[str, Any]]]:
+        """One app's stored dependency rows for ``page_ids``, and the objects they name.
+
+        What a page the fallback walk could not scan keeps (ADT #865), in the
+        ``{table: rows}`` shape :meth:`refresh_app_incremental` takes.
+        """
+        pages = list(page_ids)
+        if not pages:
+            return {}
+        props = self.connection.execute(
+            queries.select_page_props_query(len(pages)), (app_id, *pages)
+        ).fetchall()
+        objects = self.connection.execute(
+            queries.select_page_objects_query(len(pages)), (app_id, app_id, *pages)
+        ).fetchall()
+        return {
+            "APEX_USED_DB_OBJECTS": [dict(row) for row in objects],
+            "APEX_USED_DB_OBJECT_COMP_PROPS": [dict(row) for row in props],
+        }
+
     def record_refresh(
         self,
         scope_type: str,

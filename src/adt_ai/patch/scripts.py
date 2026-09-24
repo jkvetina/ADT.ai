@@ -37,8 +37,8 @@ from adt_ai.patch import settings
 from adt_ai.patch.content import decode_repo_text
 from adt_ai.patch.files import _patch_map, _patch_scripts_folder
 from adt_ai.patch.generated_helpers import (
-    ALTER_HELPER_SLOT,
-    DROP_HELPER_SLOT,
+    alter_helper_slot,
+    drop_helper_slot,
     is_alter_helper_filename,
     is_drop_helper_filename,
 )
@@ -119,17 +119,18 @@ def _is_generated_helper(relative: Path, config: dict[str, Any]) -> bool:
 
     Filename AND slot, never either alone. The filename shapes are the
     generator's (`drop.<type>.<name>.sql`, `<stem>.<number>.sql`,
-    `<stem>.hash.sql`) and the slots are the two it writes into, so a
-    hand-written `02.sql` in a `_before` slot is an author's file whatever its
-    name looks like. Getting this wrong deletes the only copy of somebody's DDL,
-    which is why it is the narrow test rather than the clever one.
+    `<stem>.hash.sql`) and the slots are the two it writes into, as this
+    project's config names them (ADT #923), so a hand-written `02.sql` in a
+    `_before` slot is an author's file whatever its name looks like. Getting
+    this wrong deletes the only copy of somebody's DDL, which is why it is the
+    narrow test rather than the clever one.
     """
     if len(relative.parts) < 2:
         return False
     slot = relative.parts[0]
-    if slot == DROP_HELPER_SLOT:
+    if slot == drop_helper_slot(config):
         return is_drop_helper_filename(relative.name, config)
-    if slot == ALTER_HELPER_SLOT:
+    if slot == alter_helper_slot(config):
         return is_alter_helper_filename(relative.name)
     return False
 
@@ -309,15 +310,15 @@ def _prune_empty(source_root: Path, root: Path) -> None:
         source_root.rmdir()
 
 __all__ = [
-    "ALTER_HELPER_SLOT",
     "Any",
     "CommitRecord",
-    "DROP_HELPER_SLOT",
     "PATCH_SCRIPTS_FOLDER",
     "PatchScripts",
     "Path",
+    "alter_helper_slot",
     "annotations",
     "collect_patch_scripts",
+    "drop_helper_slot",
     "harden_patch_script",
     "is_alter_helper_filename",
     "is_drop_helper_filename",

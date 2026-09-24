@@ -285,4 +285,17 @@ def _percent(covered: int, total: int) -> float:
     return float(ratio.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
+def tenths(figure: float) -> Decimal:
+    """A figure to the one decimal place it prints with, a half rounded up (ADT #923).
+
+    Read through its shortest spelling, which for a figure `_percent` rounded is
+    the decimal it was. `f"{figure:.1f}"` and `round()` rounded a half to even,
+    so 6.25 printed `6.2`, and 53.15, held just below it in binary, `53.1`.
+
+    Every printed figure goes through here, and so does the change table's
+    `DELTA`: the difference of two of these rather than a rounding of its own.
+    """
+    return Decimal(repr(figure)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+
+
 __all__ = [name for name in globals() if not name.startswith("__")]

@@ -67,6 +67,7 @@ LEFT JOIN user_plsql_object_settings p
     AND p.type              = o.object_type
 WHERE 1 = 1
     AND g.object_like       IS NULL
+    AND o.object_name       NOT LIKE 'BIN$%'
     AND o.object_type       IN ('PACKAGE', 'PACKAGE BODY', 'PROCEDURE', 'FUNCTION',
         'TRIGGER', 'VIEW', 'MATERIALIZED VIEW', 'SYNONYM', 'TYPE', 'TYPE BODY')
     AND EXISTS (
@@ -120,6 +121,10 @@ ORDER BY 1
 # Neither arm returns an APEX scan helper (`DEPSCAN$<n>#<n>`, ADT #888): the run
 # drops the strays it finds before this read, and the filter keeps out one a
 # concurrent scan creates after that drop.
+#
+# Nor a recycle-bin object (`BIN$...`, ADT #923), and the overview, the error
+# reads and the PL/Scope list below leave them out too: Oracle takes no DDL on
+# one, so it could only ever fail, and `export_db` ignores them the same way.
 OBJECTS_TO_RECOMPILE_QUERY = f"""
 WITH objects_add AS (
     SELECT /*+ MATERIALIZE CARDINALITY(t 1) */
@@ -158,6 +163,7 @@ FROM (
         AND o.status            != 'VALID'
         AND o.object_type       NOT IN ('SEQUENCE')
         AND {not_a_scan_helper("o.object_name")}
+        AND o.object_name       NOT LIKE 'BIN$%'
         AND EXISTS (
             SELECT 1
             FROM object_types n_t
@@ -185,6 +191,7 @@ FROM (
         AND g.object_like       IS NULL
         AND :force              = 'Y'
         AND {not_a_scan_helper("o.object_name")}
+        AND o.object_name       NOT LIKE 'BIN$%'
         -- The first arm already returns every invalid object, so this one takes
         -- the VALID ones and nothing else. Without the predicate a bare -force
         -- (:drift_only = 'N', where the drift arm below applies no status test of
@@ -300,6 +307,7 @@ WHERE 1 = 1
         WHERE e.name LIKE n_n.object_like ESCAPE '\\'
     )
     AND e.text          NOT LIKE 'PLW%'     -- skip warnings
+    AND e.name          NOT LIKE 'BIN$%'    -- recycle bin
 GROUP BY
     e.type,
     e.name
@@ -358,6 +366,7 @@ WHERE 1 = 1
         WHERE e.name LIKE n_n.object_like ESCAPE '\\'
     )
     AND e.text          NOT LIKE 'PLW%'     -- skip warnings
+    AND e.name          NOT LIKE 'BIN$%'    -- recycle bin
 ORDER BY e.type, e.name, e.line, e.position, e.sequence
 """.strip()
 
@@ -438,6 +447,7 @@ LEFT JOIN user_plsql_object_settings p
     AND p.type              = o.object_type
 WHERE 1 = 1
     AND o.status            = 'VALID'
+    AND o.object_name       NOT LIKE 'BIN$%'
     AND o.object_type       IN ({_PLSCOPE_TYPE_IN_LIST})
     AND (
         NVL(p.PLSCOPE_SETTINGS, '-') NOT LIKE '%IDENTIFIERS:ALL%'

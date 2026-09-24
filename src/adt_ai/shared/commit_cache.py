@@ -62,7 +62,8 @@ def branch_filename(branch: str) -> str:
         or any(component in {"", ".", ".."} for component in components)
     ):
         raise ValueError(
-            f"Unsupported branch name {branch!r}; use only letters, digits, ., _, -, or /"
+            f"UNSUPPORTED BRANCH NAME {branch!r}\n\n"
+            "Use only letters, digits, ., _, -, or /."
         )
     return branch.replace("/", "-")
 
@@ -89,8 +90,8 @@ def store_path(
     path = cache_path(root, cache_file_template, branch)
     if path.suffix.lower() != ".db":
         raise ValueError(
-            f"repo_commits_file must name a .db SQLite store, not {path}. "
-            "YAML commit history is no longer supported. Update the setting, remove "
+            f"repo_commits_file MUST NAME A .db STORE, NOT {path}\n\n"
+            "YAML commit history is no longer supported. Update the setting, remove\n"
             "any old YAML cache, then run 'adt rebuild'."
         )
     return path
@@ -120,8 +121,9 @@ def open_store(
     legacy = legacy_cache_path(root, cache_file_template, branch)
     if legacy.is_file():
         raise ValueError(
-            f"Legacy YAML commit cache is no longer supported: {legacy}. "
-            "Remove it, then run 'adt rebuild' to create a complete SQLite store."
+            f"LEGACY YAML COMMIT CACHE: {legacy}\n\n"
+            "It is no longer supported. Remove it, then run 'adt rebuild' to create\n"
+            "a complete SQLite store."
         )
     store = CommitStore.open(path)
     try:

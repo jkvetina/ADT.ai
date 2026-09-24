@@ -21,12 +21,15 @@ from adt_ai.patch.layout import deploy_log_folder
 from adt_ai.shared.commit_discovery import CommitRecord
 
 
-def spool_start(config: dict[str, Any], target_env: str | None, schema: str) -> str:
-    """`SPOOL "./logs_<ENV>/<SCHEMA>.log" APPEND;`.
+def spool_start(config: dict[str, Any], schema: str) -> str:
+    """`SPOOL "./logs/<SCHEMA>.log" APPEND;`, the folder named for no environment.
 
-    The script is generated per target, so its log destination is known here,
-    which is what lets a hand-run in SQLcl land beside an `adtai patch -deploy`
-    run instead of dropping a stray `<SCHEMA>.log` in the folder root (ADT #260).
+    The script is no longer generated per target (#924 F33): the same file
+    deploys anywhere, so it names the environment-free folder, which is where a
+    hand-run in SQLcl lands, and `-deploy -target` points this line at its own
+    `logs_<ENV>/` in the payload it sends (`templates.for_target`). Either way
+    the log lands in a folder rather than as a stray `<SCHEMA>.log` in the
+    folder root (ADT #260).
 
     The line itself is `patch_spool_line` since ADT #431; the folder it names
     stays `deploy_log_folder`'s answer, because `-deploy` writes its own captured
@@ -34,7 +37,7 @@ def spool_start(config: dict[str, Any], target_env: str | None, schema: str) -> 
     """
     return settings.spool_line(
         config,
-        folder = deploy_log_folder(config, target_env),
+        folder = deploy_log_folder(config, None),
         schema = schema,
     )
 

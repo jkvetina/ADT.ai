@@ -28,7 +28,9 @@ from adt_ai.cli.patch_deploy_layout import (
     DEPLOY_STATUS_RUNNING,
     _deployment_layout,
     _deployment_row_values,
+    import_blocks,
 )
+from adt_ai.patch.apex_deploy import BUILDING_APP_ROW
 from adt_ai.patch.models import DeploymentPlanItem, DeploymentResult
 from adt_ai.shared.streamed_table import ERASE_TO_END_OF_LINE, StreamedTable
 
@@ -258,6 +260,8 @@ class ConsoleDeployReporter:
             if self._finished is None or self._total is None
             else f"{self._finished}/{self._total}"
         )
+        if item is not None and item.file == BUILDING_APP_ROW:
+            files = import_blocks(self._total)
         elapsed = (
             ""
             if self._started is None

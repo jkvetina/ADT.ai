@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from adt_ai.export_db.normalizer_identifiers import unquote_simple_identifiers
 from adt_ai.export_db.normalizers import (
     NormalizationContext,
     _ensure_statement_semicolon,
@@ -14,6 +15,18 @@ from adt_ai.export_db.normalizers import (
     qualified,
 )
 
+#: The kinds that may sit between CREATE and INDEX. Matching `[UNIQUE]` alone sent
+#: every other kind to the definition-line fallback, which kept the table's source
+#: owner and wrote no IF NOT EXISTS, so a re-run failed ORA-00955 (ADT #923).
+_INDEX_KINDS = r"UNIQUE|BITMAP|MULTIVALUE|SEARCH|VECTOR"
+
+#: The kinds whose statement takes IF NOT EXISTS, as the 26ai SQL Language
+#: Reference writes it: `CREATE [UNIQUE] [BITMAP] [MULTIVALUE] INDEX [IF NOT
+#: EXISTS]`. The `CREATE VECTOR INDEX` syntax and Oracle Text's `CREATE SEARCH
+#: INDEX` show no such clause, so those two go unguarded until a live database
+#: has accepted it: a guard it refuses breaks the first deploy, not the second.
+_IF_NOT_EXISTS_KINDS = {"", "UNIQUE", "BITMAP", "MULTIVALUE"}
+
 
 def normalize_index(
     lines: list[str],
@@ -23,7 +36,7 @@ def normalize_index(
         return lines
 
     index_pattern = (
-        r"\s*CREATE\s+(?P<unique>UNIQUE\s+)?INDEX\s+"
+        rf"\s*CREATE\s+(?:(?P<kind>{_INDEX_KINDS})\s+)?INDEX\s+"
         r"(?:IF\s+NOT\s+EXISTS\s+)?"
         r"(?P<name>(?:\"[^\"]+\"|[A-Za-z0-9_$#]+)\.(?:\"[^\"]+\"|[A-Za-z0-9_$#]+)"
         r"|\"[^\"]+\"|[A-Za-z0-9_$#]+)\s+ON\s+"
@@ -58,8 +71,10 @@ def normalize_index(
     expression = body[1:close_index]
     suffix = body[close_index + 1:].strip().rstrip(";")
     option_lines = [line.rstrip() for line in lines[option_start:]]
-    kind = "CREATE UNIQUE INDEX" if match.group("unique") else "CREATE INDEX"
-    if_not_exists = " IF NOT EXISTS" if context.add_if_not_exists else ""
+    index_kind = (match.group("kind") or "").upper()
+    kind = f"CREATE {index_kind} INDEX" if index_kind else "CREATE INDEX"
+    guarded = context.add_if_not_exists and index_kind in _IF_NOT_EXISTS_KINDS
+    if_not_exists = " IF NOT EXISTS" if guarded else ""
     # Both names are re-derived here rather than edited in place, so both need
     # the owner put back under `keep_owner`; the index and its table share one.
     result = [
@@ -122,11 +137,4 @@ def _index_expression_items(expression: str) -> list[str]:
     ]
 
 def _normalize_index_expression(expression: str) -> str:
-    return _replace_outside_sql_strings(
-        expression,
-        lambda chunk: re.sub(
-            r'"([A-Z][A-Z0-9_$#]*)"',
-            lambda match: match.group(1).lower(),
-            chunk,
-        ),
-    )
+    return _replace_outside_sql_strings(expression, unquote_simple_identifiers)

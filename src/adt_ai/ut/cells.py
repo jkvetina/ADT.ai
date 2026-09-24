@@ -12,7 +12,13 @@ rather than about the table it sits in.
 
 from __future__ import annotations
 
-from adt_ai.ut.inventory import RESULT_ERRORED, RESULT_PASSED, PackageCoverage, TestOutcome
+from adt_ai.ut.inventory import (
+    RESULT_ERRORED,
+    RESULT_PASSED,
+    PackageCoverage,
+    TestOutcome,
+    tenths,
+)
 
 
 def count_cell(count: int) -> object:
@@ -39,10 +45,20 @@ def seconds_cell(seconds: float | None) -> str:
     return "" if seconds is None else f"{seconds:.1f}"
 
 
+def percent_figure(percent: float) -> str:
+    """A `COVERAGE` figure to one decimal place, a half rounded up (ADT #923).
+
+    The figure was rounded half up to two places (`inventory._percent`), and
+    `f"{percent:.1f}"` then rounded it again half to even: 6.25 printed `6.2`.
+    The rule is `inventory.tenths`, which the change table's `DELTA` shares.
+    """
+    return str(tenths(percent))
+
+
 def percent_cell(percent: float | None) -> str:
     # Same shape as a package row's own figure, so the roll-up stacks under the
     # column it summarises rather than reading as a different kind of number.
-    return "" if percent is None else f"{percent:.1f}"
+    return "" if percent is None else percent_figure(percent)
 
 
 # What a `MODULE NAME` cell reads when `ut_module` parsed no module out of the
@@ -114,7 +130,7 @@ def coverage_cell(package: PackageCoverage | None, *, paired: bool = True) -> st
         return UNPAIRED_COVERAGE
     if package is None or package.percent is None:
         return ""
-    return f"{package.percent:.1f}"
+    return percent_figure(package.percent)
 
 
 def status_cell(passed: bool) -> str:

@@ -155,7 +155,10 @@ def build_predicates(
     """
     predicates: list[str] = [_not_in("export_type", UNCOMPARED_FAMILIES)]
     if names:
-        patterns = _wildcards(names)
+        # Upper-cased the way `export_db -name` binds a name, since Oracle's
+        # `like` is case-sensitive and the screen filter is not: `-name orders`
+        # exported nothing and then reported no differences (#923).
+        patterns = [pattern.upper() for pattern in _wildcards(names)]
         predicates.extend(
             f"({_not_in('export_type', families)} or {_any_like(column, patterns)})"
             for column, families in _NAME_COLUMNS

@@ -78,7 +78,8 @@ def _run_diff(args: argparse.Namespace, *, gateway_factory: GatewayFactory | Non
     if not args.target:
         print_adt_error(
             "ARGUMENT INVALID",
-            "-target is required: it names the environment to compare against.",
+            "-target IS REQUIRED",
+            "It names the environment to compare against.",
         )
         return exit_code_for("ARGUMENT INVALID")
 
@@ -132,7 +133,7 @@ def _run_diff(args: argparse.Namespace, *, gateway_factory: GatewayFactory | Non
         if not data_names:
             print_adt_error(
                 "ARGUMENT INVALID",
-                "-data found no exported table to compare.",
+                "-data FOUND NO EXPORTED TABLE TO COMPARE",
                 "Name the tables with -name, or export them with export_data first.",
             )
             return exit_code_for("ARGUMENT INVALID")
@@ -233,9 +234,8 @@ def _run_diff(args: argparse.Namespace, *, gateway_factory: GatewayFactory | Non
     except RuntimeError as error:
         if args.debug:
             raise
-        print_adt_header("DIFF FAILED:")
-        print(str(error))
-        return 1
+        print_adt_error("DIFF FAILED", str(error))
+        return exit_code_for("DIFF FAILED")
 
     # **The artifact does not reach the screen** (Jan, `#769`). `#763` closed
     # the run on a `DIFF COMPLETE:` section carrying the zip path and a
@@ -263,9 +263,7 @@ def _run_diff(args: argparse.Namespace, *, gateway_factory: GatewayFactory | Non
             tail = pull.tail("OBJECTS", lambda sides: pull_objects(sides, shown))
         report_summary(summary, verbose=args.verbose, limit=limit, tail=tail)
     else:
-        print_adt_header("DIFF FAILED:")
-        if result.output:
-            print(result.output)
+        print_adt_error("DIFF FAILED", result.output or "")
 
     return 0 if result.success and not (pull and pull.failed) else 1
 
@@ -278,7 +276,10 @@ def _refusal(args: argparse.Namespace) -> str | None:
     """
     modes = [flag for dest, (flag, _) in _MODES.items() if getattr(args, dest, False)]
     if len(modes) > 1:
-        return f"{' and '.join(modes)} each replace the object comparison; run them one at a time."
+        return (
+            f"{' AND '.join(modes)} CANNOT BE COMBINED\n\n"
+            "Each replaces the object comparison; run them one at a time."
+        )
     apex = bool(getattr(args, "apex", False))
     # `-app` names applications and `-page` their pages, and only `-apex`
     # compares either (`#778`, `#893`). Both parse the way `export_apex` parses
@@ -289,7 +290,7 @@ def _refusal(args: argparse.Namespace) -> str | None:
     ):
         tokens = _flatten_arg_groups(getattr(args, dest, None))
         if tokens and not apex:
-            return f"{flag} applies to the APEX comparison; add -apex."
+            return f"{flag} NEEDS -apex\n\n{flag} applies to the APEX comparison; add -apex."
         try:
             parse(tokens)
         except ValueError as error:
@@ -305,16 +306,17 @@ def _refusal(args: argparse.Namespace) -> str | None:
         for flag, value in refused:
             if value:
                 return (
+                    f"{flag} DOES NOT APPLY TO {mode}\n\n"
                     f"{flag} applies to the object comparison, and {mode} compares "
                     f"{compares} only."
                 )
     # `-ignore` shapes the row comparison only (`#883`). `-limit` caps every
     # mode's listings since `#893`, so only its sign is checked.
     if _flatten_arg_groups(getattr(args, "ignore", None)) and not getattr(args, "data", False):
-        return "-ignore applies to the table data comparison; add -data."
+        return "-ignore NEEDS -data\n\n-ignore applies to the table data comparison; add -data."
     limit = getattr(args, "limit", None)
     if limit is not None and limit < 0:
-        return "-limit counts rows, so it cannot be negative."
+        return "-limit CANNOT BE NEGATIVE\n\n-limit counts rows."
     return None
 
 
@@ -327,13 +329,19 @@ def _pairing_refusal(args: argparse.Namespace, apex: bool) -> str | None:
     """
     if getattr(args, "target_app", None) is not None:
         if not apex:
-            return "-target-app pairs an application on the APEX comparison; add -apex."
+            return (
+                "-target-app NEEDS -apex\n\n"
+                "-target-app pairs an application on the APEX comparison; add -apex."
+            )
         selection = _parse_apex_app_selection(_flatten_arg_groups(getattr(args, "app", None)))
         ids = selection.explicit_ids if selection is not None and not selection.ranges else ()
         if len(ids) != 1 or not ids[0].isdigit():
-            return "-target-app pairs one application: name exactly one id with -app."
+            return "-target-app PAIRS ONE APPLICATION\n\nName exactly one id with -app."
     if getattr(args, "branch", None) is not None and not getattr(args, "restore", False):
-        return "-branch names the branch -restore writes to; add -restore."
+        return (
+            "-branch NEEDS -restore\n\n"
+            "-branch names the branch -restore writes to; add -restore."
+        )
     return None
 
 
@@ -380,7 +388,7 @@ def _run_diff_under_a_bar(request: DiffRequest, row: str) -> DiffResult:
     The bar returns the elapsed time rather than the operation's value, so the
     result is carried out of the worker by closure. A raise inside the worker
     still propagates: `TimedProgressBar.run` closes the row with `FAILED` and
-    re-raises, which is what keeps `DIFF FAILED:` off the end of a live row.
+    re-raises, which is what keeps `ERROR - DIFF FAILED:` off the end of a live row.
     """
     print_adt_header(COMPARING_HEADER)
     print()
@@ -396,8 +404,9 @@ def _run_diff_under_a_bar(request: DiffRequest, row: str) -> DiffResult:
     pair = pair_key(
         request.source.schema,
         request.target.schema,
-        types = request.object_types,
-        names = request.object_names,
+        types        = request.object_types,
+        names        = request.object_names,
+        environments = (request.source.environment, request.target.environment),
     )
     target = previous_seconds(path, pair) or FALLBACK_TARGET_SECONDS
     carried: list[DiffResult] = []

@@ -48,7 +48,12 @@ def _resolve_raw_target(raw_target: str | None, app_id: int) -> str | None:
     return _APP_ID_SUBSTITUTION.sub(str(app_id), raw_target)
 
 
-def _resolve_target_app_id(flag: str, app_id: int, target_app: str | None) -> int | None:
+def _resolve_target_app_id(flag: str, app_id: int, target_app: int | str | None) -> int | None:
+    """The application an edge lands in: its own for PAGE, the named one for CROSS_APP.
+
+    `target_app` is the id `NAV_EDGES_QUERY` resolved, an alias included (#923),
+    or the link's raw token where a row carries no resolved id.
+    """
     if flag == "PAGE":
         return app_id
     if flag == "CROSS_APP":
@@ -119,7 +124,9 @@ class ApexFlowRefreshRunner:
                     component     = row["COMPONENT"],
                     raw_target    = _resolve_raw_target(row["RAW_TARGET"], app.app_id),
                     target_app    = target_app,
-                    target_app_id = _resolve_target_app_id(flag, app.app_id, target_app),
+                    target_app_id = _resolve_target_app_id(
+                        flag, app.app_id, row.get("TARGET_APP_ID", target_app)
+                    ),
                     target_page   = row["TARGET_PAGE"],
                     flag          = flag,
                 )

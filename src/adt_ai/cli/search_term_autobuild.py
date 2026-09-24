@@ -2,7 +2,7 @@
 
 The graph questions build their stores first (`search_autobuild.py`); a TERM
 search reads a third kind of store, the source text `rebuild` mirrors, and it
-answered `NOT SEARCHED: ... run adtai rebuild -app <ID>` instead. Jan,
+answered `WARNING - NOT SEARCHED: ... run adtai rebuild -app <ID>` instead. Jan,
 2026-09-19, on that screen: *"I still see this shit, so the something is still
 broken"*. So before a TERM search reads a layer, the layer is brought up to
 date the way `rebuild` would:
@@ -22,7 +22,7 @@ date the way `rebuild` would:
 Freshness is measured the way `search_autobuild` measures it: seconds ago on
 the database's clock against the local refresh stamp's age, so no offset
 between the two clocks enters it. No connection, or a database that does not
-answer, leaves the layers as they stand, and `NOT SEARCHED` still names what
+answer, leaves the layers as they stand, and `WARNING - NOT SEARCHED` still names what
 could not be read.
 """
 
@@ -73,7 +73,7 @@ def prepare_term_stores(
     apps = _apps_to_refresh(root, args, gateway_factory) if {"APEX", "STATIC"} & set(layers) else []
     if not apps or not _connects(root):
         # Nothing owed, or nothing to refresh through: the layers are read as
-        # they stand, and `NOT SEARCHED` names the ones that hold nothing.
+        # they stand, and `WARNING - NOT SEARCHED` names the ones that hold nothing.
         return
     if apps == [EVERY_APP]:
         # Resolving `1+` asks the database for its applications before the

@@ -36,7 +36,9 @@ the header it actually prints.
 
 from __future__ import annotations
 
+import re
 import sys
+import textwrap
 from collections.abc import Sequence
 from typing import TextIO
 
@@ -59,6 +61,12 @@ ERROR_CODES: tuple[str, ...] = (
     # before writing, and git refused (ADT #897). Jan: *"ERROR header with
     # proper name and desc"*. Git's own line is the diagnosis, so no hint.
     "GIT COMMIT FAILED",
+    # `patch` and `diff` stopping on their own work (ADT #934). Both printed a
+    # bare section with the body flush left under it; Jan: *"I thought all
+    # text below a header should be indented with 2 spaces"*, and the header
+    # should read `ERROR - PATCH FAILED:`. The message names its own cause.
+    "PATCH FAILED",
+    "DIFF FAILED",
     "STARTUP FAILED",
     "UNEXPECTED ERROR",
 )
@@ -87,6 +95,59 @@ DEBUG_HINT = "Use -debug to show the Python traceback."
 #: it, which is what lets a searched-paths list nest at four without this module
 #: knowing anything about lists.
 BODY_INDENT = "  "
+
+
+#: What a headline keeps in its own case: a quoted value, a `-flag` or `:bind`,
+#: and a path, file name or config key. Everything else is uppercased.
+_VERBATIM = re.compile(r"""('[^']*'|"[^"]*"|`[^`]*`|(?<!\S)[-:]\S+|\S*[_/\\]\S*|\S*\w\.\w\S*)""")
+_CHOICES = re.compile(r"(?P<head>.*?) \((?P<choices>choose from .*)\)")
+#: argparse's two lists of what the reader typed or left out, kept whole: a
+#: stray positional such as `extra` has no dash to mark it as typed.
+_TYPED = re.compile(
+    r"(?P<lead>unrecognized arguments|the following arguments are required): (?P<typed>.*)"
+)
+
+
+def argument_headline(message: str) -> str:
+    """argparse's own refusal, opened on a short uppercase headline (ADT #934).
+
+    Every message ADT.ai writes opens its error screen on one. Jan, 2026-09-24:
+    *"all error names should be short uppercase messages. Recheck other
+    modules."* argparse's sentences are the one family ADT.ai does not write,
+    so they are cased here rather than at a raise site: `unrecognized
+    arguments: -bogus` reads `UNRECOGNIZED ARGUMENTS: -bogus`. The flags and
+    quoted values keep their case, because they are what the reader typed, and
+    an invalid choice's list moves to the line below, where a long one cannot
+    push the headline off the screen.
+    """
+    first, newline, rest = message.partition("\n")
+    typed = _TYPED.fullmatch(first)
+    if typed is not None:
+        return f"{typed.group('lead').upper()}: {typed.group('typed')}{newline}{rest}"
+    detail = ""
+    choices = _CHOICES.fullmatch(first)
+    if choices is not None:
+        first = choices.group("head")
+        detail = f"\n\nC{choices.group('choices')[1:]}."
+    headline = "".join(
+        part if _VERBATIM.fullmatch(part) else part.upper()
+        for part in _VERBATIM.split(first)
+    )
+    return f"{headline}{detail}{newline}{rest}"
+
+
+def one_line(message: str) -> str:
+    """A headline-and-detail message folded onto one line (ADT #934).
+
+    A refusal is a headline over its detail, and a few places quote one inside
+    a single row: a `NOT SEARCHED` reason, a parenthesis. Each line becomes a
+    sentence, so the detail cannot break the row it is quoted in.
+    """
+    parts = [line.strip() for line in message.splitlines() if line.strip()]
+    folded = parts[0] if parts else ""
+    for part in parts[1:]:
+        folded += (" " if folded.endswith((".", ":", ";", ",")) else ". ") + part
+    return folded
 
 
 def error_header(code: str) -> str:
@@ -120,8 +181,12 @@ def _block(text: str | Sequence[str]) -> list[str]:
     A blank carrying `BODY_INDENT` is trailing whitespace on a line nobody can
     see, which `test_text_write_newline.py`'s sibling rules exist to keep out of
     the console.
+
+    A string is dedented first: the screen owns the indent, and a message that
+    spelled its own two columns, as the refusals printed under a flush-left
+    header had to, would otherwise land at four (ADT #934).
     """
-    lines = text.splitlines() if isinstance(text, str) else list(text)
+    lines = textwrap.dedent(text).splitlines() if isinstance(text, str) else list(text)
     return [f"{BODY_INDENT}{line}".rstrip() for line in lines]
 
 
@@ -142,9 +207,9 @@ def print_adt_error(
 
     `debug_available` is the caller's `hasattr(args, "debug")`, so the parser
     stays the single authority on whether the flag exists. The hint still prints
-    only for `HINT_CODES`: five commands never declared `-debug`, and on the
-    seven codes that name their own cause a traceback adds nothing the screen
-    does not already say.
+    only for `HINT_CODES`: some commands never declared `-debug`, and on the
+    codes that name their own cause a traceback adds nothing the screen does
+    not already say.
     """
     _check(code)
     stream = file if file is not None else sys.stderr

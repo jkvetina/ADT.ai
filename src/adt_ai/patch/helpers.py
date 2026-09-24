@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.patch import queries
+from adt_ai.patch.content import decode_repo_text
 from adt_ai.patch.files import _patch_scripts_folder
 
 # The naming contract for what this module writes moved to
@@ -30,9 +31,9 @@ from adt_ai.patch.files import _patch_scripts_folder
 # `object_identity`). Re-exported rather than relocated at every call site:
 # `scripts.py` and the tests reach for these by name.
 from adt_ai.patch.generated_helpers import (  # noqa: F401 (re-exported for existing importers)
-    ALTER_HELPER_SLOT,
-    DROP_HELPER_SLOT,
+    alter_helper_slot,
     drop_helper_filename,
+    drop_helper_slot,
     is_alter_helper_filename,
     is_drop_helper_filename,
 )
@@ -240,7 +241,7 @@ def _write_hash_table_diff_helpers(
         if not baseline_hash:
             continue
         previous = stored_tables.get(file) or _body_at_content_hash(
-            root, file, window, baseline_hash
+            root, file, window, baseline_hash, config=config
         )
         if previous is None:
             unresolved.append(file)
@@ -250,8 +251,8 @@ def _write_hash_table_diff_helpers(
             continue
         # The working tree, because hash mode forces the `local` content mode:
         # what was compared against the baseline is what the patch ships, so it
-        # is also what the ALTER has to reach.
-        current = current_path.read_text(encoding="utf-8")
+        # is also what the ALTER has to reach, decoded the way it ships (#923).
+        current = decode_repo_text(current_path.read_bytes(), file, config)
         # The stem, not the upper-cased name: this one is rendered into DDL, and
         # a generated patch script is a compatibility contract.
         table_name = _database_object_stem(file, config)
@@ -269,7 +270,7 @@ def _write_hash_table_diff_helpers(
             continue
         if not sql:
             continue
-        folder = script_root / ALTER_HELPER_SLOT
+        folder = script_root / alter_helper_slot(config)
         folder.mkdir(parents=True, exist_ok=True)
         helper = folder / f"{Path(file).stem}.hash.sql"
         text_files.write_text(helper, sql)
@@ -354,7 +355,7 @@ def _write_drop_helpers(
             continue
         if _object_exported_elsewhere(root, file, identity, config, on_disk):
             continue
-        folder = script_root / DROP_HELPER_SLOT
+        folder = script_root / drop_helper_slot(config)
         folder.mkdir(parents=True, exist_ok=True)
         helper = folder / drop_helper_filename(object_type, object_name)
         text_files.write_text(helper, _drop_helper_sql(object_type, object_name))
@@ -401,7 +402,7 @@ def _write_table_diff_helpers(
     }
     written: list[AlterHelper] = []
     for file in sorted(table_files):
-        versions = _table_versions(root, file, records)
+        versions = _table_versions(root, file, records, config=config)
         if not versions:
             continue
         # Read through the configured extension, never `Path.stem`:
@@ -417,7 +418,7 @@ def _write_table_diff_helpers(
         # One `previous` per version, oldest first: the baseline in front, then
         # each version standing in for the one after it.
         previous_bodies = [
-            _table_baseline(root, file, records),
+            _table_baseline(root, file, records, config=config),
             *(body for _, body in versions[:-1]),
         ]
         for previous, (number, current) in zip(previous_bodies, versions, strict=True):
@@ -435,7 +436,7 @@ def _write_table_diff_helpers(
                 continue
             if not sql:
                 continue
-            folder = script_root / ALTER_HELPER_SLOT
+            folder = script_root / alter_helper_slot(config)
             folder.mkdir(parents=True, exist_ok=True)
             helper = folder / f"{Path(file).stem}.{number}.sql"
             text_files.write_text(helper, sql)
@@ -449,11 +450,9 @@ def _write_table_diff_helpers(
     return written
 
 __all__ = [
-    "ALTER_HELPER_SLOT",
     "AlterHelper",
     "Any",
     "CommitRecord",
-    "DROP_HELPER_SLOT",
     "GeneratedScripts",
     "Mapping",
     "Path",
@@ -463,8 +462,10 @@ __all__ = [
     "_write_drop_helpers",
     "_write_generated_patch_scripts",
     "_write_table_diff_helpers",
+    "alter_helper_slot",
     "annotations",
     "drop_helper_filename",
+    "drop_helper_slot",
     "git_show",
     "table_alter_sql",
     "is_alter_helper_filename",

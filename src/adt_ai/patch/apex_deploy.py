@@ -49,12 +49,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from adt_ai.export_apex.files import ApexFileResolver
 from adt_ai.patch import settings
 from adt_ai.patch.apex_backup import ApexBackup, backup_line
 from adt_ai.patch.apex_import import (
     ApexTarget,
     build_import_script,
     derive_sandbox_alias,
+    one_target_refusal,
     recover_task_number,
 )
 from adt_ai.patch.apex_lock import BuildStatusLock, build_status_line, lock_target
@@ -68,12 +70,10 @@ from adt_ai.patch.layout import is_apex_full_export
 from adt_ai.patch.models import DeploymentPlanItem, DeploymentResult
 from adt_ai.shared.apex_payloads import IGNORE_NAME, drop_legacy_staging, link_payloads
 from adt_ai.shared.apex_store import ApexStore
+from adt_ai.shared.apexlang_line_endings import PrecheckIssue, convert_crlf, crlf_issue
+from adt_ai.shared.apexlang_static_refs import missing_refusal, missing_static_files
 from adt_ai.validate.files import resolve_targets
-from adt_ai.validate.report import message_lines, parse_import_output
-
-# The sibling export that owns the static-file payloads `-apexlang` skips, the
-# same constant `cli/commands_validate.py` reads for the same reason.
-FILES_DIR = "files"
+from adt_ai.validate.report import import_error_lines, parse_import_output
 
 EXPORT_COMMAND = "adtai export_apex -apexlang -app"
 
@@ -207,7 +207,7 @@ def prepare_apex_imports(
     *,
     force           : bool = False,
     locks           : dict[int, BuildStatusLock] | None = None,
-) -> tuple[list[ApexImportItem], list[str]]:
+) -> tuple[list[ApexImportItem], list[str | PrecheckIssue]]:
     """Resolve, stage and read every application this deploy imports.
 
     Returns the prepared items plus notes about applications the patch ships and
@@ -229,27 +229,43 @@ def prepare_apex_imports(
     if apex_target is None or not apex_target.selected or not app_ids:
         return [], []
     target_id = apex_target.target_id
-    if target_id is not None and len(app_ids) > 1:
-        named = ", ".join(str(app_id) for app_id in sorted(app_ids))
-        raise PatchError(
-            f"-app {target_id} names one target and this patch ships {len(app_ids)} "
-            f"applications ({named}). Several applications cannot land on one id."
-        )
+    if several := one_target_refusal(target_id, app_ids):
+        raise PatchError(several)
     refusal = _full_export_refusal(patch_files, config, target_id)
     if refusal and not force:
         raise PatchError(refusal)
 
     items: list[ApexImportItem] = []
+    resolver = ApexFileResolver.from_config(root, config)
     aliases, owners, workspaces = _application_facts(root, app_ids)
     drop_legacy_staging(root)
-    targets, notes = resolve_targets(
+    targets, missing_trees = resolve_targets(
         root, config, app_ids=[str(app_id) for app_id in sorted(app_ids)]
     )
+    notes: list[str | PrecheckIssue] = [*missing_trees]
     for resolved in targets:
         app_id = resolved.app_id
         if app_id is None:
-            raise PatchError("resolved APEX import target has no application id")
+            raise PatchError("APEX IMPORT TARGET HAS NO APPLICATION ID")
         landing = target_id if target_id is not None else app_id
+        # ADT #765: the payloads are linked into the export's own tree and kept
+        # there, so the import reads the folder that is committed rather than a
+        # copy assembled under `config/temp/`. `apex import` compiles before it
+        # writes, so it needs exactly the completeness `validate` needs, and it now
+        # gets it from the same reconciliation rather than from a second tree that
+        # could disagree with this one. From the configured `apex_path_files`,
+        # the folder `export_apex` wrote them to, as `validate` reads it (#923).
+        link_payloads(resolved.path, resolver.files_root(resolved.path.parent))
+        # ADT #928: SQLcl's compiler cannot read CRLF, so a tree committed that
+        # way is converted in place and noted, before the tree is hashed, so the
+        # log names the bytes the import read. Never refused: a re-export would
+        # throw away the hand-edited `.apx` this deploy exists to ship.
+        if converted := convert_crlf(resolved.path):
+            notes.append(crlf_issue(_relative_label(resolved.path, root), converted))
+        # ADT #930: a static file the tree names and lacks fails the compile, so
+        # it refuses here, before the lock writes a status and before `init` runs.
+        if missing := missing_static_files(resolved.path):
+            raise PatchError(missing_refusal(app_id, _relative_label(resolved.path, root), missing))
         # **Before the signature is read, which is the whole of the point**
         # (ADT #726). The window this closes runs from that read to the import,
         # so a lock taken after it would leave the race exactly where it was.
@@ -267,17 +283,10 @@ def prepare_apex_imports(
                 workspace = workspaces.get(app_id, ""),
                 mode      = mode,
             )
-        # ADT #765: the payloads are linked into the export's own tree and kept
-        # there, so the import reads the folder that is committed rather than a
-        # copy assembled under `config/temp/`. `apex import` compiles before it
-        # writes, so it needs exactly the completeness `validate` needs, and it now
-        # gets it from the same reconciliation rather than from a second tree that
-        # could disagree with this one.
-        link_payloads(resolved.path, resolved.path.parent / FILES_DIR)
         # ADT #745: a held lock has already read the target, one statement
         # before it wrote the status that moves that reading. `None` where no
-        # lock went on, so an unlocked deploy reads the target here exactly as
-        # it did before ADT #726.
+        # lock went on OR its read failed (a `""` reading is an empty target,
+        # #923), so the gate reads the target itself as it did before ADT #726.
         held = locks.get(app_id) if locks is not None else None
         signatures = collect_signatures(
             gateway_factory(owners.get(app_id, "")),
@@ -285,24 +294,33 @@ def prepare_apex_imports(
             app_id    = app_id,
             target_id = landing,
             tree_root = resolved.path,
-            on_target = held.signature if held is not None and held.locked else None,
+            on_target = (held.signature or None) if held is not None and held.locked else None,
+            # ADT #925: the author, read by the same lock before its write
+            # stamped the application with this deploy's own user.
+            last_change = held.last_change if held is not None and held.locked else None,
         )
         if signatures.refused and not force:
             raise PatchError(drift_message(signatures))
-        items.append(
-            ApexImportItem(
-                app_id          = app_id,
-                target_id       = landing,
-                alias           = aliases.get(app_id, ""),
-                schema          = owners.get(app_id, ""),
-                source          = resolved.path,
-                staged          = resolved.path,
-                label           = resolved.label,
-                files           = _tree_files(resolved.path),
-                signatures      = signatures,
-                explicit_target = target_id is not None,
-            )
+        item = ApexImportItem(
+            app_id          = app_id,
+            target_id       = landing,
+            alias           = aliases.get(app_id, ""),
+            schema          = owners.get(app_id, ""),
+            source          = resolved.path,
+            staged          = resolved.path,
+            label           = resolved.label,
+            files           = _tree_files(resolved.path),
+            signatures      = signatures,
+            explicit_target = target_id is not None,
         )
+        # Built once here so what the script refuses (no alias to carry beside
+        # `-id`, a path SQLcl cannot quote) refuses with the gates above, not
+        # after the `init` half ran (ADT #923).
+        try:
+            build_import_script(item.staged, item.target, item.alias_for_target)
+        except ValueError as error:
+            raise PatchError(str(error)) from None
+        items.append(item)
     return items, notes
 
 
@@ -412,11 +430,15 @@ def _source_line(item: ApexImportItem, root: Path) -> str:
     Same column width as the three signature rows above it, so the block reads
     as one table rather than as a row bolted onto it.
     """
+    return f"--   DEPLOYED FROM    | {_relative_label(item.source, root)}"
+
+
+def _relative_label(path: Path, root: Path) -> str:
+    """``path`` from the project root, or absolute when it sits outside it."""
     try:
-        source = item.source.relative_to(root).as_posix()
+        return path.relative_to(root).as_posix()
     except ValueError:
-        source = str(item.source)
-    return f"--   DEPLOYED FROM    | {source}"
+        return str(path)
 
 
 def _full_export_refusal(
@@ -435,9 +457,11 @@ def _full_export_refusal(
     if not exports:
         return ""
     lines = [
-        f"-app {target_id} lands the tree on a different application, and this "
-        "patch also installs a full export, which cannot be retargeted and would "
-        "install the source application in place."
+        f"-app {target_id} CANNOT RETARGET A FULL EXPORT",
+        "",
+        "It lands the tree on a different application, and this patch also",
+        "installs a full export, which cannot be retargeted and would install",
+        "the source application in place.",
     ]
     lines.extend(f"  {path}" for path in exports)
     lines.append(
@@ -484,16 +508,8 @@ def _task_number(app_id: int, target_id: int) -> int:
 
 
 def _excerpt(report: Any) -> tuple[str, ...]:
-    """The compiler's own rows, in the shape the deploy table's error block wants.
-
-    A report with no parsed rows still owes the reader something, an
-    UNRECOGNISED outcome being the case where the transcript is all there is, so
-    its tail is carried instead of an empty tuple that would render as a failure
-    with no reason attached.
-    """
-    if report.errors:
-        return tuple(message_lines(report.errors))
-    return tuple(line for line in report.raw.splitlines()[-10:] if line.strip())
+    """The error block's lines, `validate.report.import_error_lines` (ADT #928)."""
+    return import_error_lines(report)
 
 
 __all__ = [name for name in globals() if not name.startswith("_")]

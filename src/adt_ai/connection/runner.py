@@ -41,6 +41,14 @@ _SECRET_KEYS = (
     *COMMAND_KEYS,
 )
 
+# The pre-`wallet_pwd` spelling of the wallet password, with its encryption
+# marker and key fingerprint. `set-wallet-pwd` removes all three (#924 F25).
+_LEGACY_WALLET_KEYS = (
+    "wallet_password",
+    "wallet_password!",
+    "wallet_password_key",
+)
+
 ConnectionEditSecretField = Literal[
     "password", "wallet_password", "key", "old_key", "new_key"
 ]
@@ -148,7 +156,7 @@ def _reject_unsafe_yaml(text: str) -> None:
         YAML(typ="safe").load(text)
     except Exception as error:
         raise ConnectionEditError(
-            f"unsupported or unsafe YAML in connection file: {error}"
+            f"UNSUPPORTED OR UNSAFE YAML IN CONNECTION FILE\n\n{error}"
         ) from error
 
 
@@ -230,7 +238,7 @@ class ConnectionEditor:
             # Only `create` may start from a blank document; every other action
             # edits an existing file, so surface the miss as an edit error (exit 2)
             # instead of a raw FileNotFoundError traceback.
-            raise ConnectionEditError(f"connection file not found: {request.path}")
+            raise ConnectionEditError(f"CONNECTION FILE NOT FOUND: {request.path}")
         _reject_unsafe_yaml(text)
         yaml = _yaml()
         data = yaml.load(text)
@@ -250,7 +258,7 @@ class ConnectionEditor:
         elif request.action == "rekey":
             summary, preview = rekey_secrets(data, request)
         else:
-            raise ConnectionEditError(f"unknown action: {request.action}")
+            raise ConnectionEditError(f"UNKNOWN ACTION: {request.action}")
 
         if request.apply:
             request.path.parent.mkdir(parents=True, exist_ok=True)
@@ -272,10 +280,10 @@ class ConnectionEditor:
     ) -> tuple[str, str]:
         env = request.environment
         if env in data:
-            raise ConnectionEditError(f"environment already exists: {env}")
+            raise ConnectionEditError(f"ENVIRONMENT ALREADY EXISTS: {env}")
         if request.like is not None:
             if request.like not in data:
-                raise ConnectionEditError(f"source environment not found: {request.like}")
+                raise ConnectionEditError(f"SOURCE ENVIRONMENT NOT FOUND: {request.like}")
             new_env = self._clone_env(data[request.like], request)
             summary = f"add environment {env} (like {request.like})"
         else:
@@ -351,7 +359,15 @@ class ConnectionEditor:
             wallet = {}
             env_node["wallet"] = wallet
         wallet.setdefault("wallet", request.wallet)
-        if request.wallet_password and "wallet_pwd" not in wallet:
+        # A legacy `wallet_password` is a stored wallet password too, and the
+        # loader prefers it, so writing `wallet_pwd` beside it stored a second
+        # password nothing reads (#924 F25). `-create` keeps what is stored.
+        stored = any(
+            isinstance(node, dict) and key in node
+            for node in (wallet, env_node.get("db"))
+            for key in ("wallet_pwd", "wallet_password")
+        )
+        if request.wallet_password and not stored:
             self._write_password(
                 wallet,
                 "wallet_pwd",
@@ -428,7 +444,7 @@ class ConnectionEditor:
             env_node["schemas"] = schemas
         if schema in schemas:
             raise ConnectionEditError(
-                f"schema already exists: {request.environment}.{schema}"
+                f"SCHEMA ALREADY EXISTS: {request.environment}.{schema}"
             )
         user = request.username or schema
         db: dict[str, Any] = {"user": user}
@@ -448,7 +464,7 @@ class ConnectionEditor:
         schema_node = schemas.get(request.schema) if isinstance(schemas, dict) else None
         if not isinstance(schema_node, dict):
             raise ConnectionEditError(
-                f"schema not found: {request.environment}.{request.schema}"
+                f"SCHEMA NOT FOUND: {request.environment}.{request.schema}"
             )
         if request.password:
             db = schema_node.get("db")
@@ -475,6 +491,14 @@ class ConnectionEditor:
                 request,
                 request.plaintext("password"),
             )
+            # The loader reads the legacy `wallet_password` spelling before
+            # `wallet_pwd`, so a legacy value left in the wallet or `db` block
+            # kept winning over the password just set (#924 F25). The new
+            # secret replaces it, marker and fingerprint included.
+            for node in (wallet, env_node.get("db")):
+                if isinstance(node, dict):
+                    for key in _LEGACY_WALLET_KEYS:
+                        node.pop(key, None)
         summary = f"set wallet password for {request.environment}"
         return summary, ""
 
@@ -510,7 +534,7 @@ class ConnectionEditor:
     def _require_environment(self, data: Any, env: str) -> Any:
         env_node = data.get(env) if isinstance(data, dict) else None
         if not isinstance(env_node, dict):
-            raise ConnectionEditError(f"environment not found: {env}")
+            raise ConnectionEditError(f"ENVIRONMENT NOT FOUND: {env}")
         return env_node
 
     def _dump_node(self, yaml: YAML, node: Any) -> str:

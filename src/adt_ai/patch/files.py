@@ -276,7 +276,10 @@ def _reject_unresolved_merges(root: Path, files: list[str]) -> None:
         if _MERGE_MARKER_RE.search(text):
             conflicted.append(path)
     if conflicted:
-        raise PatchError(f"unresolved merge markers in patch file(s): {', '.join(conflicted)}")
+        raise PatchError(
+            "UNRESOLVED MERGE MARKERS\n\n"
+            f"In patch file(s): {', '.join(conflicted)}"
+        )
 
 
 # Where an APEX artifact SITS is a layout question, so it is answered in

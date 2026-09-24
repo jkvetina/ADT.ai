@@ -26,6 +26,7 @@ from adt_ai.patch.models import (
     PatchError,
     ViewMismatch,
 )
+from adt_ai.patch.templates import for_target
 from adt_ai.recompile.queries import build_compile_statement
 from adt_ai.shared import text_files
 from adt_ai.shared.commit_discovery import PatchFolder, patch_id
@@ -78,26 +79,30 @@ def _select_patch_folder(folders: list[PatchFolder], ref: str | None) -> PatchFo
         # newest patch is the selection, as before.
         if folders:
             return folders[0]
-        raise PatchError("no patch folder found")
+        raise PatchError("NO PATCH FOLDER FOUND")
     exact = [folder for folder in folders if _is_exact_patch_ref(folder, ref)]
     if len(exact) == 1:
         return exact[0]
     if not folders:
-        raise PatchError(f"no patch folder found matching {ref!r}")
+        raise PatchError(f"NO PATCH FOLDER MATCHES {ref!r}")
     def names(selection: list[PatchFolder]) -> str:
         return ", ".join(folder.folder for folder in selection if folder.folder)
 
+    # Each refusal opens on a short uppercase headline and lists the folders on
+    # the line below it (ADT #934).
     if len(exact) > 1:
         # The ambiguous set only, a folder that merely CONTAINS the ref is not
         # one of the things being chosen between, and listing it here would send
         # the reader after a folder that was never in the running.
         raise PatchError(
-            f"{ref!r} matches more than one patch folder: {names(exact)} "
-            "- name one of them exactly"
+            f"{ref!r} MATCHES MORE THAN ONE PATCH FOLDER\n\n"
+            f"Matches: {names(exact)}\n"
+            "Name one of them exactly."
         )
     raise PatchError(
-        f"{ref!r} names no patch folder exactly, it only occurs inside: {names(folders)} "
-        "- name a full folder name, its patch code, or its id"
+        f"{ref!r} NAMES NO PATCH FOLDER EXACTLY\n\n"
+        f"It only occurs inside: {names(folders)}\n"
+        "Name a full folder name, its patch code, or its id."
     )
 
 def _deployment_group(name: str, config: dict[str, Any] | None) -> str:
@@ -123,6 +128,16 @@ def _deployment_app_id(name: str, config: dict[str, Any] | None = None) -> int |
     group, _stage = stages.split_stage(_deployment_group(name, config))
     parts = group.split(".", 1)
     return int(parts[1]) if len(parts) == 2 and parts[1].isdigit() else None
+
+def _script_app_id(path: Path, config: dict[str, Any] | None = None) -> int | None:
+    """The application a script deploys: its `SOURCE APP ID` row, else its name's.
+
+    `-create -app 1226000` names application 122's scripts `<SCHEMA>.1226000.*`
+    (ADT #935), so the name says where the tree lands and the header row says
+    whose tree it is, which is what the deploy needs to find and import it.
+    """
+    source = stages.source_app_id(path.read_text(encoding="utf-8", errors="replace"))
+    return source if source is not None else _deployment_app_id(path.name, config)
 
 def _deployment_stage(name: str, config: dict[str, Any] | None = None) -> str | None:
     """`init`, `end`, or ``None`` for a script that is not one half of an application.
@@ -187,8 +202,19 @@ def _unrun_deployment_result(item: DeploymentPlanItem, status: str) -> Deploymen
         log_path= None,
     )
 
-def _deployment_payload(path: Path, *, continue_on_error: bool) -> str:
+def _deployment_payload(
+    path: Path,
+    *,
+    continue_on_error: bool,
+    config: dict[str, Any] | None = None,
+    target_env: str | None = None,
+) -> str:
     """The install script as SQLcl receives it: session defaults, then the script.
+
+    ``target_env`` resolves the script for the target it is deployed to
+    (#924 F33, `templates.for_target`): that target's `--[ENV] ` lines run, and
+    the SPOOL names its log folder. The file on disk names no target, which is
+    what lets one patch deploy DEV, then UAT, then PROD.
 
     The directives are prepended here and not merely trusted to be in the file,
     because `-deploy` replays whatever install script is already on disk while
@@ -212,7 +238,10 @@ def _deployment_payload(path: Path, *, continue_on_error: bool) -> str:
         else queries.SQLERROR_EXIT_ROLLBACK_DIRECTIVE,
         *queries.SESSION_DEFAULT_DIRECTIVES,
     ]
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    text = for_target(
+        path.read_text(encoding="utf-8", errors="replace"), config or {}, target_env,
+    )
+    for line in text.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("--"):
             continue

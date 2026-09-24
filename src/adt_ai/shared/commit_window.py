@@ -34,6 +34,7 @@ def resolve_history_floor(config: dict[str, Any]) -> int | None:
         days = int(raw)
     except (TypeError, ValueError):
         raise ValueError(
-            f"patch_history_bottom_days must be a whole number of days, got {raw!r}"
+            f"INVALID patch_history_bottom_days: {raw!r}\n\n"
+            "It must be a whole number of days."
         ) from None
     return days if days > 0 else None

@@ -296,7 +296,7 @@ def _run_recompile_for_schema(
                 columns=list(_MVIEW_COLUMNS),
             )
             # a failed refresh/compile lists its error below the table, keyed by
-            # object name and styled like the COMPILE ERRORS message list.
+            # object name and styled like the `ERROR - RECOMPILATION FAILED:` message list.
             failed_actions = [a for a in result.mview_actions if not a.ok and a.error]
             for action in failed_actions:
                 print(f"  {action.object_name}) {action.error}")
@@ -327,7 +327,7 @@ def _run_discovery(
     has_sql  = bool(args.sql and args.sql.strip())
     has_file = bool(args.statements_file)
     if has_sql == has_file:
-        print_adt_error("ARGUMENT INVALID", "Provide exactly one of -sql or -file.")
+        print_adt_error("ARGUMENT INVALID", "PROVIDE EXACTLY ONE OF -sql OR -file")
         return exit_code_for("ARGUMENT INVALID")
 
     startup = _load_startup_context(args)
@@ -425,11 +425,17 @@ def _run_doctor(args: argparse.Namespace) -> int:
     ]
     if len(selected_actions) > 1:
         joined_actions = (
-            " and ".join(selected_actions)
+            " AND ".join(selected_actions)
             if len(selected_actions) == 2
-            else f"{', '.join(selected_actions[:-1])}, and {selected_actions[-1]}"
+            else f"{', '.join(selected_actions[:-1])}, AND {selected_actions[-1]}"
         )
-        print_adt_error("ARGUMENT INVALID", f"{joined_actions} cannot be combined")
+        print_adt_error("ARGUMENT INVALID", f"{joined_actions} CANNOT BE COMBINED")
+        return exit_code_for("ARGUMENT INVALID")
+    if args.sync and not args.init:
+        print_adt_error(
+            "ARGUMENT INVALID",
+            "-sync NEEDS -init\n\n-sync keeps the files -init scaffolds current.",
+        )
         return exit_code_for("ARGUMENT INVALID")
 
     printed_lines: list[str] = []
@@ -486,6 +492,7 @@ def _run_doctor(args: argparse.Namespace) -> int:
             sqlcl= args.sqlcl,
             offline=args.offline,
             init  =args.init,
+            sync  =args.sync,
             root  =Path(args.root),
             force =args.force,
             config=_doctor_config(args),

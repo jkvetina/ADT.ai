@@ -12,6 +12,11 @@ from adt_ai.export_db.normalizer_context import NormalizationContext as Normaliz
 from adt_ai.export_db.normalizer_context import Normalizer as Normalizer
 from adt_ai.export_db.normalizer_context import ddl_keyword as _ddl_keyword
 from adt_ai.export_db.normalizer_context import qualified as qualified
+from adt_ai.export_db.normalizer_identifiers import (
+    identifier_key,
+    normalize_identifier_part,
+    split_qualified_name,
+)
 
 # The plugin loader went the same way when `#740` took it past that cap again.
 from adt_ai.export_db.normalizer_plugins import NormalizerError as NormalizerError
@@ -161,21 +166,17 @@ def _normalize_common(
 
     payload = lower_simple_quoted_identifiers("\n".join(lines))
     if not context.keep_owner:
+        # The name ends where an identifier character does not follow it: `\b`
+        # never matches after a trailing `$` or `#` (ADT #923).
         payload = _replace_outside_sql_strings(
             payload,
             lambda chunk: re.sub(
-                rf"\b(?P<owner>[A-Za-z0-9_$#]+)\.(?={re.escape(context.object_name.lower())}\b)",
+                rf"\b(?P<owner>[A-Za-z0-9_$#]+)\."
+                rf"(?={re.escape(context.object_name.lower())}(?![A-Za-z0-9_$#]))",
                 owner_qualifier_stripper(context.object_owner),
                 chunk,
             ),
         )
-    payload = re.sub(r"\s+(NON)?EDITIONABLE\b", "", payload, flags=re.IGNORECASE)
-    payload = re.sub(
-        r"\s+DEFAULT\s+COLLATION\s+\S+",
-        "",
-        payload,
-        flags=re.IGNORECASE,
-    )
     # A third spelling of the view column-list strip used to sit here (`#680`).
     # It could never fire: `VIEW` is a body-preserving type, so it returns above
     # without reaching this branch, and no other type carries a `CREATE OR
@@ -183,12 +184,25 @@ def _normalize_common(
     # `object_normalizers/view_columns.py` as the one reader, which is what lets
     # `keep_view_column_names` be honoured in one place rather than three.
     lines = [line.rstrip() for line in payload.rstrip().splitlines()]
+    if lines:
+        lines[0] = _strip_definition_noise(lines[0])
     lines = _split_spec_from_body(lines, context)
     lines = _trim_trailing_blank_lines(lines)
     lines = _ensure_statement_semicolon(lines)
     if terminate:
         return _ensure_sql_terminator(lines)
     return lines
+
+def _strip_definition_noise(line: str) -> str:
+    """`EDITIONABLE` and `DEFAULT COLLATION`, dropped from the definition line only.
+
+    Both are header keywords. Run over the whole payload they rewrote the query
+    text too: a materialized view selecting `user_objects.editionable` lost the
+    column, and a literal holding `DEFAULT COLLATION` lost its closing quote with
+    the words (ADT #923).
+    """
+    line = re.sub(r"\s+(NON)?EDITIONABLE\b", "", line, flags=re.IGNORECASE)
+    return re.sub(r"\s+DEFAULT\s+COLLATION\s+\S+", "", line, flags=re.IGNORECASE)
 
 def _normalize_definition_line_only(
     lines: list[str],
@@ -202,13 +216,7 @@ def _normalize_definition_line_only(
     return normalized
 
 def _normalize_definition_line(line: str, context: NormalizationContext) -> str:
-    line = re.sub(r"\s+(NON)?EDITIONABLE\b", "", line, flags=re.IGNORECASE)
-    line = re.sub(
-        r"\s+DEFAULT\s+COLLATION\s+\S+",
-        "",
-        line,
-        flags=re.IGNORECASE,
-    )
+    line = _strip_definition_noise(line)
 
     keyword = _ddl_keyword(context.object_type)
     object_type_pattern = r"\s+".join(re.escape(part) for part in keyword.split())
@@ -241,31 +249,17 @@ def _extract_definition_owner(payload: str, object_type: str) -> str | None:
     )
     if not match:
         return None
-    return _identifier_key(match.group("name").split(".")[0])
-
-_QUALIFIED_DEFINITION_NAME = re.compile(
-    r'^(?P<owner>"[^"]+"|[A-Za-z0-9_$#]+)\.(?P<object>"[^"]+"|[A-Za-z0-9_$#]+)$'
-)
-
-def _split_definition_name(name: str) -> tuple[str | None, str]:
-    """Split ``owner.object`` without splitting a dot INSIDE a quoted name.
-
-    ``"Comm.Base"."X"`` is one owner and one object, so the naive
-    ``name.split(".")`` this replaced read it as three parts and kept the wrong
-    half. The alternation here is the same one the definition-line regex uses.
-    """
-    match = _QUALIFIED_DEFINITION_NAME.fullmatch(name.strip())
-    if not match:
-        return None, name.strip()
-    return match.group("owner"), match.group("object")
+    return identifier_key(split_qualified_name(match.group("name"))[0])
 
 def _normalize_definition_name(
     name: str,
     keep_owner: bool = False,
     display_name: str | None = None,
 ) -> str:
-    owner, object_name = _split_definition_name(name)
-    normalized = _normalize_definition_name_part(object_name)
+    # Split at the dot BETWEEN the parts: `"Comm.Base"."X"` is one owner and one
+    # object, which a plain `split(".")` read as three parts.
+    *owners, object_name = split_qualified_name(name)
+    normalized = normalize_identifier_part(object_name)
     # The OBJECT half follows the file; the owner never does. An owner is a
     # schema, not this file's name, and `keep_owner` exports are qualified
     # against the dictionary rather than against the working tree.
@@ -275,17 +269,9 @@ def _normalize_definition_name(
     # its quotes intact, matches nothing, and is left exactly as it was.
     if display_name and normalized.casefold() == display_name.casefold():
         normalized = display_name
-    if keep_owner and owner is not None:
-        return f"{_normalize_definition_name_part(owner)}.{normalized}"
+    if keep_owner and owners:
+        return f"{normalize_identifier_part(owners[0])}.{normalized}"
     return normalized
-
-def _normalize_definition_name_part(part: str) -> str:
-    quoted_match = re.fullmatch(r'"([A-Z][A-Z0-9_$#]*)"', part)
-    if quoted_match:
-        return quoted_match.group(1).lower()
-    if re.fullmatch(r"[A-Z][A-Z0-9_$#]*", part):
-        return part.lower()
-    return part
 
 def sql_spans(payload: str, *, identifiers: bool = False) -> list[tuple[str, int, int]]:
     """Split SQL text into ``code``, ``string``, ``comment`` and ``quoted`` spans.
@@ -441,8 +427,19 @@ def _split_spec_from_body(
             return lines[:index]
     return lines
 
-def _code_positions(payload: str, from_index: int = 0) -> Iterable[int]:
-    for kind, start, end in sql_spans(payload):
+def _code_positions(
+    payload: str,
+    from_index: int = 0,
+    *,
+    identifiers: bool = False,
+) -> Iterable[int]:
+    """Every index of `payload` from `from_index` on that is SQL code.
+
+    The one home of this question (ADT #474, #923). `identifiers=True` makes a
+    quoted identifier opaque as well, for a scan asking where the SQL STRUCTURE
+    is: `"A(B"`, `"X,Y"` and `"FROM"` are names that merely look like it.
+    """
+    for kind, start, end in sql_spans(payload, identifiers=identifiers):
         if kind != "code" or end <= from_index:
             continue
         yield from range(max(start, from_index), end)
@@ -479,33 +476,16 @@ def _normalize_sql_identifier(
     name: str,
     context: NormalizationContext | None = None,
 ) -> str:
-    name = name.strip()
-    parts = name.split(".")
-    if len(parts) > 1:
-        owner = parts[0]
-        object_name = ".".join(parts[1:])
-        if context is not None and context.object_owner:
-            normalized_name = _normalize_identifier_part(object_name)
-            if _identifier_key(owner) == context.object_owner:
-                return normalized_name
-            return f"{_normalize_identifier_part(owner)}.{normalized_name}"
-        name = object_name
-    return _normalize_identifier_part(name)
+    owner, *parts = split_qualified_name(name)
+    if not parts:
+        return normalize_identifier_part(owner)
+    normalized_name = ".".join(normalize_identifier_part(part) for part in parts)
+    if context is None or not context.object_owner or identifier_key(owner) == context.object_owner:
+        return normalized_name
+    return f"{normalize_identifier_part(owner)}.{normalized_name}"
 
 def _constraint_column_names(columns: str) -> list[str]:
     return [_normalize_sql_identifier(column) for column in _split_top_level_commas(columns)]
-
-def _normalize_identifier_part(identifier: str) -> str:
-    identifier = identifier.strip()
-    quoted_match = re.fullmatch(r'"([A-Z][A-Z0-9_$#]*)"', identifier)
-    if quoted_match:
-        return quoted_match.group(1).lower()
-    if re.fullmatch(r"[A-Z][A-Z0-9_$#]*", identifier):
-        return identifier.lower()
-    return identifier.strip('"')
-
-def _identifier_key(identifier: str) -> str:
-    return identifier.strip().strip('"').upper()
 
 
 def build_table_fix_sql(

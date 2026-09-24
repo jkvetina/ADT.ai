@@ -1,4 +1,4 @@
-"""The eight warning sections `patch -create` can close a schema block with.
+"""The nine warning sections `patch -create` can close a schema block with.
 
 Split out of `patch_create_render.py` when ADT #465 pushed that module past the
 20 KB context guard (`tests/contracts/test_context_file_size.py`). The same call
@@ -22,12 +22,13 @@ from collections.abc import Callable
 from typing import Any
 
 from adt_ai.cli.constants import print_adt_header
+from adt_ai.patch.layout import listed_patch_paths
 from adt_ai.patch.models import DatabasePatchResult, SchemaReport
 from adt_ai.patch.object_folders import object_folder_resolver
 from adt_ai.shared.file_list import nested_files, parent_folder, plain_row, print_file_rows
 from adt_ai.shared.object_list import print_object_rows
 
-# The eight warning sections `-create` can print, spelled once each. Constants
+# The nine warning sections `-create` can print, spelled once each. Constants
 # rather than literals at the call sites so `tests/helpers/console_surface.py`
 # records every one by name: it folds a module-level `NAME = "literal"` at the
 # call site AND reads any `*_HEADER` constant on its own, which is what keeps a
@@ -59,6 +60,10 @@ IGNORED_SCRIPTS_HEADER = "WARNING - NOT COMMITTED SCRIPTS, IGNORED:"
 # show a WARNING - OBJECTS CHANGED:"*.
 CHANGED_OBJECTS_HEADER = "WARNING - OBJECTS CHANGED:"
 NO_DATABASE_CLOCK_HEADER = "WARNING - NO DATABASE CLOCK:"
+# ADT #932, the ninth, and a third refusal that became a report: a file neither
+# UTF-8 nor `repo_encoding` stopped the patch as `PATCH FAILED:` until Jan, on a
+# plugin's `LICENSE4LIBS`: *"Good that user know, stupid that he is blocked."*
+NOT_UTF8_HEADER = "WARNING - NOT UTF-8:"
 
 # The newer-commit rows sit inside the same 78-character budget the commit
 # preview uses, rather than old ADT's flat `summary_len = 36`, a constant that
@@ -110,11 +115,15 @@ def warning_rows(
 
 def print_uncommitted(report: SchemaReport, config: dict[str, Any]) -> None:
     """Files git reports dirty or untracked, per schema (ADT #276, narrowed #444)."""
-    if not report.uncommitted:
+    # One `apexlang/` row for a tree and no page comments (ADT #928), the same
+    # rows `PROCESSED FILES:` prints: a CRLF tree converted by the last deploy
+    # is every file in it, and the fix is one commit of one folder.
+    rows = listed_patch_paths(list(report.uncommitted), config)
+    if not rows:
         return
     warning_rows(
         UNCOMMITTED_HEADER,
-        list(report.uncommitted),
+        rows,
         nested    = nested_files(config),
         folder_of = object_folder_resolver(config),
     )
@@ -199,6 +208,34 @@ def print_refused_tables(result: DatabasePatchResult, config: dict[str, Any]) ->
         nested    = nested_files(config),
         folder_of = object_folder_resolver(config),
         children  = lambda path, depth: [refusal_line(reasons[path], depth)],
+    )
+
+
+def print_undecodable_files(
+    result: DatabasePatchResult,
+    config: dict[str, Any],
+    *,
+    debug: bool = False,
+) -> None:
+    """Files the patch carries byte for byte because it could not read them (ADT #932).
+
+    Neither UTF-8 nor the declared `repo_encoding`, so their snapshot is the
+    repo's exact bytes and no transform touched it. Under `-debug` the first bad
+    byte's position hangs under each file, the same way `NO TABLE DIFF:` hangs
+    Oracle's reason, because an offset is what finds it in an editor. Without it
+    the list names the files and nothing else (ADT #934, Jan: *"Show positions
+    only in debug mode"*).
+    """
+    if not result.undecodable_files:
+        return
+    reasons = dict(result.undecodable_files)
+    print_adt_header(NOT_UTF8_HEADER)
+    print("  copied byte for byte; save as UTF-8, or set repo_encoding in config.yaml")
+    print_file_rows(
+        [file for file, _reason in result.undecodable_files],
+        nested    = nested_files(config),
+        folder_of = object_folder_resolver(config),
+        children  = (lambda path, depth: [refusal_line(reasons[path], depth)]) if debug else None,
     )
 
 

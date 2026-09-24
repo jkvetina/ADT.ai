@@ -79,14 +79,27 @@ The row is absent for a tree exported without a recorded commit, which is every 
 
 **The target moving is a showstopper.** When the first two disagree, somebody changed the application after the tree was exported and an import would overwrite work this patch never saw, so the deploy refuses before its first install script. An application with no recorded signature refuses the same way: the run cannot say what the change was based on. An id nothing is installed on yet, the ordinary first sandbox import, is not drift and passes.
 
-The refusal names the two states and the way out of them:
+The refusal says who changed the application, when, and how old your base is:
 
 ```text
-APP 100 moved since the tree was exported, so an import would overwrite work this patch never saw.
-  BASE    9f2c1ab7d0e34c5f8b6a2d1e7c0f4a93b5d8e621 SH256:795mkyqBRAN1UkZCYSV6l3ntA3JyqzBP8fmKN6LOT7k=
-  CURRENT SH256:HTIddFLS1G5jp2GiVk2z/HzDAxaS77J9idV2cEpeM0o=
-Run: git rebase db/dev, then deploy again (or -force to overwrite)
+  APP 100 CHANGED SINCE YOUR EXPORT
+
+  Deploying now would overwrite that work.
+
+  CHANGED BY  | DEVELOPER
+  CHANGED ON  | 2026-09-23 17:02
+  YOUR BASE   | 2026-09-23 16:58 (a5e59eb0 on db/dev)
+
+  Run: git rebase db/dev, then deploy again (or -force to overwrite)
 ```
+
+`CHANGED BY` and `CHANGED ON` are APEX's own `LAST_UPDATED_BY` and `LAST_UPDATED_ON`, the newer of the application and its pages. A Builder save names the developer. A deploy names the developer identity it ran under ([`IDENTITY.yaml`](config.md), and the stamp above), or the database user when there is none.
+
+They are read before the deploy locks the application, because the lock's build-status write stamps the application with this deploy's own user. An application nobody has touched since its import carries no author, and both rows then read `(not recorded)`.
+
+`YOUR BASE` is when `export_apex` took the checksum the change was made against, so the gap to `CHANGED ON` is how far behind you are, with the commit and the ref the rebase lands on. A tree exported before ADT recorded that time reads `(export time not recorded)`.
+
+The checksums stay in the import log, which also records the author as a `LAST CHANGED` row, left out when APEX has none.
 
 **`Run: git rebase` needs both halves of the merge base.** A recorded commit is only a base this checkout has; a shared ref is what makes it everybody's.
 
@@ -110,7 +123,9 @@ A completed deployment of the same payload to the same target is skipped without
 
 ## The row in the deploy table
 
-The import is a SQLcl command, not a file in the patch folder, and its row says so: `> BUILDING APP`. An APEXlang application's install script is two halves around it: `<SCHEMA>.<APP>.init.sql` carries the workspace block, the `apex_init` slot and the `APEXLANG SOURCE:` rows; `<SCHEMA>.<APP>.end.sql` carries the `apex_end` slot and the build status. The schema's own script runs before either:
+The import is a SQLcl command, not a file in the patch folder, and its row says so: `> BUILDING APP`. An APEXlang application's install script is two halves around it.
+
+`<SCHEMA>.<APP>.init.sql` carries the commits and files the patch changed, the workspace block, the `apex_init` slot and the `APEXLANG SOURCE:` rows; `<SCHEMA>.<APP>.end.sql` carries the `apex_end` slot and the build status of the application the import landed, and repeats no change list. The schema's own script runs before either:
 
 ```text
   FILE                   SCHEMA    BLOCKS   TIMER   STATUS
@@ -120,6 +135,20 @@ The import is a SQLcl command, not a file in the patch folder, and its row says 
   > BUILDING APP         SANDBOX               5s   SUCCESS
   SANDBOX.100.end.sql    SANDBOX      1/1      1s   SUCCESS
 ```
+
+A patch built with `-create -app 100926` names both halves for the target, `SANDBOX.100926.init.sql` and `SANDBOX.100926.end.sql`, so their rows, their SPOOL and their logs say where the tree lands.
+
+The `init` half keeps the source in its header and its source rows. `DEPLOY.sql` names application 100, its tree and its new id between the two lines ([patch_deploy.md](patch_deploy.md)):
+
+```text
+PROMPT -- APP ID 100926
+PROMPT -- SOURCE APP ID 100
+...
+PROMPT -- APEXLANG SOURCE: sandbox/apex/100_ORDERS/apexlang
+PROMPT -- imported from that folder as application 100926 by patch -deploy -app 100926, not from this patch
+```
+
+One target id over a patch carrying two APEXlang applications is refused at `-create` as it is at `-deploy`.
 
 The order is the point. A tree imports onto the objects its pages query, so the schema scripts and the `init` half run first; a failed script leaves the import and the `end` half `NOT RUN` rather than importing over a half-deployed schema, and a refused import leaves the `end` half `NOT RUN`.
 

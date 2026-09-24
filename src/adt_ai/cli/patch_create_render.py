@@ -46,6 +46,7 @@ from adt_ai.cli.patch_create_warnings import (
     print_refused_tables,
     print_script_warnings,
     print_uncommitted,
+    print_undecodable_files,
     print_unresolved_tables,
 )
 from adt_ai.cli.patch_preview_render import (
@@ -53,6 +54,7 @@ from adt_ai.cli.patch_preview_render import (
     RELEVANT_COMMITS_HEADER,
     patch_show_commits,
 )
+from adt_ai.patch.layout import is_apex_comment, listed_patch_paths
 from adt_ai.patch.models import DatabasePatchResult, SchemaReport
 from adt_ai.patch.object_folders import object_folder_resolver
 from adt_ai.shared.commit_discovery import CommitRecord
@@ -155,6 +157,8 @@ def print_create_screen(
     result: DatabasePatchResult,
     records: list[CommitRecord],
     root: Path,
+    *,
+    debug: bool = False,
 ) -> None:
     """The finished `-create` screen, in the order Jan reads it (ADT #443).
 
@@ -175,7 +179,7 @@ def print_create_screen(
     module already owned every section the order arranges.
     """
     print_create_commit_listings(workspace, config, result, records)
-    print_create_report(result, config)
+    print_create_report(result, config, debug=debug)
     # Two empty lines above it, like every other header on the screen, and asked
     # for by name: Jan, `#443`, *"a dedicated section at the bottom (with 2 empty
     # lines above it) where you will list these schema driving files in 1 list"*.
@@ -206,7 +210,12 @@ def print_create_screen(
     print()
 
 
-def print_create_report(result: DatabasePatchResult, config: dict[str, object]) -> None:
+def print_create_report(
+    result: DatabasePatchResult,
+    config: dict[str, object],
+    *,
+    debug: bool = False,
+) -> None:
     # `config` arrived with ADT #504: every section below lists file paths, and
     # whether they group under their folder is a project setting (`nested_files`)
     # read against a project layout (`path_objects`). Threaded rather than read
@@ -232,7 +241,7 @@ def print_create_report(result: DatabasePatchResult, config: dict[str, object]) 
         # a schema's own object files from the templates and scripts `files` also
         # carries. The APEX group went with it, `PROCESSED FILES:` appends
         # `<schema>.<app_id>`, so which app a block belongs to is still on screen.
-        _print_object_changes(report, nested, folder_of)
+        _print_object_changes(report, nested, folder_of, config)
         print_adt_header("PROCESSED FILES:", schema_label(report.schema_label))
         # File rows and nothing else (ADT #451). `#277`'s newer-commit block used
         # to hang under the row it belonged to, which is the shape Jan read back
@@ -244,8 +253,10 @@ def print_create_report(result: DatabasePatchResult, config: dict[str, object]) 
         # OBJECTS:` two headers above and printed in both places until ADT #511.
         # The split lives on the model beside the deleted listings it is the
         # complement of, so this section reads one list and filters nothing.
+        # An APEXlang tree is one folder row and page comments are no row
+        # (ADT #928): the import ships the folder, and nobody installs a comment.
         print_file_rows(
-            [item.path for item in report.carried_files],
+            listed_patch_paths([item.path for item in report.carried_files], config),
             nested    = nested,
             folder_of = folder_of,
         )
@@ -260,11 +271,15 @@ def print_create_report(result: DatabasePatchResult, config: dict[str, object]) 
     print_no_database_clock(result)
     print_unresolved_tables(result, config)
     print_refused_tables(result, config)
+    print_undecodable_files(result, config, debug=debug)
     print_script_warnings(result, config)
 
 
 def _print_object_changes(
-    report: SchemaReport, nested: bool, folder_of: Callable[[str], str | None]
+    report    : SchemaReport,
+    nested    : bool,
+    folder_of : Callable[[str], str | None],
+    config    : dict[str, object],
 ) -> None:
     """What this patch DOES to objects, before the list of what it carries.
 
@@ -293,11 +308,14 @@ def _print_object_changes(
         print_adt_header(ALTER_HEADER)
         print_file_rows(report.alter_files, nested=nested, folder_of=folder_of)
         print()
-    _print_deleted_objects(report, nested, folder_of)
+    _print_deleted_objects(report, nested, folder_of, config)
 
 
 def _print_deleted_objects(
-    report: SchemaReport, nested: bool, folder_of: Callable[[str], str | None]
+    report    : SchemaReport,
+    nested    : bool,
+    folder_of : Callable[[str], str | None],
+    config    : dict[str, object],
 ) -> None:
     """`DELETED OBJECTS:`, printing objects rather than paths (ADT #506).
 
@@ -313,12 +331,15 @@ def _print_deleted_objects(
     rows go through `#504`'s file renderer, so the one section printing both
     shapes still has one spelling of each.
     """
-    if not report.deleted_objects and not report.deleted_scripts:
+    # No page comments here either (ADT #928): a comment that went away took no
+    # object with it, and Jan asked for `comments/` not to be listed at all.
+    scripts = [path for path in report.deleted_scripts if not is_apex_comment(path, config)]
+    if not report.deleted_objects and not scripts:
         return
     print_adt_header(DELETED_HEADER)
     print_object_rows(report.deleted_objects)
-    if report.deleted_scripts:
-        print_file_rows(report.deleted_scripts, nested=nested, folder_of=folder_of)
+    if scripts:
+        print_file_rows(scripts, nested=nested, folder_of=folder_of)
     print()
 
 

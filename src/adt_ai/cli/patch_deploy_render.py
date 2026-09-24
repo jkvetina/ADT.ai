@@ -48,8 +48,10 @@ from adt_ai.cli.patch_deploy_reporter import ConsoleDeployReporter
 from adt_ai.cli.patch_preview_render import RELEVANT_COMMITS_HEADER
 from adt_ai.export_db.render import _commit_stdout
 from adt_ai.patch.apex_backup import REVERT_FAILED, REVERT_RESTORED
+from adt_ai.patch.apex_deploy import BUILDING_APP_ROW
 from adt_ai.patch.apex_lock import build_status_timeline
 from adt_ai.patch.models import DeploymentPlanItem, DeploymentResult, ViewMismatch
+from adt_ai.shared.apexlang_line_endings import PrecheckIssue, print_precheck_issues
 from adt_ai.shared.commit_discovery import CommitRecord
 from adt_ai.shared.object_list import print_object_rows
 
@@ -251,22 +253,36 @@ def _print_deployment_errors(results: Sequence[DeploymentResult], root: Path) ->
     below already used `_project_relative`. One run therefore printed the same
     kind of artifact two different ways, and the reader could not paste either
     (Jan, 2026-09-08).
+
+    **One header over every failed script, the file named under it** (ADT #934).
+    The file sat on the header line, `DEPLOYMENT ERROR: > BUILDING APP`, with a
+    rule sized to the header alone. Jan: *"ALL ERRORS should be consistent!"*, so
+    it reads like `ERROR - RECOMPILATION FAILED:`: `FILE:` at two, what SQLcl
+    refused at four, the log back at two.
     """
-    for result in results:
-        if getattr(result, "status", "") != "ERROR":
-            continue
-        print_adt_header("DEPLOYMENT ERROR:", result.file)
+    failed = [result for result in results if getattr(result, "status", "") == "ERROR"]
+    if not failed:
+        return
+    print_adt_header("ERROR - DEPLOYMENT FAILED:")
+    for index, result in enumerate(failed):
+        if index:
+            print()
+        # The APEX import's row label is a step name, not a file (`#735`), so
+        # the stanza names the application it was building instead.
+        if result.file == BUILDING_APP_ROW:
+            print(f"  APP: {getattr(result, 'app_id', None)}")
+        else:
+            print(f"  FILE: {result.file}")
         excerpt = getattr(result, "error_excerpt", ()) or ()
         for line in excerpt:
-            print(f"  {line}")
+            print(f"    {line}")
         if not excerpt:
             # The run failed on a missing success marker with nothing that parses
             # as an error, the log is the only place left to look, so say so
             # rather than printing an empty section.
-            print("  no error text in the SQLcl output, read the full log")
+            print("    no error text in the SQLcl output, read the full log")
         log_path = getattr(result, "log_path", None)
         if log_path is not None:
-            print()
             print(f"  LOG: {_project_relative(Path(log_path), root)}")
 
 def _print_apex_scans(
@@ -376,15 +392,17 @@ def _print_apex_revert(revert: Any) -> None:
         print(f"      {revert.reason}")
 
 
-def _print_apex_notes(notes: Sequence[str]) -> None:
+def _print_apex_notes(notes: Sequence[str | PrecheckIssue]) -> None:
     """Applications `-app` shipped and could not import, under `validate`'s header.
 
     The same `NOTES:` section and the same wording rule as
     `cli/commands_validate.py`: the note names the export that would let the
     import happen, because "no APEXlang tree for app 100" says what is missing
     and not how to get it. Nothing prints when there is nothing to say, so a run
-    with every tree in place grows no output at all.
+    with every tree in place grows no output at all. A tree the precheck had to
+    convert is a warning rather than a note, the same one `validate` prints (#934).
     """
+    notes = print_precheck_issues(notes)
     if not notes:
         return
     print_adt_header("NOTES:")

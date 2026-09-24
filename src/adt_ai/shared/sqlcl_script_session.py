@@ -157,10 +157,10 @@ class ScriptSession:
             return tail.lstrip("\n").rstrip()
         if _ran_without_a_session(output):
             raise ConnectFailedError(
-                "SQLcl did not connect: "
+                "SQLCL DID NOT CONNECT\n\n"
                 + (output.strip().splitlines() or ["no output"])[-1]
-                + ". A named connection resolves only from SQLcl's own store; "
-                "register it once with a run that has the password, or give the "
+                + "\nA named connection resolves only from SQLcl's own store; "
+                "register it once\nwith a run that has the password, or give the "
                 "connection file one."
             )
         reported = error_in(output)

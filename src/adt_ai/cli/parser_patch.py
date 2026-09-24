@@ -58,7 +58,7 @@ def add_patch_parser(subparsers: SubParsers) -> None:
     # with the flag beside it: the behaviour is the same override in both.
     #
     # A third verb since ADT #639: with `-drop` it overrides the ownership check
-    # (a sandbox somebody else created, or one recording no creator) and never
+    # (a sandbox somebody else created; one recording no creator drops without it, #682) and never
     # the rail (a derived sandbox id is the only kind that drops at all). Jan,
     # 2026-09-01: *"drop only the app created by me ... Unless there is -force"*.
     #
@@ -340,12 +340,14 @@ def add_patch_parser(subparsers: SubParsers) -> None:
     )
     # NOT "deployment target", which named the flag back at itself and left the
     # reader guessing between an environment, a schema and a patch folder
-    # (ADT #326). The only readers are `commands_patch_deploy.py:59,130,140`,
-    # every one of them `args.target or <the connection default>`.
+    # (ADT #326). Nor a connection default (#923): -deploy, -drop and a bare -hash
+    # or -baseline refuse without it; -upload and -create's ALTERs fall back to it.
     patch.add_argument(
         "--target",
         "-target",
-        help="environment to deploy into (default: the connection file's default)",
+        help="environment the patch is for: -deploy, -drop and a bare -hash or "
+             "-baseline need it; without it -create's ALTERs and -upload use "
+             "the connection default",
     )
     # NOT "filter or select branch" (ADT #326): the "or" advertised two
     # behaviours where there is one. The single reader is

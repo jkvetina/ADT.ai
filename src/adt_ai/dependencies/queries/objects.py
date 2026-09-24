@@ -197,13 +197,24 @@ def apex_page_db_objects_query(page_filter: str) -> str:
 # components that use it. The join is LEFT so an object no component property
 # names still counts, as 0 and 0; a page filter lands on `p.PAGE_ID` and so
 # drops those rows, which is what narrowing to pages means.
+#
+# The 24.2 read stores no component id (its view carries none), and
+# `COUNT(DISTINCT)` skips a NULL, so COMPS read 0 for every application on 24.2
+# and later. A component without an id is its type and name, what `-page`
+# groups components by, on its page; the `USED_DB_OBJECT_ID` test keeps the
+# LEFT join's empty row from counting as one.
 APEX_APP_INVENTORY_QUERY_TEMPLATE = """
 SELECT o.APPLICATION_ID AS app_id,
        COALESCE(o.USED_DB_OBJECT_OWNER, '') AS object_owner,
        COALESCE(o.USED_DB_OBJECT_TYPE, '') AS object_type,
        COALESCE(o.USED_DB_OBJECT_NAME, '') AS object_name,
        COUNT(DISTINCT p.PAGE_ID) AS pages,
-       COUNT(DISTINCT p.COMPONENT_ID) AS comps
+       COUNT(DISTINCT CASE
+           WHEN p.COMPONENT_ID IS NOT NULL THEN CAST(p.COMPONENT_ID AS TEXT)
+           WHEN p.USED_DB_OBJECT_ID IS NOT NULL THEN
+                COALESCE(p.PAGE_ID, '') || '|' || COALESCE(p.COMPONENT_TYPE, '')
+                || '|' || COALESCE(p.COMPONENT_NAME, '')
+       END) AS comps
 FROM APEX_USED_DB_OBJECTS o
 LEFT JOIN APEX_USED_DB_OBJECT_COMP_PROPS p
   ON p.APPLICATION_ID = o.APPLICATION_ID
@@ -418,6 +429,26 @@ def delete_app_rows_query(table: str) -> str:
 
 def select_app_rows_query(table: str) -> str:
     return f"SELECT * FROM {table} WHERE APPLICATION_ID = ?"
+
+
+# What a page the fallback walk could not scan keeps (ADT #865): its stored
+# property rows, and the object rows those name. The first binds the
+# application id and then one `?` per page; the second binds the application id
+# once more in front of those, for its own outer filter.
+def select_page_props_query(count: int) -> str:
+    placeholders = ", ".join("?" for _ in range(count))
+    return (
+        "SELECT * FROM APEX_USED_DB_OBJECT_COMP_PROPS "
+        f"WHERE APPLICATION_ID = ? AND PAGE_ID IN ({placeholders})"
+    )
+
+
+def select_page_objects_query(count: int) -> str:
+    return (
+        "SELECT * FROM APEX_USED_DB_OBJECTS o WHERE o.APPLICATION_ID = ? "
+        "AND o.USED_DB_OBJECT_ID IN (SELECT p.USED_DB_OBJECT_ID "
+        f"FROM ({select_page_props_query(count)}) p)"
+    )
 
 
 def like_clause(column: str, count: int) -> str:

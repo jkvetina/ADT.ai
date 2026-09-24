@@ -90,9 +90,11 @@ A sandbox is yours to drop when the creator APEX recorded for it is you. The run
 A mismatch stops the run with both names on the screen:
 
 ```text
-PATCH FAILED:
--------------
-  APP 100124 (ORDERS_124) was created by ALEX.RIVERA, and config/IDENTITY.yaml apex_account says SAM.TAYLOR, so it is not yours to drop.
+ERROR - PATCH FAILED:
+---------------------
+  NOT YOUR SANDBOX TO DROP
+
+  APP 100124 (ORDERS_124) was created by ALEX.RIVERA, and config/IDENTITY.yaml apex_account says SAM.TAYLOR.
   Run: adtai patch -target DEV -drop 100124 -force drops somebody else's sandbox anyway
 ```
 

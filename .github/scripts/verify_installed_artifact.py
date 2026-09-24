@@ -41,9 +41,15 @@ SCAFFOLD_FILES = (
     "connections/wallets/.gitkeep",
 )
 RESOURCE_ROOT = "adt_ai/doctor/resources/"
-# Scaffolded name -> the resource the wheel carries it as. The `.gitattributes`
-# is authored rather than copied off the repo root, so its two names differ.
-RENAMED_RESOURCES = {".gitattributes": "config/gitattributes_template"}
+# Scaffolded name -> the template resource the wheel carries it as.
+RENAMED_RESOURCES = {
+    ".gitattributes": "config/gitattributes_template",
+    ".gitignore": "config/gitignore_template",
+}
+# The managed block markers (ADT #938), local so the verifier never imports adt_ai.
+GIT_META_MARK_START = "# >>> adtai managed"
+GIT_META_MARK_END = "# <<< adtai managed"
+GIT_META_SCAFFOLD_FILES = {".gitattributes", ".gitignore"}
 
 
 class ArtifactPair(NamedTuple):
@@ -94,8 +100,8 @@ def _sdist_files(sdist: Path) -> dict[str, bytes]:
 def _source_path(wheel_path: str) -> str | None:
     if ".dist-info/" in wheel_path:
         return None
-    if wheel_path == f"{RESOURCE_ROOT}.gitignore":
-        return ".gitignore"
+    if wheel_path == f"{RESOURCE_ROOT}config/gitignore_template":
+        return "config/gitignore_template"
     if wheel_path == f"{RESOURCE_ROOT}requirements.txt":
         return "requirements.txt"
     if wheel_path == f"{RESOURCE_ROOT}config/gitattributes_template":
@@ -216,11 +222,28 @@ def verify_scaffold(project: Path) -> None:
         )
 
 
+def _unwrap_git_meta_block(payload: bytes, *, relative: str) -> bytes:
+    """`payload` with its ADT-owned managed-block markers stripped (ADT #938).
+
+    `doctor -init` scaffolds `.gitattributes` as the shipped template between
+    `GIT_META_MARK_START`/`GIT_META_MARK_END`; this recovers the template so
+    it can still be compared byte for byte against the packaged resource.
+    """
+    text = payload.decode("utf-8")
+    prefix = f"{GIT_META_MARK_START}\n"
+    suffix = f"{GIT_META_MARK_END}\n"
+    if not text.startswith(prefix) or not text.endswith(suffix):
+        raise ValueError(f"scaffolded {relative} is missing its ADT-owned managed block")
+    return text[len(prefix) : -len(suffix)].encode("utf-8")
+
+
 def _verify_scaffold_payloads(project: Path, wheel: Path) -> None:
     wheel_files = _wheel_files(wheel)
     for relative in (*PATCH_TEMPLATE_FILES, *RENAMED_RESOURCES):
         packaged = wheel_files[f"{RESOURCE_ROOT}{RENAMED_RESOURCES.get(relative, relative)}"]
         scaffolded = (project / relative).read_bytes()
+        if relative in GIT_META_SCAFFOLD_FILES:
+            scaffolded = _unwrap_git_meta_block(scaffolded, relative=relative)
         if scaffolded != packaged:
             raise ValueError(f"scaffolded resource differs from installed wheel: {relative}")
 

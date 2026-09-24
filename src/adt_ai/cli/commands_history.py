@@ -16,6 +16,7 @@ from adt_ai.calendar.render import render_calendar_grid as _print_calendar_grid
 # `diff` moved to its own module at the 24 KB context cap (`#780`); re-exported
 # so `runtime.py` and the announce tests keep the import they have always had.
 from adt_ai.cli.commands_history_reveal import GIT_LOOKUP_FAILURES, _run_rebuild_reveal
+from adt_ai.cli.commands_search_data import _run_search_data
 from adt_ai.cli.commands_search_graph import _graph_requested, _run_search_graph
 from adt_ai.cli.commands_search_term import _run_search_term
 from adt_ai.cli.constants import (
@@ -215,6 +216,10 @@ def _run_search(
     # question is its own mode with its own banner routing, since a machine
     # `-format` sends the banner to stderr; history is what is left.
     if getattr(args, "term", None) is not None:
+        # `-data` reads the database's table rows instead of the offline
+        # layers (ADT #879).
+        if getattr(args, "data", False):
+            return _run_search_data(args, gateway_factory)
         return _run_search_term(args, gateway_factory)
     if _graph_requested(args):
         return _run_search_graph(args, gateway_factory)
@@ -305,7 +310,7 @@ def _run_search(
     if result.failed_restores:
         # A stale cache entry can make `git show` miss; a partial restore must
         # never look like a full one.
-        print_adt_header("COULD NOT RESTORE:")
+        print_adt_header("WARNING - COULD NOT RESTORE:")
         print_file_rows(result.failed_restores, nested=nested, folder_of=folder_of)
     return 0
 
@@ -354,7 +359,7 @@ def _run_calendar(args: argparse.Namespace) -> int:
 
 def _resolve_calendar_month(value: str) -> str:
     if not re.fullmatch(r"\d{4}-\d{2}", value):
-        raise ValueError(f"-month: '{value}' must be YYYY-MM")
+        raise ValueError(f"-month: '{value}' MUST BE YYYY-MM")
     datetime.strptime(f"{value}-01", "%Y-%m-%d")
     return value
 

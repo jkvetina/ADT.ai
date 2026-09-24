@@ -19,11 +19,11 @@ def deep_component_filters(
     component_filters: tuple[ApexComponentFilter, ...],
 ) -> tuple[ApexComponentFilter, ...]:
     if page_selection is None:
-        raise ApexDeepFilterError("-deep requires -page")
+        raise ApexDeepFilterError("-deep REQUIRES -page")
     db_path = internal_path(root, "dependencies.db")
     if not db_path.exists():
         raise ApexDeepFilterError(
-            f"-deep requires dependency database at {db_path}"
+            f"-deep REQUIRES THE DEPENDENCY DATABASE\n\nNone at {db_path}."
         )
     store = DependencyStore.open(db_path)
     try:
@@ -57,11 +57,11 @@ def deep_db_object_rows(
     page_selection: ApexPageSelection | None,
 ) -> list[dict[str, Any]]:
     if page_selection is None:
-        raise ApexDeepFilterError("-deep requires -page")
+        raise ApexDeepFilterError("-deep REQUIRES -page")
     db_path = internal_path(root, "dependencies.db")
     if not db_path.exists():
         raise ApexDeepFilterError(
-            f"-deep requires dependency database at {db_path}"
+            f"-deep REQUIRES THE DEPENDENCY DATABASE\n\nNone at {db_path}."
         )
     store = DependencyStore.open(db_path)
     try:

@@ -424,7 +424,10 @@ class DoctorUpgradeMixin(DoctorHost):
         return f"UPDATED TO {version}" if version else "UPDATED"
 
     def _parse_pip_upgrade(self, output: str) -> tuple[str, bool]:
+        # Only pip's closing line says what it installed: the first `adt-ai-`
+        # anywhere was a wheel's file name, or the old version (ADT #923).
         if "Successfully installed" in output:
-            match = re.search(r"adt[-_]ai-(\S+)", output)
+            line = re.search(r"^\s*Successfully installed\b(.*)$", output, re.M)
+            match = re.search(r"(?<!\S)adt[-_]ai-(\S+)", line.group(1) if line else "")
             return (match.group(1) if match else self.package_version), True
         return self.package_version, False

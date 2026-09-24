@@ -45,8 +45,9 @@ def _merge_tables_entry(config: dict[str, Any], table_name: str) -> dict[str, An
         return {}
     if not isinstance(merge_tables, dict):
         raise InvalidConfigValueError(
-            "Config merge_tables must be a mapping of table name to merge flags, "
-            f"got {type(merge_tables).__name__}"
+            "INVALID merge_tables IN CONFIG\n\n"
+            "It must be a mapping of table name to merge flags, "
+            f"got {type(merge_tables).__name__}."
         )
     table_key = table_name.upper()
     for key, value in merge_tables.items():
@@ -59,20 +60,22 @@ def _merge_tables_entry(config: dict[str, Any], table_name: str) -> dict[str, An
 def _merge_block(block: Any, where: str) -> dict[str, Any]:
     if not isinstance(block, dict):
         raise InvalidConfigValueError(
-            f"Config {where} must be a mapping of {', '.join(MERGE_FLAGS)} "
-            f"to true or false, got {type(block).__name__}"
+            f"INVALID {where} IN CONFIG\n\n"
+            f"It must be a mapping of {', '.join(MERGE_FLAGS)} "
+            f"to true or false, got {type(block).__name__}."
         )
     resolved: dict[str, Any] = {}
     for key, value in block.items():
         flag = str(key).strip().lower()
         if flag not in MERGE_FLAGS:
             raise InvalidConfigValueError(
-                f"Config {where} has an unknown merge flag {key!r}; "
-                f"expected one of {', '.join(MERGE_FLAGS)}"
+                f"UNKNOWN MERGE FLAG {key!r} IN {where}\n\n"
+                f"Expected one of {', '.join(MERGE_FLAGS)}."
             )
         if not isinstance(value, bool) and str(value).strip().upper() not in _MERGE_WORDS:
             raise InvalidConfigValueError(
-                f"Config {where}.{flag} must be true or false, got {value!r}"
+                f"INVALID {where}.{flag} IN CONFIG\n\n"
+                f"It must be true or false, got {value!r}."
             )
         resolved[flag] = value
     return resolved
@@ -96,7 +99,7 @@ def _refuse_renamed_merge_key(config: dict[str, Any]) -> None:
     if not stale:
         return
     raise InvalidConfigValueError(
-        f"Config tables.{stale[0]}.merge moved to merge_tables.{stale[0]}; "
-        f"move the merge block of {', '.join(stale)} under the top-level "
-        "merge_tables key. See docs/export_data.md."
+        f"tables.{stale[0]}.merge MOVED TO merge_tables.{stale[0]}\n\n"
+        f"Move the merge block of {', '.join(stale)} under the top-level "
+        "merge_tables key.\nSee docs/export_data.md."
     )

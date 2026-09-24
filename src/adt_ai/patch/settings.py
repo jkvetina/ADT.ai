@@ -100,6 +100,9 @@ from adt_ai.patch.deploy_settings import (
     apex_scan_log_name as apex_scan_log_name,
 )
 from adt_ai.patch.deploy_settings import (
+    apex_terminal_status as apex_terminal_status,
+)
+from adt_ai.patch.deploy_settings import (
     deploy_build_status as deploy_build_status,
 )
 from adt_ai.patch.deploy_settings import (

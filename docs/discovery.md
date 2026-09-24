@@ -107,6 +107,10 @@ ORDER  BY object_type;
 */
 ```
 
+A value spanning several lines, a `dbms_metadata.get_ddl` result say, stays on its own row: every line break inside a cell, `LF`, `CRLF` or a bare `CR`, is written as `<br>`, on screen, in the report and in the block, and a `|` is written `\|`.
+
+That is what keeps the block whole. A data line of its own reading `*/` would have closed it, and the next run would have found the rest of the row in the file as SQL.
+
 `-nolog` does **not** turn that off. It suppresses the report and the `.gitignore` update only, and the write-back still happens on every `-file` run. To run a file of statements without changing it, do not pass `-file`.
 
 <br>

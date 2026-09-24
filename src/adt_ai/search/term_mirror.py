@@ -74,7 +74,7 @@ def _requested_apps(
     """The refreshed applications in scope, naming every one asked for and missing.
 
     Without `-app` that is every refreshed application. A named id nobody
-    refreshed is a row of its own under `NOT SEARCHED`, and so is a range that
+    refreshed is a row of its own under `WARNING - NOT SEARCHED`, and so is a range that
     reaches no refreshed application, rather than either reading as no hits.
     """
     if not request.narrows_apps:
