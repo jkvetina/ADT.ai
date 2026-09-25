@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,6 +55,13 @@ class ApexExportRequest:
     # table in `config/internal/apex.db` now, resolved from `root` like every
     # other fact this run caches, so a caller had nothing left to override.
     apex_store  : ApexStore | None = None
+    # The last step of every application's own block, after every format it
+    # exported, drawn by the reporter that drew those formats (the `-compact`
+    # bar when one is open): `export_apex -apexlang` compiles the tree it just
+    # wrote (ADT #971), a `validate` concern this package has no business
+    # importing. Set only when the compile will run, so `planned_actions`
+    # budgets its `validate` pair.
+    validate_apexlang: Callable[[ApexApplication, ApexProgressReporter], None] | None = None
 
     @property
     def recent_days(self) -> int | float | None:

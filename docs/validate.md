@@ -50,19 +50,19 @@ adtai validate -scan -app 100 -page 12 40-60
 
 ## Output
 
-One streamed row per folder, its label printed before the compile starts and its result after, then one section per folder that has anything to report:
+One streamed row per application, its label printed before the compile starts and the compile's clock after, then one section per application that has anything to report:
 
 ```text
 APEX DEPLOYMENT TOOL - VALIDATE
 -------------------------------
 
-VALIDATING:
------------
-  apex/100_DEMO ........................................................... OK
-  apex/101_REPORTS ......................................................... 1
+VALIDATING APPS:
+----------------
+  100/DEMO ........................................................... 0:00:05
+  101/REPORTS ........................................................ 0:00:04
 
-ERRORS IN apex/101_REPORTS:
----------------------------
+ERRORS IN 101/REPORTS:
+----------------------
 
   application.apx:1:0
     SYNTAX
@@ -71,7 +71,8 @@ ERRORS IN apex/101_REPORTS:
 TIMER: 20s
 ```
 
-- **A row names the application folder, not the `apexlang/` tree inside it.** Every folder `validate` finds for itself ends that way, so printing the segment on every row says what the command is rather than what the row is. An `-input` path is echoed exactly as it was typed, because that mode validates what it was handed and may be a zip or a single `.apx`.
+- **A row names the application by id and alias**, the ones `export_apex` recorded, so no connection is needed to print them. A tree no export recorded keeps its folder, without the `apexlang/` segment every such folder ends in. An `-input` path is echoed exactly as it was typed, because that mode validates what it was handed and may be a zip or a single `.apx`.
+- **A row ends in the compile's clock, never its verdict.** The sections under the rows say what failed, and the exit code says whether the run passed. On a terminal the clock ticks once a second while the compile runs, counting down from the application's stored compile time in `apex.db`, or up from `0:00:00` before its first compile; a redirected run, CI and a captured test still get exactly the one line above, printed once its verdict lands.
 - One stanza per message: `file:line:col` on its own line, the locator format an editor or terminal will linkify, then the compile type and the message text nested under it. The folder is the section header rather than a repeated field.
 - **Messages wrap at 80 columns rather than being truncated.** The message *is* the answer here, since a `REFERENCE_NOT_FOUND` names the file that is missing, so no width may cut it. That is also why this is a list and not a table: the compiler's prose runs well past 150 characters. A single unbreakable token, almost always a path, is allowed to overhang.
 - A folder that also produced warnings prints a `WARNINGS IN <folder>:` section above its errors, in the same shape.
@@ -83,14 +84,13 @@ TIMER: 20s
 
 `validate` is a gate. Exit `0` means every requested folder validated clean, and everything else is non-zero, so CI and agents can branch on it directly. Non-zero covers more than compiler errors on purpose: a run that checked nothing is not a pass.
 
-| Row | Meaning | Exit |
-| --- | ------- | ---- |
-| `OK` | The compiler validated the folder with no errors. | `0` |
-| `OK (n warnings)` | Clean, but the compiler raised warnings, listed in their own section. | `0` |
-| *a number* | That many compiler errors, one stanza each. | non-zero |
-| `EMPTY` | The folder exists but holds no APEXlang files. A broken export, not a quiet success. | non-zero |
-| `UNRECOGNISED` | SQLcl printed something this version cannot read. The raw output is shown verbatim. | non-zero |
-| a `NOTES:` row | An `-app` with no export on disk. | non-zero |
+| Screen | Meaning | Exit |
+| ------ | ------- | ---- |
+| rows only | The compiler validated every application with no errors. | `0` |
+| `WARNINGS IN <app>:` | Clean, but the compiler raised warnings. | `0` |
+| `ERRORS IN <app>:` | Compiler errors, one stanza each. | non-zero |
+| `WARNING - UNRECOGNISED OUTPUT <app>:` | SQLcl printed something this version cannot read. The raw output is shown verbatim. | non-zero |
+| a `NOTES:` row | An `-app` with no export on disk, or a folder holding no APEXlang files: a broken export, not a quiet success. | non-zero |
 | `WARNING - APEXLANG PRECHECK ISSUE:` | A tree converted from CRLF, not yet committed. | non-zero |
 
 A run that cannot start at all refuses instead of reporting, on stderr, under the shared `ERROR - INPUT NOT FOUND:` header every ADT.ai refusal takes ([console.md](console.md#failure-screens)). The lead line under it says which of the two cases you are in:
@@ -230,7 +230,7 @@ The run connects through the application's owner as `config/internal/apex.db` re
 
 - The compiler validates against metadata from the APEX version that exported the application, so a result is only as meaningful as the SQLcl build running it. An old SQLcl against a 26.1 export is not a trustworthy pass.
 - One SQLcl session per folder. Batching several calls into one session is measurably cheaper, since JVM startup dominates the few seconds a run costs, but a batch is a single blocking call and could not stream a per-folder row, so the per-folder call wins.
-- Importing the tree back is `patch -deploy -app`, which reads exactly this tree and lands it on a sandbox id first, on [patch_import.md](patch_import.md). The loop from export to promotion is on apex_round_trip.md.
+- Importing the tree back is `patch -deploy -app`, which reads exactly this tree and lands it on a sandbox id first, on [patch_import.md](patch_import.md). It and `patch -create` run this compile first and refuse a tree that fails it. The loop from export to promotion is on apex_round_trip.md.
 
 <br>
 

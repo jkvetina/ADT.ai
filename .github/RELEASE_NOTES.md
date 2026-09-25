@@ -1,30 +1,26 @@
-- **`search` reads your data: `search TERM -data` finds a text or a number in the rows of tables, views, materialized views and synonyms**, one list per object type. An object the database refuses to read is named under `WARNING - NOT SEARCHED:`, and the rest are still searched.
-- **Every error, in `calendar` as everywhere else, opens on a short uppercase headline with no trailing period**, the detail below it in sentence case. Every failure section opens on `ERROR - ` with its body indented two columns, and more warning headers carry the `WARNING - ` prefix.
-- **`doctor`: `-init -sync` keeps a project's `.gitattributes` and `.gitignore` current inside an ADT-managed block**, leaving every line outside it alone. The new `auto_sync_git` key, on by default, makes every export do the same on disk before it writes. Large repositories no longer crash it.
-- **`doctor`: `-init` writes files with the project's `file_crlf` line ending**, and the scaffolded `.gitignore` carries only what ADT writes into a project.
-- **`export_apex`: `-apexlang` always writes LF and carries the plugin and theme static files.** `validate` and `patch -deploy` convert a tree committed with CRLF before SQLcl reads it, and a converted tree still skips its next deploy.
-- **`patch` ships an APEXlang application as its folder**, and an APEXlang-only export builds a patch that carries its application. `patch -deploy` refuses up front when a static file the tree names is missing.
-- **`patch -create -app <id>` names the target application in `DEPLOY.sql`, its scripts and its logs**, with a comment between the two halves saying which application is imported as which id. An application's `comments/` files are no part of any patch.
-- **A patch no longer depends on the target it was created for.** `patch -deploy -target X` switches on that environment's lines and spools into its log folder.
-- **A drift refusal in `patch -deploy -app` says who changed the application, when, and how old your base is.**
-- **`patch -create` refreshes dependencies only for the schemas the patch carries.** A text file that is not UTF-8 warns instead of failing the patch, and a binary file ships silently.
-- **A patch carries the LOB scripts its data MERGE calls**, so a table exported with LOB values deploys through a patch.
-- **`export_db` carries on past an object the database refuses** and lists it under a `WARNING` section. Quoted names keep their quotes unless Oracle reads them the same without, an object named with a trailing `$` or `#` loses its owner, and grants are written one statement per grantee.
-- **`export_data` round-trips more types.** `delete: true` deletes once before the first MERGE batch, LOB scripts find rows keyed on RAW or DATE columns, and INTERVAL values are written the way Oracle writes them.
-- **`rebuild`: `-app` falls back to page-by-page scans when the whole-application scan fails**, and names only the broken pages, by id and name, below the progress list.
-- **`connection`: `-set-wallet-pwd` replaces a legacy `wallet_password`**, and a symlinked connection file stays a link when ADT saves it.
-- **`diff` reads schemas more exactly.** `-target-schema` no longer reports a grant as missing only because it names the schema, a lower-case `-name` matches, and `-apex -verbose` on APEX 26.1 lists changed supporting-objects scripts.
-- **`discovery`: `-file` writes a line break inside a cell as `<br>`**, so a value can no longer close its result block early.
-- **`recompile` leaves recycle-bin (`BIN$`) objects out**, and a name its compile statement refuses fails alone instead of ending the pass.
-- **`ut` keeps twenty runs per schema and `-name` selection**, and rounds `COVERAGE` half up.
+- **An application is written `<id>/<alias>` everywhere**, and every APEXlang compile counts down from the time its last compile took.
+- **`patch` compiles the APEXlang tree before `-create` builds or `-deploy -app` runs anything**, and `-deploy -app` compiles before it connects. In `validate` and `patch`, `VALIDATING APPS:` rows name each application, tick once a second and carry the compile's warnings.
+- **`export_apex -apexlang` compiles what it just exported**, each application in its own block, and reports what the compile found as a warning.
+- **`patch`: `-create` replaces an altered table with its ALTER instead of shipping both**, and lists every uncommitted file in the repository as a tree below `PROCESSED FILES:`.
+- **`patch`: `-create` warns when an APEXlang application changed since your export**, names it in the warning header and numbers the way out. It reads the live checksum on APEX 24.2 too, on the environment `export_apex` recorded.
+- **`patch`: `-deploy` no longer writes `logs_<ENV>/deployment.json`**, and a failed application scan prints `ERROR - VERIFICATION FAILED:` with one row per page.
+- **A remedy with more than one step prints as numbered steps**, in `doctor` as in every command, and a `ValueError` or `RuntimeError` gets its own error header.
+- **`connection`: `-test` checks that each connection opens and reports an environment as one status table**, and with `-schema` shows what each schema holds. A connection file that does not parse is refused without printing its contents.
+- **Unsafe connection fields and update redirects are rejected.**
+- **SQLcl stays on the thin driver on Windows too**, where an installed Oracle client older than 23 used to break every SQLcl-backed command.
+- **`export_db`: `-compact` closes its progress bar on `ALL DONE`.**
+- **`export_data` leaves a comment-only `.sql` in place of a MERGE it can no longer generate.**
+- **`export_apex -deep` includes a page's shared components.**
+- **`search`: `TERM` names an exported file it cannot read and carries on**, and the dependency graph attributes an APEX caller to the owner of the object it uses.
+- **The `diff` documentation now ships its schema and APEX pages.**
 
 ## Verification
 
-| Suite          | Passed | Failed | Unverified | Coverage | Cores | Time |
-| -------------- | -----: | -----: | ---------: | -------: | ----: | ---: |
-| Unit tests     |   9897 |        |            |     100% |    14 | 2:02 |
-| User stories   |    180 |        |          2 |          |     3 | 0:01 |
-| Security audit |     26 |        |            |          |     1 | 1:03 |
+| Suite          | Passed | Failed | Unverified | Coverage | Cores |  Time |
+| -------------- | -----: | -----: | ---------: | -------: | ----: | ----: |
+| Unit tests     |  10271 |        |            |     100% |    14 |  2:52 |
+| User stories   |    185 |        |          2 |          |     3 | 19:13 |
+| Security audit |     22 |        |            |          |     1 |  0:41 |
 
 The 2 unverified user stories are Windows-only contracts, and every release is built on macOS.
 

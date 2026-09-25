@@ -16,7 +16,7 @@ from typing import Any
 from adt_ai.export_apex.files import ApexFileResolver
 from adt_ai.export_apex.inventory import ApexApplication
 from adt_ai.shared.apex_paths import APEXLANG_DIR, apexlang_folders
-from adt_ai.shared.apex_store import ApexStore
+from adt_ai.shared.apex_store import ApexStore, apex_store_path
 from adt_ai.shared.path_template import DEFAULT_PATH_APP
 
 APPS_METADATA = "config/internal/apex.db"
@@ -120,12 +120,25 @@ def _targets_for_apps(
             targets.append(
                 ValidateTarget(
                     folder,
-                    _export_label(folder, root),
+                    app_label(application.app_id, application.app_alias),
                     application.app_id,
                     stageable = True,
                 )
             )
     return targets, notes
+
+
+def app_label(app_id: int, alias: str) -> str:
+    """An application named the way Jan reads it: `<id>/<alias>` (ADT #966, #973).
+
+    Jan: *"show app number + app alias, we must have this somewhere in
+    export_apex"*. The alias is the one `export_apex` recorded, so no connection
+    is needed to print it; an application recorded without one prints its id.
+    Joined by a slash since ADT #973, the spelling `EXPORTING APP <id>/<alias>:`
+    already used. Jan: *"Find all places where you have "<app_id> <app_alias>"
+    and replace it with "<app_id>/<app_alias>""*.
+    """
+    return f"{app_id}/{alias}" if alias else str(app_id)
 
 
 def _application(entry: Mapping[str, Any], raw_id: str) -> ApexApplication:
@@ -142,10 +155,35 @@ def _application(entry: Mapping[str, Any], raw_id: str) -> ApexApplication:
 
 
 def _discover(root: Path, config: Mapping[str, Any]) -> list[ValidateTarget]:
+    recorded = _recorded_labels(root, config)
     return [
-        ValidateTarget(folder, _export_label(folder, root), stageable=True)
+        ValidateTarget(
+            folder,
+            recorded.get(folder.resolve()) or _export_label(folder, root),
+            stageable = True,
+        )
         for folder in apexlang_folders(root, config)
     ]
+
+
+def _recorded_labels(root: Path, config: Mapping[str, Any]) -> dict[Path, str]:
+    """Each recorded application's tree, named `<id>/<alias>` (ADT #966, #973).
+
+    A bare run finds trees by walking folders, so the rows name the same
+    applications `-app` names; a tree no export recorded keeps its folder.
+    The store is only read when it exists: a bare run never creates one.
+    """
+    if not apex_store_path(root).is_file():
+        return {}
+    resolver = ApexFileResolver.from_config(root, dict(config))
+    with ApexStore.load(root) as store:
+        entries = store.applications()
+    labels: dict[Path, str] = {}
+    for raw_id, entry in entries.items():
+        application = _application(entry, str(raw_id))
+        folder = resolver.for_schema(application.owner).apexlang_root(application)
+        labels[folder.resolve()] = app_label(application.app_id, application.app_alias)
+    return labels
 
 
 def _export_label(folder: Path, root: Path) -> str:

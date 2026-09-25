@@ -2,9 +2,9 @@
 
 ![One file. Your key. Never in git.](images/connection.png)
 
-`connection` manages a project's connection file from the command line instead of by hand-editing YAML. Reach for it to bootstrap a project's first connection, to add an environment or a schema, and to set or rotate a password without ever typing one into a shell.
+`connection` manages a project's connection file from the command line instead of by hand-editing YAML. Reach for it to bootstrap a project's first connection, to add an environment or a schema, to set or rotate a password without ever typing one into a shell, and to check that a connection actually opens.
 
-It resolves the same connection file every other command uses, through `-root` and `-config-dir`, and applies one structural change to it. `-create` can create that file when it is missing; the other actions edit an existing one.
+It resolves the same connection file every other command uses, through `-root` and `-config-dir`, and applies one structural change to it, except `-test`, which only reads it. `-create` can create that file when it is missing; the other actions edit an existing one.
 
 <br>
 
@@ -31,13 +31,20 @@ adtai connection -set-pwd -env DEV -schema APP -encrypt -key /secure/adt.key -go
 adtai connection -set-wallet-pwd -env DEV -encrypt -key /secure/adt.key -go
 ```
 
+Check that every schema of an environment connects, and see what each one holds:
+
+```bash
+adtai connection -test -env TEST
+adtai connection -test -env TEST -schema APP
+```
+
 Move the whole file to a new encryption key:
 
 ```bash
 adtai connection -rekey -old-key /secure/adt.key -new-key /secure/adt-2027.key -go
 ```
 
-Exactly one action is required per run: `-create`, `-add-env`, `-add-schema`, `-set-pwd`, `-set-wallet-pwd` or `-rekey`.
+Exactly one action is required per run: `-create`, `-add-env`, `-add-schema`, `-set-pwd`, `-set-wallet-pwd`, `-rekey` or `-test`.
 
 <br>
 
@@ -73,6 +80,71 @@ TIMER: 0s
 - The edit is rewritten with a round-trip YAML parser, so comments and key order in the file survive, and only the targeted block is added or changed.
 - A connection file that is a symbolic link is written at its target, and the link is kept.
 - `-rekey` is the one action not aimed at a single block. It rewrites every encrypted secret in the file at once, and its preview names each one and renders none.
+
+<br>
+
+## Testing a connection
+
+`-test` only reads. Without `-schema` it tries every schema the environment defines and prints one table, each row naming its schema before the connect and its status after it. Without `-env` it takes the first environment in the file, the way every other command does:
+
+```text
+APEX DEPLOYMENT TOOL - CONNECTION
+---------------------------------
+
+TESTING CONNECTIONS, DEV:
+-------------------------
+
+  SCHEMA    STATUS
+  -------   ------
+  SANDBOX   OK
+  APP       ERROR
+  CORE      OK
+
+
+ERROR - DATABASE CONNECTION FAILED:
+-----------------------------------
+  DEV.APP
+    ORA-01017: invalid credential or not authorized; logon denied
+    Help: https://docs.oracle.com/error-help/db/ora-01017/
+
+  1) check the connection file and wallet under ADT.ai connections/wallets
+  2) rerun
+
+
+TIMER: 1s
+```
+
+- A schema that refuses the connection reads `ERROR`, and the next one is still tried. Each refusal is explained below the table, naming `ENV.SCHEMA`, and the command exits non-zero.
+- With `-schema`, it tests that one schema and prints its connection section and a count per object type:
+
+```text
+APEX DEPLOYMENT TOOL - CONNECTION
+---------------------------------
+
+CONNECTING TO SCHEMA APP, DEV:
+------------------------------
+              APEX | 26.1.0
+          DATABASE | 23.26.3.0.0 | FREEPDB1
+
+
+OBJECTS OVERVIEW:
+-----------------
+
+  OBJECT TYPE    COUNT   INVALID
+  ------------   -----   -------
+  INDEX              2
+  PACKAGE            1
+  PACKAGE BODY       1
+  TABLE              1
+  VIEW               1
+
+
+TIMER: 0s
+```
+
+- **The count is the whole schema**, read from `USER_OBJECTS`. The connection's `prefix` and `ignore` filters decide what an export writes, not what the schema holds, so they do not narrow it.
+- Oracle's own objects stay out: system-generated names, the recycle bin, and partition and LOB segments, which are part of their table. An empty schema prints no `OBJECTS OVERVIEW:`.
+- `-test` only reads, so it takes neither `-go` nor `-encrypt`.
 
 <br>
 
@@ -167,7 +239,7 @@ Every SQLcl script ADT generates, REST export included, connects through a **nam
 - **Machine moves.** The YAML travels with the project and SQLcl's store does not. Where the store has no such name, on a new machine or a cleared one, the call fails fast and ADT re-registers and retries by itself.
 - **Wallets.** Registration passes an absolute wallet path, so a wallet project needs nothing extra.
 - **Opt-out.** Set `sqlcl_named_connections: false` in project `config.yaml` to restore the older inline connect scripts.
-- **Driver.** SQLcl is always launched on the JDBC thin driver, with `ORACLE_HOME` withheld from its environment, because its launcher otherwise reads that variable as a request for the thick driver and builds a URL the JVM cannot satisfy. Nothing else changes: `PATH` still finds the launcher, `TNS_ADMIN` still resolves aliases, wallet connects are unaffected, and ADT's own Python connection keeps thick mode, since only the SQLcl child is started without the variable.
+- **Driver.** SQLcl is always launched on the JDBC thin driver, with `ORACLE_HOME` withheld from its environment, because its launcher otherwise reads that variable as a request for the thick driver and builds a URL the JVM cannot satisfy. It also gets `-Doracle.sqlcl.skipOracleHome=true` in `JAVA_TOOL_OPTIONS`, added to whatever you set there, because on Windows SQLcl finds an installed Oracle client through the registry too, and a client older than 23 then fails with `no ocijdbc23 in java.library.path`. Nothing else changes: `PATH` still finds the launcher, `TNS_ADMIN` still resolves aliases, wallet connects are unaffected, and ADT's own Python connection keeps thick mode, since only the SQLcl child is started without the variable.
 
 <br>
 
@@ -183,6 +255,7 @@ Exactly one action flag is required, and each names the further arguments it nee
 | `-set-pwd` | No | off | Action. Set a schema password. Requires `-env` and `-schema`, and prompts interactively with `-go`. |
 | `-set-wallet-pwd` | No | off | Action. Set an environment's wallet password. Requires `-env`, and prompts interactively with `-go`. |
 | `-rekey` | No | off | Action. Re-encrypt every encrypted secret in the file under a new key. Requires `-old-key` and `-new-key`, takes no `-env` or `-schema`, and rejects `-encrypt`. |
+| `-test` | No | off | Action. Try every schema of `-env` and print `OK` or `ERROR` for each; with `-schema`, test that one and print its versions and object counts. Writes nothing. |
 | `-old-key`, `--old-key` | No | none | With `-rekey`, the key the file's secrets are encrypted with today. A value or a path to a key file. |
 | `-new-key`, `--new-key` | No | none | With `-rekey`, the key to re-encrypt them with. A value or a path to a key file. |
 | `-user`, `--user` | No | schema name | Database user for `-create` and `-add-schema`. |

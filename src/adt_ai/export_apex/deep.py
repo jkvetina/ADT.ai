@@ -4,8 +4,12 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.dependencies.store import DependencyStore
+from adt_ai.export_apex import queries
 from adt_ai.export_apex.filters import ApexComponentFilter, ApexPageSelection
+from adt_ai.export_apex.recent import _used_on_pages
+from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.internal_paths import internal_path
+from adt_ai.shared.row_values import row_value
 
 
 class ApexDeepFilterError(ValueError):
@@ -17,6 +21,8 @@ def deep_component_filters(
     app_id: int,
     page_selection: ApexPageSelection | None,
     component_filters: tuple[ApexComponentFilter, ...],
+    *,
+    gateway: QueryGateway | None = None,
 ) -> tuple[ApexComponentFilter, ...]:
     if page_selection is None:
         raise ApexDeepFilterError("-deep REQUIRES -page")
@@ -34,6 +40,31 @@ def deep_component_filters(
         )
     finally:
         store.close()
+
+    if gateway is not None:
+        # Shared LOVs and lists have no PAGE_ID in the DB-object mirror. APEX
+        # records their page users on the export component itself; treating the
+        # mirror's null page as unused silently omitted required shared files.
+        components = gateway.fetch_all(queries.RECENT_COMPONENTS_QUERY, {
+            "app_id": app_id, "recent": None, "changed_since": None, "author": None,
+        })
+        rows.extend({
+            "component_type": row_value(component, "TYPE_NAME"),
+            "component_name": row_value(component, "NAME"),
+        } for component in components if any(
+            page_selection.matches(int(str(page_id)))
+            for page_id in _used_on_pages(row_value(component, "USED_ON_PAGES"))
+        ))
+        # That catalog lists no page users for an authorization scheme, so the
+        # schemes a page or its components require come from the page views.
+        authorizations = gateway.fetch_all(
+            queries.PAGE_AUTHORIZATIONS_QUERY, {"app_id": app_id}
+        )
+        rows.extend({
+            "component_type": "AUTHORIZATION",
+            "component_name": row_value(authorization, "NAME"),
+        } for authorization in authorizations
+            if page_selection.matches(int(str(row_value(authorization, "PAGE_ID")))))
 
     filters = list(component_filters)
     seen = {

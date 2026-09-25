@@ -55,7 +55,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from adt_ai.shared import text_files
+from adt_ai.shared.git_exclude import exclude_from_git
 from adt_ai.shared.internal_paths import CONFIG_DIR
 
 # Where the compiler expects the payloads, relative to the app tree root.
@@ -167,43 +167,8 @@ def _drop_old_ignore(target_root: Path) -> None:
 
 def _ensure_git_excluded(apexlang_root: Path) -> None:
     """Ignore linked payloads through the repository's untracked exclude file."""
-    exclude = _git_exclude(apexlang_root)
-    if exclude is None:
-        return
-    try:
-        existing = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
-        if EXCLUDE_PATTERN in {line.strip() for line in existing.splitlines()}:
-            return
-        prefix = existing + ("\n" if existing and not existing.endswith("\n") else "")
-        exclude.parent.mkdir(parents=True, exist_ok=True)
-        text_files.write_text(exclude, prefix + EXCLUDE_PATTERN + "\n")
-    except OSError:
-        # Git hygiene is best-effort; compiling the correct tree is mandatory.
-        return
-
-
-def _git_exclude(path: Path) -> Path | None:
-    """Resolve `.git/info/exclude` for a checkout or linked worktree."""
-    for root in (path, *path.parents):
-        marker = root / ".git"
-        if marker.is_dir():
-            return marker / "info" / "exclude"
-        if not marker.is_file():
-            continue
-        try:
-            label, value = marker.read_text(encoding="utf-8").strip().split(":", 1)
-            if label != "gitdir":
-                return None
-            git_dir = Path(value.strip())
-            if not git_dir.is_absolute():
-                git_dir = (root / git_dir).resolve()
-            common = git_dir / "commondir"
-            if common.is_file():
-                git_dir = (git_dir / common.read_text(encoding="utf-8").strip()).resolve()
-            return git_dir / "info" / "exclude"
-        except (OSError, ValueError):
-            return None
-    return None
+    # Git hygiene is best-effort; compiling the correct tree is mandatory.
+    exclude_from_git(apexlang_root, EXCLUDE_PATTERN)
 
 
 def _drop_stale(target_root: Path, keep: set[Path]) -> int:

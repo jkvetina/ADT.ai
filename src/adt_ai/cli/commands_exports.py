@@ -102,7 +102,7 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
         print_adt_error(
             "ARGUMENT INVALID",
             "-force APPLIES A -groups PLAN",
-            "Add -groups, or drop -force to export.",
+            "1) add -groups\n2) or drop -force to export",
         )
         return exit_code_for("ARGUMENT INVALID")
     # `auto_sync_git` (ADT #938): keeps the root `.gitattributes` block current
@@ -368,11 +368,10 @@ def _run_export_apex(
 
 def _print_missing_apex_format_guidance() -> None:
     formats = ", ".join(["-all", *(f"-{action}" for action in APEX_EXPORT_ACTIONS)])
-    print("Use -reveal to list workspaces and applications without exporting.")
+    print("  1) -reveal  list workspaces and applications without exporting")
+    print(f"  2) -app N -<format>  export them, formats: {formats}")
     print()
-    print("To export app(s) pass application number(s) and format.")
-    print(f"Available formats: {formats}")
-    print("Example: adtai export_apex -app 1000 -readable")
+    print("  Example: adtai export_apex -app 1000 -readable")
     print()
 
 

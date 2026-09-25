@@ -57,7 +57,7 @@ LEGACY_APEX_FILES: tuple[str, ...] = (
 #: The `recent.yaml` key whose watermarks belong here.
 RECENT_MODULE = "export_apex"
 
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "6"
 
 _RETIRED = ("workspace_id",)
 
@@ -66,11 +66,14 @@ _RETIRED = ("workspace_id",)
 #: Version 2 to 3 (ADT #725): `applications` gains the export's merge base.
 #: Version 3 to 4 (ADT #873): `applications` loses the unread `workspace_id`.
 #: Version 4 to 5 (ADT #925): `applications` gains when its checksum was taken.
+#: Version 5 to 6 (ADT #962): `applications` gains the environment it was
+#: taken from.
 MIGRATIONS: tuple[Migration, ...] = (
     Migration("1", "2", lambda connection: connection.executescript(queries.APEX_STORE_LIFT_1)),
     Migration("2", "3", lambda connection: connection.executescript(queries.APEX_STORE_LIFT_2)),
     Migration("3", "4", lambda connection: drop_columns(connection, "applications", _RETIRED)),
     Migration("4", "5", lambda connection: connection.executescript(queries.APEX_STORE_LIFT_4)),
+    Migration("5", "6", lambda connection: connection.executescript(queries.APEX_STORE_LIFT_5)),
 )
 
 #: The application columns, in the order a row is written and read back. This
@@ -88,6 +91,7 @@ APPLICATION_FIELDS: tuple[str, ...] = (
     "checksum_at",
     "base_commit",
     "mirror_ref",
+    "checksum_env",
 )
 
 
@@ -190,18 +194,28 @@ class ApexStore:
             )
         return len(rows)
 
-    def store_checksum(self, app_id: Any, checksum: str, *, at: str = "") -> None:
-        """Record one application's fingerprint, and when it was taken (ADT #925).
+    def store_checksum(self, app_id: Any, checksum: str, *, at: str = "", env: str = "") -> None:
+        """Record one application's fingerprint, when and where it was taken.
 
         The time is what a drift refusal prints as the developer's base, so it
-        is the export's own moment, local and to the minute like APEX's dates.
+        is the export's own moment, local and to the minute like APEX's dates
+        (ADT #925).
+
+        ``env`` is the environment the export connected to, written verbatim
+        beside the checksum rather than merged like ``store_applications``'
+        metadata fields (ADT #962): a checksum is only meaningful against the
+        environment it was taken from, so a re-export from a different one must
+        overwrite it, blank included, the same way `store_merge_base` overwrites
+        a stale commit rather than leaving one standing that no longer applies.
         """
         key = _app_key(app_id)
         if key is None or not checksum:
             return
         stamp = at or datetime.now().strftime("%Y-%m-%d %H:%M")
         with self.connection:
-            self.connection.execute(queries.APEX_CHECKSUM_UPSERT, (key, checksum, stamp))
+            self.connection.execute(
+                queries.APEX_CHECKSUM_UPSERT, (key, checksum, stamp, str(env or ""))
+            )
 
     def store_merge_base(self, app_id: Any, base_commit: str, mirror_ref: str = "") -> None:
         """Record what this export was based on: a commit, and the ref sharing it.
@@ -259,6 +273,17 @@ class ApexStore:
             self.connection.execute(
                 queries.APEX_TIMER_UPSERT, (key, str(action), float(seconds))
             )
+
+    def roll_timer(self, app_id: Any, action: str, elapsed: float) -> None:
+        """Fold one measured run into the stored estimate, the export timers' way.
+
+        The same half-and-half rolling average `export_apex` keeps per format
+        (`export_apex/progress._update_timer`), so a compile's countdown settles
+        the way every export row's does (ADT #973).
+        """
+        previous = float(self.timers().get(_app_key(app_id) or 0, {}).get(action) or 0)
+        timer = (elapsed + previous) / 2 if previous > 0 else elapsed
+        self.store_timer(app_id, action, round(timer, 2))
 
     def store_timers(self, timers: Mapping[Any, Mapping[str, Any]]) -> None:
         """Write a whole ``{app_id: {action: seconds}}`` mapping."""

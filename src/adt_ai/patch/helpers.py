@@ -46,7 +46,7 @@ from adt_ai.patch.layout import (
 from adt_ai.patch.layout import (
     database_schema as _database_schema,
 )
-from adt_ai.patch.models import AlterHelper, GeneratedScripts
+from adt_ai.patch.models import AlterHelper, GeneratedScripts, TableClaim
 
 # Reading a repo path's object identity and whether it is still exported
 # anywhere moved to `patch/object_identity.py` with ADT #499, the same 20 000
@@ -72,6 +72,7 @@ from adt_ai.patch.table_versions import (  # noqa: F401 (re-exported for existin
     _table_baseline,
     _table_versions,
 )
+from adt_ai.patch.user_alter_scripts import claiming_scripts, scan_user_scripts
 from adt_ai.shared import text_files
 from adt_ai.shared.commit_discovery import CommitRecord
 from adt_ai.shared.git_files import git_show  # noqa: F401 (re-exported for existing importers)
@@ -114,12 +115,19 @@ def _write_generated_patch_scripts(
     # connection at all, which is most of them.
     gateways = _SchemaGateways(gateway_factory)
     refused: list[tuple[str, str]] = []
+    # Read once for the whole run rather than once per table (ADT #969): a
+    # patch with several changed tables would otherwise re-read and re-strip
+    # the same hand-written scripts once per table it is about to consider.
+    # This is the SOURCE tree, read before either writer below puts anything
+    # into it, so a script a person already placed or edited there is what the
+    # scan sees, filename shape included.
+    user_scripts = scan_user_scripts(script_root, root)
     if hash_previous is None:
-        alters = _write_table_diff_helpers(
-            root, script_root, files, records, config, gateways, refused
+        alters, claimed = _write_table_diff_helpers(
+            root, script_root, files, records, config, gateways, refused, user_scripts
         )
     else:
-        alters, unresolved = _write_hash_table_diff_helpers(
+        alters, unresolved, claimed = _write_hash_table_diff_helpers(
             root,
             script_root,
             files,
@@ -129,6 +137,7 @@ def _write_generated_patch_scripts(
             gateways,
             refused,
             hash_tables or {},
+            user_scripts,
         )
     gateways.close()
     # A sequence is never re-created, so its change ships as an ALTER beside the
@@ -146,6 +155,7 @@ def _write_generated_patch_scripts(
         paths             = [*drops, *(helper.path for helper in alters)],
         unresolved_tables = unresolved,
         refused_tables    = refused,
+        claimed_tables    = claimed,
     )
 
 #: What `database_schema` answers for a layout that carries no schema level at
@@ -204,7 +214,8 @@ def _write_hash_table_diff_helpers(
     gateways: _SchemaGateways,
     refused: list[tuple[str, str]],
     stored_tables: Mapping[str, str],
-) -> tuple[list[AlterHelper], list[str]]:
+    user_scripts: list[tuple[str, str]],
+) -> tuple[list[AlterHelper], list[str], list[TableClaim]]:
     """One ALTER step per table: what the target holds, to what this patch ships.
 
     Hash mode selects a file set rather than a commit range, so there are no
@@ -228,6 +239,12 @@ def _write_hash_table_diff_helpers(
     stored, already checked against its log line. It is the only answer for a
     target somebody fixed by hand, whose table no commit ever held, and the
     history lookup stays the fallback for a baseline recorded before tables were.
+
+    ``user_scripts`` is asked right before the point this run would otherwise
+    generate a diff (ADT #969): a hand-written script under this patch's own
+    `patch_scripts/<CODE>/` already carrying an `ALTER TABLE` for this table
+    means the project owns that change, Oracle is never asked, and no helper is
+    written over the claiming file.
     """
     table_files = {
         file
@@ -236,6 +253,7 @@ def _write_hash_table_diff_helpers(
     }
     written: list[AlterHelper] = []
     unresolved: list[str] = []
+    claimed: list[TableClaim] = []
     for file in sorted(table_files):
         baseline_hash = previous_hashes.get(file)
         if not baseline_hash:
@@ -260,6 +278,10 @@ def _write_hash_table_diff_helpers(
         # layout, so `_database_object_stem` cannot itself resolve empty
         if not table_name:  # pragma: no cover
             continue
+        claim_scripts = claiming_scripts(user_scripts, table_name)
+        if claim_scripts:
+            claimed.append(TableClaim(source=file, table_name=table_name, scripts=claim_scripts))
+            continue
         gateway = gateways.for_schema(_alter_schema(file, config))
         if gateway is None:
             continue
@@ -281,7 +303,7 @@ def _write_hash_table_diff_helpers(
                 statements = len([line for line in sql.splitlines() if line.strip()]),
             )
         )
-    return written, unresolved
+    return written, unresolved, claimed
 
 def _write_drop_helpers(
     root: Path,
@@ -379,7 +401,8 @@ def _write_table_diff_helpers(
     config: dict[str, Any],
     gateways: _SchemaGateways,
     refused: list[tuple[str, str]],
-) -> list[AlterHelper]:
+    user_scripts: list[tuple[str, str]],
+) -> tuple[list[AlterHelper], list[TableClaim]]:
     """Write one ALTER script per version step a table takes in this patch.
 
     The step the window cannot see for itself is the FIRST one, and it is the one
@@ -394,6 +417,14 @@ def _write_table_diff_helpers(
     `_table_baseline` restores that reach. It resolves per file, not per patch,
     because the pairs are per file: a window spanning ten commits still leaves a
     table only its first commit touches with a single version.
+
+    ``user_scripts`` is asked once per table, and only when the table has at
+    least one real step to diff (ADT #969): a table this window only creates
+    has nothing for a script to claim, and reporting a claim nobody acted on
+    would be the wrong kind of honest. One claim covers every step: Jan's rule
+    is per TABLE, not per version pair, so a claimed table generates nothing
+    for the whole run rather than skipping just the step a script happens to
+    name.
     """
     table_files = {
         file
@@ -401,6 +432,7 @@ def _write_table_diff_helpers(
         if _database_object_type(file, config) == "TABLE"
     }
     written: list[AlterHelper] = []
+    claimed: list[TableClaim] = []
     for file in sorted(table_files):
         versions = _table_versions(root, file, records, config=config)
         if not versions:
@@ -421,6 +453,13 @@ def _write_table_diff_helpers(
             _table_baseline(root, file, records, config=config),
             *(body for _, body in versions[:-1]),
         ]
+        if any(previous is not None for previous in previous_bodies):
+            claim_scripts = claiming_scripts(user_scripts, table_name)
+            if claim_scripts:
+                claimed.append(
+                    TableClaim(source=file, table_name=table_name, scripts=claim_scripts)
+                )
+                continue
         for previous, (number, current) in zip(previous_bodies, versions, strict=True):
             # No baseline means the target database has no such table, so the
             # `CREATE` this patch already ships is the whole statement needed.
@@ -447,7 +486,7 @@ def _write_table_diff_helpers(
                     statements = len([line for line in sql.splitlines() if line.strip()]),
                 )
             )
-    return written
+    return written, claimed
 
 __all__ = [
     "AlterHelper",
@@ -456,6 +495,7 @@ __all__ = [
     "GeneratedScripts",
     "Mapping",
     "Path",
+    "TableClaim",
     "_drop_helper_sql",
     "_path_is_deleted",
     "_table_versions",
@@ -464,9 +504,11 @@ __all__ = [
     "_write_table_diff_helpers",
     "alter_helper_slot",
     "annotations",
+    "claiming_scripts",
     "drop_helper_filename",
     "drop_helper_slot",
     "git_show",
+    "scan_user_scripts",
     "table_alter_sql",
     "is_alter_helper_filename",
     "is_drop_helper_filename",

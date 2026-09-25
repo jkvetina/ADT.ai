@@ -47,7 +47,6 @@ from adt_ai.cli.patch_deploy_layout import (
 from adt_ai.cli.patch_deploy_reporter import ConsoleDeployReporter
 from adt_ai.cli.patch_preview_render import RELEVANT_COMMITS_HEADER
 from adt_ai.export_db.render import _commit_stdout
-from adt_ai.patch.apex_backup import REVERT_FAILED, REVERT_RESTORED
 from adt_ai.patch.apex_deploy import BUILDING_APP_ROW
 from adt_ai.patch.apex_lock import build_status_timeline
 from adt_ai.patch.models import DeploymentPlanItem, DeploymentResult, ViewMismatch
@@ -145,10 +144,9 @@ def print_deployment_table(
 ) -> None:
     """The whole table at once, the fallback for a run that streamed nothing.
 
-    A SKIPPED deploy never enters the script loop, and a caller that passes no
-    reporter never drives one, so the finished table is still the right output
-    there. It goes through the same layout helper as the streamed render, which
-    is what stops the two from drifting apart.
+    A caller that passes no reporter never drives one, so the finished table
+    is still the right output there. It goes through the same layout helper as
+    the streamed render, which is what stops the two from drifting apart.
     """
     rows = _deployment_rows(results)
     layout = _deployment_layout(rows, plan)
@@ -258,7 +256,7 @@ def _print_deployment_errors(results: Sequence[DeploymentResult], root: Path) ->
     The file sat on the header line, `DEPLOYMENT ERROR: > BUILDING APP`, with a
     rule sized to the header alone. Jan: *"ALL ERRORS should be consistent!"*, so
     it reads like `ERROR - RECOMPILATION FAILED:`: `FILE:` at two, what SQLcl
-    refused at four, the log back at two.
+    refused at four, the log back at two, one blank line under it (ADT #964).
     """
     failed = [result for result in results if getattr(result, "status", "") == "ERROR"]
     if not failed:
@@ -283,14 +281,15 @@ def _print_deployment_errors(results: Sequence[DeploymentResult], root: Path) ->
             print("    no error text in the SQLcl output, read the full log")
         log_path = getattr(result, "log_path", None)
         if log_path is not None:
+            # One blank line above it (ADT #964): run straight on from the
+            # excerpt, the path read as one more line of what SQLcl refused.
+            print()
             print(f"  LOG: {_project_relative(Path(log_path), root)}")
 
 def _print_apex_scans(
     reports: Sequence[Any],
     root: Path,
-    reverts: Sequence[Any] = (),
     *,
-    waived: bool = False,
     locks: Mapping[int, Any] | None = None,
 ) -> None:
     """`VERIFYING APPLICATIONS:`, what the post-deploy scan found (`#676`).
@@ -301,26 +300,22 @@ def _print_apex_scans(
     asked; silence here would be indistinguishable from the behaviour this
     replaced, which is exactly the thing that let a broken application ship.
 
-    One row per application, its findings under it. The findings ARE the answer,
-    so they are stanza lines rather than a table column, the same call
-    `_print_deployment_errors` makes for the same reason: an `ORA-` message in a
-    cell destroys the layout at 80 columns.
-
-    ``reverts`` is what `deploy_revert_on_scan_failure` did about a failing row
-    (`#727`), printed under the row that called for it rather than in a section
-    of its own: reusing a section is how the console is not grown (`#372`), and
-    the undo of a finding belongs to the finding. It is also what stops the
-    revert report joining the list of artifacts ADT writes and never names --
-    the failure the `patch -drop` receipt was measured losing eleven times.
-
-    ``waived`` is `-continue` (`#749`). The row keeps its real verdict, because
-    Jan asked to SEE the status; what the run then did about it is the half a
-    reader cannot infer, and an `ERROR` row sitting above a `SUCCESS` deploy
-    reads as a broken report rather than as the waiver he asked for. One line
-    under the failing row, in the same place the revert already writes, so this
-    grows no section and no column.
+    A clean run prints one row per application. A failed one prints only the
+    header, a per-page count and the log (`#963`): the findings are in the log,
+    and what the run did about the failure -- the revert (`#727`) or the
+    `-continue` that asked for none (`#749`) -- is the section printed after
+    this one, `patch_revert_render`.
     """
     if not reports:
+        return
+    # **A failed scan is the header, the table and the log, nothing else**
+    # (`#963`). Jan, 2026-09-25: *"I asked for header + table + log."* The
+    # deploy table above already reads `SUCCESS`, so `ERROR - VERIFICATION
+    # FAILED:` is what says the patch went in and the application does not
+    # compile; the app id is in the log's filename, and what the run did about
+    # it has its own section after this one (`patch_revert_render`).
+    if any(getattr(report, "failed", False) for report in reports):
+        _print_failed_scans(reports)
         return
     # Not "VERIFYING DEPLOYED APPLICATIONS:". `DEPLOYED` is a word Jan struck
     # from this command's output (2026-08-10, the invented column), and
@@ -335,19 +330,10 @@ def _print_apex_scans(
         )
         print(f"  APP {report.app_id} | {report.status} | {summary}")
         # The reason under the row, for every outcome that is not a plain
-        # success (`#701`): `FAILED`, `EMPTY` and `UNSUPPORTED` all print a row
-        # that looks quiet, and the line under it is what says which of the
-        # three the reader is looking at.
+        # success (`#701`): `UNSUPPORTED` prints a row that looks quiet, and the
+        # line under it is what says why.
         if report.reason:
             print(f"    {report.reason}")
-        for finding in report.findings:
-            print(f"    {finding.line()}")
-        # Under the findings and above the log, which is the order a reader asks
-        # the questions in: what is wrong, what did the run do about it, where is
-        # the file. Only a row that actually failed carries it -- a waiver
-        # printed under a clean scan describes an event that did not happen.
-        if waived and getattr(report, "failed", False):
-            print("    -continue: this verdict did not fail the deploy and nothing was reverted")
         # The BASENAME, not the project-relative path (Jan, 2026-09-09): every
         # log this section names lives in one folder, that folder is
         # `patch/<code>/logs_<ENV>/`, and both halves of it are already on
@@ -360,36 +346,46 @@ def _print_apex_scans(
         timeline = build_status_timeline(lock) if lock is not None else ""
         if timeline:
             print(f"    BUILD STATUS: {timeline}")
-        revert = _revert_for(reverts, report.app_id)
-        if revert is not None:
-            _print_apex_revert(revert)
     print()
 
 
-def _revert_for(reverts: Sequence[Any], app_id: int) -> Any | None:
-    return next((revert for revert in reverts if revert.app_id == app_id), None)
+def _print_failed_scans(reports: Sequence[Any]) -> None:
+    """`ERROR - VERIFICATION FAILED:`, then per application a table and its log.
 
-
-def _print_apex_revert(revert: Any) -> None:
-    """What putting one application back achieved, under the scan that asked.
-
-    The outcome word alone (Jan, 2026-09-09). The report's path was on this row
-    until then and is not any more: it is one of a folder of logs whose location
-    the header already gives, and the row's job is to say what happened to the
-    application, which is the half a reader cannot get anywhere else.
-
-    `SKIPPED` prints NOTHING. It is the ordinary case -- a fresh sandbox id held
-    no application, so there was nothing to put back -- and a row saying so under
-    every such deploy is *"noise"*. What survives is the pair a reader has to
-    act on: `RESTORED`, the application is as it was, and `FAILED`, it is not,
-    with its reason underneath exactly as the scan's own reason sits under its
-    row.
+    A scan that failed with no finding to count (`FAILED`, `EMPTY`) has no
+    table, so its one-line reason stands where the table would.
     """
-    if revert.outcome not in (REVERT_RESTORED, REVERT_FAILED):
-        return
-    print(f"    REVERT: {revert.outcome}")
-    if revert.reason:
-        print(f"      {revert.reason}")
+    print_adt_header("ERROR - VERIFICATION FAILED:")
+    for report in reports:
+        if report.findings:
+            _print_issues_per_page(report.findings)
+        elif report.reason:
+            print()
+            print(f"  {report.reason}")
+            print()
+        if report.log_path:
+            print(f"  LOG: {Path(report.log_path).name}")
+    print()
+
+
+def _print_issues_per_page(findings: Sequence[Any]) -> None:
+    """`PAGE | ISSUES`, one row per page in page order (`#963`).
+
+    A finding with no page belongs to the application itself (a shared LOV, an
+    application process) and reads `APPLICATION`, the word the scan log already
+    uses for it, first because it is not on any page a reader could open.
+    """
+    counts: dict[int | None, int] = {}
+    for finding in findings:
+        counts[finding.page_id] = counts.get(finding.page_id, 0) + 1
+    pages = sorted(counts, key=lambda page: (page is not None, page or 0))
+    print_adt_table(
+        [
+            {"PAGE": "APPLICATION" if page is None else page, "ISSUES": counts[page]}
+            for page in pages
+        ],
+        numeric=("ISSUES",),
+    )
 
 
 def _print_apex_notes(notes: Sequence[str | PrecheckIssue]) -> None:

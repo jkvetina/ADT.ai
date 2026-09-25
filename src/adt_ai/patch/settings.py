@@ -64,6 +64,9 @@ from adt_ai.patch.deploy_settings import (
     APEX_BACKUP_FOLDER as APEX_BACKUP_FOLDER,
 )
 from adt_ai.patch.deploy_settings import (
+    APEX_BACKUP_GLOB as APEX_BACKUP_GLOB,
+)
+from adt_ai.patch.deploy_settings import (
     APEX_BUILD_STATUS_LOG_FILE as APEX_BUILD_STATUS_LOG_FILE,
 )
 from adt_ai.patch.deploy_settings import (
@@ -85,7 +88,7 @@ from adt_ai.patch.deploy_settings import (
     BUILD_STATUS_RUN_ONLY as BUILD_STATUS_RUN_ONLY,
 )
 from adt_ai.patch.deploy_settings import (
-    apex_backup_folder_name as apex_backup_folder_name,
+    apex_backup_path as apex_backup_path,
 )
 from adt_ai.patch.deploy_settings import (
     apex_build_status_log_name as apex_build_status_log_name,

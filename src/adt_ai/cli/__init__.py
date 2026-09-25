@@ -35,6 +35,7 @@ from adt_ai.cli.startup import print_startup_failure as _print_startup_failure
 
 try:
     from adt_ai.cli import commands_diff as _commands_diff
+    from adt_ai.cli import commands_export_apex as _commands_export_apex
     from adt_ai.cli import commands_export_data as _commands_export_data
     from adt_ai.cli import commands_exports as _commands_exports
     from adt_ai.cli import commands_history as _commands_history
@@ -76,7 +77,7 @@ else:
         _runtime,
     )
     _PATCH_MODULES: tuple[ModuleType, ...] = _EXPORT_MODULES[2:]
-    _PATCH_MODULES = (*_PATCH_MODULES, _context_connection, _context_errors)
+    _PATCH_MODULES = (*_PATCH_MODULES, _context_connection, _context_errors, _commands_export_apex)
     _PATCHABLE_NAMES = (
         "CalendarRunner",
         "DiffRunner",

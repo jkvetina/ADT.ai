@@ -217,6 +217,7 @@ def _verify_old_key(
         f"{request.path.name} IS UNDER MORE THAN ONE KEY\n\n"
         "No single -old-key opens all of it: "
         f"{', '.join(mismatched)} did not match the given -old-key while\n"
-        f"{len(recorded) - len(mismatched)} other secret(s) did. Settle the odd one out "
-        "first with -set-pwd -encrypt,\nthen rekey the file. Nothing was written."
+        f"{len(recorded) - len(mismatched)} other secret(s) did. Nothing was written.\n\n"
+        "1) -set-pwd -encrypt  settle the odd one out\n"
+        "2) rekey the file"
     )

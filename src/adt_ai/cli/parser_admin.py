@@ -49,8 +49,9 @@ def add_admin_parsers(subparsers: SubParsers) -> None:
     connection = subparsers.add_parser(
         "connection",
         description="edit the resolved connection file: create a connection, add an "
-                    "environment or schema, set a schema or wallet password, or "
-                    "re-encrypt every stored secret under a new key",
+                    "environment or schema, set a schema or wallet password, "
+                    "re-encrypt every stored secret under a new key, or test that "
+                    "each schema connects",
         help="edit the connection file (add env/schema, set password)",
     )
     connection.add_argument(
@@ -82,6 +83,12 @@ def add_admin_parsers(subparsers: SubParsers) -> None:
         "-rekey",
         action="store_true",
         help="re-encrypt every encrypted secret in the file (requires -old-key and -new-key)",
+    )
+    # ADT #948, spelled by Jan: connect and report what each schema holds.
+    connection.add_argument(
+        "-test",
+        action="store_true",
+        help="open every schema of -env (or just -schema) and count its objects",
     )
     connection.add_argument(
         "--old-key",

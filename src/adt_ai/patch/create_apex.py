@@ -324,7 +324,7 @@ def _apex_component_rows(
     if deleted_pages:
         payload.extend(_apex_deleted_pages_payload(deleted_pages))
     if page_files:
-        payload.extend(["PROMPT --;", "PROMPT -- APEX PAGES", "PROMPT --;"])
+        payload.extend(["", "PROMPT --;", "PROMPT -- APEX PAGES", "PROMPT --;"])
         for path in page_files:
             link = _object_link(root, folder, path, config, mode=content_mode)
             payload.extend(_file_link_rows(path, link))
@@ -368,6 +368,7 @@ def _apexlang_source_payload(
         else " by patch -deploy -app"
     )
     return [
+        "",
         "PROMPT --;",
         *(f"{APEXLANG_SOURCE_ROW}{folder}" for folder in folders),
         f"PROMPT -- imported from that folder{landing}, not from this patch",
@@ -375,7 +376,7 @@ def _apexlang_source_payload(
     ]
 
 def _apex_deleted_pages_payload(page_ids: list[int]) -> list[str]:
-    payload = ["PROMPT --;", "PROMPT -- APEX REMOVE PAGES", "PROMPT --;", "BEGIN"]
+    payload = ["", "PROMPT --;", "PROMPT -- APEX REMOVE PAGES", "PROMPT --;", "BEGIN"]
     for page_id in sorted(page_ids):
         payload.append(queries.APEX_REMOVE_PAGE_STATEMENT.format(page_id=page_id))
     payload.extend(["END;", "/", "--"])

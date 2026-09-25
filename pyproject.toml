@@ -39,8 +39,8 @@ keywords = [
 ]
 # No `Typing :: Typed`, and no `py.typed` beside it. That pair is a promise to
 # a consumer's type checker that every public symbol is annotated and checked;
-# the typing gate covers Doctor, part of `shared` and new modules, which is
-# real and is not that promise.
+# strict mypy checks the whole package, but third-party boundaries still have
+# missing-import overrides and can expose Any.
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",

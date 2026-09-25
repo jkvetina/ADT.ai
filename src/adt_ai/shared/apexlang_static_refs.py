@@ -61,7 +61,7 @@ def missing_refusal(
     lines.extend(plain_row(path) for path in kept)
     if remaining:
         lines.append(more_row(remaining))
-    lines.append(f"Run: adt export_apex -app {app_id} -apexlang -files, then commit the files")
+    lines.extend(["", f"1) adt export_apex -app {app_id} -apexlang -files", "2) commit the files"])
     return "\n".join(lines)
 
 

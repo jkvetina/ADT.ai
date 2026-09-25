@@ -24,6 +24,7 @@ from adt_ai.patch.apex_deploy import ApexImportItem, prepare_apex_imports, run_a
 from adt_ai.patch.apex_import import ApexTarget
 from adt_ai.patch.apex_lock import build_status_lock
 from adt_ai.patch.apex_scan import scanned_app_ids, verify_applications
+from adt_ai.patch.apex_validate import ApexlangValidation
 from adt_ai.patch.deploy import (
     _deployment_error_excerpt,
     _deployment_payload,
@@ -31,47 +32,21 @@ from adt_ai.patch.deploy import (
     _invalid_objects,
     _not_deployed_result,
     _recompile_invalid_objects,
-    _skipped_deployment_result,
     _verify_view_columns,
     _write_deployment_log,
     reset_deployment_spool,
 )
 from adt_ai.patch.deploy_progress import (
-    DeploymentProgressReader,
     _countable_references,
+    _deploy_progress_reader,
     _deployment_progress,
 )
-from adt_ai.patch.deploy_receipt import (
-    deployment_complete,
-    deployment_fingerprint,
-    installed_app_id,
-    write_deploy_receipt,
-)
+from adt_ai.patch.deploy_receipt import installed_app_id
 from adt_ai.patch.deploy_sequence import deployment_sequence
 from adt_ai.patch.layout import deploy_log_folder, ensure_deploy_log_folder
 from adt_ai.patch.models import DeploymentPlanItem, DeploymentResult, DeploymentRunResult
 from adt_ai.patch.templates import for_target
 from adt_ai.shared.sqlcl_errors import SqlclNotConnectedError, SqlclScriptError, SqlclTimeoutError
-
-
-def _deploy_progress_reader(
-    allowed: frozenset[str],
-    total: int,
-    reporter: Any,
-) -> DeploymentProgressReader | None:
-    """A line reader for this script, or ``None`` when nobody is watching.
-
-    ``None`` is the load-bearing half (ADT #434). ``sqlcl_request`` only moves the
-    child onto a pty when it is given a reader, so a reporter with no ``advance``
-    hook, a caller that passed no reporter at all, and a script with nothing
-    countable in it each keep the plain ``subprocess.run`` transport the deploy
-    has always used. The pty is bought only where its output is actually
-    rendered.
-    """
-    advance = getattr(reporter, "advance", None)
-    if advance is None or not allowed:
-        return None
-    return DeploymentProgressReader(allowed, total, advance)
 
 
 def run_deployment(
@@ -88,6 +63,8 @@ def run_deployment(
     apex_target: ApexTarget | None = None,
     apex_version: str | None = None,
     apex_account: str = "",
+    signature_gateway_factory: Callable[[str, str], Any] | None = None,
+    validation: ApexlangValidation | None = None,
 ) -> DeploymentRunResult:
     """Deploy every script in the patch folder, reporting progress as it goes.
 
@@ -114,32 +91,25 @@ def run_deployment(
     ``apex_account`` travels the same way and stamps a retargeted import as the
     developer who deployed it (ADT #682); it reaches the run from the CLI edge
     because that is where `-config-dir` is known.
+
+    ``signature_gateway_factory`` is the cross-environment check's own
+    connection (ADT #962), read on the export's recorded environment rather
+    than ``target_env`` when the two differ.
+
+    ``validation`` is the compile gate `prepare_apex_imports` asks before the
+    first script (ADT #964), shared with a `-create` in the same run.
     """
     folder, plan = workspace.deployment_plan(config, ref=ref)
     target = target_env.upper()
     log_folder = folder.path / deploy_log_folder(config, target)
-    fingerprint = deployment_fingerprint(
-        workspace.root, folder.path, plan, config, apex_target, apex_version, apex_account,
-        continue_on_error,
-    )
-    if deployment_complete(log_folder, target, fingerprint) and not force:
-        return DeploymentRunResult(
-            folder          = folder,
-            plan            = plan,
-            results         = [_skipped_deployment_result(item) for item in plan],
-            status          = "SKIPPED",
-            view_mismatches = [],
-            recompiled      = [],
-        )
-
-    # **One reading of the clock for the whole run** (`#929`). The backup folder,
-    # the scan report, the revert report and the build-status timeline promise to
-    # sort together in `logs_<TARGET_ENV>/`, and each of them used to render its
-    # name from its own `datetime.now()`. Those four moments are minutes apart on
-    # a real deploy -- the backup is taken before the import, the scan after the
-    # last script, the revert after the scan, the release in the `finally` -- so
-    # the promise held only for a fixture that ran inside one second, and CI
-    # eventually caught even that (`...220555` against `...220556`). Read here
+    # **One reading of the clock for the whole run** (`#929`). The scan report,
+    # the revert report and the build-status timeline promise to sort together
+    # in `logs_<TARGET_ENV>/`, and each of them used to render its name from its
+    # own `datetime.now()`. Those moments are minutes apart on a real deploy --
+    # the scan after the last script, the revert after the scan, the release in
+    # the `finally` -- so the promise held only for a fixture that ran inside one
+    # second, and CI eventually caught even that (`...220555` against
+    # `...220556`). The backup carries no stamp since `#963`. Read here
     # because this is where the run begins for everything it writes; the per-file
     # deployment log keeps its own reading, see `settings.deploy_log_name`.
     moment = datetime.now()
@@ -149,7 +119,6 @@ def run_deployment(
     # folder that arrives by clone has none even when `-create` seeded one
     # (ADT #270).
     ensure_deploy_log_folder(folder.path, config, target)
-    write_deploy_receipt(log_folder, target, fingerprint, "INCOMPLETE")
     gateways = {
         schema: gateway_factory(schema)
         for schema in sorted({item.schema for item in plan})
@@ -183,6 +152,9 @@ def run_deployment(
             gateway_factory,
             force = force,
             locks = apex_locks,
+            target_env = target,
+            signature_gateway_factory = signature_gateway_factory,
+            validation = validation,
         )
         for imported in apex_items:
             if imported.schema not in gateways:
@@ -215,15 +187,16 @@ def run_deployment(
                     # anything to put back; later is a copy of the tree this patch
                     # just landed. One application per step since `#735`, so the
                     # copy is taken once its `init` half has run and before the
-                    # first byte of the import is written.
+                    # first byte of the import is written. Into the patch's own
+                    # `backup_<ENV>/`, where a file an earlier deploy of this
+                    # patch kept is left as it is (`#963`).
                     if settings.revert_on_scan_failure(config):
                         apex_backups.update(
                             back_up_targets(
                                 [step.imported],
                                 gateway_factory,
-                                log_folder = log_folder,
-                                config     = config,
-                                moment     = moment,
+                                folder     = folder.path,
+                                target_env = target,
                             )
                         )
                     results.extend(
@@ -362,7 +335,6 @@ def run_deployment(
             or (not continue_on_error and any(report.failed for report in apex_scans))
             else "SUCCESS"
         )
-        write_deploy_receipt(log_folder, target, fingerprint, status)
         return DeploymentRunResult(
             folder          = folder,
             # The APEX rows belong to the plan, not beside it: the finished table is
@@ -377,6 +349,7 @@ def run_deployment(
             apex_notes      = apex_notes,
             apex_scans      = apex_scans,
             apex_reverts    = apex_reverts,
+            apex_backups    = apex_backups,
             apex_locks      = apex_locks,
             scan_waived     = scan_waived,
         )

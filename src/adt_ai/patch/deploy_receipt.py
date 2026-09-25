@@ -1,25 +1,21 @@
-"""Durable completion of the exact patch payload and verification policy."""
+"""What an install script reaches through its `@`/`@@` includes, and what it runs.
+
+This module also wrote `logs_<TARGET>/deployment.json`, a completed-run receipt
+keyed on a hash of the payload, until ADT #965 removed it (Jan, 2026-09-25:
+*"REMOVE IT, YOU HAVE EVERYTHING IN REAL LOGS"*). The include walk it hashed
+over is still what `installed_app_id` reads a carrier with, so it stays.
+"""
 
 from __future__ import annotations
 
-import hashlib
-import json
-import os
 import re
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from adt_ai.patch import settings
-from adt_ai.patch.apex_deploy import ApexImportItem, _application_facts
-from adt_ai.patch.apex_import import ApexTarget
+from adt_ai.patch.apex_deploy import ApexImportItem
 from adt_ai.patch.deploy_progress import _link_pattern
 from adt_ai.patch.models import DeploymentPlanItem
 from adt_ai.patch.templates import _apex_environment_payload, for_target, unscoped
-from adt_ai.shared import text_files
-from adt_ai.shared.apexlang_line_endings import import_bytes, is_source
-from adt_ai.shared.deploy_status import DEPLOY_RECEIPT, read_deploy_receipt
-from adt_ai.validate.files import resolve_targets
 
 _INCLUDE_RE = re.compile(r'''^(@@?|START\s+)(?:"([^"]+)"|'([^']+)'|([^\s;]+))''', re.I)
 
@@ -69,96 +65,6 @@ def _include_closure(paths: set[Path], folder: Path, config: dict[str, Any]) -> 
             paths.add(child)
             pending.append(child)
     return True
-
-
-def deployment_fingerprint(
-    root: Path,
-    folder: Path,
-    plan: list[DeploymentPlanItem],
-    config: dict[str, Any],
-    apex_target: ApexTarget | None,
-    apex_version: str | None,
-    apex_account: str,
-    continue_on_error: bool = False,
-) -> str:
-    """Hash executable inputs, never deployment logs or mutable hash baselines.
-
-    Snapshot and moved-script trees include nested SQL and binary payloads.
-    Direct installer links also cover live sources and shared templates. An
-    APEXlang import reads its current local tree and static payloads by design.
-
-    ``continue_on_error`` is in the policy for the same reason ``scan`` is
-    (`#749`): it decides what a verdict COSTS, so two runs that would reach
-    different conclusions from identical scan output are not the same run. A
-    `-continue` deploy that waived a failing scan writes `SUCCESS`, and without
-    this the next plain `-deploy` of the same payload would match that receipt,
-    skip before its first script, and never issue the scan the operator did not
-    waive.
-    """
-    paths = {item.path.resolve() for item in plan}
-    sources: set[Path] = set()
-    for name in (settings.snapshots_folder(config), settings.scripts_snap_folder(config)):
-        paths.update(path.resolve() for path in (folder / name).rglob("*") if path.is_file())
-    if not _include_closure(paths, folder, config):
-        return ""
-    if apex_target is not None and apex_target.selected:
-        targets, _notes = resolve_targets(
-            root, config,
-            app_ids=[str(value) for value in sorted({item.app_id for item in plan if item.app_id})],
-        )
-        for target in targets:
-            for tree in (target.path, target.path.parent / "files"):
-                paths.update(path.resolve() for path in tree.rglob("*") if path.is_file())
-            sources.update(
-                path.resolve() for path in target.path.rglob("*")
-                if path.is_file() and is_source(path.relative_to(target.path))
-            )
-    digest = hashlib.sha256()
-    policy = {
-        "plan": [(item.file, item.schema, item.app_id) for item in plan],
-        "scan": settings.verify_deploy_scan(config),
-        "continue_on_error": continue_on_error,
-        "apex_target": asdict(apex_target) if apex_target is not None else None,
-        "apex_version": apex_version,
-        "apex_account": apex_account,
-        "application_facts": (
-            _application_facts(root, sorted({item.app_id for item in plan if item.app_id}))
-            if apex_target is not None and apex_target.selected else None
-        ),
-    }
-    digest.update(json.dumps(policy, sort_keys=True).encode())
-    for path in sorted(paths):
-        # Root-relative identities survive moving/cloning the patch checkout.
-        label = Path(os.path.relpath(path, root)).as_posix()
-        content = path.read_bytes() if path.is_file() else b"<MISSING>"
-        if path in sources:
-            # The bytes the import reads, after the tree's CRLF-to-LF conversion
-            # (ADT #928), so a run that converted its tree matches its own
-            # receipt next time rather than importing the same tree again (#936).
-            content = import_bytes(content)
-        digest.update(json.dumps([label, len(content)]).encode())
-        digest.update(content)
-    return digest.hexdigest()
-
-
-def deployment_complete(log_folder: Path, target: str, fingerprint: str) -> bool:
-    receipt = read_deploy_receipt(log_folder / DEPLOY_RECEIPT)
-    return (
-        bool(fingerprint)
-        and receipt.get("status") == "SUCCESS"
-        and receipt.get("target") == target
-        and receipt.get("fingerprint") == fingerprint
-    )
-
-
-def write_deploy_receipt(log_folder: Path, target: str, fingerprint: str, status: str) -> None:
-    """Atomically replace the receipt before execution and after verification."""
-    text_files.write_text(
-        log_folder / DEPLOY_RECEIPT,
-        json.dumps({
-            "version": 1, "target": target, "fingerprint": fingerprint, "status": status,
-        }) + "\n",
-    )
 
 
 # a `/* */` block, never a `/*+` optimizer hint

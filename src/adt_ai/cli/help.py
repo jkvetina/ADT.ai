@@ -50,6 +50,8 @@ ACTION_DESTS = {
     "split",
     "sql",
     "statements_file",
+    # `connection -test`, ADT #948: a verb beside `-create` and `-rekey`.
+    "test",
     # `patch -upload`, ADT #903. A verb beside `-install`, `-archive` and
     # `-drop`: it is what the run DOES, not a tuning knob on a build.
     "upload",

@@ -196,7 +196,9 @@ PROMPT -- SCRIPT: patch_scripts/PATCH830/objects_after/drop.table.app_orders.sql
 --@"./patch_scripts/objects_after/drop.table.app_orders.sql";
 ```
 
-Nor is either created a second time. When the target already holds the object and its changed file does not say `IF NOT EXISTS`, the file's link is commented out the same way, marked `NEVER RE-CREATED BY A PATCH`, and a changed sequence ships an `ALTER SEQUENCE` under `tables_after/` instead, described on [patch_templates.md](patch_templates.md). `immutables: []` turns all of this off.
+Nor is either created a second time. A table carrying an ALTER, Oracle's own diff or one you wrote yourself, is always linked commented out this way, marked `REPLACED BY ITS ALTER` and naming the script, whether or not the file says `IF NOT EXISTS`.
+
+A table or sequence with no ALTER at all is still commented out when the target already holds it and the file says no `IF NOT EXISTS`, marked `NEVER RE-CREATED BY A PATCH`; a changed sequence otherwise ships an `ALTER SEQUENCE` under `tables_after/` instead, both described on [patch_templates.md](patch_templates.md). `immutables: []` turns all of this off.
 
 Three deletions earn nothing, and each is a different question:
 
@@ -246,7 +248,7 @@ adtai patch -upload -app 100
 | `-target`, `--target` | No | none | The environment the patch is for. `-deploy`, `-drop` and a bare `-hash` or `-baseline` refuse without it. The install scripts `-create` writes are the same for every target: `-deploy` runs the `.[ENV].` templates and scripts and the `patch_apex_build_status` of its own `-target`. Without it `-create`'s table ALTERs connect to the connection file's default environment; `-upload` uses that default too. |
 | `-create`, `--create` | No | off | Build the patch named by `-name`, which is mandatory beside it. An existing folder is rewritten; a well-formed folder name that exists nowhere is refused. |
 | `-deploy`, `--deploy` | No | off | Deploy the patch named by `-name`, mandatory beside it, exactly as it stands on disk. Beside `-create`, only a name with no folder is built first. |
-| `-force`, `--force` | No | off | Proceed on a patch already deployed to this target. With `-deploy`, re-run a completed deployment of the same payload, otherwise reported `SKIPPED`. With `-create`, rebuild a folder carrying a deploy log: logs are kept and generated artifacts follow the new commit window. With `-drop`, remove a sandbox somebody else created. With `-name`, keep the commits an earlier patch of that code already shipped. |
+| `-force`, `--force` | No | off | Override a refusal. With `-deploy -app`, import past a refused signature check or a full export beside the retarget. With `-create`, rebuild a folder carrying a deploy log: logs are kept and generated artifacts follow the new commit window. With `-drop`, remove a sandbox somebody else created. With `-name`, keep the commits an earlier patch of that code already shipped. |
 | `-continue`, `--continue` | No | off | With `-deploy`, keep running the remaining install scripts after one fails, instead of stopping and rolling back. A failing `deploy_verify_scan` verdict also becomes advisory: the row still prints, the run still ends `SUCCESS`, and nothing is reverted. A failed install script still ends the run `ERROR`. It does not resume an interrupted run. |
 | `-by`, `--by` | Yes | none | Limit commits and patch folders to an author, as a case-insensitive substring of the commit author email. |
 | `-my`, `--my` | No | off | Limit commits and patch folders to you, matched against `IDENTITY.yaml` or `git config user.email`. |

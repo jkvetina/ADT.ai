@@ -55,10 +55,10 @@ DEPLOY_COLUMNS = ("FILE", "SCHEMA", "BLOCKS", "TIMER", "STATUS")
 # `NOT DEPLOYED` was called until ADT #284: the longer spelling reserved twelve
 # columns on every deploy to describe a state only a *failed* one reaches, so the
 # table was five characters wider than its own content forever (Jan, 2026-08-10:
-# "the status and timer columns are wider than the content, any reason?"). The
-# distinction `#254` drew is in the words, not their length, SKIPPED is a
-# target already at SUCCESS, NOT RUN is a script an earlier failure cut off.
-DEPLOY_STATUSES = ("SUCCESS", "ERROR", "SKIPPED", "NOT RUN")
+# "the status and timer columns are wider than the content, any reason?").
+# `SKIPPED`, a target already at SUCCESS, left with the `deployment.json`
+# receipt that produced it (ADT #965).
+DEPLOY_STATUSES = ("SUCCESS", "ERROR", "NOT RUN")
 
 # What an OPEN row says while its script is still running (ADT #441). Not a
 # `DEPLOY_STATUSES` member, because that tuple is the statuses a finished result
@@ -112,8 +112,8 @@ def _timer_cell(result: DeploymentResult) -> str:
 
     Rounded the way the shared footer rounds (`context.py` `_print_completion_timer`,
     `int(elapsed + 0.5)`) so a script's own row and the run's total are the same
-    kind of number; old ADT rounded identically (`patch.py:572`). A SKIPPED or
-    NOT RUN row has no measurement at all, and `0s` there would claim one.
+    kind of number; old ADT rounded identically (`patch.py:572`). A NOT RUN
+    row has no measurement at all, and `0s` there would claim one.
     """
     seconds = getattr(result, "seconds", None)
     return "" if seconds is None else f"{int(seconds + 0.5)}s"

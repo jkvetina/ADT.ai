@@ -18,6 +18,7 @@ from adt_ai.shared import crypto, text_files
 from adt_ai.shared.connections import DEFAULT_PORT
 from adt_ai.shared.secret import Secret
 from adt_ai.shared.secret_command import COMMAND_KEYS, SECRET_SOURCES
+from adt_ai.shared.yaml_io import credential_safe_yaml_reason
 
 # Keys that belong to a stored secret: the value, its encryption marker, and the
 # key fingerprint recorded beside it (ADT #399). They are stripped together when
@@ -155,9 +156,12 @@ def _reject_unsafe_yaml(text: str) -> None:
     try:
         YAML(typ="safe").load(text)
     except Exception as error:
+        # Position only, and nothing chained: ruamel's refusal of a repeated
+        # key quotes both values, and a repeated `pwd:` is two passwords (#958).
         raise ConnectionEditError(
-            f"UNSUPPORTED OR UNSAFE YAML IN CONNECTION FILE\n\n{error}"
-        ) from error
+            "UNSUPPORTED OR UNSAFE YAML IN CONNECTION FILE\n\n"
+            f"{credential_safe_yaml_reason(error)}"
+        ) from None
 
 
 def _plain(node: Any) -> Any:

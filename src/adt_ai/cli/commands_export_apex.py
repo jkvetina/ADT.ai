@@ -44,12 +44,14 @@ from adt_ai.cli.export_apex_messages import (
 )
 from adt_ai.cli.export_apex_owners import _resolve_apex_app_owners
 from adt_ai.cli.export_apex_reveal import print_reveal_screen
+from adt_ai.cli.export_apex_validate import ExportValidation
 from adt_ai.cli.export_reporters import ConsoleApexRevealReporter
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.export_apex.deep import ApexDeepFilterError
 from adt_ai.export_apex.filters import ApexComponentFilter, ApexPageSelection
 from adt_ai.export_apex.schema_level import schema_level_only
 from adt_ai.shared.connections import Connection, ConnectionResult
+from adt_ai.shared.db import run_sqlcl_script
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 
 
@@ -204,11 +206,20 @@ def run_apex_export(run: ApexRun) -> int:
             _route_missing_apps(run, schema)
 
         if any(run.actions.values()) or run.recent_report_only:
+            # ADT #967, report only: many exported apps are not importable as
+            # they are, and building a patch just to find that out is too much
+            # work. Never turns a successful export into a failing command. Each
+            # application compiles as the last step of its own block (#971).
+            validation = ExportValidation(run, versions, sqlcl_request=run_sqlcl_script)
             try:
-                _export_one_schema(run, schema, versions)
+                _export_one_schema(
+                    run, schema, versions,
+                    validate_apexlang=validation if validation.enabled else None,
+                )
             except ApexDeepFilterError as exc:
                 print_adt_error("ARGUMENT INVALID", str(exc))
                 return exit_code_for("ARGUMENT INVALID")
+            validation.close()
         return 0
 
     return run_schema_sections(run.schemas, run_one, first_started_at=run.started_at)
@@ -298,7 +309,12 @@ def _add_reached_apps(
     return added
 
 
-def _export_one_schema(run: ApexRun, schema: str, versions: dict[str, str]) -> None:
+def _export_one_schema(
+    run: ApexRun,
+    schema: str,
+    versions: dict[str, str],
+    validate_apexlang: ExportValidation | None = None,
+) -> None:
     args = run.args
     ApexExportRunner(run.gateway_factory).run(
         ApexExportRequest(
@@ -324,6 +340,7 @@ def _export_one_schema(run: ApexRun, schema: str, versions: dict[str, str]) -> N
             apex_version=versions.get("APEX"),
             compact=args.compact,
             mirror_ref=args.mirror,
+            validate_apexlang=validate_apexlang,
         )
     )
 

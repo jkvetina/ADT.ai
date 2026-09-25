@@ -157,15 +157,42 @@ ADT.ai exports only the formats named on the command line. There are no configur
 
 `-page` and `-component` narrow the split, readable and embedded output and the matching page comment YAML. They select no format on their own, so name one. Filtered runs do not update the application cache.
 
-`-deep` beside `-page` also exports the components recorded for those pages in the dependency mirror, LOVs, lists and authorization schemes among them, and prints a `DB OBJECTS` section of the database objects those pages use.
+`-deep` beside `-page` also exports the shared components those pages use, LOVs, lists and authorization schemes among them, and prints a `DB OBJECTS` section of the database objects those pages use. It reads the dependency mirror, APEX's component page usage, and the authorization scheme the page or any component on it requires, a "Not" reference included.
+
+A shared component can belong to the selected page even when its own dependency-mirror row has no page ID, and APEX lists no pages at all for an authorization scheme. Components used only by other pages stay excluded.
 
 **The whole-application format you export in is the one `patch -app` ships.** Two formats carry a whole application, and the files in the repository are what `patch` reads to tell them apart: `-apexlang` writes the `apexlang/` tree, which `patch -deploy -app` imports from the folder it lives in, and `-full` writes the single `f<id>.sql` a patch links as a script. An application exported as an APEXlang tree therefore needs no `f<id>.sql` at all, since `patch` never links one, never imports one, and never refuses a build for the want of one. Keeping a stale one beside a tree is the confusing case rather than the safe one: a patch retargeting the tree to a sandbox id refuses to install a full export that would land on the source application instead. The mode table is on [patch_app.md](patch_app.md).
+
+**`-apexlang` compiles what it just exported.** Each application's tree goes through the same offline compiler [`validate`](validate.md) uses, as the last step of that application's own block, below its export rows:
+
+```text
+EXPORTING APP 123/SCAP:
+-----------------------
+  APEXLANG EXPORT .............................................. 100%  0:00:11
+  APPLICATION FILES ............................................ 100%  0:00:00
+  VALIDATING APEXLANG .......................................... 100%  0:00:08
+```
+
+The row counts down from the compile's stored time, like the export rows. Under `-compact` it is one more slice of the application's bar row, `APP <id> | VALIDATING APEXLANG`.
+
+Report only: the exit code stays whatever the export itself returned. After the schema's export, each tree with errors or warnings is counted in one warning; `adtai validate` lists them:
+
+```text
+WARNING - APEXLANG ISSUES:
+--------------------------
+  123/SCAP: 221 warnings
+  124/ABC: 5 errors, 2 warnings
+
+  1) run `adtai validate -app #` for more details
+```
+
+`-reveal` and any other format skip the compile.
 
 <br>
 
 ## The application checksum
 
-Every export records the application's checksum in `config/internal/apex.db`, beside the owner, alias and page count already cached there:
+Every export records the application's checksum in `config/internal/apex.db`, beside the owner, alias and page count already cached there, and the environment it connected to when it read it:
 
 ```yaml
 100:
@@ -174,9 +201,12 @@ Every export records the application's checksum in `config/internal/apex.db`, be
   app_name: Demo Hub
   pages: 42
   checksum: SH256:lmQxPul9ecXpn+7m/IoFYckC3znD6BnvxnQw0RGnsqk=
+  checksum_env: PLAYGROUND
 ```
 
 The value is stored exactly as APEX returns it, algorithm prefix included. It ignores internal component ids, so it moves when the application definition moves and stays stable across imports and environments. It answers "did anything actually change?" without diffing a full export.
+
+**The environment is what makes the checksum meaningful.** A run without `-env` records the connection default rather than leaving it blank, and a re-export overwrites it, even blank, since it describes THIS export. `patch`'s drift checks read it back: exporting from PLAYGROUND and deploying onto WHATEVER never compares WHATEVER's live checksum against PLAYGROUND's recorded one, since the two were never going to match ([patch_install.md](patch_install.md#the-application-check), [patch_import.md](patch_import.md)).
 
 It is not a format and there is no flag for it. APEX computes it over the whole application, so `-page`, `-component` and `-recent` never narrow it, and collecting it never advances a watermark. A static file genuinely named `checksum.txt` is left alone, since `-files` owns everything under the static-files folder.
 
@@ -244,7 +274,7 @@ Either one leaves the application list complete, and an application with no matc
 | `-group`, `--group` | No | connection `apex.group` | APEX application group scope. |
 | `-app`, `--app` | Yes | connection `apex.app` | Application ids to reveal or export. Each value is a plain id, a closed range `MIN-MAX`, or an open range `MIN+`; combine freely. Any range makes the scan run without an id filter and select the matches locally. |
 | `-page`, `--page` | Yes | none | Page ids for the split, readable and embedded exports. Plain ids, closed ranges, open ranges, comma-separated values. Requires an explicit component-based format. |
-| `-deep`, `--deep` | No | off | Valid only with `-page`. Adds the components recorded for those pages to the export and prints the database objects they use. |
+| `-deep`, `--deep` | No | off | Valid only with `-page`. Adds the shared components those pages use to the export and prints the database objects they use. |
 | `-component`, `--component` | Yes | none | Shared component filters as `TYPE:NAME_PATTERN`, with `%` and `*` as wildcards. Requires an explicit component-based format. |
 | `-max_app_id`, `--max_app_id`, `--max-app-id` | No | none | In reveal mode, list only applications below this id, and scope the owner and application counts the same way. |
 | `-recent [DAYS]`, `--recent [DAYS]` | No | off | Report components changed in the last DAYS days, or since the stored watermark when bare. Report-only without an explicit format. See above. |

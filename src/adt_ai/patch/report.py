@@ -19,18 +19,12 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.patch import stages
-from adt_ai.patch.content import (
-    CONTENT_MODE_HEAD,
-    CONTENT_MODE_LOCAL,
-    authoritative_commit,
-    newer_commits,
-)
+from adt_ai.patch.content import CONTENT_MODE_HEAD, authoritative_commit, newer_commits
 from adt_ai.patch.create import _patch_group, apex_owner_schemas
 from adt_ai.patch.helpers import _path_is_deleted
 from adt_ai.patch.models import GeneratedScripts, ProcessedFile, SchemaReport
 from adt_ai.patch.object_identity import _object_identity
 from adt_ai.shared.commit_discovery import CommitRecord
-from adt_ai.shared.git_files import git_status_paths
 
 # `PROMPT -- TEMPLATE: <path>` / `PROMPT -- SCRIPT: <path>`, written by
 # `templates._configured_sql_payload`. Read back off the generated script rather
@@ -60,7 +54,6 @@ def build_reports(
     generated: GeneratedScripts,
     present_files: Mapping[str, bool],
 ) -> list[SchemaReport]:
-    written = set(generated.paths)
     deleted_cache: dict[tuple[str, ...], set[tuple[str, str, str]]] = {}
     reports: list[SchemaReport] = []
     # One report per application, however many scripts carry it: an APEXlang
@@ -102,7 +95,14 @@ def build_reports(
                 alter_files = sorted(
                     helper.path for helper in generated.alters if helper.source in group_files
                 ),
-                uncommitted = _uncommitted(root, rows, written, mode=mode),
+                # `(table name, script)` for every table this schema's own
+                # script claimed (ADT #969), what `USER ALTER SCRIPTS:` lists.
+                claimed_tables = sorted(
+                    (claim.table_name, script)
+                    for claim in generated.claimed_tables
+                    if claim.source in group_files
+                    for script in claim.scripts
+                ),
                 # Established once here rather than re-walked at render time, the
                 # same reason `alter_files` is a field (ADT #465). Split into
                 # objects and the rest by ADT #506: `DELETED OBJECTS:` prints
@@ -150,51 +150,6 @@ def _deleted_scripts(rows: list[ProcessedFile], config: dict[str, Any]) -> list[
         for row in rows
         if row.deleted and _object_identity(row.path, config) is None
     ]
-
-
-def _uncommitted(
-    root: Path,
-    rows: list[ProcessedFile],
-    written: set[str],
-    *,
-    mode: str,
-) -> list[str]:
-    """The files that genuinely have uncommitted changes, asked of git (ADT #444).
-
-    This used to list every row whose commit was not among the SELECTED records,
-    which is not what the word means and is not a question about the working
-    tree at all. A template slot and a grant script are pulled in from disk by
-    design and can never carry a selected commit, so every build warned about
-    them: measured on a live project 2026-08-21, all five files under the header were
-    tracked and unmodified. Jan: *"Dont show me template files as uncommitted
-    files, unless they actually has some uncommitted changes and we are not in
-    -local mode!"*
-
-    So it asks git, through the same helper the `local` flag already uses
-    (`patch/files.py`), and a clean path drops out whatever its commit story is.
-    An untracked file still reports (`??`), which is the case the warning was
-    written for.
-
-    **Silent under `-local`**, per the second half of that sentence: that mode
-    ships the working tree on purpose, so an uncommitted file there is the
-    instruction rather than a surprise, and warning about it would fire on every
-    file the mode exists to carry.
-
-    A helper THIS run generated is still excluded (``written``). Old ADT listed
-    every one of them (patch.py:1630-1632) and on any patch that drops an object
-    or changes a table they outnumber and bury the actionable entry; they remain
-    visible in the listing above, on the same `  - ` row as every other file
-    since `#456` retired the `!` this sentence used to name.
-
-    Asked of git in ONE batched call rather than one `git status` subprocess
-    per row (`#670`): a patch of a few hundred files used to spawn a few
-    hundred processes here for a question `git_status_paths` answers in one.
-    """
-    if mode == CONTENT_MODE_LOCAL:
-        return []
-    candidates = [row.path for row in rows if row.path not in written]
-    statuses = git_status_paths(root, candidates)
-    return [path for path in candidates if path in statuses]
 
 
 def _split_group(group: str) -> tuple[str, int | None]:

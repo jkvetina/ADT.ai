@@ -91,8 +91,9 @@ class DoctorUpgradeMixin(DoctorHost):
                 return self._fail_action(
                     lines,
                     label,
-                    f"not a version: {target_version}. Pass a release number such as "
-                    "0.9.1, or leave -update bare to take the latest release.",
+                    f"not a version: {target_version}\n\n"
+                    "1) pass a release number such as 0.9.1\n"
+                    "2) or leave -update bare to take the latest release",
                 )
         if self._is_git_repo():
             return self._upgrade_adt_ai_checkout(lines, label, release)
@@ -405,7 +406,9 @@ class DoctorUpgradeMixin(DoctorHost):
         for member in archive.infolist():
             mode = member.external_attr >> 16
             if mode:
-                (target / member.filename).chmod(mode & 0o7777)
+                # An archive can supply executable permissions, never setuid,
+                # setgid or sticky bits on the installed files.
+                (target / member.filename).chmod(mode & 0o777)
 
     @staticmethod
     def _ensure_executable(launcher: Path) -> None:

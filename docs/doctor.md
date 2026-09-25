@@ -229,7 +229,9 @@ Patch *scripts* are not scaffolded: `patch_scripts/` is per patch code and gener
 
 Before replacing SQLcl, `doctor` downloads, extracts, validates, and makes the new launcher executable in a staging directory beside the live install. Promotion is a same-filesystem rename. If that final swap fails, both the live install and any pre-existing backup are restored; a corrupt or incomplete archive never moves the live install at all.
 
-The download link is **scraped out of Oracle's SQLcl page rather than written down**, so it is checked twice before anything is fetched: it must be `https` on `download.oracle.com`, and every request `doctor` builds refuses any scheme but `https`. A refusal names the URL it refused.
+The download link is **scraped out of Oracle's SQLcl page rather than written down**. It must use `https` on `download.oracle.com`, and every redirect must keep the download on the original HTTPS host and port. Metadata requests may redirect to another HTTPS host, but never to HTTP.
+
+A refused redirect stops before contacting its destination or writing the download. Extracted launchers retain ordinary executable permissions; archive entries cannot restore setuid, setgid, or sticky permission bits.
 
 Oracle publishes no checksum for that archive by any route, so integrity rests on the transport and on the launcher validation above.
 

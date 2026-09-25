@@ -238,11 +238,35 @@ class FixedWidthProgressPrinter:
         no visible progress until the whole thing resolves.
         """
         left = self._active_left or self._left(label, indent)
-        dots_len = leader_columns(self.line_width, f"{left} ", len(status) + 1)
-        dots = "." * max(LEADER_DOTS_MINIMUM, dots_len)
-        print(f" {dots} {status}")
+        text = self.row_text(label, status, indent=indent)
+        # `begin()` already put `left` on screen; this closer owes only what
+        # follows it on the same line, which is `text` minus the prefix
+        # `row_text` shares with it.
+        print(text[len(left):])
         commit_line()  # as in `finish` above, and `fail` comes through here
         self._active_left = None
+
+    def row_text(
+        self,
+        label: str,
+        status: str,
+        *,
+        indent: str | None = None,
+    ) -> str:
+        """The full ``left + dots + status`` line, computed in one place.
+
+        `status()` above only ever printed the HALF of this line `begin()` had
+        not already put on screen; a live repaint (ADT #967) has nothing on
+        screen to complete and needs the WHOLE line every tick, or the ticking
+        row and the batch-rendered one it lands on could disagree about where
+        the leader starts. Both read this one method now, so they cannot drift
+        the way the four independent dot computations `#436`'s docstring warns
+        about would let them.
+        """
+        left = self._active_left or self._left(label, indent)
+        dots_len = leader_columns(self.line_width, f"{left} ", len(status) + 1)
+        dots = "." * max(LEADER_DOTS_MINIMUM, dots_len)
+        return f"{left} {dots} {status}"
 
     def line(self, text: str) -> None:
         # Deliberately NOT committed. This prints whatever it is handed, a

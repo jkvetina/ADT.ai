@@ -230,6 +230,22 @@ COMMIT;
 """
 
 
+def no_merge_script(table: str, reason: str) -> str:
+    """The comment-only file that replaces a MERGE an export could not generate.
+
+    `<table>.sql` is also how a bare `adtai export_data` finds the tables it
+    refreshes, so deleting it would drop the table from every later run, while
+    keeping the old MERGE would replay rows the CSV no longer holds (`#958`).
+    Only comment lines, so running it anywhere does nothing.
+    """
+    safe_qualified_identifier(table, role="table name")
+    return (
+        f"-- {table.upper()}: no MERGE was generated, because {reason}.\n"
+        "-- This file keeps the table in a bare `adtai export_data` refresh;\n"
+        "-- the next export that can generate a MERGE writes it here.\n"
+    )
+
+
 def row_select(
     row: dict[str, Any],
     columns: list[str],

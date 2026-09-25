@@ -10,7 +10,8 @@ The files are found by `export_db`'s own resolver rather than a second reading
 of the layout, so a type folder two types share answers by the longest
 extension and a `-groups` sub-folder is read where the export put it. A schema
 with no exported file is named under `WARNING - NOT SEARCHED`, never answered with no
-hits, and nothing here connects to Oracle.
+hits, and so is a file that could not be read (`#958`); nothing here connects to
+Oracle.
 """
 
 from __future__ import annotations
@@ -47,8 +48,24 @@ def search_db_layer(request: TermRequest, result: TermResult) -> None:
     owners = {owner for owner, _type in files.values()}
     if not owners:
         return
+    found: list[Hit] = []
+    read = 0
+    for path, (owner, object_type) in files.items():
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as error:
+            # One file a permission, a lock or a concurrent export took away
+            # used to end the whole search, losing the hits already found and
+            # every layer after this one (`#958`). It is named the way
+            # `search -data` names an object the database refused.
+            result.not_searched.append(("DB", f"{_shown(path, request.root)}: {_why(error)}"))
+            continue
+        read += 1
+        found.extend(_file_hits(resolver, path, owner, object_type, text, request.term))
+    if not read:
+        return
     result.searched.add("DB")
-    hits = sorted(_file_hits(resolver, files, request.term), key=_hit_order)
+    hits = sorted(found, key=_hit_order)
     if len(owners) > 1:
         hits = [replace(hit, component=f"{hit.db_object[0]}.{hit.component}")
                 for hit in hits if hit.db_object is not None]
@@ -56,23 +73,40 @@ def search_db_layer(request: TermRequest, result: TermResult) -> None:
 
 
 def _file_hits(
-    resolver: ObjectFileResolver, files: dict[Path, tuple[str, str]], term: str
+    resolver: ObjectFileResolver,
+    path: Path,
+    owner: str,
+    object_type: str,
+    text: str,
+    term: str,
 ) -> Iterator[Hit]:
-    for path, (owner, object_type) in files.items():
-        text = path.read_text(encoding="utf-8", errors="replace")
-        if not line_matches(text, term):
-            continue
-        name = object_name_from_file(path, resolver.object_types[object_type].extension)
-        for line, flag, excerpt in line_hits(text, term):
-            yield Hit(
-                source    = "DB",
-                component = name,
-                prop      = object_type,
-                line      = line,
-                flag      = flag,
-                excerpt   = excerpt,
-                db_object = (owner, object_type, name),
-            )
+    if not line_matches(text, term):
+        return
+    name = object_name_from_file(path, resolver.object_types[object_type].extension)
+    for line, flag, excerpt in line_hits(text, term):
+        yield Hit(
+            source    = "DB",
+            component = name,
+            prop      = object_type,
+            line      = line,
+            flag      = flag,
+            excerpt   = excerpt,
+            db_object = (owner, object_type, name),
+        )
+
+
+def _shown(path: Path, root: Path) -> str:
+    """The file as the project names it, so the row fits beside the others.
+
+    The resolver builds every path as `root / <relative>` (`under_root` hands
+    back the path it was given), so it is always relative to the root.
+    """
+    return path.relative_to(root).as_posix()
+
+
+def _why(error: OSError) -> str:
+    """`Permission denied`, not `[Errno 13] ...: '<the absolute path again>'`."""
+    return error.strerror or type(error).__name__
 
 
 def _hit_order(hit: Hit) -> tuple[str, str, str, int]:

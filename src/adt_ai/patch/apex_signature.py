@@ -56,16 +56,30 @@ newer of the application row and its newest page. It is read BEFORE the ADT #726
 lock for the reason the checksum is (#745): the lock's build-status write stamps
 the application with the deploy's own user, and a read after it would blame the
 developer being refused. A read that fails answers "unknown" and nothing else.
+
+**A checksum is only meaningful against the environment it was taken from**
+(ADT #962). `export_apex` records that environment beside `based_on`, and a
+promotion crossing environments, PLAYGROUND exported and deployed onto
+WHATEVER, compares the recorded checksum with a live read of the SOURCE
+application taken on PLAYGROUND rather than with `on_target`: the target is
+being overwritten by design, so its live checksum was never going to match.
+``on_target`` still carries what the import log calls LATEST ON TARGET, and
+`-deploy` still writes it there; only the verdict's comparison moves, onto a
+sixth value, `on_source`, read on the export's own recorded environment. A
+same-environment deploy and an export that recorded no environment (every
+store written before this) compare `on_target` exactly as before.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from adt_ai.patch import queries
+from adt_ai.shared.apex_checksum import read_apex_checksum
 from adt_ai.shared.apex_store import ApexStore
 from adt_ai.shared.git_files import file_payload_hash
 from adt_ai.shared.row_values import row_value
@@ -108,6 +122,7 @@ class RecordedExport:
 
     checksum    : str = ""
     checksum_at : str = ""
+    checksum_env: str = ""
     base_commit : str = ""
     mirror_ref  : str = ""
 
@@ -151,6 +166,15 @@ class ApexSignatures:
     last_change : LastChange = LastChange()
     # When ``based_on`` was taken, so the refusal can say how old the base is.
     based_at    : str = ""
+    # The SOURCE application's live checksum, read on the environment the
+    # export recorded, only when that differs from the deploy's target (ADT
+    # #962). ``None`` means no cross-environment comparison applies: the
+    # verdict below compares ``on_target`` exactly as it always has, which is
+    # every same-environment deploy and every export that recorded none.
+    # ``on_target`` is unaffected either way -- it is still what the import log
+    # calls LATEST ON TARGET, because a promotion overwrites the target by
+    # design and its live checksum was never going to match.
+    on_source   : str | None = None
 
     @property
     def rebase_command(self) -> str:
@@ -168,11 +192,14 @@ class ApexSignatures:
     def verdict(self) -> str:
         if not self.based_on:
             return UNKNOWN
-        if not self.on_target:
+        # `on_source` stands in for `on_target` only for a cross-environment
+        # promotion (ADT #962); every other deploy compares its own live read.
+        live = self.on_target if self.on_source is None else self.on_source
+        if not live:
             # The application does not exist yet, which is what a fresh sandbox
             # id looks like. Nothing is there to be overwritten.
             return OK
-        return OK if self.on_target == self.based_on else DRIFTED
+        return OK if live == self.based_on else DRIFTED
 
     @property
     def refused(self) -> bool:
@@ -182,22 +209,20 @@ class ApexSignatures:
 def read_target_signature(gateway: Any, app_id: int) -> str:
     """The live APEX checksum of ``app_id``, or empty when it holds no application.
 
-    Absent is not drifted, so an id nothing is installed on comes back as an
-    empty string. APEX reports that by raising rather than by answering no rows
-    (see `_NO_APPLICATION_CODE`), so the empty answer is made here; every other
-    database error is somebody else's to see and re-raises untouched.
+    Read through `shared/apex_checksum`, the reader `export_apex` records with,
+    so the live value and ``based_on`` are one read (ADT #962; the block's
+    ORA-14552 history, ADT #960, lives with it). Absent is not drifted, so an id
+    nothing is installed on comes back as an empty string. APEX reports that by
+    raising rather than by answering nothing (see `_NO_APPLICATION_CODE`), so the
+    empty answer is made here; every other database error is somebody else's to
+    see and re-raises untouched.
     """
     try:
-        rows = gateway.fetch_all(queries.APEX_CHECKSUM_QUERY, {"app_id": app_id})
+        return read_apex_checksum(gateway, app_id)
     except Exception as error:  # noqa: BLE001 - re-raised unless it is the one case
         if not _is_missing_application(error):
             raise
         return ""
-    for row in rows:
-        value = str(row_value(row, "CHECKSUM") or "").strip()
-        if value:
-            return value
-    return ""
 
 
 def read_last_change(
@@ -265,10 +290,11 @@ def recorded_export(root: Path, app_id: int) -> RecordedExport:
     if not entry:
         return RecordedExport()
     return RecordedExport(
-        checksum    = str(entry.get("checksum") or "").strip(),
-        checksum_at = str(entry.get("checksum_at") or "").strip(),
-        base_commit = str(entry.get("base_commit") or "").strip(),
-        mirror_ref  = str(entry.get("mirror_ref") or "").strip(),
+        checksum     = str(entry.get("checksum") or "").strip(),
+        checksum_at  = str(entry.get("checksum_at") or "").strip(),
+        checksum_env = str(entry.get("checksum_env") or "").strip(),
+        base_commit  = str(entry.get("base_commit") or "").strip(),
+        mirror_ref   = str(entry.get("mirror_ref") or "").strip(),
     )
 
 
@@ -308,6 +334,10 @@ def collect_signatures(
     tree_root : Path,
     on_target : str | None = None,
     last_change : LastChange | None = None,
+    *,
+    target_env : str = "",
+    owner      : str = "",
+    signature_gateway_factory: Callable[[str, str], Any] | None = None,
 ) -> ApexSignatures:
     """Read all three before anything is written, which is the whole point.
 
@@ -326,8 +356,32 @@ def collect_signatures(
 
     ``last_change`` is taken by the same lock for the same reason: its write
     stamps the application with the deploy's own user (ADT #925).
+
+    ``target_env``, ``owner`` and ``signature_gateway_factory`` answer a
+    question `on_target` cannot (ADT #962): whether the export this tree came
+    from was taken on a DIFFERENT environment than the one being deployed to.
+    PLAYGROUND's recorded checksum read against WHATEVER's live one can never
+    match, so when the export recorded an environment and it differs from
+    ``target_env`` (case-insensitive), a second live read of the SOURCE
+    application (``app_id``, not ``target_id``) is taken on THAT environment,
+    through ``signature_gateway_factory(environment, owner)``, and it is what
+    the verdict compares instead of `on_target`. A read that fails with a real
+    database error is somebody else's to see, the same as `on_target`'s own
+    read; only a genuinely absent recorded environment, a matching one, or no
+    factory at all skip it, and then the verdict compares `on_target` exactly
+    as before.
     """
     recorded = recorded_export(root, app_id)
+    on_source: str | None = None
+    if (
+        signature_gateway_factory is not None
+        and recorded.checksum_env
+        and target_env
+        and recorded.checksum_env.upper() != target_env.upper()
+    ):
+        on_source = read_target_signature(
+            signature_gateway_factory(recorded.checksum_env, owner), app_id
+        )
     return ApexSignatures(
         app_id      = app_id,
         target_id   = target_id,
@@ -340,6 +394,7 @@ def collect_signatures(
         deploying   = tree_signature(tree_root),
         base_commit = recorded.base_commit,
         mirror_ref  = recorded.mirror_ref,
+        on_source   = on_source,
         last_change = (
             last_change if last_change is not None
             else read_last_change(gateway, target_id)
@@ -405,31 +460,66 @@ def drift_message(signatures: ApexSignatures) -> str:
     uppercased."*
     """
     if signatures.verdict == UNKNOWN:
+        headline, steps = unrecorded_rows(signatures)
         return "\n".join(
             [
-                f"  APP {signatures.app_id} HAS NO RECORDED SIGNATURE",
+                headline,
                 "",
                 "  This deploy cannot tell what the change was based on.",
-                f"  Run: {EXPORT_COMMAND} {signatures.app_id}, then commit the export",
+                "",
+                *steps,
             ]
         )
-    change = signatures.last_change
-    recovery = signatures.rebase_command or (
-        f"{EXPORT_COMMAND} {signatures.app_id}, reconcile the tree"
-    )
     return "\n".join(
         [
             f"  APP {signatures.target_id} CHANGED SINCE YOUR EXPORT",
             "",
             "  Deploying now would overwrite that work.",
             "",
-            f"  CHANGED BY  | {change.by or _NOT_RECORDED}",
-            f"  CHANGED ON  | {change.on or _NOT_RECORDED}",
-            f"  YOUR BASE   | {_base(signatures)}",
+            *change_rows(signatures),
             "",
-            f"  Run: {recovery}, then deploy again (or -force to overwrite)",
+            f"  1) {recovery_command(signatures)}",
+            "  2) deploy again",
+            "  3) or -force to overwrite",
         ]
     )
+
+
+def change_rows(signatures: ApexSignatures) -> list[str]:
+    """`CHANGED BY`, `CHANGED ON` and `YOUR BASE`, two spaces in.
+
+    Shared by the `-deploy` refusal and the `-create` warning that predicts it
+    (ADT #957), so the two screens cannot come to disagree about who moved the
+    application or what the change was based on.
+    """
+    change = signatures.last_change
+    return [
+        f"  CHANGED BY  | {change.by or _NOT_RECORDED}",
+        f"  CHANGED ON  | {change.on or _NOT_RECORDED}",
+        f"  YOUR BASE   | {_base(signatures)}",
+    ]
+
+
+def unrecorded_rows(signatures: ApexSignatures) -> tuple[str, list[str]]:
+    """The headline and the numbered steps for an export that recorded no checksum."""
+    return (
+        f"  APP {signatures.app_id} HAS NO RECORDED SIGNATURE",
+        [f"  1) {export_command(signatures)}", "  2) commit the export"],
+    )
+
+
+def recovery_command(signatures: ApexSignatures) -> str:
+    """The rebase when the export shared a base, else the re-export (ADT #725)."""
+    return signatures.rebase_command or f"{export_command(signatures)}, reconcile the tree"
+
+
+def export_command(signatures: ApexSignatures) -> str:
+    """`adtai export_apex -apexlang -app <id>`, the re-export on its own.
+
+    The bare command, so the `-create` warning can number it as a step of its
+    own (ADT #961) while the `-deploy` refusal keeps its one `Run:` sentence.
+    """
+    return f"{EXPORT_COMMAND} {signatures.app_id}"
 
 
 #: What a row says when APEX kept no value, which is every row an import wrote.

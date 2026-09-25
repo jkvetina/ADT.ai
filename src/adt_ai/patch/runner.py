@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.patch import queries, settings
+from adt_ai.patch.apex_validate import ApexlangValidation
 from adt_ai.patch.build import HASH_STAMP_FORMAT, build_database_patch
 from adt_ai.patch.content import (
     CONTENT_MODE_COMMITTED,
@@ -39,7 +40,6 @@ from adt_ai.patch.deploy import (
     _recompile_invalid_objects,
     _script_app_id,
     _select_patch_folder,
-    _skipped_deployment_result,
     _verify_view_columns,
     _write_deployment_log,
     reset_deployment_spool,
@@ -334,8 +334,8 @@ class PatchWorkspace:
             # demand for some SQL file the patch never needed (ADT #926).
             raise PatchError(
                 "NO DEPLOYABLE SQL FILES\n\n"
-                f"Patch folder: {folder.folder}\n"
-                "Rebuild it with -create -force, then -deploy."
+                "1) -create -force  rebuild it\n"
+                "2) -deploy"
             )
         return folder, plan
 
@@ -353,14 +353,16 @@ class PatchWorkspace:
         apex_target: Any = None,
         apex_version: str | None = None,
         apex_account: str = "",
+        signature_gateway_factory: Callable[[str, str], Any] | None = None,
+        validation: ApexlangValidation | None = None,
     ) -> DeploymentRunResult:
         """Deploy every script in the patch folder, reporting progress as it goes.
 
         The loop itself is ``patch/deploy_run.run_deployment`` since ADT #434 split
         this module at the 20 KB context guard; this stays as the entry point
         every caller and test already knows, and the reporter protocol,
-        ``apex_target``, ``apex_version`` and ``apex_account`` are all
-        documented there.
+        ``apex_target``, ``apex_version``, ``apex_account``,
+        ``signature_gateway_factory`` and ``validation`` are all documented there.
         """
         return run_deployment(
             self,
@@ -375,6 +377,8 @@ class PatchWorkspace:
             apex_target         = apex_target,
             apex_version        = apex_version,
             apex_account        = apex_account,
+            signature_gateway_factory = signature_gateway_factory,
+            validation          = validation,
         )
 
     # `delete_diff_tables` lived here until ADT #356. The sweep is now
@@ -403,6 +407,8 @@ class PatchWorkspace:
         files_ws: bool = False,
         hash_tables: Mapping[str, str] | None = None,
         target_app_id: int | None = None,
+        signature_gateway_factory: Callable[[str, str], Any] | None = None,
+        validation: ApexlangValidation | None = None,
     ) -> DatabasePatchResult:
         """Build the patch folder and report what went into it.
 
@@ -433,6 +439,8 @@ class PatchWorkspace:
             gateway_factory = gateway_factory,
             files_ws      = files_ws,
             target_app_id = target_app_id,
+            signature_gateway_factory = signature_gateway_factory,
+            validation    = validation,
         )
 
 __all__ = [
@@ -488,7 +496,6 @@ __all__ = [
     "_refresh_database_files",
     "_reject_unresolved_merges",
     "_select_patch_folder",
-    "_skipped_deployment_result",
     "_verify_view_columns",
     "table_alter_sql",
     "_write_deployment_log",

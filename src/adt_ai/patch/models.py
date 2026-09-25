@@ -9,6 +9,7 @@ from adt_ai.shared.commit_discovery import PatchFolder
 if TYPE_CHECKING:
     # Annotation only: `patch/staleness.py` imports `patch/files.py`, which
     # imports this module, so a runtime import here would close the cycle.
+    from adt_ai.patch.apex_signature import ApexSignatures
     from adt_ai.patch.staleness import StaleExport
     from adt_ai.shared.apexlang_line_endings import PrecheckIssue
 
@@ -78,6 +79,30 @@ class AlterHelper:
     statements: int
 
 @dataclass(frozen=True)
+class TableClaim:
+    """One table THIS patch's own script already carries the ALTER for (ADT #969).
+
+    Before generating a table's diff, `-write_table_diff_helpers` /
+    `_write_hash_table_diff_helpers` scan the patch's own hand-written scripts
+    (`patch_scripts/<CODE>/**`, any slot, any filename) for an `ALTER TABLE`
+    naming this table, comment lines stripped. A match means the ALTER can need
+    data work a diff cannot express (a NOT NULL backfill), or is a rename the
+    diff would read as drop and add, so Oracle is never asked and no helper is
+    written over the claiming file.
+
+    ``source`` is the exported table file, matching `AlterHelper.source`, so a
+    reader can join the two lists the same way. ``table_name`` is what
+    `USER ALTER SCRIPTS:` names in its `TABLE` column, resolved once here rather
+    than re-derived from the file at render time. ``scripts`` is every matching
+    repo-path script, sorted, oldest listed first.
+    """
+
+    source: str
+    table_name: str
+    scripts: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class GeneratedScripts:
     """What `-create` wrote into ``patch_scripts_dir`` on THIS run.
 
@@ -103,6 +128,10 @@ class GeneratedScripts:
     #: urgency: this one names a table the developer DID change, whose ALTER is
     #: silently missing from a patch that otherwise looks complete.
     refused_tables: list[tuple[str, str]] = field(default_factory=list)
+    #: Tables a user's own script already carries the ALTER for, so no diff was
+    #: ever asked of Oracle (ADT #969). Feeds `USER ALTER SCRIPTS:` and the
+    #: install script's commented-out link for that table's file.
+    claimed_tables: list[TableClaim] = field(default_factory=list)
 
 @dataclass(frozen=True)
 class PatchScripts:
@@ -165,7 +194,6 @@ class SchemaReport:
     app_id: int | None
     files: list[ProcessedFile]
     alter_files: list[str]
-    uncommitted: list[str]
     #: The schema's dropped objects as `(TYPE, NAME)`, what `DELETED OBJECTS:`
     #: lists (ADT #465, keyed on the object since #506). Established here rather
     #: than re-walked at render time, which would ask the same question twice.
@@ -185,6 +213,11 @@ class SchemaReport:
     # carries the injected templates and scripts, which are not what the count is
     # about.
     object_count: int = 0
+    #: `(table name, script)` for every table this schema's own script claimed
+    #: (ADT #969), what `USER ALTER SCRIPTS:` lists. One row per claiming script,
+    #: so a table two scripts both name prints twice rather than joined into one
+    #: cell.
+    claimed_tables: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def schema_label(self) -> str:
@@ -245,6 +278,10 @@ class DatabasePatchResult:
     # version would not build as a shadow table (ADT #753). A missing ALTER is
     # invisible in a patch that deploys green, so it earns a warning section.
     refused_tables: list[tuple[str, str]] = field(default_factory=list)
+    # Tables a user's own script already carried the ALTER for, so no diff was
+    # ever asked of Oracle (ADT #969). Empty on a patch whose scripts claim
+    # nothing, which is every patch before this card.
+    claimed_tables: list[TableClaim] = field(default_factory=list)
     # Objects the database moved past after they were exported, so this patch
     # ships the previous body for them (ADT #261, reported rather than refused
     # since #468). Carried on the result rather than raised, which is what makes
@@ -257,9 +294,26 @@ class DatabasePatchResult:
     # bad byte sits (ADT #932). Their snapshots ship the repo's exact bytes; they
     # stopped the build until Jan called that *"stupid that he is blocked"*.
     undecodable_files: list[tuple[str, str]] = field(default_factory=list)
+    # APEXlang applications `-deploy` would refuse, read early so the developer
+    # can rebase before the deploy (ADT #957): moved since the export in the
+    # current environment, or never exported with a checksum at all.
+    changed_apps: list[ApexSignatures] = field(default_factory=list)
+    # APEXlang trees the compile gate had to convert before SQLcl could read
+    # them (ADT #964, the warning `-deploy` gives since #928), so the developer
+    # learns the build rewrote his files and commits them.
+    apex_notes: list[PrecheckIssue] = field(default_factory=list)
     # `DEPLOY.sql`, written when the folder holds two or more install scripts,
     # or None (ADT #850). `PATCH FILES:` lists it after the scripts it orders.
     deploy_file: Path | None = None
+    # Every dirty or untracked path in the WHOLE repo, computed once per build
+    # (ADT #967, Jan mid-run: *"if we have uncommitted changes in the repo, it
+    # should list the files as a file tree ... Looks like you are printing
+    # something, but not all uncommitted files, why is that?"*). Replaces the
+    # narrower per-schema `SchemaReport.uncommitted`, which only ever asked
+    # about the patch's OWN files; excludes this run's own generated helpers and
+    # whatever it just wrote under its own patch folder, and stays empty under
+    # `-local` (`patch/build.py::_repo_uncommitted`).
+    uncommitted: list[str] = field(default_factory=list)
 
 @dataclass(frozen=True)
 class DeploymentPlanItem:
@@ -350,6 +404,11 @@ class DeploymentRunResult:
     #: write, it does not make the patch correct, so a deploy whose scan failed
     #: stays `ERROR` whether or not the target came back.
     apex_reverts: list[Any] = field(default_factory=list)
+    #: Every `ApexBackup` this run took or kept before an `-app` import, keyed
+    #: by the id the import landed on (`#963`). The console reads it to say what
+    #: happened to a failed application, `-continue` included, where no revert
+    #: ran and `apex_reverts` is empty. Empty with the revert key off.
+    apex_backups: dict[int, Any] = field(default_factory=dict)
     #: The deploy's build status ledger, `app_id` to `BuildStatusLock` (`#726`),
     #: as it stands AFTER the release step: `final` is set there and nowhere
     #: else. Empty when `patch_apex_build_status` names no status for this target

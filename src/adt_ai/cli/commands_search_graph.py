@@ -491,7 +491,9 @@ def _answer_object(
                 store.impact(args.impact, max_depth=max_depth, owners=owners),
                 args.format,
                 store.affected_columns(args.impact),
-                store.apex_callers(args.impact),
+                # `-schema` says whose object the walk is rooted at, and its APEX
+                # callers are that owner's too, not every same-named object's (#958).
+                store.apex_callers(args.impact, owners=owners),
             )
         return _print_foreign_key_tree(
             args.constraint, store.foreign_key_tree(args.constraint), args.format

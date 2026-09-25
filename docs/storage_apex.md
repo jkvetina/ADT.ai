@@ -21,6 +21,7 @@ erDiagram
         checksum_at TEXT
         base_commit TEXT
         mirror_ref TEXT
+        checksum_env TEXT
     }
     developers {
         workspace TEXT PK
@@ -54,20 +55,21 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 
 ### applications
 
-| Column      | Type    | Nullable | Key | Meaning                                                                                                                                   |
-| ----------- | ------- | -------- | --- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| app_id      | INTEGER | No       | PK  | The application id.                                                                                                                       |
-| owner       | TEXT    | Yes      |     | The parsing schema that owns the application.                                                                                             |
-| workspace   | TEXT    | Yes      |     | The workspace name.                                                                                                                       |
-| app_group   | TEXT    | Yes      |     | The application group.                                                                                                                    |
-| app_alias   | TEXT    | Yes      |     | The alias.                                                                                                                                |
-| app_name    | TEXT    | Yes      |     | The name.                                                                                                                                 |
-| pages       | INTEGER | Yes      |     | The page count at the last listing.                                                                                                       |
-| updated_at  | TEXT    | Yes      |     | When APEX last changed the application: `YYYY-MM-DD HH:MM`, APEX's own stamp at the precision the export writes into every metadata file. |
-| checksum    | TEXT    | Yes      |     | The id-independent SHA-256 APEX computes over the whole application; NULL until an export has run.                                        |
-| checksum_at | TEXT    | Yes      |     | When that checksum was taken, local time to the minute; what a drift refusal prints as YOUR BASE. NULL on a file older than version 5.    |
-| base_commit | TEXT    | Yes      |     | The commit the last `-apexlang` export was taken at, which is what a refused deploy rebases onto. Empty when that export could name none. |
-| mirror_ref  | TEXT    | Yes      |     | The `-mirror` ref that commit sits on, spelled as the user typed it. Empty when the export was not mirrored.                              |
+| Column       | Type    | Nullable | Key | Meaning                                                                                                                                   |
+| ------------ | ------- | -------- | --- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| app_id       | INTEGER | No       | PK  | The application id.                                                                                                                       |
+| owner        | TEXT    | Yes      |     | The parsing schema that owns the application.                                                                                             |
+| workspace    | TEXT    | Yes      |     | The workspace name.                                                                                                                       |
+| app_group    | TEXT    | Yes      |     | The application group.                                                                                                                    |
+| app_alias    | TEXT    | Yes      |     | The alias.                                                                                                                                |
+| app_name     | TEXT    | Yes      |     | The name.                                                                                                                                 |
+| pages        | INTEGER | Yes      |     | The page count at the last listing.                                                                                                       |
+| updated_at   | TEXT    | Yes      |     | When APEX last changed the application: `YYYY-MM-DD HH:MM`, APEX's own stamp at the precision the export writes into every metadata file. |
+| checksum     | TEXT    | Yes      |     | The id-independent SHA-256 APEX computes over the whole application; NULL until an export has run.                                        |
+| checksum_at  | TEXT    | Yes      |     | When that checksum was taken, local time to the minute; what a drift refusal prints as YOUR BASE. NULL on a file older than version 5.    |
+| base_commit  | TEXT    | Yes      |     | The commit the last `-apexlang` export was taken at, which is what a refused deploy rebases onto. Empty when that export could name none. |
+| mirror_ref   | TEXT    | Yes      |     | The `-mirror` ref that commit sits on, spelled as the user typed it. Empty when the export was not mirrored.                              |
+| checksum_env | TEXT    | Yes      |     | The environment that checksum was read on, where `patch`'s drift check reads the live one. NULL on a file older than version 6.           |
 
 <br>
 
@@ -110,11 +112,11 @@ None. Every read is by primary key, and the tables are small: one row per applic
 
 ## Version and lifetime
 
-The file is at version 4. A version 1 file, which keyed its watermarks by a TEXT application id and allowed an empty version value, is lifted in place on open with every watermark kept; a watermark row that never named an application is dropped.
+The file is at version 6. A version 1 file, which keyed its watermarks by a TEXT application id and allowed an empty version value, is lifted in place on open with every watermark kept; a watermark row that never named an application is dropped.
 
 A version 2 file gains `base_commit` and `mirror_ref` as added columns, so every checksum it already recorded is left exactly where it was. A version 3 file loses `workspace_id`, which every export stored and nothing read, and keeps every other value.
 
-A version 4 file gains `checksum_at` as an added column, empty until the next export stamps it. A file several versions behind takes each step in one open.
+A version 4 file gains `checksum_at` as an added column, empty until the next export stamps it. A version 5 file gains `checksum_env` the same way. A file several versions behind takes each step in one open.
 
 Both stamps are the database's. `updated_at` is APEX's own last-updated time at minute precision, read off the application listing. `exported_at` is read from the database clock before the export lists anything, so an object changed during the run is still selected next time, and it advances only for a run that covered the whole application.
 

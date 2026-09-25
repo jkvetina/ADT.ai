@@ -10,7 +10,7 @@ There are two whole-application formats and only one of them is a file a patch c
 
 | Its export in the selected commits | What `-app` ships | What refuses the build |
 | --- | --- | --- |
-| An `apexlang/` tree ([export_apex_formats.md](export_apex_formats.md)) | The tree, plus that application's other changed files and minus its static-file payloads. `patch -deploy -app` imports the folder in place, so the patch links no APEXlang file, snapshots only the ones it changed, and leaves the payloads to the staging that puts them back in the tree | Nothing on this application. It needs no `f<id>.sql`, so there is none to be stale against |
+| An `apexlang/` tree ([export_apex_formats.md](export_apex_formats.md)) | The tree, plus that application's other changed files and minus its static-file payloads. `patch -deploy -app` imports the folder in place, so the patch links no APEXlang file, snapshots only the ones it changed, and leaves the payloads to the staging that puts them back in the tree | A tree the APEXlang compiler refuses, under `ERROR - VALIDATION FAILED:` ([patch_import.md](patch_import.md#the-tree-is-compiled-before-anything-runs)). It needs no `f<id>.sql`, so there is none to be stale against |
 | An `f<id>.sql` full export | The `f<id>.sql` alone, that application's component files dropped, the export already containing them | An export older than a component committed after it, or missing from the window |
 
 An APEXlang application is therefore built and deployed with no `f<id>.sql` anywhere in the commits and no `-force`. Until the mode was read off the format, `-create -app` demanded a fresh export for every application in the patch.
@@ -25,11 +25,11 @@ The tree is listed as its one `apexlang/` folder, however many of its files chan
 
 `PATCH CONTENTS:` reads the folder off the `init` half's header, since the application's scripts link none of the tree. That header still names every file.
 
-A tree committed with Windows line endings (CRLF), the way some databases hand an export back, or checked out that way by `core.autocrlf`, is converted to LF in place before the import, under `WARNING - APEXLANG PRECHECK ISSUE:` asking for the commit. It is converted rather than refused because a re-export would throw away an `.apx` edited by hand.
+A tree committed with Windows line endings (CRLF), the way some databases hand an export back, or checked out that way by `core.autocrlf`, is converted to LF in place before the build and before the import, under `WARNING - APEXLANG PRECHECK ISSUE:` asking for the commit.
 
-The deploy's skip receipt reads the converted bytes, so the next `-deploy` of the same patch still skips.
+It is converted rather than refused because a re-export would throw away an `.apx` edited by hand.
 
-Every file a `static-files.apx` names is checked in the tree before anything deploys, the application's own, each plugin's and each theme's. `apex import` compiles before it writes and refuses a tree missing even one, so a missing file refuses the patch there, naming the files and `export_apex -app <id> -apexlang -files`. `-force` does not skip it.
+Every file a `static-files.apx` names is checked in the tree before the build and before anything deploys, the application's own, each plugin's and each theme's. `apex import` compiles before it writes and refuses a tree missing even one, so a missing file refuses the patch there, naming the files and `export_apex -app <id> -apexlang -files`. `-force` does not skip it.
 
 SQLcl's APEXlang compiler cannot read a `\r`. On a whole application it crashed rather than reported: a `NullPointerException`, then an `ORA-01403` from the import block it ran anyway. A failed import leads its `ERROR - DEPLOYMENT FAILED:` stanza with such an exception and leaves the stack in the log.
 

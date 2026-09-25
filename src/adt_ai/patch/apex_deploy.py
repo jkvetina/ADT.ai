@@ -21,7 +21,8 @@ compile gate passed and the bytes that are committed, with no second tree that
 could disagree with any of them.
 
 **Everything that can refuse, refuses before the first install script runs.** The
-payload reconciliation, the signature read and all three gates happen in `prepare`
+payload reconciliation, the compile (ADT #964), the signature read and all three
+gates happen in `prepare`
 and the import itself in `run`, with the patch's own scripts in between. That
 ordering is the card's own requirement, the target's signature read before anything
 is written, and it has a second payoff: a deploy refused on drift has not deployed
@@ -49,7 +50,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from adt_ai.export_apex.files import ApexFileResolver
 from adt_ai.patch import settings
 from adt_ai.patch.apex_backup import ApexBackup, backup_line
 from adt_ai.patch.apex_import import (
@@ -66,12 +66,19 @@ from adt_ai.patch.apex_signature import (
     drift_message,
     signature_lines,
 )
+from adt_ai.patch.apex_validate import (
+    NO_APPLICATION_ID,
+    RETRY_DEPLOY,
+    ApexlangValidation,
+    precheck_trees,
+    relative_label,
+    validate_trees,
+)
 from adt_ai.patch.layout import is_apex_full_export
 from adt_ai.patch.models import DeploymentPlanItem, DeploymentResult
-from adt_ai.shared.apex_payloads import IGNORE_NAME, drop_legacy_staging, link_payloads
+from adt_ai.shared.apex_payloads import IGNORE_NAME, drop_legacy_staging
 from adt_ai.shared.apex_store import ApexStore
-from adt_ai.shared.apexlang_line_endings import PrecheckIssue, convert_crlf, crlf_issue
-from adt_ai.shared.apexlang_static_refs import missing_refusal, missing_static_files
+from adt_ai.shared.apexlang_line_endings import PrecheckIssue
 from adt_ai.validate.files import resolve_targets
 from adt_ai.validate.report import import_error_lines, parse_import_output
 
@@ -207,6 +214,9 @@ def prepare_apex_imports(
     *,
     force           : bool = False,
     locks           : dict[int, BuildStatusLock] | None = None,
+    target_env      : str = "",
+    signature_gateway_factory: Any = None,
+    validation      : ApexlangValidation | None = None,
 ) -> tuple[list[ApexImportItem], list[str | PrecheckIssue]]:
     """Resolve, stage and read every application this deploy imports.
 
@@ -223,6 +233,13 @@ def prepare_apex_imports(
     function RAISES on drift and a lock taken before that refusal still has to
     be released. A caller that passes nothing takes no locks at all, which is
     what every test of the three refusals wants.
+
+    ``target_env`` and ``signature_gateway_factory`` are the cross-environment
+    check's own inputs (ADT #962), forwarded straight to `collect_signatures`.
+    A caller that passes nothing compares ``on_target`` exactly as before.
+
+    ``validation`` is the compile gate (ADT #964), raising
+    ``ApexlangValidationError``; a caller that passes none compiles nothing.
     """
     from adt_ai.patch.runner import PatchError
 
@@ -236,36 +253,27 @@ def prepare_apex_imports(
         raise PatchError(refusal)
 
     items: list[ApexImportItem] = []
-    resolver = ApexFileResolver.from_config(root, config)
     aliases, owners, workspaces = _application_facts(root, app_ids)
     drop_legacy_staging(root)
     targets, missing_trees = resolve_targets(
         root, config, app_ids=[str(app_id) for app_id in sorted(app_ids)]
     )
-    notes: list[str | PrecheckIssue] = [*missing_trees]
+    # ADT #765, #928, #930: every tree completed, converted and checked in
+    # place, the steps `-create` ran on it too (`apex_validate.precheck_trees`),
+    # so `apex import`, which compiles before it writes, reads what was checked.
+    notes: list[str | PrecheckIssue] = [*missing_trees, *precheck_trees(root, config, targets)]
+    # What the gate ahead of the connection block converted (ADT #966).
+    if validation is not None:
+        notes.extend(validation.issues)
+    # ADT #964: the compiler behind `validate`, over every tree before the first
+    # lock writes a status, so a refused tree leaves the target as it was.
+    if validation is not None:
+        validate_trees(root, targets, validation, retry=RETRY_DEPLOY)
     for resolved in targets:
         app_id = resolved.app_id
-        if app_id is None:
-            raise PatchError("APEX IMPORT TARGET HAS NO APPLICATION ID")
+        if app_id is None:  # pragma: no cover - `precheck_trees` already refused it
+            raise PatchError(NO_APPLICATION_ID)
         landing = target_id if target_id is not None else app_id
-        # ADT #765: the payloads are linked into the export's own tree and kept
-        # there, so the import reads the folder that is committed rather than a
-        # copy assembled under `config/temp/`. `apex import` compiles before it
-        # writes, so it needs exactly the completeness `validate` needs, and it now
-        # gets it from the same reconciliation rather than from a second tree that
-        # could disagree with this one. From the configured `apex_path_files`,
-        # the folder `export_apex` wrote them to, as `validate` reads it (#923).
-        link_payloads(resolved.path, resolver.files_root(resolved.path.parent))
-        # ADT #928: SQLcl's compiler cannot read CRLF, so a tree committed that
-        # way is converted in place and noted, before the tree is hashed, so the
-        # log names the bytes the import read. Never refused: a re-export would
-        # throw away the hand-edited `.apx` this deploy exists to ship.
-        if converted := convert_crlf(resolved.path):
-            notes.append(crlf_issue(_relative_label(resolved.path, root), converted))
-        # ADT #930: a static file the tree names and lacks fails the compile, so
-        # it refuses here, before the lock writes a status and before `init` runs.
-        if missing := missing_static_files(resolved.path):
-            raise PatchError(missing_refusal(app_id, _relative_label(resolved.path, root), missing))
         # **Before the signature is read, which is the whole of the point**
         # (ADT #726). The window this closes runs from that read to the import,
         # so a lock taken after it would leave the race exactly where it was.
@@ -298,6 +306,10 @@ def prepare_apex_imports(
             # ADT #925: the author, read by the same lock before its write
             # stamped the application with this deploy's own user.
             last_change = held.last_change if held is not None and held.locked else None,
+            # ADT #962: reads the SOURCE app on its own recorded environment.
+            target_env = target_env,
+            owner      = owners.get(app_id, ""),
+            signature_gateway_factory = signature_gateway_factory,
         )
         if signatures.refused and not force:
             raise PatchError(drift_message(signatures))
@@ -430,15 +442,7 @@ def _source_line(item: ApexImportItem, root: Path) -> str:
     Same column width as the three signature rows above it, so the block reads
     as one table rather than as a row bolted onto it.
     """
-    return f"--   DEPLOYED FROM    | {_relative_label(item.source, root)}"
-
-
-def _relative_label(path: Path, root: Path) -> str:
-    """``path`` from the project root, or absolute when it sits outside it."""
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
-        return str(path)
+    return f"--   DEPLOYED FROM    | {relative_label(item.source, root)}"
 
 
 def _full_export_refusal(
@@ -464,9 +468,13 @@ def _full_export_refusal(
         "the source application in place.",
     ]
     lines.extend(f"  {path}" for path in exports)
-    lines.append(
-        "Run: drop -app's value to deploy in place, or rebuild the patch without "
-        "the full export (or -force to deploy both)"
+    lines.extend(
+        [
+            "",
+            "1) drop -app's value to deploy in place",
+            "2) or rebuild the patch without the full export",
+            "3) or -force to deploy both",
+        ]
     )
     return "\n".join(lines)
 

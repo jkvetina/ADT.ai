@@ -116,9 +116,8 @@ ERROR - CONFIGURATION NOT FOUND:
     - ./connections.yaml
     - ./connections/app.yaml
 
-  Run ADT.ai from a project folder that has a connection file,
-  or pass -config-dir / -root to point at one.
-  See docs/config.md and `adtai doctor -init`.
+  1) run ADT.ai from a project folder that has a connection file
+  2) or pass -config-dir / -root to point at one
 
 
 TIMER: 0s
@@ -143,7 +142,9 @@ The code is chosen by what your next move is rather than by which layer raised t
 | `PATCH FAILED` | `patch` started and stopped on its own work: no commit matched, a baseline or dependency graph is missing or stale, a sandbox is not yours to drop. | None. The message names the cause and the flag or command that clears it. |
 | `DIFF FAILED` | `diff` started and the comparison, the read or the restore failed. | None. The message is the failure, SQLcl's own output where there is one. |
 | `STARTUP FAILED` | ADT.ai could not import itself. The banner carries no command, because none resolved. | The `-debug` hint. |
-| `UNEXPECTED ERROR` | Anything ADT.ai could not classify. | The `-debug` hint. |
+| `VALUE ERROR` | A `ValueError` ADT.ai raised with its own message, the message printed without the type name. | The `-debug` hint. |
+| `RUNTIME ERROR` | A `RuntimeError`, printed the same way. | The `-debug` hint. |
+| `UNEXPECTED ERROR` | Anything else ADT.ai could not classify, printed as `<Type>: <message>`. | The `-debug` hint. |
 
 The set is closed: a code outside it is refused, and all fourteen headers are held in the checked-in console inventory, so adding one is a reviewed console change like any other section header.
 
@@ -155,7 +156,7 @@ The set is closed: a code outside it is refused, and all fourteen headers are he
 
 The description is indented plain text, not a bullet list, and a nested list stays a nested list where the content genuinely is one: the searched-paths rows above are the case that shape is for.
 
-**Every section that says something failed opens on `ERROR - `**, the same way every warning opens on `WARNING - `, and its body sits two columns in. `patch` and `diff` stopping on their own work take the shared screen above (`PATCH FAILED`, `DIFF FAILED`). A failure reported per item keeps its own section under the same prefix: `ERROR - DEPLOYMENT FAILED:` puts each failed script on a `FILE:` row with what SQLcl refused two columns further in, and `ERROR - RECOMPILATION FAILED:` lists each object's compiler messages. `INVALID OBJECTS:` is a list of what the database holds, not a failure of the run, so it carries no prefix.
+**Every section that says something failed opens on `ERROR - `**, the same way every warning opens on `WARNING - `, and its body sits two columns in. `patch` and `diff` stopping on their own work take the shared screen above (`PATCH FAILED`, `DIFF FAILED`). A failure reported per item keeps its own section under the same prefix: `ERROR - DEPLOYMENT FAILED:` puts each failed script on a `FILE:` row with what SQLcl refused two columns further in, `ERROR - VALIDATION FAILED:` puts each APEXlang tree `patch` refused on an `APP:` row with the compiler's records under it, and `ERROR - RECOMPILATION FAILED:` lists each object's compiler messages. `INVALID OBJECTS:` is a list of what the database holds, not a failure of the run, so it carries no prefix.
 
 The project-folder remedy belongs to `CONFIGURATION NOT FOUND` alone. When every connection failure took that screen, a hand-edited YAML typo, an unauthenticated vault CLI and a failed SQLcl connect all reported it and advised running from a folder holding the file that had just been read.
 

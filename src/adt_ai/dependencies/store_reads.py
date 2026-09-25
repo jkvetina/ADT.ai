@@ -24,6 +24,7 @@ from adt_ai.dependencies import apex_pages, queries, scope
 from adt_ai.dependencies import edges as _edges
 from adt_ai.dependencies.classify import split_node
 from adt_ai.dependencies.foreign_key_tree import foreign_key_tree as _foreign_key_tree
+from adt_ai.dependencies.owner_case import normalize_owner as _normalize_owner
 from adt_ai.dependencies.owner_case import owner_params as _owner_params
 
 #: How deep `impact` walks before it stops. Re-exported by `store` so the one
@@ -232,20 +233,44 @@ class DependencyQueries:
             owners=owners,
         )
 
-    def apex_callers(self, node: str) -> list[dict[str, Any]]:
+    def apex_callers(
+        self, node: str, owners: Iterable[str] | None = None
+    ) -> list[dict[str, Any]]:
         """APEX app/page/component properties that depend on ``node``.
 
         The primary source is the ``APEX_USED_DB_OBJECTS`` mirror joined to its
         component properties. For table impacts, PL/Scope-derived view-column
         lineage widens the target set to APEX-rendered views and annotates rows
         whose component property value equals the affected view column.
+
+        ``owners`` says whose ``node`` it is (`#958`): a component is kept only
+        when the object it uses is that owner's, and a lineage view only when it
+        reads the object from one of them, the view itself sitting in whichever
+        schema it does. Matching on type and name alone put a component reading
+        ``APP_B.SETTINGS`` under ``APP_A.SETTINGS`` too. An APEX row recording
+        no owner cannot be told apart, so it still matches, and no ``owners``
+        keeps every owner, which is what `search -impact` without `-schema` asks.
         """
         type_, name = split_node(node)
+        owner_params = _owner_params(owners)
         targets: dict[tuple[str, str], list[dict[str, Any] | None]] = {
             (type_, name): [None],
         }
-        for column in self.affected_columns(node):
-            targets.setdefault(("VIEW", column["view_name"]), []).append(column)
+        #: The owners a target may be used under; a target absent here is anyone's.
+        target_owners: dict[tuple[str, str], set[str]] = {}
+        if owner_params:
+            target_owners[(type_, name)] = set(owner_params)
+        columns = self.affected_columns(node)
+        readers = self._lineage_view_owners(name, owner_params) if columns and owner_params else {}
+        for column in columns:
+            key = ("VIEW", column["view_name"])
+            if owner_params:
+                view_owners = readers.get(column["view_name"])
+                if not view_owners:
+                    # The view reads a same-named object of an owner not asked about.
+                    continue
+                target_owners.setdefault(key, set()).update(view_owners)
+            targets.setdefault(key, []).append(column)
 
         rows = self.connection.execute(queries.APEX_CALLERS_QUERY).fetchall()
 
@@ -254,11 +279,17 @@ class DependencyQueries:
         for row in rows:
             object_type = row["USED_DB_OBJECT_TYPE"]
             object_name = row["USED_DB_OBJECT_NAME"]
-            lineage_rows = targets.get((object_type, object_name))
+            object_owner = _normalize_owner(row["USED_DB_OBJECT_OWNER"] or "")
+            owned = {
+                key: value
+                for key, value in targets.items()
+                if _owned_by(target_owners.get(key), object_owner)
+            }
+            lineage_rows = owned.get((object_type, object_name))
             if not lineage_rows and not object_type:
                 matches = [
                     (key, value)
-                    for key, value in targets.items()
+                    for key, value in owned.items()
                     if key[1] == object_name
                 ]
                 if len(matches) == 1:
@@ -294,6 +325,17 @@ class DependencyQueries:
                     seen.add(key)
         return result
 
+    def _lineage_view_owners(self, name: str, owner_params: list[str]) -> dict[str, set[str]]:
+        """Each view reading ``name`` from one of ``owner_params``, and the schemas it sits in."""
+        rows = self.connection.execute(
+            queries.lineage_view_owners_query(len(owner_params)),
+            (name, *owner_params),
+        ).fetchall()
+        readers: dict[str, set[str]] = {}
+        for row in rows:
+            readers.setdefault(row["view_name"], set()).add(_normalize_owner(row["view_owner"]))
+        return readers
+
     def uses_edges(self) -> dict[str, list[str]]:
         """Forward internal uses-map (``{node: [referenced…]}``) for lineage."""
         return _edges.uses_edges(self.connection)
@@ -301,3 +343,12 @@ class DependencyQueries:
     def foreign_key_edges(self) -> dict[str, list[str]]:
         """Forward FK map (``{TABLE.child: [TABLE.parent…]}``), see `edges`."""
         return _edges.foreign_key_edges(self.connection)
+
+
+def _owned_by(allowed: set[str] | None, owner: str) -> bool:
+    """Whether an APEX row using ``owner``'s object can be a caller of a target.
+
+    A target with no owner restriction is anyone's, and a row that recorded no
+    owner cannot be ruled out, so both match as they did before `#958`.
+    """
+    return allowed is None or not owner or owner in allowed

@@ -140,6 +140,34 @@ WARNING - NO DATABASE CLOCK:
 
 <br>
 
+## The application check
+
+`-deploy -app` refuses to import an APEXlang application somebody changed since your export ([patch_deploy.md](patch_deploy.md)). `-create` asks the same question first, so you can rebase before the deploy fails.
+
+It reads the application's live signature on the environment `export_apex` recorded ([export_apex.md](export_apex.md#the-application-checksum)), never `-target`, and compares it with the checksum recorded there. An export taken before that environment was recorded falls back to the connection `-create` itself opens (`-target`, or the connection file's default), exactly as before:
+
+```text
+WARNING - APP 100 CHANGED SINCE YOUR EXPORT:
+--------------------------------------------
+  CHANGED BY  | DEVELOPER
+  CHANGED ON  | 2026-09-24 22:26
+  YOUR BASE   | 2026-09-24 22:26 (64d9c42b)
+
+  1) run: adtai export_apex -apexlang -app 100
+  2) reconcile the tree, commit changes
+  3) create the patch again
+```
+
+Each changed application gets its own warning. The rows are the ones the deploy refusal prints, and the steps are the way back to a patch that deploys. The patch is still written and the run exits `0`.
+
+- **An export that shared a base with `-mirror` rebases instead**: `1) run: git rebase db/dev`, then `2) create the patch again`.
+- **The source application is read**, the one the tree was exported from, never the `-app <id>` it will land on.
+- **An application missing from the environment is not reported.** One with no recorded export is reported as `WARNING - APP <id> HAS NO RECORDED SIGNATURE:`, with the steps to export it, commit the export and create the patch again.
+- **A read that fails prints nothing**, since the deploy still checks.
+- **Only APEXlang trees are checked.**
+
+<br>
+
 ## Files that are not UTF-8
 
 A patch is written in UTF-8. A file saved in another encoding is read in `repo_encoding` from `config.yaml` when you set one, so its national characters arrive intact. A file that fits neither is copied into the patch byte for byte, unconverted, and `-create` names it with the first bad byte and builds the patch anyway:

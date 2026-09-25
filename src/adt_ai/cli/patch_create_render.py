@@ -40,6 +40,7 @@ from adt_ai.cli.constants import (
 )
 from adt_ai.cli.context import _project_relative
 from adt_ai.cli.patch_create_warnings import (
+    print_changed_apps,
     print_changed_objects,
     print_no_database_clock,
     print_outdated,
@@ -57,6 +58,7 @@ from adt_ai.cli.patch_preview_render import (
 from adt_ai.patch.layout import is_apex_comment, listed_patch_paths
 from adt_ai.patch.models import DatabasePatchResult, SchemaReport
 from adt_ai.patch.object_folders import object_folder_resolver
+from adt_ai.shared.apexlang_line_endings import print_precheck_issues
 from adt_ai.shared.commit_discovery import CommitRecord
 from adt_ai.shared.file_list import nested_files, print_file_rows
 from adt_ai.shared.object_list import print_object_rows
@@ -82,6 +84,12 @@ from adt_ai.shared.progress import schema_label
 # close themselves (see `_print_object_changes`).
 ALTER_HEADER = "ALTER STATEMENTS:"
 DELETED_HEADER = "DELETED OBJECTS:"
+# The eleventh, ADT #969: a table this patch's own hand-written script already
+# carries the ALTER for, so Oracle's diff was never asked and no helper was
+# written. Its own header rather than a row on `ALTER STATEMENTS:`, because
+# that section lists FILES `-create` generated (ADT #506) and this one names a
+# TABLE and the SCRIPT a person already wrote, not a helper this run produced.
+USER_ALTER_HEADER = "USER ALTER SCRIPTS:"
 
 
 def print_folder_commits(folder: PatchFolder) -> None:
@@ -227,7 +235,8 @@ def print_create_report(
     # in ADT #269.
     nested = nested_files(config)
     folder_of = object_folder_resolver(config)
-    for report in result.reports:
+    last_index = len(result.reports) - 1
+    for index, report in enumerate(result.reports):
         # No `PROCESSING SCHEMA <s>:` header. `#443` took its object count off,
         # and `#444` took the line itself: it stood over `PROCESSED FILES: <s>`,
         # naming the same schema one line above the section that names it. Jan,
@@ -260,13 +269,26 @@ def print_create_report(
             nested    = nested,
             folder_of = folder_of,
         )
+        # Repo-wide now (ADT #967), and printed exactly once: directly below the
+        # LAST schema's `PROCESSED FILES:` rows, ahead of that schema's own
+        # `WARNING - OUTDATED FILES:`, which is where the single per-build
+        # `WARNING - UNCOMMITTED FILES:` section sat when it was still one
+        # section per schema.
+        if index == last_index:
+            print_uncommitted(result.uncommitted, config)
         print_outdated(report, config)
-        print_uncommitted(report, config)
+    if not result.reports:
+        # No schema block to hang it under, so nothing else printed it either.
+        print_uncommitted(result.uncommitted, config)
     # The run-scoped warnings, after the per-schema loop, because each is about
     # the patch rather than about one schema's block. `OBJECTS CHANGED:` leads
     # them: it is the only one that says the patch will ship something OTHER than
     # what the database holds, which is a bigger claim than an unresolved table
     # version or an unmoved per-patch script (ADT #468).
+    print_changed_apps(result)
+    # A tree the compile gate converted to LF (ADT #964): `-deploy`'s own
+    # warning, since the conversion now happens here when both run.
+    print_precheck_issues(result.apex_notes)
     print_changed_objects(result)
     print_no_database_clock(result)
     print_unresolved_tables(result, config)
@@ -304,11 +326,31 @@ def _print_object_changes(
     listing paths. `ALTER STATEMENTS:` genuinely lists FILES, the generated
     helpers a reviewer opens; `DELETED OBJECTS:` lists objects and says so.
     """
+    _print_user_alter_scripts(report)
     if report.alter_files:
         print_adt_header(ALTER_HEADER)
         print_file_rows(report.alter_files, nested=nested, folder_of=folder_of)
         print()
     _print_deleted_objects(report, nested, folder_of, config)
+
+
+def _print_user_alter_scripts(report: SchemaReport) -> None:
+    """`USER ALTER SCRIPTS:`, printed before `ALTER STATEMENTS:` (ADT #969).
+
+    Chronological order on the screen: Jan's rule scans for a claiming script
+    BEFORE a diff is ever generated, so a reader meets the tables this run
+    never touched Oracle for ahead of the ones it did. `TABLE` names the object
+    (`TableClaim.table_name`, resolved once at generation time); `SCRIPT` names
+    the repo-path script that claimed it, so a reviewer knows exactly which
+    file to open.
+    """
+    if not report.claimed_tables:
+        return
+    print_adt_header(USER_ALTER_HEADER)
+    print_adt_table(
+        [{"TABLE": table, "SCRIPT": script} for table, script in report.claimed_tables],
+        columns=["TABLE", "SCRIPT"],
+    )
 
 
 def _print_deleted_objects(
