@@ -143,7 +143,7 @@ def deploy_order(folder: Path, config: dict[str, Any]) -> list[Path]:
         raise PatchError(
             f"{DEPLOY_DRIVER} DOES NOT MATCH PATCH FOLDER {folder.name}\n\n"
             + "\n".join(problems)
-            + "\nFix its @ lines, or rebuild it with -create -force."
+            + "\n\n1) fix its @ lines\n2) or rebuild it with -create -force"
         )
     return [scripts[name] for name in listed]
 

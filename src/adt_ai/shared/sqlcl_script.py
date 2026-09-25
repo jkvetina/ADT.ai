@@ -68,6 +68,10 @@ __all__ = [
 # are removed for OCI and thin sessions alike by ``safe_subprocess_environment``.
 SQLCL_HIDDEN_VARIABLES = ("ORACLE_HOME",)
 
+# The JVM property that stops SQLcl looking for an Oracle client anywhere,
+# registry included (ADT #968). Thin sessions only.
+SQLCL_SKIP_ORACLE_HOME = "-Doracle.sqlcl.skipOracleHome=true"
+
 # The one diagnostic that means "this script ran against no session at all".
 #
 # ``WHENEVER SQLERROR EXIT FAILURE`` guards every connect block (ADT #188), but
@@ -190,6 +194,16 @@ def _sqlcl_environment(
         return environment
     for name in SQLCL_HIDDEN_VARIABLES:
         environment.pop(name, None)
+    # Withholding the variable is not enough on Windows (ADT #968). SQLcl's own
+    # `JDBCHelper.getOH()` falls back to the registry, where every installed
+    # Oracle client leaves an `ORACLE_HOME_KEY`, so a 19c client found there
+    # still builds the `oci8` URL and dies on `no ocijdbc23`. The property it
+    # checks before both is read by the JVM, whatever launcher started it.
+    options = environment.get("JAVA_TOOL_OPTIONS", "")
+    if SQLCL_SKIP_ORACLE_HOME not in options.split():
+        environment["JAVA_TOOL_OPTIONS"] = (
+            f"{options} {SQLCL_SKIP_ORACLE_HOME}".strip()
+        )
     return environment
 
 
@@ -201,7 +215,10 @@ def _scrub_secrets(text: str, secrets: set[str]) -> str:
     deployment logs. Eliding the password keeps cleartext credentials out of all
     three sinks.
     """
-    for secret in secrets:
+    # A shorter credential can be a prefix of another connection's password.
+    # Replacing it first would leave the longer password's remaining characters
+    # visible, and set iteration order would make that disclosure intermittent.
+    for secret in sorted(secrets, key=len, reverse=True):
         if secret:
             text = text.replace(secret, "***")
     return text

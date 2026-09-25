@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import sys
+import threading
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -27,10 +30,12 @@ from adt_ai.shared.apexlang_line_endings import (
 from adt_ai.shared.db import run_sqlcl_script
 from adt_ai.shared.error_screen import print_adt_error
 from adt_ai.shared.file_list import row as list_row
-from adt_ai.shared.progress import FixedWidthProgressPrinter
+from adt_ai.shared.progress import FixedWidthProgressPrinter, commit_line, format_seconds
+from adt_ai.shared.streamed_table import ERASE_TO_END_OF_LINE
 from adt_ai.validate.files import ValidateTarget, discovery_label, resolve_targets
-from adt_ai.validate.report import UNRECOGNISED, CompileMessage, message_lines
+from adt_ai.validate.report import EMPTY, UNRECOGNISED, CompileMessage, message_lines
 from adt_ai.validate.runner import (
+    FolderOutcome,
     ValidateReporter,
     ValidateRequest,
     ValidateRunner,
@@ -48,6 +53,9 @@ from adt_ai.validate.runner import (
 # headers, so the wording that separates the two survives inside one screen; the
 # `_HEADER` suffix goes with them, because the console inventory holds the
 # family's twelve codes and a lead line is body text rather than furniture.
+# Jan, 2026-09-25 (ADT #966): *"Also change "VALIDATING:" to "VALIDATING APPS:""*.
+VALIDATING_HEADER = "VALIDATING APPS:"
+
 INPUT_NOT_FOUND_LEAD     = "INPUTS NOT ON DISK"
 NOTHING_TO_VALIDATE_LEAD = "NOTHING TO VALIDATE"
 
@@ -59,11 +67,52 @@ class ConsoleValidateReporter(ValidateReporter):
     the shape ``DebugQueryGateway`` gives a ``QUERY:``, and the row follows it
     whole. Echoed from inside the SQLcl call, it landed after the row's label
     and before its verdict, which split one row across the whole block.
+
+    **Ticks once a second on a terminal** (ADT #967). Jan, on the row sitting
+    still for the whole ~4.5s SQLcl call: *"You were supose to show the times as
+    you go, not when you are done!"* `begin()` used to print only the label and
+    leave the clock for `finish()`; now a live run paints the full row with
+    `0:00:00` immediately and a daemon thread repaints it every second until the
+    real verdict lands. Follows `ConsoleDeployReporter`'s ticker exactly (ADT
+    #670): the thread gets its OWN `threading.Event` rather than reading
+    `self._stop`, so `_stop_ticker` clearing that attribute from the main thread
+    cannot be observed mid-loop, and a `_paint_lock` serializes a tick against
+    the closing row so neither can land half-written or overwrite the other.
+
+    **The live render is chosen by `isatty`, never by a flag**, the same
+    convention as `StreamedTable`: a redirected run, CI and pytest's `capsys`
+    print exactly the one line per row this reporter always has, byte-identical
+    to before this ticked -- the label, then ` .... 0:00:05\\n`.
     """
 
-    def __init__(self, *, debug: bool = False) -> None:
+    #: How often the open row repaints while a compile is blocking. A second is
+    #: what the eye reads as "alive" (`ConsoleDeployReporter.TICK_SECONDS`).
+    TICK_SECONDS = 1.0
+
+    def __init__(self, *, debug: bool = False, live: bool | None = None) -> None:
         self.printer = FixedWidthProgressPrinter()
         self.debug = debug
+        self._started = 0.0
+        self.live = sys.stdout.isatty() if live is None else live
+        self._label: str | None = None
+        self._row_open = False
+        # Paints arrive from `begin`/`finish` and from the ticker thread, so the
+        # two are serialized the same way `StreamedTable` serializes its own
+        # (ADT #670): a half-written row interleaved with another is unreadable.
+        self._paint_lock = threading.Lock()
+        self._stop: threading.Event | None = None
+        self._expected = 0.0
+
+    def expect(self, seconds: float) -> None:
+        """What the next compile cost last time, so its open row counts down.
+
+        ADT #973. Jan: *"you should store validation timer together with other
+        timers, so you can do countdown (on all places where you are running
+        this)"*. The open row shows what is left of the stored time, the way an
+        export row's clock does, and the closed row the real elapsed time. With
+        no history there is nothing to count down from, and the clock counts up.
+        """
+        self._expected = seconds
 
     def request(self, script: str) -> None:
         if not self.debug:
@@ -74,13 +123,121 @@ class ConsoleValidateReporter(ValidateReporter):
         print()
 
     def begin(self, label: str) -> None:
+        self._started = time.monotonic()
         self.printer.begin(label)
+        if not self.live:
+            return
+        self._label = label
+        self._row_open = True
+        self._repaint(self._clock(0.0))
+        stop = threading.Event()
+        self._stop = stop
+        threading.Thread(target=self._tick, args=(stop,), daemon=True).start()
 
     def finish(self, label: str, status: str) -> None:
-        self.printer.status(label, status)
+        # The compile time, never the verdict (ADT #966). Jan, on the bare error
+        # count this cell used to carry: *"No, show timer instead"*. The sections
+        # below the rows say what failed; the clock is the progress bars' own.
+        elapsed = int(time.monotonic() - self._started + 0.5)
+        clock = format_seconds(elapsed).strip()
+        self._stop_ticker()
+        if not self.live:
+            self.printer.status(label, clock)
+            return
+        with self._paint_lock:
+            self._row_open = False
+            print(
+                "\r" + self.printer.row_text(label, clock) + ERASE_TO_END_OF_LINE,
+                flush=True,
+            )
+        commit_line()
+        self._label = None
 
     def note(self, message: str) -> None:
         print(f"  {message}")
+
+    def _tick(self, stop: threading.Event) -> None:
+        """Repaint the open row once a second until its own event is set.
+
+        ``stop`` is a parameter, not `self._stop` (ADT #670): the loop owns the
+        event it waits on for as long as it runs, so `_stop_ticker` clearing the
+        attribute from the main thread cannot be read out from under it.
+        """
+        while not stop.wait(self.TICK_SECONDS):
+            if not self._row_open:
+                return
+            self._repaint(self._clock(time.monotonic() - self._started))
+
+    def _clock(self, elapsed: float) -> int:
+        """The open row's seconds: left of the estimate, else elapsed so far."""
+        if self._expected > 0:
+            return max(0, int(self._expected - elapsed + 0.5))
+        return int(elapsed + 0.5)
+
+    def _repaint(self, seconds: int) -> None:
+        """Redraw the open row in place. A no-op unless a row is genuinely open.
+
+        `_row_open` is read INSIDE the lock because `finish` clears it inside the
+        same one: a tick already past its own wait would otherwise repaint over
+        a row that has just printed its real verdict (ADT #670).
+        """
+        with self._paint_lock:
+            # `_row_open` is only ever True with a real label set beside it
+            # (`begin`); the `None` check is for mypy's narrowing, not a case
+            # that happens.
+            if not self._row_open or self._label is None:
+                return
+            clock = format_seconds(seconds).strip()
+            print(
+                "\r" + self.printer.row_text(self._label, clock) + ERASE_TO_END_OF_LINE,
+                end  = "",
+                flush= True,
+            )
+
+    def _stop_ticker(self) -> None:
+        if self._stop is not None:
+            self._stop.set()
+            self._stop = None
+
+
+# What `export_apex -apexlang` and `patch` say about a compile that found
+# anything (ADT #971). Jan: *"This should be presented as a warning and not
+# NOTES. And I want the same NOTES change in PATCH module."* The count per
+# application and one pointer for all of them, spelled as Jan drew it: the `#`
+# is the reader's own application id, which the rows above already list.
+APEXLANG_ISSUES_HEADER = "WARNING - APEXLANG ISSUES:"
+APEXLANG_ISSUES_POINTER = "  1) run `adtai validate -app #` for more details"
+
+
+def _counted(count: int, noun: str) -> str:
+    return f"{count} {noun}" + ("" if count == 1 else "s")
+
+
+def print_apexlang_issues(folders: tuple[FolderOutcome, ...] | list[FolderOutcome]) -> None:
+    """`WARNING - APEXLANG ISSUES:`, one row per tree with errors or warnings.
+
+    Silent when every tree compiled clean, so a clean run grows no output. No
+    trailing blank of its own: both callers render another section right after
+    this one, and `print_adt_header` normalizes the gap above it (the reason
+    `PatchValidateReporter.close` gives).
+    """
+    rows = []
+    for folder in folders:
+        report = folder.report
+        counts = [
+            _counted(len(messages), noun)
+            for messages, noun in ((report.errors, "error"), (report.warnings, "warning"))
+            if messages
+        ]
+        if counts:
+            rows.append(f"  {folder.target.label}: {', '.join(counts)}")
+    if not rows:
+        return
+    print_adt_header(APEXLANG_ISSUES_HEADER)
+    for row in rows:
+        print(row)
+    print()
+    print(APEXLANG_ISSUES_POINTER)
 
 
 def _run_validate(
@@ -109,7 +266,7 @@ def _run_validate(
     reporter = ConsoleValidateReporter(debug=args.debug)
 
     if targets:
-        print_adt_header("VALIDATING:")
+        print_adt_header(VALIDATING_HEADER)
     # The module global, read at call time, so the CLI facade's patch sync can
     # swap SQLcl out wholesale in tests.
     result = ValidateRunner(sqlcl_request=run_sqlcl_script).run(
@@ -134,6 +291,10 @@ def _run_validate(
             print_adt_header(f"WARNING - UNRECOGNISED OUTPUT {folder.target.label}:")
             print(folder.report.raw.rstrip("\n"))
             print()
+        elif folder.report.outcome == EMPTY:
+            # The row carries the clock since ADT #966, so the verdict it used
+            # to spell is said here: a broken export, never a quiet pass.
+            notes.append(f"{folder.target.label}: no APEXlang files, export it again")
 
     # A precheck issue is a warning and still fails the run: the committed tree
     # is the broken one until the conversion is committed (ADT #928, #934).

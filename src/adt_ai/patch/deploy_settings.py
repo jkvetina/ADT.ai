@@ -3,9 +3,9 @@
 Split out of ``settings.py`` when ADT #726 pushed that module past the 24 KB
 context guard, the same seam ADT #735 drew when it handed the stage names to
 ``stages.py``. What moved is one cohesive group rather than an arbitrary tail:
-the four artifacts an APEX deploy leaves in ``logs_<TARGET_ENV>/``, the one
-substitution they share, and the three keys that decide whether each of them
-happens at all.
+the artifacts an APEX deploy leaves in ``logs_<TARGET_ENV>/`` and the backup
+it keeps in ``backup_<TARGET_ENV>/``, the one substitution they share, and the
+three keys that decide whether each of them happens at all.
 
 ``settings`` re-exports every name here, so no caller and no test learns a new
 one: `settings.apex_scan_log_name`, `settings.verify_deploy_scan` and the rest
@@ -15,6 +15,7 @@ keep working exactly as they read before the split.
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 #: The scan log's name, deliberately NOT a config key and deliberately not
@@ -29,10 +30,16 @@ APEX_SCAN_LOG_FILE = "{$TIMESTAMP}_apex_scan_{$APP}.txt"
 #: script this patch installed.
 APEX_REVERT_LOG_FILE = "{$TIMESTAMP}_apex_revert_{$APP}.txt"
 
-#: The folder the pre-import export lands in, beside the deploy's own logs
-#: (ADT #727). A folder rather than a file because an APEXlang export is a
-#: tree, and it is the tree `apex import -input` reads back on a revert.
-APEX_BACKUP_FOLDER = "{$TIMESTAMP}_apex_backup_{$APP}"
+#: Where the pre-import backup lands: the patch folder's own `backup_<ENV>/`,
+#: one full SQL export per application (ADT #727, moved out of the logs by
+#: #963). No `{$TIMESTAMP}`, because the file is kept from the first deploy of
+#: the patch to that environment rather than taken again by every run.
+#: Deliberately NOT a config key, like the three `.txt` names beside it.
+APEX_BACKUP_FOLDER = "backup_{$TARGET_ENV}"
+APEX_BACKUP_FILE = "f{$APP}.sql"
+#: Every environment's backup folder in one patch folder, for the two readers
+#: that keep them out of git and out of `patch -archive`.
+APEX_BACKUP_GLOB = APEX_BACKUP_FOLDER.replace("{$TARGET_ENV}", "*")
 
 #: The build-status timeline's own report (ADT #726), `.txt` for the same reason
 #: the two above are: a `.log` here would be read by `DEPLOY_LOG_RE` as a script
@@ -73,14 +80,18 @@ def apex_build_status_log_name(config: dict[str, Any], *, moment: datetime, app_
     )
 
 
-def apex_backup_folder_name(config: dict[str, Any], *, moment: datetime, app_id: int) -> str:
-    """The folder one pre-import export lands in (ADT #727).
+def apex_backup_path(folder: Path, target_env: str, app_id: int) -> Path:
+    """`<patch folder>/backup_<ENV>/f<app>.sql`, one application's backup (ADT #963).
 
-    Same `today_deploy` stamp as the deploy log and the scan report, so the
-    backup, the import that overwrote it and the scan that judged the import all
-    sort together in `logs_<TARGET_ENV>/`.
+    Per environment, because each target held its own application before the
+    patch reached it, and the environment is upper-cased the way `-target`
+    names every other per-environment artifact.
     """
-    return apex_deploy_artifact(APEX_BACKUP_FOLDER, config, moment=moment, app_id=app_id)
+    return (
+        folder
+        / APEX_BACKUP_FOLDER.replace("{$TARGET_ENV}", target_env.upper())
+        / APEX_BACKUP_FILE.replace("{$APP}", str(app_id))
+    )
 
 
 def apex_deploy_artifact(
@@ -92,14 +103,14 @@ def apex_deploy_artifact(
 ) -> str:
     """The `{$TIMESTAMP}`/`{$APP}` substitution the APEX deploy artifacts share.
 
-    Four names now render from one pair of tokens, so the stamp they sort on is
-    read from `today_deploy` in one place rather than in four copies that can
-    drift on the next format added.
+    Three names render from one pair of tokens, so the stamp they sort on is
+    read from `today_deploy` in one place rather than in copies that can drift
+    on the next format added.
 
     ``moment`` is the run's own reading of the clock, taken once in `deploy_run`
-    (`#929`). One format read in one place was never enough on its own: the four
-    events are minutes apart on a real deploy, so four callers reading the clock
-    for themselves sorted together only on a run that finished inside a second.
+    (`#929`). One format read in one place was never enough on its own: the
+    events are minutes apart on a real deploy, so callers reading the clock for
+    themselves sorted together only on a run that finished inside a second.
     """
     from adt_ai.patch.settings import text_value
 
@@ -150,11 +161,12 @@ def revert_on_scan_failure(config: dict[str, Any]) -> bool:
     """`deploy_revert_on_scan_failure`: put the target back when the scan fails.
 
     On by default, and it only ever acts on a `patch -deploy -app` run. Before
-    the APEXlang import writes, the live target is exported into
-    `logs_<TARGET_ENV>/<timestamp>_apex_backup_<app>/` and the import log names
-    it on a `BACKUP` row; when `deploy_verify_scan` then reports a failing
-    outcome for that application, the backup is imported back and a `REVERTED`
-    row records the checksum the target carries afterwards.
+    the APEXlang import writes, the live target is exported as one full SQL
+    file into the patch's `backup_<TARGET_ENV>/f<app>.sql`, unless an earlier
+    deploy of the patch already kept one there, and the import log names it on
+    a `BACKUP` row; when `deploy_verify_scan` then reports a failing outcome for
+    that application, the file is run back and a `REVERTED` row records the
+    export the target carries afterwards.
 
     False keeps the backup step too: no export, no folder, and a failed scan
     leaves the imported tree in place, which is what every release before ADT
@@ -203,7 +215,9 @@ def deploy_build_status(config: dict[str, Any]) -> str:
 
 
 __all__ = [
+    "APEX_BACKUP_FILE",
     "APEX_BACKUP_FOLDER",
+    "APEX_BACKUP_GLOB",
     "APEX_BUILD_STATUS_LOG_FILE",
     "APEX_REVERT_LOG_FILE",
     "APEX_SCAN_LOG_FILE",
@@ -211,7 +225,7 @@ __all__ = [
     "BUILD_STATUS_OFF",
     "BUILD_STATUS_RESTORE",
     "BUILD_STATUS_RUN_ONLY",
-    "apex_backup_folder_name",
+    "apex_backup_path",
     "apex_build_status_log_name",
     "apex_deploy_artifact",
     "apex_revert_log_name",

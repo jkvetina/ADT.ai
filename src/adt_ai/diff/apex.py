@@ -197,8 +197,11 @@ class ApexDiff:
 
 
 def application_label(app_id: int, alias: str) -> str:
-    """`100 ORDERS`: the id pairs the two sides, the alias says which one it is."""
-    return f"{app_id} {alias}".strip()
+    """`100/ORDERS`: the id pairs the two sides, the alias says which one it is.
+
+    Slash-joined since ADT #973, the one spelling every command uses.
+    """
+    return f"{app_id}/{alias}" if alias else str(app_id)
 
 
 def compare_apex(

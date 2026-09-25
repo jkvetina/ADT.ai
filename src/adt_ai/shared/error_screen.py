@@ -68,6 +68,11 @@ ERROR_CODES: tuple[str, ...] = (
     "PATCH FAILED",
     "DIFF FAILED",
     "STARTUP FAILED",
+    # A `ValueError` or `RuntimeError` ADT.ai raised with its own message (ADT
+    # #966). Jan, on `UNEXPECTED ERROR:` over `ValueError: <message>`: *"IT IS
+    # NOT unexpected error, it is value error"*.
+    "VALUE ERROR",
+    "RUNTIME ERROR",
     "UNEXPECTED ERROR",
 )
 
@@ -83,6 +88,8 @@ USAGE_CODES = frozenset({"ARGUMENT INVALID", "UNKNOWN COMMAND"})
 HINT_CODES = frozenset(
     {
         "UNEXPECTED ERROR",
+        "VALUE ERROR",
+        "RUNTIME ERROR",
         "STARTUP FAILED",
         "DATABASE QUERY FAILED",
         "SQLCL SCRIPT FAILED",

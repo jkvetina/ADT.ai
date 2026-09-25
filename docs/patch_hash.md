@@ -128,8 +128,8 @@ A `MODIFIED` or `NEW` file is snapshotted and linked; a `DELETED` one reaches th
 Three consequences follow, and they are the reason the mode exists:
 
 - **No commit window.** A file changed five hundred commits ago and never deployed is still in the patch.
-- **Uncommitted work is patchable.** The comparison is against the working tree, so an edit you have not committed yet ships like any other change, and is listed under `WARNING - UNCOMMITTED FILES:` because it carries no commit.
-- **The working tree is what ships.** `-hash` forces the `local` content mode, because what was compared has to be what deploys, or the baseline would advance to the hash of bytes nobody sent. `-head` and `-nosnap` beside `-hash` are refused, naming both flags; `-local` is accepted as the redundant spelling.
+- **Uncommitted work is patchable.** The comparison is against the working tree, so an edit you have not committed yet ships like any other change, with no `COMMIT` because it carries none.
+- **The working tree is what ships.** `-hash` forces the `local` content mode, because what was compared has to be what deploys, or the baseline would advance to the hash of bytes nobody sent. `-head` and `-nosnap` beside `-hash` are refused, naming both flags; `-local` is accepted as the redundant spelling. `local` also means the repo-wide `WARNING - UNCOMMITTED FILES:` says nothing here: the mode ships the working tree on purpose, so a dirty file is the instruction rather than a surprise ([patch_deploy.md](patch_deploy.md#the-processing-report)).
 
 A rebuild after the patch deployed yields an empty one, correctly, since nothing has changed since:
 
@@ -181,6 +181,10 @@ WARNING - NO TABLE BASELINE:
 ```
 
 Read it when it appears. The patch will ship a `CREATE TABLE` against a table that already exists: record the baseline again so the table is stored, or write the column change into `patch_scripts/`.
+
+Writing it there does more than fill the gap. `-create -hash` scans your own scripts for an `ALTER TABLE` naming the table before it asks the baseline for anything, in every slot and under any filename.
+
+A hand-written column change claims the table the same way it does in commit mode: no diff is generated, and the table's link is commented out with your script named on the marker line instead of Oracle's.
 
 `WARNING - NO TABLE DIFF:` is the same silence one step later, and hash mode reaches it exactly as the commit walk does: the two versions were both found, and the target database refused one of them, so `DBMS_METADATA_DIFF` was never asked. Oracle's own error prints under the file. See [patch_templates.md](patch_templates.md) for how the comparison is made.
 

@@ -73,7 +73,8 @@ def hash_mode_error(args: argparse.Namespace) -> str | None:
         if value is not None and not value and not args.target:
             return (
                 f"{flag} NEEDS A TARGET\n\n"
-                f"Pass -target TARGET, or name the baseline directly with {flag} FILE."
+                "1) -target TARGET\n"
+                f"2) or {flag} FILE  name the baseline directly"
             )
     if args.hash is not None:
         refused = [flag for flag in ("-head", "-nosnap") if getattr(args, flag[1:], False)]

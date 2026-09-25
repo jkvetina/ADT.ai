@@ -35,6 +35,7 @@ from adt_ai.patch.install_links import _file_link_rows, _object_link
 from adt_ai.patch.layout import (
     database_object_type as _database_object_type,
 )
+from adt_ai.patch.models import GeneratedScripts
 from adt_ai.patch.selection import (  # noqa: F401  (re-exported for existing importers)
     _apex_copy_files,
     _apex_patch_sort_key,
@@ -68,6 +69,60 @@ from adt_ai.shared import text_files
 from adt_ai.shared.apex_paths import APEXLANG_DIR
 from adt_ai.shared.commit_discovery import CommitRecord
 
+#: What the marker names for a TABLE whose ALTER replaces its live link (ADT
+#: #969). Deliberately its own wording rather than `immutables.disabled_link`'s
+#: `-- [!] IMMUTABLE {type}, {reason}`: that phrasing is about the `immutables`
+#: config key (never dropped, never re-created) and fires whether or not a
+#: table carries an ALTER; this is about the ALTER alone and fires whether or
+#: not `TABLE` is even in a project's `immutables` list. `_alter_disabled_link`
+#: renders `-- [!] TABLE REPLACED BY ITS ALTER: <script path>`, the same
+#: `-- [!] <TYPE> <REASON>` shape beside the immutables family's own
+#: `-- [!] TABLE NEVER RE-CREATED BY A PATCH`.
+ALTER_REPLACES_TABLE = "REPLACED BY ITS ALTER"
+
+
+def _alter_disabled_link(rows: list[str], scripts: tuple[str, ...]) -> list[str]:
+    """``rows`` with its `@` line commented out and the ALTER script(s) named above it.
+
+    Same shape as `immutables.disabled_link`: the label row stays live, so the
+    deploy log still names the file the patch passed over, and only the `@`
+    line is commented. Kept a separate renderer rather than a call into that
+    one because its wording is fixed to the `immutables` config key's own
+    reasons (ADT #830), and this marker is about the ALTER alone.
+    """
+    *label, link = rows
+    return [*label, f"-- [!] TABLE {ALTER_REPLACES_TABLE}: {', '.join(scripts)}", f"--{link}"]
+
+
+def _table_alter_scripts(
+    generated: GeneratedScripts,
+    config: dict[str, Any],
+) -> dict[str, tuple[str, ...]]:
+    """Every TABLE file this run's ALTER replaces, generated or claimed (ADT #969).
+
+    Both halves answer the same question, does this table's `CREATE` still
+    run, so both feed the one commented-out link: a table Oracle diffed and a
+    table a project's own script already owns are the same fact to a reader of
+    the install script, which ALTER runs instead. Keyed on the exported file
+    rather than the table name, matching every other reader here (`AlterHelper.
+    source`, `TableClaim.source`).
+
+    Filtered to `TABLE`: `generated.alters` also carries the sequence ALTERs
+    `sequence_alter.py` writes (ADT #830), and those already have their own
+    commented-out link through `immutables.never_recreated`, unconditionally,
+    since `CREATE SEQUENCE` has no `IF NOT EXISTS` to make a live link a no-op.
+    Folding a sequence in here too would only pick a different reason string
+    for the same outcome, so it stays out.
+    """
+    scripts: dict[str, list[str]] = {}
+    for helper in generated.alters:
+        if _database_object_type(helper.source, config) != "TABLE":
+            continue
+        scripts.setdefault(helper.source, []).append(helper.path)
+    for claim in generated.claimed_tables:
+        scripts.setdefault(claim.source, []).extend(claim.scripts)
+    return {path: tuple(sorted(set(paths))) for path, paths in scripts.items()}
+
 
 def _write_patch_files(
     root: Path,
@@ -81,6 +136,7 @@ def _write_patch_files(
     content_mode: str = CONTENT_MODE_COMMITTED,
     present_files: Mapping[str, bool],
     never_recreated: Mapping[str, str] | None = None,
+    generated: GeneratedScripts,
     target_app_id: int | None = None,
 ) -> dict[str, Path]:
     """Write one install script per group, keyed by that group.
@@ -89,7 +145,18 @@ def _write_patch_files(
     scripts are named for the id the import lands on, still keyed by the group
     their files are grouped by. Any other script installs itself and keeps its
     own name.
+
+    ``generated`` is this run's own answer for which TABLE files carry an
+    ALTER, generated or claimed (ADT #969): read once here rather than per
+    group, since the merge (`_table_alter_scripts`) and the claiming script's
+    basenames (``claimed_names``) are the same for every group's payload.
     """
+    altered_tables = _table_alter_scripts(generated, config)
+    claimed_names = frozenset(
+        Path(script).name
+        for claim in generated.claimed_tables
+        for script in claim.scripts
+    )
     sql_files: dict[str, Path] = {}
     # One store read for the whole write, the same reason `_patch_files` reads it
     # once: the group an APEX file lands in is the application's own schema.
@@ -151,6 +218,8 @@ def _write_patch_files(
                     workspace=workspace,
                     present_files=present_files,
                     never_recreated=never_recreated,
+                    altered_tables=altered_tables,
+                    claimed_names=claimed_names,
                 )
             }
         for script_group, payload in payloads.items():
@@ -175,6 +244,8 @@ def _database_patch_payload(
     workspace: list[_signatures.WorkspaceArtifact] | None = None,
     present_files: Mapping[str, bool],
     never_recreated: Mapping[str, str] | None = None,
+    altered_tables: Mapping[str, tuple[str, ...]],
+    claimed_names: frozenset[str],
 ) -> str:
     signatures = signatures or []
     workspace = workspace or []
@@ -229,14 +300,19 @@ def _database_patch_payload(
         #
         # A hand-written script in the same slot keeps its place behind the
         # files: that one was put there by a person who meant "after".
+        #
+        # A claiming user script runs there too, even a `*_after` one (ADT
+        # #969): Jan's rule is that the ALTER always precedes the table it
+        # touches, and a script that already IS the ALTER is no different from
+        # one Oracle's diff generated, whatever filename a person gave it.
         alters = _script_payload(
             root, folder, config, after_slot, patch_code,
-            keep=is_alter_helper_filename,
+            keep=lambda name: is_alter_helper_filename(name) or name in claimed_names,
         )
         after = [
             *_script_payload(
                 root, folder, config, after_slot, patch_code,
-                keep=lambda name: not is_alter_helper_filename(name),
+                keep=lambda name: not is_alter_helper_filename(name) and name not in claimed_names,
             ),
             *_template_payload(root, folder, config, after_slot, patch_code),
         ]
@@ -259,13 +335,22 @@ def _database_patch_payload(
                 root, path, config, deleted_cache,
                 present=present_files[path],
             ):
-                payload.append(f"PROMPT -- [DELETED] {path}")
+                payload.extend(["", f"PROMPT -- [DELETED] {path}"])
             elif present_files[path] and not _is_data_companion(root, path):
                 link = _object_link(root, folder, path, config, mode=content_mode)
                 rows = _file_link_rows(path, link)
+                # This table carries an ALTER, generated or a user script's own
+                # (ADT #969): the ALTER is what reaches the new shape, so the
+                # table's `CREATE` stays linked but commented out, never
+                # removed, with the ALTER script(s) named on the marker line.
+                # Checked before `never_recreated`, which is `IF NOT EXISTS`
+                # dependent and would otherwise leave exactly this table's
+                # `CREATE` live, the reported defect this replaces.
+                if path in altered_tables:
+                    rows = _alter_disabled_link(rows, altered_tables[path])
                 # The target holds this object and the file would create it
                 # again, which `immutables` forbids (ADT #830).
-                if path in never_recreated:
+                elif path in never_recreated:
                     rows = disabled_link(rows, never_recreated[path], NEVER_RECREATED)
                 payload.extend(rows)
         payload.extend(after)

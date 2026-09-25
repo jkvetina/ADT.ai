@@ -46,7 +46,6 @@ from adt_ai.export_apex.partial import (
 from adt_ai.export_apex.postprocess import (
     _bind_params,
     _blob_bytes,
-    _checksum_value,
     _clean_page_author,
     _clean_split_sql,
     _default_id_offset,
@@ -108,6 +107,7 @@ from adt_ai.export_apex.watermarks import (
 )
 from adt_ai.export_apex.writers import ApexCollectionWriterMixin, CollectionWriteResult
 from adt_ai.shared import text_files
+from adt_ai.shared.apex_checksum import read_apex_checksum
 from adt_ai.shared.apex_store import ApexStore
 from adt_ai.shared.dates import is_sub_day_window
 from adt_ai.shared.db import QueryGateway
@@ -135,7 +135,6 @@ class ApexExportRunner(
     EXPORT_READABLE_QUERY = queries.EXPORT_READABLE_QUERY
     EXPORT_EMBEDDED_QUERY = queries.EXPORT_EMBEDDED_QUERY
     EXPORT_APEXLANG_QUERY = queries.EXPORT_APEXLANG_QUERY
-    EXPORT_CHECKSUM_QUERY = queries.EXPORT_CHECKSUM_QUERY
     FETCH_FILES_QUERY     = queries.FETCH_FILES_QUERY
     RECENT_COMPONENTS_QUERY = queries.RECENT_COMPONENTS_QUERY
     APEX_FILES_QUERY      = queries.APEX_FILES_QUERY
@@ -270,17 +269,21 @@ class ApexExportRunner(
                         application.app_id,
                         request.page_selection,
                         request.component_filters,
+                        gateway=gateway,
                     )
                     deep_rows = deep_db_object_rows(
                         request.root,
                         application.app_id,
                         request.page_selection,
                     )
-                # Everything below reads back the collection this statement
+                # Everything below reads back the collection the start query
                 # fills, so the two have to reach one database session. A
                 # transport that cannot promise that returns no rows at exit 0,
                 # and the export would write that emptiness to disk (ADT #449).
                 require_database_session(gateway, "export_apex")
+                # Read first: the block detaches the session the start query
+                # opens, and that session moves the checksum (ADT #962).
+                checksum = read_apex_checksum(gateway, application.app_id)
                 gateway.execute(self.EXPORT_START_QUERY, {"app_id": application.app_id})
                 enrichments = _enrichments(gateway, application)
                 recent_rows = recent_components(
@@ -366,11 +369,13 @@ class ApexExportRunner(
                             self._write_rest_export, gateway, resolver, request.config
                         ),
                     )
-                self._store_checksum(gateway, request, application)
+                self._store_checksum(request, application, checksum)
                 self._record_merge_base(request, resolver, application)
                 # Reached only when every requested format wrote successfully, so
                 # an app that raised mid-export keeps its previous watermarks.
                 self._advance_watermarks(request, application, candidate, store)
+                if request.validate_apexlang:
+                    request.validate_apexlang(application, segment_reporter)
             if not applications:
                 self._run_schema_artifacts_tail(
                     request, schema, gateway, resolver,
@@ -456,26 +461,23 @@ class ApexExportRunner(
 
     def _store_checksum(
         self,
-        gateway: QueryGateway,
         request: ApexExportRequest,
         application: ApexApplication,
+        checksum: str,
     ) -> None:
         """Cache the application's ID-independent SHA-256 fingerprint.
 
-        APEX computes it over the whole application, so nothing about the run
-        narrows it: a `-page` or `-recent` export records the same value a full
-        one does. It is collected rather than exported, so it prints no row of
-        its own, the same way the workspace developer list and the rest of the
-        application metadata are read (ADT #343).
+        APEX computes it over the whole application, so a `-page` or `-recent`
+        export records the same value a full one does. Collected, not exported:
+        no row of its own (ADT #343; `#360` gave it one, `#372` took it back).
 
-        `#360` gave it a row and `#372` took it back: `#343` had dropped that
-        row deliberately, so restoring it was a regression wearing a fix.
+        Read through `patch`'s own reader before the start query, whose APEX
+        session moves the value on PLAYGROUND, and stored once every format
+        wrote (ADT #962). The environment goes with it, resolved to the
+        connection default when `-env` was never named.
         """
-        gateway.execute(self.EXPORT_CHECKSUM_QUERY, {"app_id": application.app_id})
         _store_application_checksum(
-            request.root,
-            application.app_id,
-            _checksum_value(gateway.fetch_all(self.FETCH_FILES_QUERY)),
+            request.root, application.app_id, checksum, request.environment or ""
         )
 
     def _record_merge_base(
@@ -536,7 +538,6 @@ __all__ = [
     "_bind_params",
     "_blob_bytes",
     "_changes_since_label",
-    "_checksum_value",
     "_clean_page_author",
     "_clean_split_sql",
     "_cleanup_sqlcl",

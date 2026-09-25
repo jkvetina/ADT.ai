@@ -67,7 +67,7 @@ class ConsoleDeployReporter:
     and stops mid-line; `end_script` completes that same line with
     `BLOCKS | TIMER | STATUS`. The seam between them is `STREAM_SPLIT`, which
     moved with the column order in ADT #444. `streamed` lets the CLI fall back to
-    the batch render when the loop never ran, so the SKIPPED path is unchanged.
+    the batch render when the loop never ran.
 
     On a terminal it repaints that open row instead of waiting (ADT #434). One
     script per patch is the ordinary shape, so `#273`'s row-per-script streaming

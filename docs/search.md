@@ -272,19 +272,20 @@ The other way round, `-schema` and a `yaml` or `md` `-format` belong to the grap
 
 Any other flag beside a text is refused before the run starts, and so is a narrowing flag whose layer `-layer` leaves out: `-layer LEAVES OUT WHAT -branch NARROWS`, exit `2`.
 
-**A layer is brought up to date before it is read.** `APEX` and `STATIC` read the source [`rebuild -app`](rebuild.md#an-apex-application) stores, and `GIT` the branch's commit store. One missing, or older than the application's last change in the database, is refreshed first, on the same screen. `DB` reads the object files [`export_db`](export_db.md) wrote and never connects. What still could not be read is named under `WARNING - NOT SEARCHED:` at the end:
+**A layer is brought up to date before it is read.** `APEX` and `STATIC` read the source [`rebuild -app`](rebuild.md#an-apex-application) stores, and `GIT` the branch's commit store. One missing, or older than the application's last change in the database, is refreshed first, on the same screen. `DB` reads the object files [`export_db`](export_db.md) wrote and never connects. What still could not be read, an exported file `DB` could not open included, is named under `WARNING - NOT SEARCHED:` at the end:
 
 ```text
 WARNING - NOT SEARCHED:
 -----------------------
   APEX / STATIC: APP 200 is not mirrored, and could not be refreshed
   DB: SCHEMA HR has no exported files
+  DB: sandbox/database/views/orders_v.sql: Permission denied
   GIT: no commit store for branch dev, and git could not build it
 ```
 
 Without a connection, or with a database that does not answer, the layers are searched as they stand and the rest named there. The run exits `0` when it searched at least one layer, `1` when it could search none.
 
-After the hits, `USES / USED BY` lists what each database object hit uses and is used by, the APEX pages using it included, and `PAGE LINKS` lists the links into and out of each page with an APEX hit, both ends written `APP.PAGE`. Each is omitted when it has nothing to say.
+After the hits, `USES / USED BY` lists what each database object hit uses and is used by, the APEX pages using that owner's object included, and `PAGE LINKS` lists the links into and out of each page with an APEX hit, both ends written `APP.PAGE`. Each is omitted when it has nothing to say.
 
 <br>
 
@@ -355,7 +356,7 @@ An id the mirror holds no scan of is named under `WARNING - APP NOT LOADED:` as 
 
 When the mirror holds several schemas, one object name can exist in more than one. `-schema` pins the owner, case-insensitively, as a repeatable space- or comma-separated list: `-from` keeps the instances that schema owns, `-to` keeps the objects that use that schema's one, and `-impact` roots its walk there, leaving the walk outward unchanged.
 
-It narrows within the owners the mirror tracks and never widens to one it does not. A page has no owner and a constraint lookup is by name alone, so `-schema` beside either is refused rather than ignored.
+It narrows within the owners the mirror tracks and never widens to one it does not, and `-impact` lists only the APEX callers of the pinned object. A page has no owner and a constraint lookup is by name alone, so `-schema` beside either is refused rather than ignored.
 
 <br>
 

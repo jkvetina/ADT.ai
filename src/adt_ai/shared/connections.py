@@ -25,6 +25,7 @@ from adt_ai.shared.schema_selection import (
 from adt_ai.shared.secret import Secret
 from adt_ai.shared.secret_command import SecretCommandError, block_secret
 from adt_ai.shared.sqlcl_names import derive_sqlcl_name
+from adt_ai.shared.yaml_io import credential_safe_yaml_reason
 
 # Standard Oracle listener port, applied wherever a connection omits `port`
 # (driver DSNs, SQLcl connect strings, and the connection editor default).
@@ -368,10 +369,13 @@ class ConnectionLoader:
             loaded = yaml.safe_load(chosen.read_text(encoding="utf-8")) or {}
         except yaml.YAMLError as error:
             # Route a hand-edit syntax error through the friendly connection
-            # banner instead of the generic UNEXPECTED ERROR catch-all.
+            # banner instead of the generic UNEXPECTED ERROR catch-all. Only the
+            # position: the parser's text quotes the line, which may be `pwd:`,
+            # and `from None` keeps a traceback from printing it anyway (#958).
             raise InvalidConnectionError(
-                f"CONNECTION FILE IS NOT VALID YAML: {chosen}\n\n{error}"
-            ) from error
+                f"CONNECTION FILE IS NOT VALID YAML: {chosen}\n\n"
+                f"{credential_safe_yaml_reason(error)}"
+            ) from None
         if not isinstance(loaded, dict):
             raise InvalidConnectionError(
                 f"CONNECTION FILE IS NOT A YAML MAPPING: {chosen}"

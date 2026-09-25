@@ -24,8 +24,9 @@ pluralised it on the ground that the row heads a batch, which put
 `MATERIALIZED VIEW`. The one spelling keys the per-type timer store, the `-type`
 filter and every table the tool prints.
 
-An object type is dictionary data rather than a minted string, so this mode still
-adds nothing to `tests/contracts/console_surface.txt`. The object NAME is
+An object type is dictionary data rather than a minted string, so the crawling
+row adds nothing to `tests/contracts/console_surface.txt`; the one minted label
+is the close, `ALL DONE` (`#972`). The object NAME is
 deliberately not beside it: `MATERIALIZED VIEW | <30-char name>` leaves eleven
 dots, which is a row that has stopped being a bar.
 
@@ -60,10 +61,13 @@ from collections.abc import Callable
 
 from adt_ai.shared.progress import DottedProgressBar
 
-# What the row reads before the first object type is known and after the last one
-# is written: the header is the newest thing on screen at both moments, so there
-# is nothing for the row to name yet.
+# What the row reads before the first object type is known: the header is the
+# newest thing on screen, so there is nothing for the row to name yet.
 ROW_HEADER = ""
+
+# What the closed row reads (Jan, `#972`). The last type's label left the
+# finished bar reading `JOB ... 100%`, as if only the jobs were done.
+ROW_DONE = "ALL DONE"
 
 def object_type_label(object_type: str) -> str:
     """The Oracle type name, for the row that heads a batch of them.
@@ -155,8 +159,12 @@ class ObjectProgressBar:
         It closes this way with a failed object in it as well (`#917`): the
         elapsed time is the figure the reader watches for, and the objects that
         failed are listed under their own warning straight after.
+
+        The label becomes `ROW_DONE` (`#972`): the close covers the whole
+        export, not the type that happened to be pulled last.
         """
-        self._bar.print_line(self._label, 100, int(self.elapsed), close=True)
+        self._label = ROW_DONE
+        self._bar.print_line(ROW_DONE, 100, int(self.elapsed), close=True)
         print()
 
     def fail(self) -> None:

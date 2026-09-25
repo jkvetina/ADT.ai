@@ -80,7 +80,9 @@ ERROR - PATCH FAILED:
   DEPLOY.sql DOES NOT MATCH PATCH FOLDER 260914-1-12
 
   Not listed: CORE.sql
-  Fix its @ lines, or rebuild it with -create -force.
+
+  1) fix its @ lines
+  2) or rebuild it with -create -force
 ```
 
 `DEPLOY.sql` is never an install script itself, so it gets no row under `DEPLOYING PATCH:` and adds nothing to `PATCH CONTENTS:`.
@@ -137,7 +139,9 @@ WARNING - UNCOMMITTED FILES:
 - **Every warning is a section of its own**, `WARNING - <SUBJECT>:` with a `  - ` list under it. `OBJECTS CHANGED:` is the exception, listing objects rather than files. `PROCESSED FILES:` above lists files and nothing else.
 - **A file list opens on its anchor folder and gives every directory below it a row**, two spaces further in each time. The anchor is the `path_objects` type folder for an exported object, so an `export_db -groups` sub-folder reads as its own row under it, and the directory above its own for anything else, which is what puts a per-patch script's slot on a row of its own. `PATCH FILES:` is the one exception and keeps each whole path on one line. `nested_files: False` in `config.yaml` restores the flat one-path-per-row list everywhere; the rule is on [config.md](config.md).
 - **`OUTDATED FILES` is the one with teeth.** It says the patch ships a file version older than a commit that already exists: the file, then those newer commits newest-first, indented under it and carrying no dash of their own. The comparison runs against the whole `patch_scan_commits` window, so a commit the patch-code or author filter dropped is exactly the one worth warning about. `-head` suppresses it.
-- **`UNCOMMITTED FILES` asks git**, not the patch window. It lists a file only when `git status --porcelain` reports it dirty or untracked, so a template slot or a grant script pulled in from disk stays out. It says nothing under `-local`.
+- **`UNCOMMITTED FILES` asks git about the whole repository**, not the patch window or the patch's own files: one `git status --porcelain -z` covers the checkout, minus a generated helper this run wrote and whatever it just wrote under its own patch folder. It says nothing under `-local`, which ships the working tree on purpose.
+
+A patch shipping an APEXlang application compiles its tree before it connects, under `VALIDATING APEXLANG APPS:`, ahead of this report; the row counts down from the application's stored compile time while the compile runs, on to the verdict. A tree the compiler refuses builds nothing and prints `ERROR - VALIDATION FAILED:` instead ([patch_import.md](patch_import.md#the-tree-is-compiled-before-anything-runs)).
 
 `-create` prints no `PATCH CONTENTS:` section, because `PROCESSED FILES:` already names every file it installs. `-name <name>` and `-deploy` still print it, one section per schema, in the order the install script links them.
 
@@ -208,7 +212,7 @@ On Windows the row fills as the deploy runs too: the transport is a pipe rather 
 
 ## When a deploy fails
 
-Every `ERROR` row prints why. The table says *that* a script failed; the stanza under it says what SQLcl refused, and names the log holding the full transcript:
+Every `ERROR` row prints why. The table says *that* a script failed; the stanza under it says what SQLcl refused and, one blank line below, names the log holding the full transcript:
 
 ```text
 ERROR - DEPLOYMENT FAILED:
@@ -218,6 +222,7 @@ ERROR - DEPLOYMENT FAILED:
     CREATE OR REPLACE PACKAGE BODY app_ledger AS
     Error report -
     ORA-00942: table or view does not exist
+
   LOG: patch/260810-1-65/logs_DEV/20260810-121200_APP_ERROR.log
 ```
 
@@ -238,6 +243,7 @@ ERROR - DEPLOYMENT FAILED:
     Package Body APP_IMPORT compiled
     Substitution cancelled
     Exception in thread "JLine Mask Thread" java.lang.IllegalStateException: Terminal has been closed
+
   LOG: patch/260809-1-65/logs_DEV/20260810-113136_APP_ERROR.log
 ```
 
@@ -249,6 +255,8 @@ The tail carries the last object that did compile, which is what locates the fai
 
 `-app` on a `-deploy` run also lands the application's committed `apexlang/` tree in the Builder, through SQLcl's `apex import`; its row reads `> BUILDING APP`, a command rather than a file. Where it lands, how it is staged, what is read first and what is refused are on [patch_import.md](patch_import.md); the loop around it, export to promotion, is on apex_round_trip.md.
 
+The tree is compiled before `CONNECTING TO SCHEMA`, under `VALIDATING APEXLANG APPS:`, and a tree the compiler refuses stops the deploy under `ERROR - VALIDATION FAILED:` with nothing run ([patch_import.md](patch_import.md#the-tree-is-compiled-before-anything-runs)).
+
 <br>
 
 ## Where the logs go
@@ -259,7 +267,7 @@ Each installer stamps its transcript with its outcome. The name is `patch_deploy
 
 **The folder is part of the patch.** `-create` ensures `logs/` exists and `-deploy` its own `logs_<ENV>/`: SQLcl cannot spool into a missing directory, and git does not track empty ones.
 
-The latest-log display still shows the newest script outcome. Skipping requires a separate completed-run receipt, `deployment.json`, for the same payload, target and verification policy. A partial failure, interrupted execution or failed scan cannot complete that receipt. A missing, corrupt or outdated receipt runs again; `-force` also reruns a completed deployment.
+**The logs are the whole record.** A patch folder's status is its newest log per target, and every `-deploy` runs the plan, including one already deployed there. A `deployment.json` an earlier release left in `logs_<ENV>/` is ignored.
 
 <br>
 

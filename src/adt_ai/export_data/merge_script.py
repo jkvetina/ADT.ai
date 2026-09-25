@@ -110,6 +110,22 @@ def merge_sql_from_csv(
     return "".join(statements)
 
 
+def no_merge_script(table_name: str, *, keyed: bool, where_filter: str) -> str:
+    """What `<table>.sql` holds once an export can no longer generate its MERGE (`#958`).
+
+    The reason is the one a reader needs to get the MERGE back: a key to add,
+    or rows to export. A filter is named apart from an empty table, since the
+    table may be full and the `where` is what selected nothing.
+    """
+    if not keyed:
+        reason = "the table has no primary key or unique constraint to match rows on"
+    elif where_filter:
+        reason = "no row matched the configured `where` filter"
+    else:
+        reason = "the export held no rows"
+    return queries.no_merge_script(table_name, reason)
+
+
 def _join_predicate(column: str, null_safe: bool) -> str:
     """One `ON` comparison, NULL-safe when the key came from the UNIQUE fallback.
 

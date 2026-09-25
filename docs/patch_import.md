@@ -56,6 +56,45 @@ An application the patch ships and nobody exported a tree for is a `NOTES:` row 
 
 <br>
 
+## The tree is compiled before anything runs
+
+Each tree is compiled with the compiler behind [`validate`](validate.md), connectionless, before `CONNECTING TO SCHEMA`, so before the first install script, the build-status lock and the signature read. Every application the patch ships sits under one header, and the rows are `validate`'s own:
+
+```text
+VALIDATING APEXLANG APPS:
+-------------------------
+  100/ORDERS ................................................ 0:00:05
+```
+
+On a terminal each row counts down from the application's stored compile time in `apex.db`, or up from `0:00:00` before its first compile, and closes on the real time; a redirected run, CI and a captured test still get exactly the one line above.
+
+A clean application carrying compiler warnings is counted under a warning below the rows once every row has finished, the one `export_apex -apexlang` prints; `adtai validate` lists the warnings themselves:
+
+```text
+WARNING - APEXLANG ISSUES:
+--------------------------
+  100/ORDERS: 7 warnings
+
+  1) run `adtai validate -app #` for more details
+```
+
+A tree the compiler refuses stops the deploy with nothing run, the application's `init` half included. The screen carries the lines a failed import would have printed:
+
+```text
+ERROR - VALIDATION FAILED:
+--------------------------
+  APP: 100/ORDERS
+    application.apx:3:0
+      COMPONENT_NOT_FOUND
+      Component:   not found
+```
+
+`-create` runs the same compile before it writes the patch folder, so a broken tree builds nothing. `-create -deploy` compiles each tree once.
+
+`-force` does not skip it: `apex import` compiles the same tree before it writes, and would refuse it after the `init` half had run.
+
+<br>
+
 ## Three signatures, read before anything is written
 
 `LATEST ON TARGET` is the live checksum of the application about to be written, `CHANGE BASED ON` the one `export_apex` recorded when it wrote the tree, and `DEPLOYING` a content hash of the tree on disk.
@@ -77,6 +116,8 @@ The first two are APEX's own `CHECKSUM-SH256`, independent of ids and comparable
 
 The row is absent for a tree exported without a recorded commit, which is every tree exported before this existed.
 
+**A promotion crossing environments compares the source, not the target.** `export_apex` records the environment it connected to beside `CHANGE BASED ON` ([export_apex.md](export_apex.md#the-application-checksum)). Exporting from PLAYGROUND and deploying onto WHATEVER would compare WHATEVER's live checksum against PLAYGROUND's recorded one, which can never match, so when the recorded environment differs from `-target`, `LATEST ON TARGET` is read and logged as always but the comparison instead reads the SOURCE application's live checksum on the environment it was actually exported from. A same-environment deploy, and an export recorded before this existed, compare `LATEST ON TARGET` exactly as shown above.
+
 **The target moving is a showstopper.** When the first two disagree, somebody changed the application after the tree was exported and an import would overwrite work this patch never saw, so the deploy refuses before its first install script. An application with no recorded signature refuses the same way: the run cannot say what the change was based on. An id nothing is installed on yet, the ordinary first sandbox import, is not drift and passes.
 
 The refusal says who changed the application, when, and how old your base is:
@@ -90,7 +131,9 @@ The refusal says who changed the application, when, and how old your base is:
   CHANGED ON  | 2026-09-23 17:02
   YOUR BASE   | 2026-09-23 16:58 (a5e59eb0 on db/dev)
 
-  Run: git rebase db/dev, then deploy again (or -force to overwrite)
+  1) git rebase db/dev
+  2) deploy again
+  3) or -force to overwrite
 ```
 
 `CHANGED BY` and `CHANGED ON` are APEX's own `LAST_UPDATED_BY` and `LAST_UPDATED_ON`, the newer of the application and its pages. A Builder save names the developer. A deploy names the developer identity it ran under ([`IDENTITY.yaml`](config.md), and the stamp above), or the database user when there is none.

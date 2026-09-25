@@ -12,7 +12,7 @@ from functools import partial
 from importlib import resources
 from importlib.resources.abc import Traversable
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from adt_ai.doctor._base import (
     ADT_AI_GITHUB_LATEST_RELEASE_URL,
@@ -135,10 +135,37 @@ def _request(url: str) -> urllib.request.Request:
     return urllib.request.Request(url, headers={"User-Agent": "ADT.ai doctor"})
 
 
+class _HttpsRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Keep TLS and the archive's trusted origin across every redirect hop."""
+
+    def __init__(self, download_url: str | None = None) -> None:
+        super().__init__()
+        parsed = urllib.parse.urlsplit(download_url) if download_url else None
+        self.origin = (
+            (parsed.hostname, parsed.port if parsed.port is not None else 443)
+            if parsed else None
+        )
+
+    def redirect_request(
+        self, req: urllib.request.Request, fp: Any, code: int, msg: str,
+        headers: Any, newurl: str,
+    ) -> urllib.request.Request | None:
+        # Check before urllib follows the redirect, not after downloading from
+        # a different server. Metadata may redirect across HTTPS hosts; the
+        # executable archive must stay on its original trusted host and port.
+        _request(newurl)
+        parsed = urllib.parse.urlsplit(newurl)
+        origin = (parsed.hostname, parsed.port if parsed.port is not None else 443)
+        if self.origin is not None and origin != self.origin:
+            raise ValueError(f"refusing a download redirect to a different host or port: {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def _fetch_text(url: str) -> str:
     request = _request(url)
+    opener = urllib.request.build_opener(_HttpsRedirectHandler())
     try:
-        with urllib.request.urlopen(request, timeout=_FETCH_TIMEOUT_SECONDS) as response:
+        with opener.open(request, timeout=_FETCH_TIMEOUT_SECONDS) as response:
             return cast(bytes, response.read()).decode("utf-8", errors="replace")
     except urllib.error.URLError as error:
         if _is_certificate_error(error):
@@ -148,8 +175,9 @@ def _fetch_text(url: str) -> str:
 
 def _download_file(url: str, target: Path) -> None:
     request = _request(url)
+    opener = urllib.request.build_opener(_HttpsRedirectHandler(url))
     try:
-        with urllib.request.urlopen(request, timeout=_DOWNLOAD_TIMEOUT_SECONDS) as response:
+        with opener.open(request, timeout=_DOWNLOAD_TIMEOUT_SECONDS) as response:
             target.write_bytes(response.read())
     except urllib.error.URLError as error:
         if _is_certificate_error(error):
@@ -324,8 +352,8 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
 
     def _fail_action(self, lines: list[str], label: str, detail: str) -> DoctorResult:
         self._end_action(lines, label, "FAILED")
-        if detail:
-            self._add(lines, f"    {detail}")
+        for line in detail.splitlines():
+            self._add(lines, f"    {line}".rstrip())
         return DoctorResult(lines=[], performed_actions=[], exit_code=1)
 
     def _add(self, lines: list[str], line: str) -> None:

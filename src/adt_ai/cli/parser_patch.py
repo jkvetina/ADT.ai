@@ -46,8 +46,8 @@ def add_patch_parser(subparsers: SubParsers) -> None:
     # two, one per verb, and the row states both because a reader of `-create`
     # has no way to guess the `-deploy` meaning covers them:
     #
-    # * `PatchRunner.deploy_patch` skips the same payload/target only after a
-    #   complete successful run, including required verification, unless forced;
+    # * `-deploy` overrides the APEX import refusals; its re-run meaning left
+    #   with the `deployment.json` skip (ADT #965);
     # * `create_database_patch` refuses to rebuild a folder that has already been
     #   deployed unless forced, and with `-force` treats it as a refresh that
     #   keeps the deploy logs (Jan, 2026-08-15) and rebuilds the folder's own
@@ -71,8 +71,8 @@ def add_patch_parser(subparsers: SubParsers) -> None:
         "--force",
         "-force",
         action = "store_true",
-        help   = "proceed on a patch already deployed here: with -deploy re-run it, "
-                 "with -create refresh it keeping its logs; with -drop remove a "
+        help   = "override a refusal: with -deploy an APEX import one, with -create "
+                 "refresh a deployed patch keeping its logs; with -drop remove a "
                  "sandbox somebody else created; with -name keep shipped commits",
     )
     # `-deldiff` was withdrawn by ADT #356. Dropping the `%$1`/`%$2` leftovers is

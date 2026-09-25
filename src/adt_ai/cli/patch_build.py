@@ -25,6 +25,7 @@ were already adjacent, and nothing else).
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,7 @@ from adt_ai.cli.patch_hash_mode import HashSelection, apply_hash_mode, hash_mode
 from adt_ai.cli.patch_preview_render import _content_mode, _selected_content_modes
 from adt_ai.patch import settings as patch_settings
 from adt_ai.patch.apex_import import resolve_target
+from adt_ai.patch.apex_validate import ApexlangValidation
 from adt_ai.patch.baseline_tables import read_baseline_tables
 from adt_ai.patch.content import CONTENT_MODE_FLAGS
 from adt_ai.shared.patch_folders import PatchFolder
@@ -248,8 +250,8 @@ def resolve_patch_name_and_folder(
         # mangling `#289` forbids whichever way the rewrite question landed.
         raise PatchError(
             f"NO PATCH FOLDER {patch_ref!r}\n\n"
-            "It looks like a patch folder name, but no such folder exists.\n"
-            "Check the name, or pass a patch code to create a new patch."
+            "1) check the folder name\n"
+            "2) or pass a patch code to create a new patch"
         )
     return PatchSelection(
         selected_folder = selected_folder,
@@ -341,6 +343,8 @@ def build_database_patch(
     hash_selection: HashSelection | None,
     root: Path,
     gateway_factory: GatewayFactory | None = None,
+    signature_gateway_factory: Callable[[str, str], Any] | None = None,
+    validation: ApexlangValidation | None = None,
 ) -> None:
     """Write the patch folder and print the whole `-create` screen.
 
@@ -352,8 +356,23 @@ def build_database_patch(
     answer, not a Python parse of the two `CREATE TABLE` texts. The factory is
     handed over rather than a gateway, so a patch that carries no table still
     opens no connection.
+
+    ``signature_gateway_factory`` is the drift warning's own connection (ADT
+    #962): an environment-aware factory rather than ``gateway_factory``'s
+    schema-only one, since the warning reads the export's recorded environment,
+    never `-target`.
+
+    ``validation`` is the run's compile gate (ADT #964), the one a `-deploy` in
+    the same run reads to skip a tree this build already compiled.
     """
     target = resolve_target(args.app)
+    # `PatchValidateReporter`'s hold (ADT #971); duck-typed, as every reporter
+    # hook is, so a caller's own reporter without it still runs.
+    reporter = validation.reporter if validation else None
+    flush_issues = getattr(reporter, "flush_issues", None)
+    hold_issues = getattr(reporter, "hold", None)
+    if hold_issues is not None:
+        hold_issues()
     result = workspace.create_database_patch(
         config,
         patch_code = (
@@ -401,9 +420,15 @@ def build_database_patch(
         # rather than a record of one.
         force      = args.force,
         gateway_factory = gateway_factory,
+        signature_gateway_factory = signature_gateway_factory,
         # Every workspace static file rather than only the changed ones (ADT #812).
         files_ws   = bool(getattr(args, "files_ws", False)),
+        validation = validation,
     )
+    # Directly under the compile rows, as if printed there (ADT #971), once the
+    # build's own reads are over.
+    if flush_issues is not None:
+        flush_issues()
     print_create_screen(
         workspace, config, result, records, root, debug=bool(getattr(args, "debug", False)),
     )

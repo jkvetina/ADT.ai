@@ -254,12 +254,12 @@ def _certificate_error(url: str, error: Exception) -> RuntimeError:
     Python has no root certificates installed, not a genuinely bad server cert.
     """
     return RuntimeError(
-        f"TLS certificate verification failed for {url}: {error}. "
-        "Python could not verify the server's certificate. Install root "
-        'certificates for this Python (on macOS run the "Install '
-        'Certificates.command" bundled with your python.org install, or '
-        "`pip install --upgrade certifi`), then retry. ADT.ai will not bypass "
-        "certificate verification."
+        f"TLS CERTIFICATE VERIFICATION FAILED FOR {url}\n\n"
+        f"{error}. Python could not verify the server's certificate,\n"
+        "and ADT.ai will not bypass it:\n\n"
+        '1) install root certificates for this Python: "Install Certificates.command"\n'
+        "   on macOS, or pip install --upgrade certifi\n"
+        "2) retry"
     )
 
 

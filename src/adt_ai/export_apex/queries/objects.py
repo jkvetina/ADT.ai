@@ -452,6 +452,66 @@ ORDER BY
         END
 """.strip()
 
+# The authorization schemes each page requires, for the page itself or for any
+# component on it. APEX's export catalog lists no page users for a scheme
+# (measured on 26.1: a scheme page 1 requires has empty USED_ON_PAGES), so
+# `-deep` reads the page views instead. A "Not" reference is stored as `!<id>`;
+# a built-in such as MUST_NOT_BE_PUBLIC_USER matches no shared scheme (ADT #959).
+PAGE_AUTHORIZATIONS_QUERY = """
+SELECT DISTINCT
+    u.page_id,
+    a.authorization_scheme_name AS name
+FROM (
+    SELECT page_id, authorization_scheme_id FROM apex_application_pages
+    WHERE application_id = :app_id
+    UNION ALL
+    SELECT page_id, authorization_scheme_id FROM apex_application_page_regions
+    WHERE application_id = :app_id
+    UNION ALL
+    SELECT page_id, authorization_scheme_id FROM apex_application_page_items
+    WHERE application_id = :app_id
+    UNION ALL
+    SELECT page_id, authorization_scheme_id FROM apex_application_page_buttons
+    WHERE application_id = :app_id
+    UNION ALL
+    SELECT page_id, authorization_scheme_id FROM apex_application_page_proc
+    WHERE application_id = :app_id
+    UNION ALL
+    SELECT page_id, authorization_scheme_id FROM apex_application_page_da
+    WHERE application_id = :app_id
+    UNION ALL
+    SELECT page_id, authorization_scheme_id FROM apex_application_page_da_acts
+    WHERE application_id = :app_id
+    UNION ALL
+    SELECT page_id, authorization_scheme_id FROM apex_application_page_comp
+    WHERE application_id = :app_id
+    UNION ALL
+    SELECT page_id, authorization_scheme_id FROM apex_application_page_val
+    WHERE application_id = :app_id
+    UNION ALL
+    SELECT page_id, authorization_scheme_id FROM apex_application_page_branches
+    WHERE application_id = :app_id
+    UNION ALL
+    SELECT page_id, authorization_scheme_id FROM apex_application_page_rpt_cols
+    WHERE application_id = :app_id
+    UNION ALL
+    SELECT page_id, authorization_scheme_id FROM apex_application_page_ir_col
+    WHERE application_id = :app_id
+    UNION ALL
+    SELECT page_id, authorization_scheme_id FROM apex_appl_page_ig_columns
+    WHERE application_id = :app_id
+    UNION ALL
+    SELECT page_id, authorization_scheme_id FROM apex_appl_page_card_actions
+    WHERE application_id = :app_id
+) u
+JOIN apex_application_authorization a
+    ON  a.application_id                    = :app_id
+    AND TO_CHAR(a.authorization_scheme_id)  = LTRIM(u.authorization_scheme_id, '!')
+ORDER BY
+    u.page_id,
+    a.authorization_scheme_name
+""".strip()
+
 APEX_FILES_QUERY = """
 SELECT
     f.filename,

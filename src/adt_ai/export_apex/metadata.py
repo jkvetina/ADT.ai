@@ -28,7 +28,9 @@ def _store_application_metadata(root: Path, applications: list[ApexApplication])
             for application in applications
         )
 
-def _store_application_checksum(root: Path, app_id: int, checksum: str) -> None:
+def _store_application_checksum(
+    root: Path, app_id: int, checksum: str, environment: str = ""
+) -> None:
     """Record one application's fingerprint beside the rest of its metadata.
 
     The value used to be an export format of its own, one line in a
@@ -41,11 +43,16 @@ def _store_application_checksum(root: Path, app_id: int, checksum: str) -> None:
     every app in the run before the first one is exported, which is why the
     fingerprint is merged in afterwards rather than stored first. Since `#369`
     that merge is one `UPDATE` of one column instead of a whole-file rewrite.
+
+    ``environment`` travels with it (ADT #962), written whether or not it is
+    blank: a checksum is only meaningful read against the environment it was
+    taken from, so a re-export from a different one must overwrite what the
+    previous export recorded there, never merge with it.
     """
     if not checksum:
         return
     with ApexStore.load(root) as store:
-        store.store_checksum(app_id, checksum)
+        store.store_checksum(app_id, checksum, env=environment)
 
 def _store_application_merge_base(
     root: Path, app_id: int, base_commit: str, mirror_ref: str

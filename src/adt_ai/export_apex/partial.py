@@ -9,6 +9,7 @@ from adt_ai.export_apex.recent import (
 )
 
 _COMPONENT_TYPES = {
+    "authorizations": "AUTHORIZATION",
     "authorization_schemes": "AUTHORIZATION",
     "build_options": "BUILD OPTION",
     "breadcrumbs": "BREADCRUMB",
@@ -55,7 +56,12 @@ def _component_row(
             "USED_ON_PAGES": [],
         }
     parts = [part for part in relative.split("/") if part]
-    for index, part in enumerate(parts):
+    # The folder holding the file names its type when it is a known one:
+    # `security/authorizations/x.sql` is an authorization, not a SECURITY row
+    # named AUTHORIZATIONS (ADT #959).
+    known = [len(parts) - 2] if len(parts) > 1 and parts[-2] in _COMPONENT_TYPES else []
+    for index in known or range(len(parts)):
+        part = parts[index]
         if part not in _COMPONENT_TYPES:
             continue
         filename = parts[index + 1] if index + 1 < len(parts) else ""

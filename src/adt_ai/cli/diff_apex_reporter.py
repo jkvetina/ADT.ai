@@ -168,7 +168,7 @@ def _app_id(application: ApplicationChanges) -> int | str:
 
 
 def block_title(application: ApplicationChanges, header: str = SUMMARY_HEADER) -> str:
-    """`100 ORDERS -> 101 ORDERS_COPY` for a `-target-app` pair, the label alone otherwise.
+    """`100/ORDERS -> 101/ORDERS_COPY` for a `-target-app` pair, the label alone otherwise.
 
     A name can outrun the screen, so the longer one gives a character at a time,
     ending on `...`, until the header fits `MAX_LINE` (ADT #893).

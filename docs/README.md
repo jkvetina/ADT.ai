@@ -1,6 +1,6 @@
 # ADT.ai Documentation
 
-This is the public documentation index for ADT.ai `1.5.0`.
+This is the public documentation index for ADT.ai `1.5.1`.
 
 <br>
 
@@ -16,6 +16,8 @@ This is the public documentation index for ADT.ai `1.5.0`.
 | [connection / where the password lives](connection_passwords.md) | The stored format, the vault and no-password modes, masking, and changing the key. |
 | [connection / security](connection_security.md) | How a stored password is protected, written to hand to a security reviewer. |
 | [diff](diff.md) | Compare two Oracle environments or schemas. |
+| [diff / schema objects](diff_db.md) | Compare database objects between two environments or schemas. |
+| [diff / APEX applications](diff_apex.md) | Compare APEX applications and their files between two environments. |
 | [discovery](discovery.md) | Run read-only SELECT discovery queries. |
 | [export_apex](export_apex.md) | Reveal and export APEX workspaces and applications. |
 | [export_apex / the formats](export_apex_formats.md) | What each format flag writes, the APEX version gates, and the schema-level shapes. |

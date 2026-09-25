@@ -6,9 +6,13 @@ from dataclasses import dataclass
 
 from adt_ai.export_apex.recent import WHOLE_APP_ACTIONS, _page_id_from_export_path, _slug
 
+# Each alias resolves to the type's folder in APEX's split export, singular:
+# authorization schemes live in `security/authorizations/`, whatever the
+# dependency mirror ("Authorization Scheme") or the user calls them.
 _COMPONENT_TYPE_ALIASES = {
-    "authorization_scheme": "authorization_scheme",
-    "authorization_schemes": "authorization_scheme",
+    "authorization": "authorization",
+    "authorization_scheme": "authorization",
+    "authorization_schemes": "authorization",
     "list_of_values": "lov",
     "lov": "lov",
 }

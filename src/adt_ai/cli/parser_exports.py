@@ -255,7 +255,7 @@ def add_export_parsers(subparsers: SubParsers) -> None:
         "--deep",
         "-deep",
         action = "store_true",
-        help   = "with -page, also export page components from config/internal/dependencies.db",
+        help   = "with -page, also export the shared components those pages use",
     )
     export_apex.add_argument(
         "--component",

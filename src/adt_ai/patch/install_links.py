@@ -32,8 +32,13 @@ def _file_link_rows(path: str, link: str) -> list[str]:
     survive a hand-edit that comments out only the `@` line beneath it (Jan:
     "I can have `-- FILE: ...` / `--@file` and the file is listed, counted, but
     not executed").
+
+    One empty line above the label, the same as a template or script pair
+    (`templates.linked_file_rows`, ADT `#456`). Jan, 2026-09-25: *"You should
+    have empty line above each prompt."* Without it the object-file blocks ran
+    together under their group header, a commented-out table among them.
     """
-    return [f"PROMPT -- FILE: {path}", link]
+    return ["", f"PROMPT -- FILE: {path}", link]
 
 def _object_link(
     root: Path,

@@ -171,9 +171,6 @@ def _deployment_order_key(
         name,
     )
 
-def _skipped_deployment_result(item: DeploymentPlanItem) -> DeploymentResult:
-    return _unrun_deployment_result(item, "SKIPPED")
-
 def _not_deployed_result(item: DeploymentPlanItem) -> DeploymentResult:
     """A script the run never started, because an earlier one failed.
 
@@ -184,9 +181,7 @@ def _not_deployed_result(item: DeploymentPlanItem) -> DeploymentResult:
     Spelled `NOT RUN` since ADT #284, not `NOT DEPLOYED`: the streamed table has to
     reserve the widest status before the first script runs, so twelve characters
     here widened STATUS on every deploy to describe a state only a failed one ever
-    reaches. Seven fits old ADT's column (patch.py:517) and keeps the distinction
-    from SKIPPED intact, SKIPPED is a target already at SUCCESS, NOT RUN is a
-    script an earlier failure cut off.
+    reaches. Seven fits old ADT's column (patch.py:517).
     """
     return _unrun_deployment_result(item, "NOT RUN")
 

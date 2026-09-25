@@ -334,7 +334,7 @@ def _run_command(
         elif args.command == "discovery":
             exit_code = _run_discovery(args, gateway_factory=gateway_factory)
         elif args.command == "connection":
-            exit_code = _run_connection(args)
+            exit_code = _run_connection(args, gateway_factory=gateway_factory)
         elif args.command == "ut":
             exit_code = _run_ut3(args, gateway_factory=gateway_factory)
         elif args.command == "validate":
@@ -437,8 +437,6 @@ def _run_invalid_command(command: str) -> int:
         details: list[str] | None = None
         if command == "init":
             details = ["Use:", "  adtai doctor -init"]
-        elif command in {"update", "upgrade"}:
-            details = ["Use one of:", "  adtai doctor -update", "  adtai doctor -sqlcl"]
         print_adt_error("UNKNOWN COMMAND", f"`{command}` IS NOT AN ADT.ai COMMAND", details)
         _print_module_overview(file=sys.stderr)
 

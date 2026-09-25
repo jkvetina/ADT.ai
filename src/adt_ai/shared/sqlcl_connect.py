@@ -34,7 +34,7 @@ from zipfile import ZipFile
 from adt_ai.shared.connections import DEFAULT_PORT, Connection
 from adt_ai.shared.oracle_session import DDL_LOCK_TIMEOUT_STATEMENT
 from adt_ai.shared.sqlcl_names import CONNMGR_DELETE_COMMAND, credential_fingerprint
-from adt_ai.shared.sqlcl_quoting import quote_sqlcl_argument, reject_unquotable
+from adt_ai.shared.sqlcl_quoting import SqlclQuotingError, quote_sqlcl_argument, reject_unquotable
 from adt_ai.shared.zip_extract import safe_extractall
 
 # SQLcl prints "Session altered." (a FEEDBACK message, which ``sql -S`` does not
@@ -105,6 +105,15 @@ class SqlclConnect:
         return self.name is not None and self.registers is None
 
 
+def _reject_connect_line_breaks(value: str, *, role: str) -> None:
+    """Connection data must not add executable lines to a SQLcl script."""
+    if "\n" in value or "\r" in value:
+        raise SqlclQuotingError(
+            f"SQLCL CANNOT USE THE {role.upper()}\n\n"
+            "It contains a line break. Remove it before connecting."
+        )
+
+
 def sqlcl_connect(
     connection: Connection,
     *,
@@ -129,12 +138,15 @@ def sqlcl_connect(
     # there is nothing for that path to store.
     if connection.external_auth:
         alias = connection.tns or connection.service or ""
+        _reject_connect_line_breaks(alias, role="TNS alias")
         return _plan(f"connect /@{alias}", startup_sql)
 
     name = connection.sqlcl_name if named_connections else None
 
     if not name:
         return _plan(_connect_line(connection, project_root), startup_sql)
+
+    _reject_connect_line_breaks(name, role="saved connection name")
 
     # A connection file carrying no password cannot register anything, so
     # registration is not a fallback for it: it is a way to write a broken entry
@@ -209,6 +221,10 @@ def _connect_line(
     username = connection.username
     password = connection.password.reveal() or ""
     service  = connection.service or connection.sid or ""
+    _reject_connect_line_breaks(username, role="database username")
+    _reject_connect_line_breaks(service, role="database service")
+    if connection.hostname:
+        _reject_connect_line_breaks(connection.hostname, role="database hostname")
     # The password goes into the line as `user/"pw"@dsn`, and SQLcl offers no
     # escape for a `"` inside that token: the line ends early and SQLcl connects
     # with a truncated credential or prompts (ADT #653). Refused by name rather

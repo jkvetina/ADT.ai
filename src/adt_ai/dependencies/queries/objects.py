@@ -371,6 +371,23 @@ ORDER BY o.APPLICATION_ID,
          o.USED_DB_OBJECT_NAME
 """.strip()
 
+
+def lineage_view_owners_query(owner_count: int) -> str:
+    """The views reading one name from one of ``owner_count`` owners, each with its own owner.
+
+    Column lineage names a view and its source table without an owner, so this
+    is where `apex_callers` learns whether a view reads the asked-about owner's
+    table, and which schema the view itself sits in (`#958`).
+    """
+    return f"""
+SELECT DISTINCT d.NAME AS view_name, d.OWNER AS view_owner
+FROM USER_DEPENDENCIES d
+WHERE d.TYPE = 'VIEW'
+  AND d.REFERENCED_NAME = ?
+  AND {owner_in_clause('d.REFERENCED_OWNER', owner_count)}
+""".strip()
+
+
 USES_EDGES_QUERY = f"""
 SELECT DISTINCT d.TYPE AS t, d.NAME AS n,
        d.REFERENCED_TYPE AS rt, d.REFERENCED_NAME AS rn

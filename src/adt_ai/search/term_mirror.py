@@ -181,10 +181,12 @@ def relations(store: DependencyStore, hits: Iterable[Hit]) -> list[Relation]:
             for node in store.used_by(f"{kind}.{name}", owners=[owner])
             if node not in itself
         }
+        # The owner goes along: two schemas' objects of one name have two sets
+        # of APEX callers, and the hit is in exactly one of them (`#958`).
         pages = {
             _apex_page(caller)
             for kind in specs
-            for caller in store.apex_callers(f"{kind}.{name}")
+            for caller in store.apex_callers(f"{kind}.{name}", owners=[owner])
         }
         rows.extend(Relation(label, "USES", *node.split(".", 1)) for node in sorted(uses))
         rows.extend(Relation(label, "USED BY", *node.split(".", 1)) for node in sorted(used_by))

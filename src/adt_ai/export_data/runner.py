@@ -12,7 +12,11 @@ from adt_ai.export_data.groups import GroupRules, group_for, resolve_data_group_
 from adt_ai.export_data.inventory import DataColumn, DataDiscovery, DataTable
 from adt_ai.export_data.lob_update_scripts import include_update_scripts
 from adt_ai.export_data.merge_config import merge_config
-from adt_ai.export_data.merge_script import commented_where_filter, merge_sql_from_csv
+from adt_ai.export_data.merge_script import (
+    commented_where_filter,
+    merge_sql_from_csv,
+    no_merge_script,
+)
 from adt_ai.export_data.sidecars import (  # noqa: F401  (re-exported for existing importers)
     SIDE_CAR_DATA_TYPES,
     _is_sidecar_column,
@@ -203,6 +207,7 @@ class ExportDataRunner:
         if sidecar_columns and not where_filter:
             _prune_sidecar_folder(path.with_suffix(""), written_sidecars)
         primary_columns = _key_columns(table, csv_columns)
+        merge_sql = ""
         if primary_columns:
             merge_sql = _merge_sql_from_csv(
                 path            = path,
@@ -216,11 +221,26 @@ class ExportDataRunner:
                 identity_columns = _always_identity_columns(columns),
                 primary_key_columns = _primary_key_columns(columns),
             )
-            if merge_sql:
-                text_files.write_text(
-                    path.with_suffix(".sql"),
-                    merge_sql + include_update_scripts(update_scripts),
-                )
+        merge_path = path.with_suffix(".sql")
+        if merge_sql:
+            text_files.write_text(
+                merge_path,
+                merge_sql + include_update_scripts(update_scripts),
+            )
+        elif merge_path.is_file():
+            # An empty table, a filter matching nothing or a removed key must
+            # not leave an older MERGE replaying rows the CSV no longer holds,
+            # and deleting the file is no answer either: a bare re-export finds
+            # its tables by this very file, so the table would drop out of every
+            # later run (`#958`). A table that never had one starts no tracking.
+            text_files.write_text(
+                merge_path,
+                no_merge_script(
+                    table.name,
+                    keyed        = bool(primary_columns),
+                    where_filter = where_filter,
+                ),
+            )
         return path, row_count
 
 

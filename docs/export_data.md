@@ -74,7 +74,11 @@ sandbox/database/data/adt_anno_ticket.csv
 sandbox/database/data/adt_fixture_ddl_log.csv
 ```
 
-Beside each CSV, `<table>.sql` holds the generated MERGE. **It is written only when the table has key columns to match rows on.** A table with neither a primary key nor a unique constraint gets its CSV alone, because a MERGE with nothing to join on would have no way to tell an update from an insert.
+Beside each CSV, `<table>.sql` holds the generated MERGE. **It is generated only when the export has rows and the table has a primary key or unique constraint to match them on.** Otherwise the CSV is written alone.
+
+A table that already has a `.sql` keeps one, holding only a comment that says why no MERGE was generated: the table is empty, the `where` filter matched no row, or there is no key. The old MERGE is gone, so rows the CSV no longer holds cannot be replayed.
+
+The file stays because a bare `adtai export_data` finds the tables it refreshes by it: the table keeps being exported, and the next export that can generate a MERGE writes it there again. A table that never had a `.sql` gets none.
 
 The key is picked in this order, and the same key names the sidecar files, targets each LOB UPDATE and joins the MERGE:
 

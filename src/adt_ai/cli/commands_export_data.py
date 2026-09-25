@@ -60,7 +60,7 @@ def _run_export_data(
         print_adt_error(
             "ARGUMENT INVALID",
             "-force APPLIES A -groups PLAN",
-            "Add -groups, or drop -force to export.",
+            "1) add -groups\n2) or drop -force to export",
         )
         return exit_code_for("ARGUMENT INVALID")
     # `auto_sync_git` (ADT #938): keeps the root `.gitattributes` block current

@@ -73,6 +73,25 @@ def _yaml_reason(error: Exception) -> str:
     return str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
 
 
+def credential_safe_yaml_reason(error: Exception) -> str:
+    """Where a file holding secrets failed to parse, and nothing it contained.
+
+    `_yaml_reason` above keeps the parser's problem, which is fine for a cache
+    and wrong for a connection file (`#958`, SEC-02): the problem can quote the
+    source (`found duplicate key "pwd" with value ...`, a tag's own name, a
+    stray character), and the rest of the parser's text is the offending line
+    itself, as likely as not the `pwd:` one. PyYAML and ruamel both carry the
+    position as a 0-based `problem_mark`, so the position is read from there
+    and the exception's text is never touched.
+    """
+    mark = getattr(error, "problem_mark", None)
+    line = getattr(mark, "line", None)
+    column = getattr(mark, "column", None)
+    if isinstance(line, int) and isinstance(column, int):
+        return f"Invalid YAML at line {line + 1}, column {column + 1}."
+    return "Invalid YAML."
+
+
 def store_yaml_mapping(path: Path, payload: Mapping[Any, Any]) -> None:
     """Write a mapping as sorted block-style YAML, creating parent folders."""
     path.parent.mkdir(parents=True, exist_ok=True)

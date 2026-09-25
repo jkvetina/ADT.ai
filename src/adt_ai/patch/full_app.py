@@ -224,7 +224,7 @@ def stale_full_app_message(stale: list[StaleFullApp]) -> str:
         changed = ", ".join(str(number) for number in item.newer_commits)
         lines.append(f"  APP {item.app_id}: {exported}, changed since in {changed}")
     apps = ",".join(str(item.app_id) for item in stale)
-    lines.append(f"Run: {EXPORT_COMMAND} {apps}, then commit the export")
+    lines.extend(["", f"1) {EXPORT_COMMAND} {apps}", "2) commit the export"])
     return "\n".join(lines)
 
 

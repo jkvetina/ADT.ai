@@ -1,4 +1,4 @@
-"""The nine warning sections `patch -create` can close a schema block with.
+"""The ten warning sections `patch -create` can close a schema block with.
 
 Split out of `patch_create_render.py` when ADT #465 pushed that module past the
 20 KB context guard (`tests/contracts/test_context_file_size.py`). The same call
@@ -22,13 +22,15 @@ from collections.abc import Callable
 from typing import Any
 
 from adt_ai.cli.constants import print_adt_header
+from adt_ai.patch.apex_drift import drift_warning_rows
+from adt_ai.patch.apex_signature import UNKNOWN
 from adt_ai.patch.layout import listed_patch_paths
 from adt_ai.patch.models import DatabasePatchResult, SchemaReport
 from adt_ai.patch.object_folders import object_folder_resolver
 from adt_ai.shared.file_list import nested_files, parent_folder, plain_row, print_file_rows
 from adt_ai.shared.object_list import print_object_rows
 
-# The nine warning sections `-create` can print, spelled once each. Constants
+# The ten warning sections `-create` can print, spelled once each. Constants
 # rather than literals at the call sites so `tests/helpers/console_surface.py`
 # records every one by name: it folds a module-level `NAME = "literal"` at the
 # call site AND reads any `*_HEADER` constant on its own, which is what keeps a
@@ -64,6 +66,9 @@ NO_DATABASE_CLOCK_HEADER = "WARNING - NO DATABASE CLOCK:"
 # UTF-8 nor `repo_encoding` stopped the patch as `PATCH FAILED:` until Jan, on a
 # plugin's `LICENSE4LIBS`: *"Good that user know, stupid that he is blocked."*
 NOT_UTF8_HEADER = "WARNING - NOT UTF-8:"
+# ADT #957, the tenth, is the `-deploy` signature refusal asked at `-create` so
+# the developer can rebase first. It has no constant: since ADT #961 its header
+# names the application, one per application, spelled at `print_changed_apps`.
 
 # The newer-commit rows sit inside the same 78-character budget the commit
 # preview uses, rather than old ADT's flat `summary_len = 36`, a constant that
@@ -113,12 +118,21 @@ def warning_rows(
     print_file_rows(rows, nested=nested, folder_of=folder_of, children=children)
 
 
-def print_uncommitted(report: SchemaReport, config: dict[str, Any]) -> None:
-    """Files git reports dirty or untracked, per schema (ADT #276, narrowed #444)."""
-    # One `apexlang/` row for a tree and no page comments (ADT #928), the same
-    # rows `PROCESSED FILES:` prints: a CRLF tree converted by the last deploy
-    # is every file in it, and the fix is one commit of one folder.
-    rows = listed_patch_paths(list(report.uncommitted), config)
+def print_uncommitted(uncommitted: list[str], config: dict[str, Any]) -> None:
+    """Every dirty or untracked path in the repo, as a file tree (ADT #967).
+
+    Repo-wide now, and printed once per build rather than once per schema: Jan,
+    mid `patch -create`, on the narrower `SchemaReport.uncommitted` this
+    replaces (only ever the patch's OWN files git reported dirty): *"if we have
+    uncommitted changes in the repo, it should list the files as a file tree
+    (reuse this component). Should be just below PROCESSED FILES section. Looks
+    like you are printing something, but not all uncommitted files, why is
+    that?"* `DatabasePatchResult.uncommitted` (`patch/build.py::_repo_uncommitted`)
+    is where the repo-wide read and its exclusions live; this only renders it,
+    through the same `warning_rows` file-tree component every other section
+    here uses.
+    """
+    rows = listed_patch_paths(list(uncommitted), config)
     if not rows:
         return
     warning_rows(
@@ -268,6 +282,29 @@ def print_changed_objects(result: DatabasePatchResult) -> None:
     print_object_rows(
         (item.object_type, item.object_name) for item in result.changed_objects
     )
+
+
+def print_changed_apps(result: DatabasePatchResult) -> None:
+    """APEXlang applications `-deploy` is going to refuse (ADT #957).
+
+    Not a `warning_rows` list either: each application is the `-deploy`
+    refusal's own block (`apex_drift.drift_warning_rows`), who moved it, when,
+    what the change was based on and the numbered way out, so the warning read
+    now and the refusal read later say the same thing.
+
+    **One header per application, and the header is the headline** (ADT #961).
+    It was one `WARNING - APP CHANGED:` over an `APP <id> CHANGED SINCE YOUR
+    EXPORT` row per block; Jan: *"this look like a dupe, lets consolidate:
+    WARNING - APP 122 CHANGED SINCE YOUR EXPORT:"*. The two headers are spelled
+    here as f-strings so the console inventory reads both.
+    """
+    for signatures in result.changed_apps:
+        if signatures.verdict == UNKNOWN:
+            print_adt_header(f"WARNING - APP {signatures.app_id} HAS NO RECORDED SIGNATURE:")
+        else:
+            print_adt_header(f"WARNING - APP {signatures.app_id} CHANGED SINCE YOUR EXPORT:")
+        for row in drift_warning_rows(signatures):
+            print(row)
 
 
 def print_no_database_clock(result: DatabasePatchResult) -> None:

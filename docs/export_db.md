@@ -272,9 +272,10 @@ EXPORTING 3 OBJECTS:
   TABLE ..................................... 67%                      0:00:00 
   TRIGGER .................................... 67%                     0:00:00 
   TRIGGER ...................................................... 100%  0:00:00 
+  ALL DONE ..................................................... 100%  0:00:00 
 ```
 
-- **The row names the type being pulled**, in the same singular spelling the overview above it prints and `-type` takes.
+- **The row names the type being pulled**, in the same singular spelling the overview above it prints and `-type` takes. Once the last object is written the row reads `ALL DONE`, with what the whole export cost.
 - The bar advances when an object's DDL comes back, not on a clock, and the time on the right is what is left rather than what has passed. A multi-schema export draws one bar per schema.
 - **The dot track is sized against the type on the row**, so a full row always reaches the same column whichever type names it. A shorter label buys itself a longer track, which is why the same percentage draws a different number of dots after the label changes.
 - **The percentage travels with the dots**, one space off the last of them, and the whole remainder of the track pads out behind it so the timer lands on the 78-column edge. The timer is the only field on a fixed column: a row relabelling itself shorter hands the leader the columns the label gave up and gets back only its share of them, so the figure sits a little further left under a shorter type name.

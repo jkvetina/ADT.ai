@@ -9,6 +9,7 @@ from pathlib import Path
 from adt_ai.cli.constants import (
     ConfigLoader,
     ConnectionLoader,
+    GatewayFactory,
     print_adt_header,
     print_module_banner,
 )
@@ -23,15 +24,25 @@ from adt_ai.cli.context import (
     _repo_root,
     _wallet_roots,
 )
+from adt_ai.cli.context_connection import _print_connection_block
+from adt_ai.cli.context_errors import (
+    _is_database_connection_error,
+    _is_user_database_error,
+    _print_database_error,
+)
+from adt_ai.cli.gateways import build_gateway, debug_wrapped
+from adt_ai.connection.probe import ObjectCount, object_counts, open_session
 from adt_ai.connection.runner import (
     ConnectionEditError,
     ConnectionEditor,
     ConnectionEditRequest,
 )
 from adt_ai.shared import crypto
-from adt_ai.shared.connections import ConnectionNotFoundError
+from adt_ai.shared.connections import Connection, ConnectionNotFoundError
+from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.secret import Secret
+from adt_ai.shared.tables import close_adt_table, open_adt_table, print_adt_table
 
 #: `#861`, spelled by Jan picking it. Named once above a password prompt that
 #: has no terminal to hide the typing on. The name avoids the word bandit reads
@@ -45,6 +56,7 @@ _CONNECTION_ACTIONS = (
     ("set-pwd", "set_pwd"),
     ("set-wallet-pwd", "set_wallet_pwd"),
     ("rekey", "rekey"),
+    ("test", "test"),
 )
 
 _CONNECTION_ACTION_NAMES = [f"-{name}" for name, _ in _CONNECTION_ACTIONS]
@@ -56,7 +68,7 @@ _CONNECTION_ACTION_LIST = ", ".join(
 # nothing for an action that supplies none. `-rekey` is the sharper case: it
 # encrypts by definition, and accepting the flag would imply there is a variant
 # of it that does not.
-_ACTIONS_WITHOUT_ENCRYPT = {"add-env", "rekey"}
+_ACTIONS_WITHOUT_ENCRYPT = {"add-env", "rekey", "test"}
 
 # A rekey rewrites the whole file, so it takes no environment or schema selector.
 _WHOLE_FILE_ACTIONS = {"rekey"}
@@ -68,7 +80,9 @@ def _selected_connection_action(args: argparse.Namespace) -> str | None:
 
 
 def _missing_connection_selector(action: str, args: argparse.Namespace) -> str | None:
-    if action in _WHOLE_FILE_ACTIONS:
+    # `-test` takes the first environment when -env is absent, and every schema
+    # of it when -schema is, the way every database command resolves its target.
+    if action in _WHOLE_FILE_ACTIONS or action == "test":
         return None
     if action == "add-env":
         if not args.env:
@@ -265,7 +279,161 @@ def _connection_edit_path(
         return None, candidates[0]
 
 
-def _run_connection(args: argparse.Namespace) -> int:
+def _schema_gateway(
+    args: argparse.Namespace,
+    startup: StartupContext,
+    connection: Connection,
+    schema: str,
+    gateway_factory: GatewayFactory | None,
+) -> QueryGateway:
+    return debug_wrapped(
+        gateway_factory(schema) if gateway_factory else build_gateway(startup, connection),
+        debug=args.debug,
+    )
+
+
+def _database_error_code(error: Exception) -> str:
+    """The screen `_print_database_error` picks, so the exit code agrees with it."""
+    connect_failed = (
+        getattr(error, "adt_sql", None) is None and _is_database_connection_error(error)
+    )
+    return "DATABASE CONNECTION FAILED" if connect_failed else "DATABASE QUERY FAILED"
+
+
+def _test_one_schema(
+    args: argparse.Namespace,
+    startup: StartupContext,
+    environment: str,
+    schema: str,
+    gateway_factory: GatewayFactory | None,
+) -> int:
+    """`-test -schema`: the connection block and the object overview, nothing else.
+
+    Jan approved this layout from a sample before it was built (`#949`). A
+    refused connection is not caught here: with one schema there is no next
+    one to try, so it takes the ordinary `DATABASE CONNECTION FAILED` screen.
+    """
+    connection = startup.connections.resolve(environment=environment, schema=schema)
+    gateway = _schema_gateway(args, startup, connection, schema, gateway_factory)
+    counts: list[ObjectCount] = []
+
+    # The count is read under the connection header, before the versions, so
+    # no blocking read ever sits behind a finished section (`#372`, `#670`).
+    # It is also the first statement, so it is what opens the session.
+    def read_counts() -> None:
+        counts.extend(object_counts(gateway))
+
+    _print_connection_block(
+        gateway,
+        connection,
+        schema          = schema,
+        environment     = environment,
+        debug           = args.debug,
+        before_versions = read_counts,
+    )
+    if counts:
+        print_adt_header("OBJECTS OVERVIEW:")
+        print_adt_table(
+            [
+                {
+                    "OBJECT TYPE" : count.object_type,
+                    "COUNT"       : count.total,
+                    "INVALID"     : count.invalid or "",
+                }
+                for count in counts
+            ],
+            columns = ["OBJECT TYPE", "COUNT", "INVALID"],
+            numeric = ["COUNT", "INVALID"],
+        )
+    return 0
+
+
+def _test_environment(
+    args: argparse.Namespace,
+    startup: StartupContext,
+    environment: str,
+    gateway_factory: GatewayFactory | None,
+) -> int:
+    """`-test` without `-schema`: one `SCHEMA | STATUS` table for the environment.
+
+    Jan's layout, approved from a sample (`#949`): no connection block per
+    schema, one row each, `OK` or `ERROR`, and the error details below the
+    table. Each row prints its schema name before the connect and its status
+    after it, so the screen always names the schema being tried. The open line
+    is the announcement, the way `recompile -mviews` streams its rows.
+    """
+    connections = startup.connections
+    schemas = connections.schema_names(environment)
+    if not schemas:
+        return 0
+    # Resolved up front, so a connection file problem stops the run before a
+    # row is left half printed.
+    resolved = {
+        schema: connections.resolve(environment=environment, schema=schema)
+        for schema in schemas
+    }
+    print_adt_header(f"TESTING CONNECTIONS, {environment}:")
+    layout = open_adt_table(
+        [],
+        min_widths = {"SCHEMA": max(len(schema) for schema in schemas), "STATUS": len("ERROR")},
+        columns    = ["SCHEMA", "STATUS"],
+    )
+    if layout is None:  # pragma: no cover, columns were given, so a table is always open
+        raise RuntimeError("the connection test table did not open")
+    failures: list[tuple[str, Exception]] = []
+    for schema in schemas:
+        print(layout.cells_segment([schema, ""], 0, 1), end="", flush=True)
+        status = "OK"
+        try:
+            open_session(
+                _schema_gateway(args, startup, resolved[schema], schema, gateway_factory)
+            )
+        except Exception as error:
+            if not _is_user_database_error(error):
+                raise
+            failures.append((schema, error))
+            status = "ERROR"
+        print(layout.cells_segment([schema, status], 1, 2).rstrip(), flush=True)
+    close_adt_table()
+
+    # One screen per refused schema, named, in table order. The `-debug` hint
+    # closes the last one only: one flag answers all of them.
+    for index, (schema, refusal) in enumerate(failures):
+        _print_database_error(
+            refusal,
+            debug_available = index == len(failures) - 1,
+            subject         = f"{environment}.{schema}",
+        )
+    if not failures:
+        return 0
+    return exit_code_for(_database_error_code(failures[0][1]))
+
+
+def _run_connection_test(
+    args: argparse.Namespace,
+    gateway_factory: GatewayFactory | None,
+) -> int:
+    if args.go:
+        print_adt_error(
+            "ARGUMENT INVALID",
+            "-go IS NOT USED WITH -test",
+            "-test only reads, so there is nothing to apply.",
+        )
+        return exit_code_for("ARGUMENT INVALID")
+
+    startup = _load_startup_context(args)
+    if args.debug:
+        _print_startup_debug(startup)
+    environment = args.env or startup.connections.default_environment
+    if args.schema:
+        return _test_one_schema(args, startup, environment, args.schema, gateway_factory)
+    return _test_environment(args, startup, environment, gateway_factory)
+
+
+def _run_connection(
+    args: argparse.Namespace,
+    gateway_factory: GatewayFactory | None = None,
+) -> int:
     print_module_banner("CONNECTION")
 
     action = _selected_connection_action(args)
@@ -290,6 +458,8 @@ def _run_connection(args: argparse.Namespace) -> int:
         else:
             print_adt_error("ARGUMENT INVALID", "-encrypt IS ONLY FOR PASSWORD ACTIONS")
         return exit_code_for("ARGUMENT INVALID")
+    if action == "test":
+        return _run_connection_test(args, gateway_factory)
 
     startup, path = _connection_edit_path(args, allow_missing=action == "create")
     if args.debug and startup is not None:

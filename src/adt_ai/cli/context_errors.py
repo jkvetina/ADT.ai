@@ -21,9 +21,8 @@ from adt_ai.shared.error_screen import print_adt_error
 # columns now, so an 88-character remedy wrapped on an 80-column terminal and
 # the continuation landed flush left, outside the block it belongs to (#764).
 _PROJECT_FOLDER_REMEDY = (
-    "Run ADT.ai from a project folder that has a connection file,\n"
-    "or pass -config-dir / -root to point at one.\n"
-    "See docs/config.md and `adtai doctor -init`."
+    "1) run ADT.ai from a project folder that has a connection file\n"
+    "2) or pass -config-dir / -root to point at one"
 )
 
 # Code and remedy both branch on the error CLASS, so a raise site says which
@@ -159,9 +158,10 @@ def _print_database_error(
         details.append("Query:")
         details.extend(f"  {line}" for line in _display(sql).splitlines())
     if is_connection:
-        details.append(
-            "Check the connection file and wallet under ADT.ai connections/wallets, then rerun."
-        )
+        details.extend([
+            "1) check the connection file and wallet under ADT.ai connections/wallets",
+            "2) rerun",
+        ])
     print_adt_error(
         code,
         _about(subject, _display(error).splitlines()),
@@ -207,6 +207,14 @@ def _print_sqlcl_error(error: Exception, *, debug_available: bool = True) -> Non
     print_adt_error("SQLCL SCRIPT FAILED", _display(error), debug_available=debug_available)
 
 
+#: The two builtin types ADT.ai raises with a message of its own, each named on
+#: its own header rather than under `UNEXPECTED ERROR:` (ADT #966).
+_NAMED_ERRORS: dict[type[Exception], str] = {
+    ValueError   : "VALUE ERROR",
+    RuntimeError : "RUNTIME ERROR",
+}
+
+
 def _print_unexpected_error(
     error: Exception, *, debug_available: bool = True, subject: str | None = None
 ) -> None:
@@ -214,6 +222,13 @@ def _print_unexpected_error(
     # The command banner has already printed (it is the first handler statement),
     # so this only adds a friendly framing instead of leaking a raw traceback.
     message = _display(error)
+    named = _NAMED_ERRORS.get(type(error))
+    if named is not None:
+        # The header names the type, so the body is the message alone (ADT #966).
+        print_adt_error(
+            named, _about(subject, message.splitlines()), debug_available=debug_available
+        )
+        return
     if "\n" in message:
         # A multi-line message is a captured transcript, not a sentence. Gluing
         # the type onto its first line makes that line the reported cause --

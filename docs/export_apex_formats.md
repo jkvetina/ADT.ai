@@ -43,7 +43,7 @@ On a disk that ignores case, as macOS's does by default, a component renamed onl
 
 `-full` and `-readable` write no folder of their own and delete nothing.
 
-`-deep` beside `-page` also exports the components recorded for those pages in the dependency mirror, LOVs, lists and authorization schemes among them, and prints a `DB OBJECTS` section of the database objects those pages use.
+`-deep` beside `-page` also exports the shared components those pages use, LOVs, lists and authorization schemes among them, and prints a `DB OBJECTS` section of the database objects those pages use. It reads the dependency mirror, APEX's component page usage, and the authorization scheme the page or any component on it requires, a "Not" reference included.
 
 Version handling reads the one APEX version the connection block already printed. `-apexlang` on an older instance is skipped and the run continues, so `-all` never fails on a pre-26.1 environment. The skip is announced only when you named the format yourself, and is silent under `-all`.
 

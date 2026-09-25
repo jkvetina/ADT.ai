@@ -46,6 +46,9 @@ ACTION_HEADERS = {
     "rest": "REST SERVICES",
     "files": "APPLICATION FILES",
     "files_ws": "WORKSPACE FILES",
+    # Not an export format: the compile `-apexlang` runs over the tree it just
+    # wrote (ADT #971), timed under its own `apex.db` timer (ADT #973).
+    "validate": "VALIDATING APEXLANG",
 }
 
 # The formats exported from a collection query, in the order the runner walks
@@ -90,6 +93,8 @@ def planned_actions(request: Any, applications: list[ApexApplication]) -> list[t
             planned.append((application.app_id, action))
         if request.actions.get("files"):
             planned.append((application.app_id, "files"))
+        if request.validate_apexlang and (application.app_id, "apexlang") in planned:
+            planned.append((application.app_id, "validate"))
         if index == 0:
             planned.extend(_schema_level_pairs(request))
     if not applications:

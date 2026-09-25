@@ -5,7 +5,11 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from adt_ai.cli.commands_patch_deploy import patch_build_gateway_factory, run_patch_deploy
+from adt_ai.cli.commands_patch_deploy import (
+    patch_build_gateway_factory,
+    patch_env_gateway_factory,
+    run_patch_deploy,
+)
 from adt_ai.cli.constants import (
     ConfigLoader,
     GatewayFactory,
@@ -38,10 +42,13 @@ from adt_ai.cli.patch_inputs import (
 )
 from adt_ai.cli.patch_no_commits import answer_without_commits
 from adt_ai.cli.patch_preview_render import print_patch_preview
+from adt_ai.cli.patch_validate_render import PatchValidateReporter, print_validation_failure
 from adt_ai.patch.apex_import import resolve_target
+from adt_ai.patch.apex_validate import ApexlangValidation, ApexlangValidationError
 from adt_ai.patch.install_paths import SchemaSelectionError
 from adt_ai.patch.topup import ConsoleTopUpReporter
 from adt_ai.shared import text_files
+from adt_ai.shared.db import run_sqlcl_script
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.git_files import fetch_origin, git_ref_exists
 
@@ -53,6 +60,11 @@ def _run_patch(
     print_module_banner("PATCH")
     try:
         return _run_patch_command(args, gateway_factory)
+    except ApexlangValidationError as error:
+        # ADT #964: the compiler's own lines, `-debug` or not; a traceback
+        # would say nothing about a tree the compiler already explained.
+        print_validation_failure(error)
+        return exit_code_for("PATCH FAILED")
     except SchemaSelectionError as error:
         # ADT #807: a mistyped `-schema` is what the user typed, not what broke.
         print_adt_error("ARGUMENT INVALID", error.description, error.details)
@@ -132,7 +144,8 @@ def _level_history(
     if args.branch and not git_ref_exists(root, args.branch):
         raise PatchError(
             f'BRANCH "{args.branch}" NOT FOUND\n\n'
-            "Check the name, or fetch the remote first if the branch only exists there."
+            "1) check the name\n"
+            "2) or fetch the remote first if the branch only exists there"
         )
     return ensure_commit_store(args, root, config)
 
@@ -202,6 +215,13 @@ def _run_patch_command(
     # After the config load, never before: `patch_root` is the project's own
     # answer since ADT #430, so a workspace minted early looks in the wrong folder.
     workspace = PatchWorkspace(root, patch_config())
+    # One compile gate for the run, so `-create -deploy` compiles a tree once
+    # (ADT #964). SQLcl is this module's global, read here at call time, so the
+    # CLI facade swaps it for tests exactly as it does for `validate`.
+    validation = ApexlangValidation(
+        sqlcl_request = run_sqlcl_script,
+        reporter      = PatchValidateReporter(debug=args.debug),
+    )
     if args.install:
         # `-install` orders every exported object from the dependency graph, so it
         # brings the graph level itself, exactly as `-create` does, rather than
@@ -243,6 +263,7 @@ def _run_patch_command(
             config          = patch_config(),
             gateway_factory = gateway_factory,
             ref             = patch_ref,
+            validation      = validation,
         )
 
     # Deploy-only: nothing to build, so the commit scan below is skipped
@@ -380,6 +401,13 @@ def _run_patch_command(
             gateway_factory = patch_build_gateway_factory(
                 args, root, patch_config(), gateway_factory
             ),
+            # The drift warning's own connection (ADT #962): it reads the
+            # export's recorded environment, never `-target`, so it needs the
+            # env-aware factory rather than the ALTER base's schema-only one.
+            signature_gateway_factory = patch_env_gateway_factory(
+                args, root, patch_config(), gateway_factory
+            ),
+            validation      = validation,
         )
         # `-create -deploy` on a name with no folder behind it: the build just
         # happened, so the deploy ships what this run produced.

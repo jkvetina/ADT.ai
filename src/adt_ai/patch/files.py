@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import heapq
 import re
 import shutil
 import sqlite3
+import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path, PurePosixPath
@@ -169,6 +172,31 @@ def write_install_script(
     return results
 
 
+@contextlib.contextmanager
+def _backups_set_aside(folder: Path) -> Iterator[None]:
+    """Keep the `-app` revert backups out of the archive (ADT #963).
+
+    Jan, 2026-09-25: backups are never committed and never archived. A backup
+    is a full export of a target application, the way back from a failed
+    deploy; an archived patch is the record of what shipped, and the backup
+    never did. `make_archive` takes no filter, so the folders are moved aside
+    for the length of the zip, next to the patch so the move is a rename. On
+    success they go with the patch folder; a zip that fails puts them back.
+    """
+    backups = sorted(
+        path for path in folder.glob(_settings.APEX_BACKUP_GLOB) if path.is_dir()
+    )
+    with tempfile.TemporaryDirectory(prefix=".adt_backups_", dir=folder.parent) as aside:
+        for path in backups:
+            path.rename(Path(aside) / path.name)
+        try:
+            yield
+        except BaseException:
+            for path in backups:
+                (Path(aside) / path.name).rename(path)
+            raise
+
+
 def archive_patch_folders(
     root: Path,
     config: dict[str, Any],
@@ -198,7 +226,8 @@ def archive_patch_folders(
         destination = archive_root / _archive_paths.archive_subfolder(config, folder=folder.folder)
         destination.mkdir(parents=True, exist_ok=True)
         archive_path = destination / folder.folder
-        made = shutil.make_archive(str(archive_path), archive_format, root_dir=folder.path)
+        with _backups_set_aside(folder.path):
+            made = shutil.make_archive(str(archive_path), archive_format, root_dir=folder.path)
         shutil.rmtree(folder.path)
         archive_paths.append(Path(made))
 

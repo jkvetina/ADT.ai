@@ -10,10 +10,10 @@ What it compares is picked by one flag, and each mode has a page of its own:
 
 | Mode | Compares |
 | --- | --- |
-| objects | The database objects and grants, and leaves a SQLcl DIFF artifact behind. The default, with no mode flag. |
+| [objects](diff_db.md) | The database objects and grants, and leaves a SQLcl DIFF artifact behind. The default, with no mode flag. |
 | `-rest` | The REST modules, privileges and roles the two schemas publish. |
 | `-data` | The rows of the tables `export_data` exports, matched on their keys. |
-| `-apex` | The APEX applications, their static files and the workspace's static files. |
+| [`-apex`](diff_apex.md) | The APEX applications, their static files and the workspace's static files. |
 
 <br>
 
@@ -69,7 +69,7 @@ git diff
 
 ## Output
 
-Every mode opens the same way: a connection block per side, then the comparison crawling under its own row. What differs follows, in the tables of the mode that ran, shown on diff_db.md, diff_rest.md, diff_data.md and diff_apex.md.
+Every mode opens the same way: a connection block per side, then the comparison crawling under its own row. What differs follows, in the tables of the mode that ran, shown on [diff_db.md](diff_db.md#output), diff_rest.md, diff_data.md and [diff_apex.md](diff_apex.md#output).
 
 ```text
 APEX DEPLOYMENT TOOL - DIFF
@@ -185,10 +185,10 @@ What a run can actually save is export time, which is what `-name` and `-type` n
 | `-verbose`, `--verbose` | No | off | List every changed object under `CHANGED OBJECTS:` and `CHANGED GRANTS:`, uncapped unless `-limit` caps it. With `-data`, one block per table of its differing rows and values; with `-apex`, one section per changed page under the summaries. |
 | `-rest`, `--rest` | No | off | Compare the REST modules, privileges and roles both schemas publish instead of the schema objects. See diff_rest.md. |
 | `-data`, `--data` | No | off | Compare the rows of the tables `export_data` exports instead of the schema objects. See diff_data.md. |
-| `-apex`, `--apex` | No | off | Compare the APEX applications and static files both schemas own instead of the schema objects. See diff_apex.md. |
+| `-apex`, `--apex` | No | off | Compare the APEX applications and static files both schemas own instead of the schema objects. See [diff_apex.md](diff_apex.md). |
 | `-app`, `--app` | Yes | connection `apex.app` | With `-apex`, application id(s) or `MIN-MAX` / `MIN+` ranges to compare, on both sides. |
-| `-target-app`, `--target-app` | No | the `-app` id | With `-apex` and one `-app` id, the target's application to compare it with, such as a working copy. See diff_apex.md. |
-| `-page`, `--page` | Yes | all | With `-apex`, page id(s) or `MIN-MAX` / `MIN+` ranges to compare, leaving out application-wide and workspace changes. See diff_apex.md. |
+| `-target-app`, `--target-app` | No | the `-app` id | With `-apex` and one `-app` id, the target's application to compare it with, such as a working copy. See [diff_apex.md](diff_apex.md#a-working-copy-with--target-app). |
+| `-page`, `--page` | Yes | all | With `-apex`, page id(s) or `MIN-MAX` / `MIN+` ranges to compare, leaving out application-wide and workspace changes. See [diff_apex.md](diff_apex.md#one-page-with--page). |
 | `-ignore`, `--ignore` | Yes | none | With `-data`, column pattern(s) to leave out on both sides. Comma- or space-separated, `%` wildcards. |
 | `-limit`, `--limit` | No | all | List at most N rows per listing, in every mode, and say how many were left off; the counts stay whole. With `-data`, stop each table after N differing rows. `0` lists all. |
 | `-restore`, `--restore` | No | off | Write the target's version of everything that differs into `-root`, where the source's export keeps it, over a `WIP` commit of any uncommitted work. See [Restoring the target's versions](#restoring-the-targets-versions). |

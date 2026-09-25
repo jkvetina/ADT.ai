@@ -31,16 +31,22 @@ An application whose own deploy row errored is not scanned at all. The deploy ha
 ## What a run prints
 
 ```text
-VERIFYING APPLICATIONS:
------------------------
-  APP 1000 | ERROR | 3 error(s) in 1116 fragments
-    PAGE 1 | Column | sourcing | Column Name | PL/SQL: ORA-00904: "SOURCING": invalid identifier
-    PAGE 101 | Validation | Company Must Have Contact | PL/SQL Expression | PLS-00222: no function with name 'VALIDATE_COMPANY_HAS_CONTACT' exists in this scope
-    PAGE 223 | Region | Rhine Barge Detail | PL/SQL Expression | PLS-00103: Encountered the symbol "SELECT"
-    LOG: 20260902-194318_apex_scan_1000.txt
+ERROR - VERIFICATION FAILED:
+----------------------------
+  APP 1000 | ERROR | 4 error(s) in 1116 fragments
+
+  PAGE   ISSUES
+  ----   ------
+     1        2
+   101        1
+   223        1
+
+  LOG: 20260902-194318_apex_scan_1000.txt
 ```
 
-A finding is a stanza line rather than a table column, the same call `ERROR - DEPLOYMENT FAILED:` makes for the same reason: an `ORA-` message in a cell destroys the layout at 80 columns.
+**The header says the application failed, not the deploy.** The deploy table above it still reads `SUCCESS` for every script that ran, so `ERROR - VERIFICATION FAILED:` is what tells a reader that the patch went in and the application it produced does not compile. A clean run keeps `VERIFYING APPLICATIONS:`.
+
+**The console counts issues per page; the log lists them.** One row per page, in page order, and a finding that sits on no page (a shared LOV, an application process) counts under `APPLICATION`. Every finding, with its component, property and the database's own error, is in the log named under the table, which is the file a reader opens to fix them.
 
 **A finding fails the deploy**, unless the run passed `-continue`. Unlike the invalid-object list on the deploy page, this read is patch-scoped. It asks the application this patch just deployed, so it cannot fail a run over an object somebody else left invalid a month ago. What `-continue` changes is below, in "Waiving the verdict for one run".
 
@@ -60,7 +66,7 @@ The timestamp format is `today_deploy`, shared with the deploy logs so the scan 
 
 **The console names the file, not the folder.** Every log this section points at is in that one folder, and both halves of its path are already on screen: the patch code on the `DEPLOYING PATCH:` header and the environment on the connection header above it.
 
-**It is deliberately not a script `.log`.** Scan reports describe verification separately from installation. The completed-run receipt includes the required scan result, so a successful install followed by failed verification stays incomplete and is retried. A successful script log alone cannot make the next deployment skip its scan.
+**It is deliberately not a script `.log`.** Scan reports describe verification separately from installation. Every `-deploy` runs its scan again, so a successful install followed by failed verification is simply deployed and verified again.
 
 <br>
 
@@ -92,7 +98,7 @@ The key above is a project setting. `-continue` is the per-run answer, and it wa
 adtai patch -name 260902-1-CARGO -deploy -app -continue
 ```
 
-The scan still runs, the row still prints its real verdict, and every finding is still listed and still written to the log. What changes is what the run does about it:
+The scan still runs, the row still prints its real verdict, and every finding is still counted and still written to the log. What changes is what the run does about it:
 
 | | Default | Under `-continue` |
 | --- | --- | --- |
@@ -103,16 +109,26 @@ The scan still runs, the row still prints its real verdict, and every finding is
 
 The last row is the one to read twice: `-continue` has never laundered a failed install script into a successful run, and it still does not. Only the scan verdict became advisory.
 
-A waived row says so under its findings, so an `ERROR` above a `SUCCESS` run is never left to be inferred:
+A waived verdict says so in the section after it, so an `ERROR` above a `SUCCESS` run is never left to be inferred:
 
 ```text
-  APP 1000 | ERROR | 3 error(s) in 1116 fragments
-    PAGE 1 | Column | sourcing | Column Name | PL/SQL: ORA-00904: "SOURCING": invalid identifier
-    -continue: this verdict did not fail the deploy and nothing was reverted
-    LOG: 20260902-194318_apex_scan_1000.txt
+ERROR - VERIFICATION FAILED:
+----------------------------
+
+  PAGE   ISSUES
+  ----   ------
+     1        1
+
+  LOG: 20260902-194318_apex_scan_1000.txt
+
+
+WARNING - APP 1000 NOT REVERTED:
+--------------------------------
+  APP NOT REVERTED ON DEMAND, -continue USED
+  BACKUP: backup_DEV/f1000.sql
 ```
 
-The backup is still taken on an `-app` run, so the way back exists even though the run did not take it.
+The backup is still taken on an `-app` run, so the way back exists even though the run did not take it, and the section names it.
 
 <br>
 
@@ -160,50 +176,67 @@ A failing scan used to end the run with the broken application still installed. 
 deploy_revert_on_scan_failure : True
 ```
 
-On by default, and only ever on a `patch -deploy -app` run. It has no opinion about install scripts: the tree-level backup is what `-app` buys, and a per-app script is the patch's own SQL running against the target.
+On by default, and only ever on a `patch -deploy -app` run. It has no opinion about install scripts: the backup is what `-app` buys, and a per-app script is the patch's own SQL running against the target.
 
-`-continue` suppresses the revert without touching the key: a run told to keep going past a failure and then handed its application back is a run that did not continue. The backup is still exported, so the way back is on disk either way.
+`-continue` suppresses the revert without touching the key: a run told to keep going past a failure and then handed its application back is a run that did not continue. The backup is still taken, so the way back is on disk either way.
 
-**The revert is another import, so the backup is an export in the import's own format.** `apex import -input <tree>` is an id-based replacement, which is what makes it reversible: run it a second time against the tree the target held before, and the target is what it was.
-
-So, immediately before the import writes, the live target is exported into the deploy's own log folder:
+**The backup is one full SQL export, and the revert runs it.** Immediately before the import writes, the live target is exported the way `export_apex -full` exports, as a single `f<id>.sql`, into the patch folder itself:
 
 ```text
-patch/260907-1-CARGO/logs_DEV/20260907-194318_apex_backup_1000/
+patch/260907-1-CARGO/backup_DEV/f1000.sql
 ```
 
-The timestamp is `today_deploy` again, so the backup, the import that overwrote it and the scan that judged the import all sort together. The import log names it on a `BACKUP` row beside the signature rows, whether or not the run ever needs it.
+One file per application and per environment, named by the id the import lands on. The import log names it on a `BACKUP` row beside the signature rows, whether or not the run ever needs it.
 
-The backup keeps the static-file payloads that `export_apex -apexlang` deliberately drops. That export drops them so `-files` stays the repository's one static-file channel and the repo never holds two copies; a backup is not a repository, and an application restored without its stylesheets is not the application that was there.
+**The first backup is the one kept.** A file already there is the application as it stood before this patch first reached that environment, so a later deploy of the same patch leaves it alone and exports nothing. The `BACKUP` row says so when that happens. A target holding no application has nothing to back up, which is the ordinary case on a fresh sandbox id.
+
+**The revert is the install a full export always gets.** The deploy already installs a patch's own `f<id>.sql` with an `@` line under its session directives, and the revert runs the backup exactly that way, through the same `patch_file_link`. The file removes the application and writes it again under its own id, workspace and component ids, static files included, so there is no second install path to keep in step.
+
+**Backups are never committed and never archived.** A backup is a full export of a target application, the way back from a failed deploy and nothing the patch ships. Writing one adds `/<patch root>/*/backup_*/` to the repository's private `.git/info/exclude`, the file `validate` already keeps its linked payloads out of git with, so the project's own `.gitignore` is never touched. `patch -archive` leaves every `backup_*/` folder out of the zip.
 
 <br>
 
 ## What a revert prints
 
-Under the scan row that called for it, never in a section of its own:
+Its own section, right after the verification section that called for it, one per application `-app` imported and the scan failed. An application an install script landed has no backup and prints nothing here. The verification section itself stays the header, the page table and the log.
+
+The backup restored the application:
 
 ```text
-VERIFYING APPLICATIONS:
------------------------
-  APP 1000 | ERROR | 3 error(s) in 1116 fragments
-    PAGE 1 | Column | sourcing | Column Name | PL/SQL: ORA-00904: "SOURCING": invalid identifier
-    LOG: 20260907-194318_apex_scan_1000.txt
-    REVERT: RESTORED
+APP 1000 REVERTED:
+------------------
+  RESTORED FROM BACKUP: backup_DEV/f1000.sql
+
+  LOG: 20260907-194318_apex_revert_1000.txt
 ```
 
-Every log this section names lives in `patch/<code>/logs_<ENV>/`, and both the patch code and the environment are on screen above it, so the rows carry the filename alone.
+The revert ran and did not restore it:
+
+```text
+ERROR - APP 1000 NOT REVERTED:
+------------------------------
+  BROKEN APP INSTALLED, REVERT FAILED
+  BACKUP: backup_DEV/f1000.sql
+  LOG: 20260907-194318_apex_revert_1000.txt
+```
+
+There was nothing to restore, which is the ordinary case on a fresh application id:
+
+```text
+ERROR - APP 1000 NOT REVERTED:
+------------------------------
+  BROKEN APP INSTALLED, NOTHING TO RESTORE
+```
+
+And `-continue`, which asks for no revert, prints the `WARNING` shown above.
+
+`BACKUP:` is relative to the patch folder and printed only when that file is on disk, so no line names a way back that is not there. `LOG:` is the basename: every log lives in `patch/<code>/logs_<ENV>/`, and the patch code and the environment are on screen above it.
 
 **The deploy stays failed.** Reverting undoes the write; it does not make the patch correct, so the run still ends `ERROR` and still exits non-zero.
 
-| Outcome | What it means | On screen |
-| --- | --- | --- |
-| `RESTORED` | The backup imported back and the target exports the application it held before the deploy | `REVERT: RESTORED` |
-| `FAILED` | The import refused, the connection did, or the application afterwards is not the one from before | `REVERT: FAILED`, with the reason under it |
-| `SKIPPED` | There was nothing to put back, which is the ordinary case on a fresh application id | no row at all |
+**A transcript ending on `SUCCESS` is not the proof.** After the revert the application is exported again, the same way the backup was, and the two exports have to be identical. A revert that ran and left the target somewhere else is `FAILED`, and the report names both.
 
-**`Import successful` is not the proof.** The backup tree is hashed as it is written, the application is exported again after the revert import and hashed the same way, and the two have to agree. A revert that ran and left the target somewhere else is `FAILED`, and the report names both hashes.
-
-**The proof is a content hash rather than APEX's `CHECKSUM-SH256`, and that is measured rather than preferred.** An import bumps `APEX_APPLICATIONS.FILES_VERSION`, APEX's cache token for `#APP_FILES#` URLs, and the checksum moves with it. Measured on APEX 26.1.0: an application reverted from its own backup exported byte-identical to that backup and still read a different checksum, and re-importing the same bytes answered a different value again. The checksum is stable to read and unstable across an import, so comparing it would have reported every revert as `FAILED`. The hash is `apex_signature`'s, the same one the deploy's own `DEPLOYING` row carries.
+**Nothing in the comparison is masked, and that is measured.** On APEX 26.1.0, two full exports of one application with no import between them are byte-identical, and so are the export taken before an APEXlang import and the one taken after that export was run back over it. The APEXlang import in between moved from 6 to over 30 lines, `FILES_VERSION`, the id offset and component ids among them; running the file back writes every one of them again. The only volatile line an export can carry is its `Date and Time:` comment, and the backup is exported without it. APEX's own `CHECKSUM-SH256` cannot answer this: an import bumps `FILES_VERSION` and the checksum moves with it.
 
 <br>
 
@@ -287,7 +320,7 @@ One file per reverted application, beside the scan that asked for it, and `.txt`
 patch/260907-1-CARGO/logs_DEV/20260907-194318_apex_revert_1000.txt
 ```
 
-It carries the application, the outcome, the backup folder, the content hash before the deploy and the one after the revert, so the claim that the target came back is readable without the console. Its header says which value those are, so no reader compares them to the `SH256:` rows in the import log beside it.
+It carries the application, the outcome, the backup file, and a hash of the backup's export and of the export taken after the revert, so the claim that the target came back is readable without the console. Both hashes open `EXPORT:`, so no reader compares them to the `SH256:` rows in the import log beside it.
 
 <br>
 

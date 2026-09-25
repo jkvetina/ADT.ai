@@ -18,6 +18,13 @@ fetched and stored and nothing read back.
 
 Version 5 (ADT #925) stamps `checksum_at`, when the checksum was taken, so a
 drift refusal can say how old the developer's base is.
+
+Version 6 (ADT #962) stamps `checksum_env`, the environment the export
+connected to when it read the checksum. A checksum is only meaningful against
+the environment it was taken from: exporting from PLAYGROUND and deploying to
+WHATEVER compares WHATEVER's live checksum against PLAYGROUND's recorded one,
+which can never match. Recording the environment beside the checksum is what
+lets a drift check read the RIGHT live value instead of the target's.
 """
 
 from __future__ import annotations
@@ -47,7 +54,8 @@ CREATE TABLE IF NOT EXISTS applications (
     checksum     TEXT,
     checksum_at  TEXT,
     base_commit  TEXT,
-    mirror_ref   TEXT
+    mirror_ref   TEXT,
+    checksum_env TEXT
 );
 CREATE TABLE IF NOT EXISTS developers (
     workspace TEXT NOT NULL,
@@ -100,6 +108,13 @@ ALTER TABLE applications ADD COLUMN checksum_at TEXT;
 COMMIT;
 """
 
+# Version 5 to 6, one added column, for the reason LIFT_2 gives (ADT #962).
+APEX_STORE_LIFT_5 = """
+BEGIN;
+ALTER TABLE applications ADD COLUMN checksum_env TEXT;
+COMMIT;
+"""
+
 APEX_APPLICATIONS_QUERY = "SELECT * FROM applications ORDER BY app_id"
 
 APEX_APPLICATION_QUERY = "SELECT * FROM applications WHERE app_id = ?"
@@ -118,10 +133,14 @@ def apex_application_upsert(fields: tuple[str, ...]) -> str:
     )
 
 
+# `checksum_env` travels with the checksum verbatim, like the merge base below
+# it: a re-export from a different environment must overwrite it, never merge
+# with whatever the previous export recorded (ADT #962).
 APEX_CHECKSUM_UPSERT = (
-    "INSERT INTO applications (app_id, checksum, checksum_at) VALUES (?, ?, ?) "
+    "INSERT INTO applications (app_id, checksum, checksum_at, checksum_env) VALUES (?, ?, ?, ?) "
     "ON CONFLICT(app_id) DO UPDATE SET "
-    "checksum = excluded.checksum, checksum_at = excluded.checksum_at"
+    "checksum = excluded.checksum, checksum_at = excluded.checksum_at, "
+    "checksum_env = excluded.checksum_env"
 )
 
 # Written verbatim rather than through the COALESCE upsert above, because both

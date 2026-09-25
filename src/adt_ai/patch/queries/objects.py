@@ -3,25 +3,9 @@ from __future__ import annotations
 INVALID_OBJECTS_QUERY = "SELECT object_type, object_name FROM user_objects WHERE status = 'INVALID'"
 
 # The signature `-app` reads off a live application before it imports anything
-# over it (ADT #592). One SELECT over the pipelined function, never
-# `export_apex`'s collection round trip: that helper exists because an export
-# needs the file CONTENTS of several members, and a checksum is one short scalar
-# in one member, so the collection, the COMMIT and the second query buy nothing.
-#
-# `CHECKSUM-SH256` is documented as "independent of IDs and can be compared
-# across instances and workspaces", which is what lets a sandbox import under a
-# different application id be compared against the application it came from.
-#
-# Measured against APEX 26.1.0 on SANDBOX, 2026-08-30: it answers
-# `SH256:<base64>` from a plain connection with no workspace security context
-# set up first, and an application id nothing is installed on RAISES
-# (`ORA-20987 ... not found`) rather than answering no rows.
-APEX_CHECKSUM_QUERY = """
-SELECT DBMS_LOB.SUBSTR(contents, 4000, 1) AS checksum
-FROM   TABLE(APEX_EXPORT.GET_APPLICATION(
-           p_application_id => :app_id,
-           p_type           => 'CHECKSUM-SH256'))
-""".strip()
+# over it (ADT #592) is `shared/queries/apex_checksum.APEX_CHECKSUM_BLOCK`, the
+# one block `export_apex` records the checksum through too (ADT #962). It
+# detaches any APEX session first, as `APEX_SET_BUILD_STATUS_BLOCK` below does.
 
 # Who last moved a live application, and when (ADT #925), so a drift refusal
 # can name the person whose work the developer is about to merge. The newer of
@@ -61,8 +45,8 @@ FETCH  FIRST 1 ROWS ONLY
 # which is why `apex_lock` carries the map back to the API value the setter takes.
 #
 # No rows is a target holding no application, which is what a fresh sandbox id
-# looks like; unlike `APEX_CHECKSUM_QUERY` above this one answers empty rather
-# than raising, because it reads a view rather than a pipelined export.
+# looks like; unlike the shared `APEX_CHECKSUM_BLOCK` this one answers empty rather
+# than raising, because it reads a view rather than calling the export API.
 APEX_BUILD_STATUS_QUERY = """
 SELECT build_status
 FROM   apex_applications
@@ -112,34 +96,40 @@ BEGIN
 END;
 """.strip()
 
-# The application `-app` keeps before it overwrites one (ADT #727). The same
-# pipelined read as `APEX_CHECKSUM_QUERY` above and for the same reason: the
-# collection round trip in `export_apex/queries` exists to serve a whole export
-# run, and a backup wants one application's members once, with no collection to
-# create, no COMMIT and no second query.
+# The application `-app` keeps before it overwrites one, as one full SQL export
+# (ADT #727, reshaped by #963). `p_split => FALSE` is `export_apex -full`'s
+# format, the `f<id>.sql` a deploy already installs with an `@` line, so the
+# revert runs the backup through that same path. Jan, 2026-09-25: *"FULL is
+# faster and contains all we need, thats the best choice for backup/restore"*.
 #
-# `APEXLANG` rather than `APPLICATION_SOURCE`, because the deploy overwrites the
-# target with an APEXlang import and the revert is that same import of that same
-# shape. A format the importer already accepts needs no second install path, and
-# the backup is then the exact artifact `apex import -input` reads.
+# A PL/SQL block read through `fetch_clob` rather than a SELECT over the
+# pipelined function, for the shared `APEX_CHECKSUM_BLOCK`'s reason: APEX 24.2 raises
+# ORA-14552 on the SELECT form. `p_with_runtime_instances` is never named, the
+# 24.1 floor `export_apex/queries/objects.py` documents on `EXPORT_FULL_QUERY`.
 #
-# Both payload columns come back in one pass. An APEXlang member is either text
-# (`contents`, the `.apx` source and the `.json` metadata) or bytes
-# (`contents_blob`, the `shared-components/static-files/` payloads), and asking
-# for them separately would export the whole application twice to split them.
-# `export_apex` drops the BLOB half so `-files` stays the repository's single
-# static-file channel; a backup is not a repository and keeps them, because an
-# application restored without its static files is not the application that was
-# there before the import.
-APEX_BACKUP_QUERY = """
-SELECT
-    t.name,
-    t.contents,
-    t.contents_blob
-FROM   TABLE(APEX_EXPORT.GET_APPLICATION(
-           p_application_id => :app_id,
-           p_split          => TRUE,
-           p_type           => 'APEXLANG')) t
+# Everything the application owns rides along -- public and private saved
+# reports, their subscriptions, translations, comments and ACL role assignments
+# -- because a restore that drops a user's saved report is not the application
+# that was there. `p_with_date => FALSE` keeps the export-date comment out, the
+# one line that moves between two exports of an unchanged application; measured
+# on SANDBOX, nothing else does, across a revert either (`apex_backup`).
+APEX_FULL_EXPORT_BLOCK = """
+DECLARE
+    l_files apex_t_export_files;
+BEGIN
+    l_files := APEX_EXPORT.GET_APPLICATION (
+        p_application_id            => :app_id,
+        p_split                     => FALSE,
+        p_with_date                 => FALSE,
+        p_with_ir_public_reports    => TRUE,
+        p_with_ir_private_reports   => TRUE,
+        p_with_ir_notifications     => TRUE,
+        p_with_translations         => TRUE,
+        p_with_comments             => TRUE,
+        p_with_acl_assignments      => TRUE
+    );
+    :result := CASE WHEN l_files.COUNT > 0 THEN l_files(1).contents END;
+END;
 """.strip()
 
 # What `-drop` reads before it removes anything (ADT #592). Two facts per

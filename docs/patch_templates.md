@@ -162,13 +162,19 @@ That is why `-create` opens a connection at all, and it opens one only when a ta
 
 So the coverage is Oracle's own: columns added, dropped and retyped, `NOT NULL` and `DEFAULT`, and `PRIMARY KEY`, `UNIQUE`, `FOREIGN KEY` and `CHECK` added or dropped. Three things are worth knowing before you read a helper:
 
-- **A renamed column is a drop and an add.** The comparison matches columns by name, so the data in the old column does not survive the patch. Write the `RENAME COLUMN` into `patch_scripts/` yourself when you need the rows kept.
+- **A renamed column is a drop and an add.** The comparison matches columns by name, so the data in the old column does not survive the patch. Write the `RENAME COLUMN` into `patch_scripts/` yourself when you need the rows kept, and see below: `-create` reads that script as yours and never also writes its own diff over it.
 - **An index is not part of a table.** Indexes are their own object files under `path_objects`, so adding or removing one travels the ordinary object path and never appears in an ALTER helper.
 - **A `DEFAULT` cannot be removed by the comparison.** Oracle answers `ORA-39267: Cannot remove default from table column.` and no statement; ADT.ai ships that sentence as a comment, so it reaches your deploy log where the missing statement would have run.
 
-A generated ALTER runs **ahead of** its own table file in the patch script, because a table with an ALTER already exists on the target: its exported file then contributes a no-op `CREATE TABLE IF NOT EXISTS` plus `COMMENT ON COLUMN` lines describing the shape the ALTER just produced. Hand-written scripts you put in `tables_after/` still run after the files.
+Every table carrying an ALTER, generated or one you wrote yourself, is linked commented out in the patch script rather than run: the ALTER is what reaches the new shape, so the exported `CREATE TABLE` and its `COMMENT ON COLUMN` lines never run a second time.
 
-A table file without `IF NOT EXISTS` is linked commented out instead, because running it on a target that holds the table would stop the deploy on `ORA-00955`.
+A reference line above the commented `@` names the ALTER script(s) that replace it, and that link is never removed, so uncommenting it is your own reversible call. The ALTER itself, hand-written scripts included, always runs **ahead of** the table's own row, even one you put in `tables_after/`, which for anything else still runs after the files.
+
+**A hand-written `ALTER TABLE` claims its table before `-create` ever asks Oracle for a diff.** Put the statement anywhere under `patch_scripts/{$PATCH_CODE}/`, whatever slot or filename, and `-create` scans your own scripts for it first: an ALTER can need data work a diff cannot express, a `NOT NULL` backfill, or be a rename the diff would read as drop-and-add.
+
+A match means no diff is generated for that table at all, `USER ALTER SCRIPTS:` names the table and your script on the finished screen, and your file is never overwritten, even one carrying the generator's own `<table>.<n>.sql` name.
+
+A table with no ALTER at all, and whose export carries no `IF NOT EXISTS`, is still linked commented out on its own, because running it against a target that already holds the table would stop the deploy on `ORA-00955`.
 
 If the target database refuses one of the two versions, no comparison happens and `-create` says so under `WARNING - NO TABLE DIFF:`, with Oracle's own error under the file. The patch still builds; the table simply carries no ALTER, and that is the one case where a green deploy would otherwise change nothing.
 

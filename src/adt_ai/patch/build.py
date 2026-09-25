@@ -12,11 +12,12 @@ it needs from the workspace is which folder that is, so the workspace resolves
 the name and hands it over.
 
 **Everything that can refuse runs before the first byte is written**, which is
-the ordering rule the three gates below share: `require_forced_refresh` (a folder
+the ordering rule the four gates below share: `require_forced_refresh` (a folder
 already deployed), `require_fresh_full_app_exports` (an APEX full export older
-than its own components) and `_reject_unresolved_merges` (a file still carrying
-conflict markers). A refusal therefore leaves no folder, no scripts and no
-snapshots behind.
+than its own components), `_reject_unresolved_merges` (a file still carrying
+conflict markers) and `check_patch_trees` (an APEXlang tree the compiler refuses,
+ADT #964). A refusal therefore leaves no folder, no scripts and no snapshots
+behind.
 """
 
 from __future__ import annotations
@@ -26,8 +27,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from adt_ai.patch.apex_drift import changed_applications
 from adt_ai.patch.apex_import import one_target_refusal
-from adt_ai.patch.content import CONTENT_MODE_COMMITTED, file_present
+from adt_ai.patch.apex_validate import ApexlangValidation, check_patch_trees
+from adt_ai.patch.content import CONTENT_MODE_COMMITTED, CONTENT_MODE_LOCAL, file_present
 from adt_ai.patch.create import (
     _patch_files,
     _write_generated_patch_scripts,
@@ -45,6 +48,7 @@ from adt_ai.patch.scripts import collect_patch_scripts, reset_patch_scripts
 from adt_ai.patch.snapshots import _write_snapshots
 from adt_ai.patch.staleness import export_freshness, require_forced_refresh
 from adt_ai.shared.commit_discovery import CommitRecord
+from adt_ai.shared.git_uncommitted import every_uncommitted_path
 
 HASH_STAMP_FORMAT = "%Y-%m-%d %H:%M"
 
@@ -68,6 +72,8 @@ def build_database_patch(
     files_ws: bool = False,
     hash_tables: Mapping[str, str] | None = None,
     target_app_id: int | None = None,
+    signature_gateway_factory: Callable[[str, str], Any] | None = None,
+    validation: ApexlangValidation | None = None,
 ) -> DatabasePatchResult:
     """Write ``folder`` and report what went into it.
 
@@ -95,6 +101,16 @@ def build_database_patch(
     named for the id the import lands on, and `DEPLOY.sql` says between them
     which application is imported as which. One id over two APEXlang
     applications is refused before anything is written, as `-deploy` refuses it.
+
+    ``signature_gateway_factory`` is the drift warning's own connection (ADT
+    #962), separate from ``gateway_factory``: the warning reads the export's
+    recorded environment, never `-target`, so it needs an environment on top of
+    a schema where the ALTER connection above it needs only the latter.
+
+    ``validation`` is the compile gate (ADT #964): the tree of every APEXlang
+    application the patch ships goes through `validate`'s compiler before
+    anything is written, and a refused one raises ``ApexlangValidationError``.
+    `None` compiles nothing, which is every caller but the CLI.
     """
     del target_env
     # Ahead of every write, and ahead of the file selection, so a refusal costs
@@ -127,6 +143,10 @@ def build_database_patch(
     # in the committed mode (ADT #812). Every reader of bytes below is handed it.
     pinned = selection.pinned
     _reject_unresolved_merges(root, files)
+    # ADT #964: an APEXlang tree the compiler refuses stops the build here, ahead
+    # of the ALTER connection and the `mkdir`, so a refusal leaves no folder. Jan:
+    # *"It should be validated during patch creation and before you deploy."*
+    apex_notes = check_patch_trees(root, config, files, validation)
     # A file the database has already moved past is snapshotted as-is, and
     # deploying it reverts the live object (ADT #261). Read here rather than in
     # the CLI so every caller of `create_database_patch` gets the answer, and
@@ -137,6 +157,10 @@ def build_database_patch(
     # warning, not a show stopper"*), which is why the build continues below with
     # the answer in hand rather than stopping on it.
     freshness = export_freshness(root, config, files)
+    # The `-deploy` signature gate asked early, as a warning (ADT #957): Jan,
+    # *"that is a bit late ... so he can rebase before the deployment fail"*.
+    # On the same connection the table ALTERs use, before anything is written.
+    changed_apps = changed_applications(root, config, files, signature_gateway_factory)
     present_files = {
         path: file_present(
             root, path, config, mode=content_mode, records=records,
@@ -204,6 +228,11 @@ def build_database_patch(
             content_mode  = content_mode,
             hash_previous = hash_previous,
         ),
+        # This run's own ALTERs, generated and claimed (ADT #969): every TABLE
+        # among them stays linked but commented out, and a claiming script
+        # sitting in an `after` slot is pulled ahead of the table files it
+        # names.
+        generated = generated,
         target_app_id = target_app_id,
     )
     # After every install script is on disk, so it sees exactly what the folder
@@ -241,6 +270,9 @@ def build_database_patch(
         scripts           = scripts,
         unresolved_tables = generated.unresolved_tables,
         refused_tables    = generated.refused_tables,
+        claimed_tables    = generated.claimed_tables,
+        changed_apps      = changed_apps,
+        apex_notes        = apex_notes,
         changed_objects   = freshness.changed,
         unclocked_schemas = freshness.unclocked,
         undecodable_files = undecodable,
@@ -259,7 +291,55 @@ def build_database_patch(
             generated = generated,
             present_files = present_files,
         ),
+        uncommitted = _repo_uncommitted(
+            root, folder, set(generated.paths), mode=content_mode
+        ),
     )
+
+
+def _repo_uncommitted(
+    root: Path,
+    folder: Path,
+    generated_paths: set[str],
+    *,
+    mode: str,
+) -> list[str]:
+    """Every file this build's own commit does not yet cover, repo-wide (ADT #967).
+
+    Jan, mid-run: *"if we have uncommitted changes in the repo, it should list
+    the files as a file tree ... Looks like you are printing something, but not
+    all uncommitted files, why is that?"* The old `WARNING - UNCOMMITTED FILES:`
+    asked a narrower question, `SchemaReport.uncommitted`'s own `_uncommitted()`
+    (removed by this card) only ever checked the patch's OWN files; this asks
+    git about the whole checkout, once, and `cli/patch_create_warnings.py`
+    renders whatever comes back as a file tree.
+
+    Two exclusions, both about what THIS build itself just did rather than what
+    was already sitting in the checkout dirty: a generated helper this run wrote
+    (``generated_paths``, the same set `report.py` excludes from its own,
+    narrower listing) and anything under the patch folder this call is in the
+    middle of writing -- a brand new `patch/<code>/` is untracked by
+    definition, and reporting it here would be the build warning about its own
+    output.
+
+    **Silent under `-local`**, the same carve-out the old `_uncommitted` made:
+    that mode ships the working tree on purpose, so an uncommitted file there is
+    the instruction rather than a surprise.
+    """
+    if mode == CONTENT_MODE_LOCAL:
+        return []
+    try:
+        folder_prefix = folder.resolve().relative_to(root.resolve()).as_posix() + "/"
+    except ValueError:
+        # The patch folder sits outside `root` (a caller's own arrangement,
+        # never the CLI's): nothing to strip, so every dirty path is reported.
+        folder_prefix = None
+    return [
+        path
+        for path in every_uncommitted_path(root)
+        if path not in generated_paths
+        and (folder_prefix is None or not path.startswith(folder_prefix))
+    ]
 
 
 def _reset_generated_artifacts(folder: Path, config: dict[str, Any]) -> None:

@@ -48,14 +48,15 @@ from adt_ai.cli.patch_deploy_render import (
     _print_still_invalid_objects,
     _print_view_mismatches,
     print_deploy_patch_contents,
-    print_deployment_table,
 )
 from adt_ai.cli.patch_hash_mode import BASELINE_STAMP_FORMAT, print_baseline_stats
 from adt_ai.cli.patch_preview_render import (
     _ignored_create_arguments,
     patch_scan_commits,
 )
+from adt_ai.cli.patch_revert_render import print_apex_reverts
 from adt_ai.patch.apex_import import resolve_target
+from adt_ai.patch.apex_validate import ApexlangValidation, check_deploy_trees
 from adt_ai.patch.baseline_advance import merge_landed_files
 from adt_ai.patch.hashes import read_baseline
 from adt_ai.patch.models import DeploymentResult
@@ -74,6 +75,7 @@ def run_patch_deploy(
     config: dict[str, object],
     gateway_factory: GatewayFactory | None,
     ref: str | None,
+    validation: ApexlangValidation | None = None,
 ) -> int:
     """Ship the patch exactly as it stands on disk.
 
@@ -101,7 +103,9 @@ def run_patch_deploy(
     if ignored:
         print_adt_header("IGNORING WITH -deploy:", ", ".join(ignored))
         print("  -deploy deploys the existing patch unchanged")
-        print("  drop -deploy to build the patch, then deploy it in a separate run")
+        print()
+        print("  1) drop -deploy to build the patch")
+        print("  2) deploy it in a separate run")
         print()
     # Header, patch, connect, deploy, old ADT's order (`init()`:
     # show_matching_commits at patch.py:230, then create_patch's PATCH OVERVIEW
@@ -119,6 +123,14 @@ def run_patch_deploy(
     # What the run is about to ship, listed with no flag asked for it (ADT #353):
     # the same section `-patch` and `-create` print.
     print_patch_plan(workspace, config, ref)
+    # The compile gate before any connection (ADT #966, Jan: *"VALIDATING should
+    # be done BEFORE connecting"*); the deploy's own gate then finds it passed.
+    apex_target = resolve_target(args.app)
+    if apex_target.selected:
+        _folder, plan = workspace.deployment_plan(config, ref=ref)
+        check_deploy_trees(
+            root, config, [item.app_id for item in plan if item.app_id], validation
+        )
     selected_gateway_factory, dev_gateway_factory, connection_provider = (
         _patch_deploy_gateway_factories(args, root, config, gateway_factory)
     )
@@ -147,11 +159,17 @@ def run_patch_deploy(
         force              = args.force,
         continue_on_error  = args.continue_patch,
         reporter           = reporter,
+        # The cross-environment signature check's own connection (ADT #962):
+        # an export recorded on a different environment than `-target` is
+        # compared there, never against the target being overwritten.
+        signature_gateway_factory = patch_env_gateway_factory(
+            args, root, config, gateway_factory
+        ),
         # `-app` (ADT #592). Resolved here rather than inside the runner so the
         # one-id refusal keeps firing where `_run_patch_command` already fires
         # it, at the top of the handler and ahead of everything a rejected flag
         # should not have to pay for.
-        apex_target        = resolve_target(args.app),
+        apex_target        = apex_target,
         # Who a retargeted import is stamped as (ADT #682). Resolved here for
         # the reason `-app` is, and because `-config-dir` is only known at this
         # edge; `patch/apex_import.build_import_script` owns what it writes.
@@ -159,22 +177,17 @@ def run_patch_deploy(
             load_identity(_config_search_paths(args.config_dir, root, _repo_root())),
             root,
         ),
+        # The compile gate (ADT #964), ahead of `init`; a tree the `-create`
+        # half of this run passed is not compiled again.
+        validation         = validation,
     )
-    if not reporter.streamed:
-        # A SKIPPED deploy never enters the script loop, so nothing streamed and
-        # the finished table is still the report.
-        print_adt_header("DEPLOYING PATCH:", reporter.folder)
-        print_deployment_table(result.results, result.plan)
     _print_deployment_errors(result.results, root)
     _print_view_mismatches(result.view_mismatches)
     _print_still_invalid_objects(result.still_invalid)
-    _print_apex_scans(
-        result.apex_scans,
-        root,
-        result.apex_reverts,
-        waived = result.scan_waived,
-        locks  = result.apex_locks,
-    )
+    _print_apex_scans(result.apex_scans, root, locks=result.apex_locks)
+    # What the run did about each application that failed its scan (`#963`),
+    # right under the verification section that names the failure.
+    print_apex_reverts(result.apex_scans, result.apex_backups, result.apex_reverts)
     _print_apex_notes(result.apex_notes)
     advance_baseline(
         root, config, args, workspace,
@@ -399,6 +412,52 @@ def patch_build_gateway_factory(
             )
             resolved.append(target)
         return resolved[0](schema)
+
+    return factory
+
+
+def patch_env_gateway_factory(
+    args: argparse.Namespace,
+    root: Path,
+    config: dict[str, object],
+    gateway_factory: GatewayFactory | None,
+) -> Callable[[str, str], QueryGateway]:
+    """An environment-aware connection for a signature read (ADT #962).
+
+    `patch -create`'s drift warning and `patch -deploy`'s cross-environment
+    check both read a checksum on the environment `export_apex` recorded, never
+    `-target`: a checksum recorded on PLAYGROUND is meaningless read against
+    WHATEVER's live application. Both ask this factory rather than
+    `patch_build_gateway_factory`'s, which only ever opens `-target`'s.
+
+    An injected ``gateway_factory`` (every test) answers every environment the
+    same way, exactly as it answers every schema the same way today: there is
+    only one fake database in a test, so the environment argument is dropped
+    and the schema alone is cached, the same cache `patch_build_gateway_factory`
+    wraps its own injected factory in.
+
+    Resolved for real, an empty environment (`-create`'s own courtesy for an
+    export that recorded none) falls back to `-target`, else the connection
+    file's default -- the same fallback `_patch_deploy_gateway_factories` uses
+    for its own target, so the two agree on what "no environment recorded"
+    means. `-deploy`'s cross-environment check never passes an empty one: it
+    only calls here when the export recorded a real environment.
+
+    **Resolved on first use, never here**, for the reason
+    `patch_build_gateway_factory` is: `-create` reaches this factory whether or
+    not the patch carries an APEXlang application to warn about, and `-deploy`
+    reaches it whether or not any export crossed an environment.
+    """
+    debug = getattr(args, "debug", False)
+    if gateway_factory:
+        wrapped = cached_schema_gateway_factory(gateway_factory, debug=debug)
+        return lambda _env, schema: wrapped(schema)
+
+    def factory(env: str, schema: str) -> QueryGateway:
+        startup = _load_startup_context(args)
+        resolved_env = env or args.target or startup.connections.default_environment
+        connection = startup.connections.resolve(environment=resolved_env, schema=schema)
+        return build_gateway(startup, connection, debug=debug, project_root=root)
 
     return factory
 

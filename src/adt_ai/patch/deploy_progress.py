@@ -179,6 +179,29 @@ class DeploymentProgressReader:
         self._notify(self.deployed, self._total)
 
 
+def _deploy_progress_reader(
+    allowed: frozenset[str],
+    total: int,
+    reporter: Any,
+) -> DeploymentProgressReader | None:
+    """A line reader for this script, or ``None`` when nobody is watching.
+
+    ``None`` is the load-bearing half (ADT #434). ``sqlcl_request`` only moves the
+    child onto a pty when it is given a reader, so a reporter with no ``advance``
+    hook, a caller that passed no reporter at all, and a script with nothing
+    countable in it each keep the plain ``subprocess.run`` transport the deploy
+    has always used. The pty is bought only where its output is actually
+    rendered.
+
+    Beside the reader it builds since ADT #964 took `deploy_run.py` to the 24 KB
+    context guard.
+    """
+    advance = getattr(reporter, "advance", None)
+    if advance is None or not allowed:
+        return None
+    return DeploymentProgressReader(allowed, total, advance)
+
+
 def _deployment_progress(output: str, allowed: frozenset[str]) -> int | None:
     """How many countable files a run's transcript actually reached.
 
