@@ -32,7 +32,11 @@ from typing import Any
 
 from adt_ai.cli.commands_patch_actions import run_archive_patches, run_install_script
 from adt_ai.cli.commands_patch_drop import run_drop_applications
-from adt_ai.cli.commands_patch_upload import APP_REQUIRED_MESSAGE, run_patch_upload
+from adt_ai.cli.commands_patch_upload import (
+    APP_REQUIRED_MESSAGE,
+    UPLOAD_TEMPLATE_MESSAGE,
+    run_patch_upload,
+)
 from adt_ai.cli.constants import (
     GatewayFactory,
     PatchError,
@@ -42,7 +46,7 @@ from adt_ai.cli.patch_create_render import print_create_screen
 from adt_ai.cli.patch_hash_mode import HashSelection, apply_hash_mode, hash_mode_error
 from adt_ai.cli.patch_preview_render import _content_mode, _selected_content_modes
 from adt_ai.patch import settings as patch_settings
-from adt_ai.patch.apex_import import resolve_target
+from adt_ai.patch.apex_import import AppIdTemplate, resolve_target
 from adt_ai.patch.apex_validate import ApexlangValidation
 from adt_ai.patch.baseline_tables import read_baseline_tables
 from adt_ai.patch.content import CONTENT_MODE_FLAGS
@@ -146,6 +150,10 @@ def upload_flag_refusal(args: argparse.Namespace) -> str | None:
         return f"-upload CANNOT BE COMBINED WITH {', '.join(clashing)}"
     if not args.app:
         return APP_REQUIRED_MESSAGE
+    # One run binds to one application (`commands_patch_upload._app_id`), so a
+    # template that expands per application has nothing to expand over (ADT #974).
+    if any(isinstance(value, AppIdTemplate) for value in args.app):
+        return UPLOAD_TEMPLATE_MESSAGE
     schemas = [value for group in (args.schema or []) for value in group]
     if len(schemas) > 1:
         named = ", ".join(schemas)

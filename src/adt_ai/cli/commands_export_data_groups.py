@@ -18,7 +18,7 @@ from adt_ai.export_data.groups import (
     parse_group_prefixes,
     plan_data_group_moves,
 )
-from adt_ai.export_data.runner import _data_folder
+from adt_ai.export_data.runner import _data_folder, _merge_extension
 from adt_ai.shared.config import as_int
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 
@@ -35,7 +35,7 @@ def run_data_groups_move(
     route only those prefixes and narrow the preview to them; bare `-groups`
     auto-detects groups from how the tree is already arranged. The plan prints
     on every run and moves nothing; `-force` applies it. A table's CSV, its
-    `.sql` merge script, and its sidecar directory move together, the one
+    merge script, and its sidecar directory move together, the one
     place export_data's own file shape differs from `export_db`'s.
     """
     prefixes = parse_group_prefixes(args.groups)
@@ -62,7 +62,7 @@ def run_data_groups_move(
             ]
             detected = detect_groups_by_prefix(names, groups_min)
             rules = GroupRules(type_rules={"DATA": detected}) if detected else GroupRules.empty()
-        plan = plan_data_group_moves(data_folder, rules)
+        plan = plan_data_group_moves(data_folder, rules, _merge_extension(dict(config)))
         code = execute_group_move(
             plan,
             emit=print,

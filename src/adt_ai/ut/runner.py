@@ -36,7 +36,13 @@ from adt_ai.ut.inventory import (
     SuiteTiming,
     TestOutcome,
 )
-from adt_ai.ut.junit import in_declaration_order, parse_junit, row_line, unreported
+from adt_ai.ut.junit import (
+    in_declaration_order,
+    parse_junit,
+    row_line,
+    unreported,
+    unreported_tests,
+)
 from adt_ai.ut.naming import UtNaming
 
 # The records a run is described by moved to `ut/session.py` under `#436`, when
@@ -268,7 +274,9 @@ class Ut3Runner:
         document = "\n".join(row_line(row) for row in rows).strip()
         outcomes = parse_junit(package, document)
         if outcomes:
-            return in_declaration_order(package, outcomes)
+            return in_declaration_order(
+                package, outcomes + unreported_tests(package, outcomes)
+            )
         return unreported(package, document)
 
 
@@ -354,5 +362,6 @@ __all__ = [
     "row_line",
     "time",
     "unreported",
+    "unreported_tests",
     "uuid",
 ]

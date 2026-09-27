@@ -52,11 +52,27 @@ def merge_sql_from_csv(
     pointing at it.
     """
     columns, batches = _csv_select_batches(path, config, column_types)
-    if not columns:
-        return ""
     # The MERGE/DELETE target carries the owner under `keep_owner`; every config
     # lookup below still keys off the unqualified `table_name`.
     table = (sql_table_name or table_name).lower()
+    table_merge_config = merge_config(config, table_name)
+    if not columns:
+        # `#982` V5, Jan's yes on `#985`: `delete: true` over an empty export
+        # empties the target on replay, the way the source is. Without it there
+        # is nothing to run and the caller writes the comment-only stub.
+        if not is_enabled(table_merge_config.get("delete"), default=False):
+            return ""
+        return queries.merge_statement(
+            table        = table,
+            columns      = [],
+            csv_selects  = [],
+            primary_join = "",
+            updates      = "",
+            skip_delete  = "",
+            skip_insert  = "--",
+            skip_update  = "--",
+            where_filter = where_filter,
+        )
     lower_columns = [column.lower() for column in columns]
     lower_primary = [column.lower() for column in primary_columns]
     # An ALWAYS identity column is exported and may be the key, but Oracle
@@ -69,7 +85,6 @@ def merge_sql_from_csv(
         if column not in never_updated
     ]
     insert_columns = [column for column in lower_columns if column not in identity]
-    table_merge_config = merge_config(config, table_name)
     skip_delete = "" if is_enabled(table_merge_config.get("delete"), default=False) else "--"
     skip_insert = (
         ""
@@ -86,6 +101,11 @@ def merge_sql_from_csv(
         for column in lower_primary
     ) + "\n"
     updates = queries.update_assignments(update_columns, skip_update)
+    if skip_insert and skip_update:
+        # A MERGE with both WHEN clauses commented out is a statement Oracle
+        # refuses, so it is left out and the DELETE stands on its own (`#982`).
+        # With nothing to load there is nothing to batch either.
+        batches = batches[:1]
     statements = []
     for index, batch in enumerate(batches):
         # The DELETE empties the table for the whole reload, so only the first
@@ -110,7 +130,13 @@ def merge_sql_from_csv(
     return "".join(statements)
 
 
-def no_merge_script(table_name: str, *, keyed: bool, where_filter: str) -> str:
+def no_merge_script(
+    table_name: str,
+    *,
+    keyed: bool,
+    where_filter: str,
+    identity_key: bool = False,
+) -> str:
     """What `<table>.sql` holds once an export can no longer generate its MERGE (`#958`).
 
     The reason is the one a reader needs to get the MERGE back: a key to add,
@@ -119,6 +145,13 @@ def no_merge_script(table_name: str, *, keyed: bool, where_filter: str) -> str:
     """
     if not keyed:
         reason = "the table has no primary key or unique constraint to match rows on"
+    elif identity_key:
+        # `#982`: every environment numbers that column itself, so a replay
+        # would match nothing and insert every row again
+        reason = (
+            "its only key is a GENERATED ALWAYS identity column, which every "
+            "environment numbers on its own"
+        )
     elif where_filter:
         reason = "no row matched the configured `where` filter"
     else:

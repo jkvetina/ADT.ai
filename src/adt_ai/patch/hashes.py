@@ -28,7 +28,7 @@ header. Read the baseline rather than reproducing a hash by hand.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -73,6 +73,10 @@ def baseline_filename(target_env: str) -> str:
 #: shape. Its presence is what marks a patch as hash-built, which is how
 #: `-deploy` tells the two modes apart with no extra flag.
 PATCH_HASHES_FILE = "hashes.log"
+
+#: The hash column of a receipt row for a file the patch DELETED (ADT #983).
+#: Not a hash any payload can produce, so the two kinds of row cannot collide.
+DELETED_MARK = "DELETED"
 
 
 @dataclass(frozen=True)
@@ -310,13 +314,17 @@ def merge_into_baseline(
     *,
     target_env: str,
     stamp: str,
-) -> tuple[Path, int]:
+    removed: Iterable[str] = (),
+) -> tuple[Path, int, int]:
     """Advance the baseline by exactly what a patch shipped, and nothing else.
 
     Everything the patch did not carry keeps the hash and commit it already had,
     which is what leaves work done between `-create` and `-deploy` pending
-    instead of silently recording it as deployed. Returns the number of paths
-    that actually moved, so the console can report it.
+    instead of silently recording it as deployed. ``removed`` is the patch's
+    deletions that landed, taken OUT of the baseline (ADT #983): only adding
+    left a deployed deletion recorded as held, so every later `-create -hash`
+    selected it again. Returns how many paths moved and how many left, so the
+    console can report both.
     """
     existing_hashes: dict[str, str] = {}
     existing_commits: dict[str, int] = {}
@@ -325,6 +333,9 @@ def merge_into_baseline(
     advanced = sum(
         1 for file, value in shipped.items() if existing_hashes.get(file) != value
     )
+    gone = {file for file in removed if file in existing_hashes and file not in shipped}
+    for file in gone:
+        del existing_hashes[file]
     existing_hashes.update(shipped)
     existing_commits.update(commits)
     written = write_baseline(
@@ -337,7 +348,7 @@ def merge_into_baseline(
         # the target however careful the three rules above are (`#452`).
         source     = DEPLOYED,
     )
-    return written, advanced
+    return written, advanced, len(gone)
 
 
 def replace_measured_scope(
@@ -402,6 +413,7 @@ def write_patch_hashes(
     *,
     patch_code: str,
     stamp: str,
+    deleted: Iterable[str] = (),
 ) -> Path:
     """Record what this patch ships, inside the patch folder.
 
@@ -409,22 +421,48 @@ def write_patch_hashes(
     makes the folder self-describing, and its PRESENCE is the hash-built marker
     `-deploy` reads to decide whether advancing the baseline is this patch's to
     do. A commit-built patch has none and advances nothing.
+
+    ``deleted`` rides the same file as `<path> | <commit> | DELETED` rows (ADT
+    #983), because a deletion is part of what the patch carries: the deploy
+    that lands it takes the path out of the baseline, or the next hash patch
+    selects the same deletion again.
     """
+    gone = sorted(set(deleted) - set(shipped))
+    rows = {**shipped, **dict.fromkeys(gone, DELETED_MARK)}
+    counted = f"{len(shipped)} files" + (f", {len(gone)} deleted" if gone else "")
     return _write_hash_lines(
         folder / PATCH_HASHES_FILE,
-        shipped,
+        rows,
         commits,
-        header = f"# patch {patch_code} {stamp} ({len(shipped)} files)",
+        header = f"# patch {patch_code} {stamp} ({counted})",
     )
 
 
 def read_patch_hashes(folder: Path) -> tuple[dict[str, str], dict[str, int]]:
-    """What a patch folder recorded, or two empty dicts for a commit-built one."""
+    """What a patch folder shipped, or two empty dicts for a commit-built one.
+
+    Its deletions are left out, since nothing shipped under them; they are
+    `read_patch_deletions`'s answer.
+    """
     path = folder / PATCH_HASHES_FILE
     if not path.is_file():
         return {}, {}
     hashes, commits, _stamp, _source = _parse_hash_lines(path)
-    return hashes, commits
+    shipped = {file: value for file, value in hashes.items() if value != DELETED_MARK}
+    return shipped, {file: number for file, number in commits.items() if file in shipped}
+
+
+def read_patch_deletions(folder: Path) -> list[str]:
+    """The paths a hash-built patch deleted, empty for any other folder.
+
+    A receipt written before ADT #983 carries none, and reads as a patch that
+    deleted nothing, which is what it recorded.
+    """
+    path = folder / PATCH_HASHES_FILE
+    if not path.is_file():
+        return []
+    hashes, _commits, _stamp, _source = _parse_hash_lines(path)
+    return sorted(file for file, value in hashes.items() if value == DELETED_MARK)
 
 
 def _write_hash_lines(

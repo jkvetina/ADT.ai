@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.patch import queries, settings
+from adt_ai.patch.apex_import import AppTarget
 from adt_ai.patch.apex_validate import ApexlangValidation
 from adt_ai.patch.build import HASH_STAMP_FORMAT, build_database_patch
 from adt_ai.patch.content import (
@@ -406,7 +407,7 @@ class PatchWorkspace:
         gateway_factory: Callable[[str], Any] | None = None,
         files_ws: bool = False,
         hash_tables: Mapping[str, str] | None = None,
-        target_app_id: int | None = None,
+        target_app_id: AppTarget | None = None,
         signature_gateway_factory: Callable[[str, str], Any] | None = None,
         validation: ApexlangValidation | None = None,
     ) -> DatabasePatchResult:

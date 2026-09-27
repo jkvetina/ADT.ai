@@ -8,6 +8,7 @@ from typing import Any
 from adt_ai.patch import queries, stages
 from adt_ai.patch import settings as _settings
 from adt_ai.patch import signatures as _signatures
+from adt_ai.patch.apex_import import AppTarget, landing_id
 from adt_ai.patch.content import (
     CONTENT_MODE_COMMITTED,
     CONTENT_MODE_NOSNAP,
@@ -18,6 +19,8 @@ from adt_ai.patch.create_apex import (
     _is_apexlang_application,
 )
 from adt_ai.patch.files import (
+    _dependency_edges,
+    _order_by_dependencies,
     _patch_map,
 )
 from adt_ai.patch.generated_helpers import is_alter_helper_filename, linked_group
@@ -32,6 +35,10 @@ from adt_ai.patch.helpers import (  # noqa: F401  (re-exported for existing impo
 )
 from adt_ai.patch.immutables import NEVER_RECREATED, disabled_link
 from adt_ai.patch.install_links import _file_link_rows, _object_link
+from adt_ai.patch.layout import apex_app_id
+from adt_ai.patch.layout import (
+    database_object_name as _database_object_name,
+)
 from adt_ai.patch.layout import (
     database_object_type as _database_object_type,
 )
@@ -137,14 +144,15 @@ def _write_patch_files(
     present_files: Mapping[str, bool],
     never_recreated: Mapping[str, str] | None = None,
     generated: GeneratedScripts,
-    target_app_id: int | None = None,
+    target_app_id: AppTarget | None = None,
 ) -> dict[str, Path]:
     """Write one install script per group, keyed by that group.
 
     ``target_app_id`` is `-app <id>` (ADT #935): an APEXlang application's two
     scripts are named for the id the import lands on, still keyed by the group
     their files are grouped by. Any other script installs itself and keeps its
-    own name.
+    own name. A `#` template (ADT #974) is expanded per application here, so
+    everything below this loop is handed one application's own landing id.
 
     ``generated`` is this run's own answer for which TABLE files carry an
     ALTER, generated or claimed (ADT #969): read once here rather than per
@@ -173,6 +181,9 @@ def _write_patch_files(
     workspace = _signatures.collect_workspace_signatures(
         root, files, config, present_files=present_files,
     )
+    # The graph `ensure_fresh_dependency_graph` just made current, read once:
+    # every group of every schema script is ordered off it (ADT #984).
+    edges = _dependency_edges(root)
     for group in sorted({_patch_group(path, config, owners) for path in files}):
         group_files = [path for path in files if _patch_group(path, config, owners) == group]
         retarget_to: int | None = None
@@ -181,7 +192,9 @@ def _write_patch_files(
             # `patch -deploy -app` issues (ADT #735), `init` before it and `end`
             # after it; any other application is one script that installs itself.
             if _is_apexlang_application(group_files, config):
-                retarget_to = target_app_id
+                retarget_to = landing_id(
+                    target_app_id, apex_app_id(group_files[0], config) or 0,
+                )
                 payloads = _apexlang_patch_payloads(
                     root, folder, group_files, records, config,
                     patch_code    = patch_code,
@@ -189,7 +202,7 @@ def _write_patch_files(
                     schema        = group,
                     content_mode  = content_mode,
                     present_files = present_files,
-                    target_app_id = target_app_id,
+                    target_app_id = retarget_to,
                 )
             else:
                 payloads = {
@@ -220,6 +233,7 @@ def _write_patch_files(
                     never_recreated=never_recreated,
                     altered_tables=altered_tables,
                     claimed_names=claimed_names,
+                    edges=edges,
                 )
             }
         for script_group, payload in payloads.items():
@@ -246,6 +260,7 @@ def _database_patch_payload(
     never_recreated: Mapping[str, str] | None = None,
     altered_tables: Mapping[str, tuple[str, ...]],
     claimed_names: frozenset[str],
+    edges: Mapping[str, list[str]] | None = None,
 ) -> str:
     signatures = signatures or []
     workspace = workspace or []
@@ -280,7 +295,11 @@ def _database_patch_payload(
     )
     deleted_cache: dict[tuple[str, ...], set[tuple[str, str, str]]] = {}
     for group in _payload_groups(files, config):
-        group_files = [path for path in files if _database_patch_group(path, config) == group]
+        group_files = _dependency_ordered(
+            [path for path in files if _database_patch_group(path, config) == group],
+            config,
+            edges or {},
+        )
         # `patch_postfix_*` through the resolver `_known_slots` also reads (#430).
         before_slot = _settings.slot_name(group, "before", config)
         after_slot = _settings.slot_name(group, "after", config)
@@ -391,6 +410,33 @@ def _payload_groups(files: list[str], config: dict[str, Any]) -> list[str]:
         if group not in groups:  # pragma: no cover
             groups.append(group)
     return groups
+
+
+def _dependency_ordered(
+    files: list[str],
+    config: dict[str, Any],
+    edges: Mapping[str, list[str]],
+) -> list[str]:
+    """One group's files with every file linked after the files it needs (ADT #984).
+
+    The same refinement `-install` runs (`files._order_by_dependencies`), over
+    every group, tables, objects and data alike. `files` arrives in
+    `_patch_sort_key` order, `patch_map` type and then path, and that stays the
+    tie-break, so only a real edge moves a file. Until #984 that sort was the
+    whole answer, and a new FK child named before its new parent was linked
+    first and failed the install.
+
+    A DATA file is its table's rows, so it is keyed as that table: the rows of
+    a child table then load after its parent's through the same FK edges.
+    """
+    nodes: dict[str, str] = {}
+    for path in files:
+        object_type = _database_object_type(path, config)
+        name = _database_object_name(path, config)
+        if object_type is None or name is None:
+            continue
+        nodes[path] = f"{'TABLE' if object_type == 'DATA' else object_type}.{name}"
+    return _order_by_dependencies(files, nodes, dict(edges), keep_order=True)
 
 
 def _is_data_companion(root: Path, path: str) -> bool:

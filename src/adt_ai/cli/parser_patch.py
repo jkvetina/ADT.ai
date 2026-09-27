@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from adt_ai.cli.parser_common import COMMIT_IDENTITY_HELP, SubParsers, add_connection_key_argument
+from adt_ai.cli.parser_common import (
+    COMMIT_IDENTITY_HELP,
+    SubParsers,
+    add_connection_key_argument,
+    app_target,
+)
 from adt_ai.cli.parser_patch_upload import add_upload_flags, add_upload_verb
 from adt_ai.shared.dates import recent_window
 from adt_ai.shared.recent_state import BARE_RECENT
@@ -440,12 +445,13 @@ def add_patch_parser(subparsers: SubParsers) -> None:
         "--app",
         "-app",
         nargs   = "*",
-        type    = int,
+        type    = app_target,
         default = None,
         metavar = "ID",
         help    = "deploy the APEX application whole, optional ID lands it on "
-                  "that application id instead of its own; "
-                  "with -upload, the one application to upload into, required",
+                  "that application id instead of its own, # in ID is each "
+                  "app's own id; with -upload, the one application to upload "
+                  "into, required",
     )
     # `-rebuild` was declared here until ADT #345 withdrew it. It reached
     # `PatchRequest.rebuild` and was read by nothing, while its help and its

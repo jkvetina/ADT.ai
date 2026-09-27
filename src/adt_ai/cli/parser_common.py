@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     # here at runtime would drag the whole monolith into six small parser
     # modules that need one name from it.
     from adt_ai.cli.constants import AdtArgumentParser
+    from adt_ai.patch.apex_import import AppTarget
 
 #: What `build_parser` hands each `add_*_parsers` below: argparse's subparsers
 #: action, parameterised by the parser class the CLI registers with it.
@@ -34,3 +35,19 @@ def add_connection_key_argument(parser: argparse.ArgumentParser) -> None:
         "-key",
         help="encryption key or path to a key file for encrypted connection passwords",
     )
+
+
+def app_target(raw: str) -> AppTarget:
+    """`patch -app`'s ``type``: an id or a `#` template (ADT #974).
+
+    Re-raised as ``ArgumentTypeError`` so argparse prints the message itself
+    rather than naming this function as the type it could not convert to.
+    Imported here rather than at module scope: this module ships with every
+    release, and the `patch` engine only with `patch`.
+    """
+    from adt_ai.patch.apex_import import parse_app_value
+
+    try:
+        return parse_app_value(raw)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from None

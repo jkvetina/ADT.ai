@@ -176,6 +176,8 @@ Passwords are written as cleartext by default, and a cleartext write removes the
 
 `-set-wallet-pwd` writes `wallet_pwd:` and removes an older `wallet_password:` from the environment's `wallet` and `db` blocks, with its marker and key fingerprint. The runtime reads that older spelling first, so left in place it would keep winning over the password just set.
 
+It also removes `wallet_pwd_cmd` and `wallet_password_cmd` from the environment's `wallet` and `db` blocks and every schema's `db` block, since the runtime merges all three and refuses a command beside a stored value. Both preview and run name those blocks. The command is not kept, so going back to it means adding it again.
+
 `-encrypt` writes an encrypted value. Its key comes from `-key`, `ADT_KEY`, or `ADT_KEY_CMD`; values and key-file paths are accepted. Prefer a file or secret-manager command. Unlike the prompted database password, literal `-key VALUE` is exposed in shell history and the process list. The formats are on [connection_passwords.md](connection_passwords.md).
 
 <br>

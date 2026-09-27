@@ -248,7 +248,7 @@ def advance_baseline(
     )
     if merged is None:
         return
-    path, advanced = merged
+    path, advanced, removed = merged
     total = len(read_baseline(path))
     print_adt_header("UPDATING BASELINE:")
     # One row, and flat: a baseline file is named rather than listed, so there is
@@ -257,9 +257,16 @@ def advance_baseline(
     print_file_rows([_project_relative(path, root)], nested=False)
     # `ADVANCED` is the files whose hash actually moved; everything else in the
     # baseline is untouched by design, and saying so is what makes the number
-    # readable rather than a riddle beside the header (`#453`).
+    # readable rather than a riddle beside the header (`#453`). `REMOVED` is
+    # the deletions this deploy landed, which left the baseline (`#983`); they
+    # are no longer in `TOTAL`, so `UNCHANGED` is counted without them.
     print_baseline_stats(
-        {"ADVANCED": advanced, "UNCHANGED": total - advanced, "TOTAL": total},
+        {
+            "ADVANCED" : advanced,
+            "REMOVED"  : removed,
+            "UNCHANGED": total - advanced,
+            "TOTAL"    : total,
+        },
         total = total,
     )
 

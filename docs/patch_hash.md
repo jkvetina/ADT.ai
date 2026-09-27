@@ -123,7 +123,7 @@ CHANGED FILES: 3
   app/database/packages/app_dead.sql           198    DELETED
 ```
 
-A `MODIFIED` or `NEW` file is snapshotted and linked; a `DELETED` one reaches the same DROP helper a commit-built patch generates. `COMMIT` is the newest commit that touched the file, blank when there is none.
+A `MODIFIED` or `NEW` file is snapshotted and linked; a `DELETED` one reaches the same DROP helper a commit-built patch generates, and the patch's `hashes.log` records it as a `DELETED` row so the deploy can take it out of the baseline. `COMMIT` is the newest commit that touched the file, blank when there is none.
 
 Three consequences follow, and they are the reason the mode exists:
 
@@ -202,16 +202,18 @@ UPDATING BASELINE:
    STATUS      FILES
    ---------   -----
    ADVANCED        3
-   UNCHANGED     409
-   TOTAL         412
+   REMOVED         1
+   UNCHANGED     408
+   TOTAL         411
 ```
 
-`ADVANCED` is the files whose hash actually moved. The rest of the baseline is untouched by design, which is the point of the rules below, so the table says so rather than leaving one number beside a header to be interpreted.
+`ADVANCED` is the files whose hash actually moved, and `REMOVED` the deletions the deploy landed, which leave the baseline and so are no longer counted in `TOTAL`. The rest of the baseline is untouched by design, which is the point of the rules below, so the table says so rather than leaving one number beside a header to be interpreted.
 
 - **Only a hash-built patch advances anything.** `hashes.log` is written by `-create -hash` alone and its presence is the marker, so a commit-built patch leaves the baseline exactly as it found it. The two modes are not meant to be mixed.
 - **Only the files that patch shipped move.** Work done between `-create` and `-deploy` stays pending, which a re-read of the working tree could not have managed.
 - **Only the files whose own install script succeeded.** Under `-continue` a run can land one schema and fail another, and advancing the whole patch there would mark the failed schema's objects live.
 - **An APEXlang application moves only where its import landed in place.** Its `end` script runs whatever the import did, so the application's own `> BUILDING APP` row has to succeed on its own id too, with no failing scan, a waived one included, and no revert. A run without `-app` never imports, and `-app` with another id lands on a sandbox the baseline does not track, so both leave the application pending for the next patch.
+- **A deletion leaves the baseline once its DROP landed.** It moves with the same install script its file would have, so a deletion whose script failed stays recorded and the next `-create -hash` selects it again. Without this, a deployed deletion stayed in the baseline and came back in every later patch.
 - **`SKIPPED` and `ERROR` advance nothing.**
 - **A shipped table moves its stored file too**, read off the working tree where it still holds the bytes that shipped. A table edited since `-create` keeps its old file, which the log line no longer agrees with, so the next patch falls back to the history lookup instead of trusting it.
 

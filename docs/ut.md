@@ -200,6 +200,7 @@ The vanished-suite case is still caught, by the zero-test rule rather than by na
 | Every test passed (skipped tests do not fail the run). | `0` |
 | Any test failed or errored. | non-zero |
 | A suite ran but the reporter returned nothing, or output that could not be parsed. | non-zero |
+| The report leaves out a discovered test: that test is an `ERROR`, `utPLSQL reported no result for this test`; a disabled one is a `SKIP`. | non-zero |
 | Nothing ran at all: no matching package, none matching `-name`, or none that is a runnable suite. | non-zero |
 | A tested package is below the `-gate` threshold. | non-zero |
 
@@ -227,7 +228,7 @@ Entity expansion, external-entity retrieval and the quadratic blowup all begin i
 | -------- | ---------- | ------- | ----------- |
 | `-name`, `--name` | Yes | everything | Name pattern or patterns, comma- or space-separated, with `%` and `_` LIKE wildcards (`\` escapes a literal one, quoted: `-name 'APP\_INT%'`). Selects the suites to run, and names itself in the `RUNNING TESTS FOR <PATTERNS>:` header. LIKE wildcards, not regex; `ut_pattern` is what uses regular expressions. |
 | `-refresh`, `--refresh` | No | off | Rebuild utPLSQL's annotation cache for the schema before discovery, so a suite compiled since the last run is found. |
-| `-gate [N]`, `--gate [N]` | No | off | Fail the run when a tested package's `COVERAGE` is below a threshold. With a number that number is the threshold; bare it comes from `ut_coverage_gate`; absent nothing gates. See [ut_coverage.md](ut_coverage.md). |
+| `-gate [N]`, `--gate [N]` | No | off | Fail the run when a tested package's `COVERAGE` is below a threshold. With a number that number is the threshold; bare it comes from `ut_coverage_gate`; absent nothing gates. A NaN or infinite value, on the flag or in the config, reads as `0`. See [ut_coverage.md](ut_coverage.md). |
 | `-compact`, `--compact` | No | off | Replace both summary tables with one `RESULTS:` row: the run's `PACKAGES`, `LINES`, `TIMER`, `COVERAGE` and a `PASS` or `ERROR` status. `ERRORS & FAILURES:` and the `-gate` list still print; the `-verbose` change table does not. |
 | `-silent`, `--silent` | No | off | Suppress whatever the mode prints between the connection block and `SUMMARY PER SUITE:`. The banner, connection block, `ERRORS & FAILURES:` when a run has any, the summaries and the timer stay. Outranks `-verbose`. |
 | `-verbose`, `--verbose` | No | off | Print `UNIT TESTS SUITES:` and then `TEST RESULTS:`, a row per test under its package heading, instead of the progress bar. The heading is streamed before the suite runs and its rows land once the verdict is known. Ignored under `-silent`. |

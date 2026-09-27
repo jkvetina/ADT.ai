@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.patch.apex_drift import changed_applications
-from adt_ai.patch.apex_import import one_target_refusal
+from adt_ai.patch.apex_import import AppTarget, one_target_refusal
 from adt_ai.patch.apex_validate import ApexlangValidation, check_patch_trees
 from adt_ai.patch.content import CONTENT_MODE_COMMITTED, CONTENT_MODE_LOCAL, file_present
 from adt_ai.patch.create import (
@@ -71,7 +71,7 @@ def build_database_patch(
     gateway_factory: Callable[[str], Any] | None = None,
     files_ws: bool = False,
     hash_tables: Mapping[str, str] | None = None,
-    target_app_id: int | None = None,
+    target_app_id: AppTarget | None = None,
     signature_gateway_factory: Callable[[str, str], Any] | None = None,
     validation: ApexlangValidation | None = None,
 ) -> DatabasePatchResult:
@@ -255,12 +255,20 @@ def build_database_patch(
     # modes stay apart without a second flag (Jan, 2026-08-21: "User should not
     # be mixing these modes").
     if hash_shipped is not None:
+        carried = set(files)
         write_patch_hashes(
             folder,
-            {file: value for file, value in hash_shipped.items() if file in set(files)},
+            {file: value for file, value in hash_shipped.items() if file in carried},
             hash_commits or {},
             patch_code = patch_code,
             stamp      = datetime.now().strftime(HASH_STAMP_FORMAT),
+            # What the patch carried that the baseline held and it does not
+            # ship is what it deleted, recorded so the deploy that lands it
+            # takes the path out of the baseline (ADT #983).
+            deleted    = sorted(
+                file for file in carried
+                if file in (hash_previous or {}) and file not in hash_shipped
+            ),
         )
     return DatabasePatchResult(
         folder            = folder,

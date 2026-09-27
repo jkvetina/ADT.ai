@@ -23,6 +23,7 @@ from typing import Any
 
 from adt_ai.patch import queries
 from adt_ai.patch.content import decode_repo_text
+from adt_ai.patch.drop_helpers import _drop_helper_sql, _write_drop_helpers
 from adt_ai.patch.files import _patch_scripts_folder
 
 # The naming contract for what this module writes moved to
@@ -108,7 +109,9 @@ def _write_generated_patch_scripts(
     if not config.get("patch_add_scripts", True):
         return GeneratedScripts(alters=[], paths=[])
     script_root = _patch_scripts_folder(root, config, patch_code)
-    drops = _write_drop_helpers(root, script_root, files, records, config)
+    drops = _write_drop_helpers(
+        root, script_root, files, records, config, baseline=hash_previous
+    )
     unresolved: list[str] = []
     # One gateway per schema, opened only if a table in that schema actually has
     # two versions to compare (ADT #753). A patch carrying no table file opens no
@@ -304,94 +307,6 @@ def _write_hash_table_diff_helpers(
             )
         )
     return written, unresolved, claimed
-
-def _write_drop_helpers(
-    root: Path,
-    script_root: Path,
-    files: list[str],
-    records: list[CommitRecord],
-    config: dict[str, Any],
-) -> list[str]:
-    """Write a DROP script per object THIS patch window deletes.
-
-    The window, not the filesystem, decides (ADT #290). `(root / file).exists()`
-    alone answers "gone now", which is a different question: a file some LATER
-    commit deleted, outside the selection, is equally absent and used to earn a
-    helper this patch never made, shipping the object's content and a script
-    dropping it in the same folder. Old ADT read the diff between the baseline
-    commit and the window's last commit instead (patch.py:1333) and never had
-    that failure.
-
-    Deliberate divergence from old ADT, decided on ADT.ai's merits: an object the
-    window BOTH created and deleted earns no helper either. The database this
-    patch deploys onto sits at the pre-window state and has no such object, so
-    the DROP is a no-op at best and hits an unrelated same-named object at worst.
-    Old ADT emitted it, its `first_commit <= self.first_commit_id` gate
-    (patch.py:1338-1341) reads like it covers this and does not: `relevant_comms`
-    only holds ids from `relevant_commits` and `first_commit_id` only ever moves
-    down from `min(relevant_commits) - 1`, so the comparison is false in every
-    window that does not open at the edge of known history.
-
-    **The unit is the OBJECT, never the file path (ADT #498).** A `DROP` names an
-    object, so every question here has to be asked about the object: an
-    `export_db -groups` move is a delete at one path plus an add at another, and
-    both path-keyed tests above pass it through. That shipped a patch installing
-    63 relocated objects and then dropping every one of them, `DROP TABLE` on two
-    live tables included. So the created-by-window test compares identities, and
-    the disk test asks whether the object is still exported ANYWHERE under its
-    type folder rather than whether its old filename is still there.
-    """
-    deleted_by_window = {file for record in records for file in record.deleted_files}
-    created_identities = {
-        identity
-        for record in records
-        for file, status in record.file_statuses.items()
-        if status == "A"
-        and (identity := _object_identity(file, config)) is not None
-    }
-    on_disk: dict[tuple[str, ...], set[tuple[str, str, str]]] = {}
-    written: list[str] = []
-    for file in files:
-        if file not in deleted_by_window:
-            continue
-        # `_object_identity` resolves through the configured `path_objects`
-        # layout, so a path outside it answers None here. Requiring the first
-        # part to be literally `database` on top of that was a condition old
-        # ADT's drop loop never had (patch.py:1327-1352) and one the SHIPPED
-        # default `<schema>/database/<object_type>/` can never satisfy, part 0 is
-        # the schema, so every project on the default layout silently got no DROP
-        # helper (ADT #287). Same hardcoded assumption ADT #196 lifted out of
-        # `layout.py`, surviving at the one call site that sweep missed.
-        #
-        # It reads the name through the type's own extension, never `Path.stem`,
-        # which strips one suffix and turned `core.spec.sql` into the `CORE.SPEC`
-        # that `safe_identifier` refuses (ADT #471). This loop spelled the tuple
-        # out a second time beside the import that already builds it (ADT #554).
-        identity = _object_identity(file, config)
-        if identity is None:
-            continue
-        _schema, object_type, object_name = identity
-        if object_type == "GRANT":
-            continue
-        if identity in created_identities:
-            continue
-        if _object_exported_elsewhere(root, file, identity, config, on_disk):
-            continue
-        folder = script_root / drop_helper_slot(config)
-        folder.mkdir(parents=True, exist_ok=True)
-        helper = folder / drop_helper_filename(object_type, object_name)
-        text_files.write_text(helper, _drop_helper_sql(object_type, object_name))
-        written.append(helper.relative_to(root).as_posix())
-    return written
-
-def _drop_helper_sql(object_type: str, object_name: str) -> str:
-    safe_object_type(object_type, role="object type")
-    safe_identifier(object_name, role="object name")
-    return queries.DROP_HELPER_TEMPLATE.format(
-        object_type = object_type,
-        object_name = object_name,
-        statement   = f"DROP {object_type} {object_name}",
-    )
 
 def _write_table_diff_helpers(
     root: Path,

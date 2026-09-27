@@ -94,29 +94,20 @@ def _annotations_clause(suffix: str) -> list[str]:
 def _format_partition_suffix(suffix: str) -> list[str]:
     """The table's partitioning clause, folded for RANGE INTERVAL and kept as written otherwise.
 
-    An interval-partitioned table grows its partitions itself, so exporting the
-    seed alone round-trips. Every other scheme carries its partitions in the
-    definition: a LIST partition's values, a plain RANGE partition's bounds and
-    a HASH scheme's `PARTITIONS n` are all schema, and there is no VALUES clause
-    in a HASH scheme to fold to in the first place. So they are preserved raw,
-    the way the CLUSTER and INMEMORY branches above preserve theirs.
+    An interval-partitioned table grows its partitions itself, so the seed is
+    the one partition that is schema, and the fold keeps it bound and all. Every
+    other scheme carries its partitions in the definition: a LIST partition's
+    values, a plain RANGE partition's bounds and a HASH scheme's `PARTITIONS n`
+    are all schema, and there is no VALUES clause in a HASH scheme to fold to in
+    the first place. So they are preserved raw, the way the CLUSTER and INMEMORY
+    branches above preserve theirs.
 
     Until ADT #662 anything but RANGE INTERVAL fell through to a bare `;` and the
     table exported as unpartitioned with exit 0.
     """
-    interval_match = re.search(
-        r"PARTITION BY RANGE \(([^)]+)\)\s+INTERVAL\s+\((NUMTODSINTERVAL\([^)]+\))\)",
-        suffix,
-        flags=re.IGNORECASE,
-    )
-    if interval_match:
-        column_name, interval = interval_match.groups()
-        partition_name = _extract_partition_name(suffix)
-        return [
-            f"PARTITION BY RANGE ({column_name}) INTERVAL({interval}) (",
-            f"    PARTITION {partition_name} VALUES()",
-            ");",
-        ]
+    interval_lines = _format_interval_suffix(suffix)
+    if interval_lines:
+        return interval_lines
 
     match = re.search(
         r"\bPARTITION\s+BY\b(?P<body>.*?)(?=;|\bCREATE\b|\bALTER\b|$)",
@@ -131,6 +122,49 @@ def _format_partition_suffix(suffix: str) -> list[str]:
     if lines:
         lines[-1] = lines[-1].rstrip(";") + ";"
     return lines
+
+_INTERVAL_HEAD = re.compile(
+    r"PARTITION\s+BY\s+RANGE\s*\((?P<columns>[^)]+)\)\s*INTERVAL\s*\(", flags=re.IGNORECASE
+)
+_SEED_HEAD = re.compile(
+    r'\(\s*PARTITION\s+(?P<name>"[^"]*"|\S+)\s+VALUES\s+LESS\s+THAN\s*\(', flags=re.IGNORECASE
+)
+
+
+def _format_interval_suffix(suffix: str) -> list[str]:
+    """A RANGE INTERVAL scheme folded to its interval and its seed partition, bound kept.
+
+    The seed's `VALUES LESS THAN (...)` is where the interval grid starts, so it
+    is as much schema as the interval is. `#981` found this writing `PARTITION
+    p00 VALUES()` in its place, which no Oracle parses, so no exported interval
+    table ever re-created, and a unit test pinned that shape as correct. Both
+    parentheses are matched rather than regex-bounded: a `TO_DATE(...)` bound
+    and a `NUMTOYMINTERVAL(...)` interval each nest one.
+
+    The partitions Oracle added past the seed are left out: they appear as rows
+    arrive and a replayed seed grows them again. With no seed at all there is no
+    bound to keep, and none is invented; the clause goes out as it came, the way
+    every other scheme does. Oracle refuses such a CREATE (`ORA-00906`, measured
+    on SANDBOX), so DBMS_METADATA can never hand one over.
+    """
+    head = _INTERVAL_HEAD.search(suffix)
+    if not head:
+        return []
+    interval_close = _matching_parenthesis_index(suffix, head.end() - 1)
+    seed = _SEED_HEAD.search(suffix, interval_close or 0)
+    if interval_close is None or not seed:
+        return []
+    bound_close = _matching_parenthesis_index(suffix, seed.end() - 1)
+    if bound_close is None:
+        return []
+    interval = re.sub(r"\s+", " ", suffix[head.end() : interval_close]).strip()
+    bound = suffix[seed.end() - 1 : bound_close + 1]
+    return [
+        f"PARTITION BY RANGE ({head.group('columns')}) INTERVAL({interval}) (",
+        f"    PARTITION {_partition_name(seed.group('name'))} VALUES LESS THAN {bound}",
+        ");",
+    ]
+
 
 def _format_inmemory_suffix(suffix: str) -> list[str]:
     """The table's INMEMORY clause, kept as written; `NO INMEMORY` is the default.
@@ -179,9 +213,5 @@ def _trailing_table_statements(suffix: str) -> list[str]:
         return []
     return [line.rstrip() for line in suffix[match.start():].strip().splitlines()]
 
-def _extract_partition_name(suffix: str) -> str:
-    match = re.search(r'\(\s*PARTITION\s+("[^"]*"|\S+)', suffix, flags=re.IGNORECASE)
-    if not match:
-        return "p00"
-    name = match.group(1)
+def _partition_name(name: str) -> str:
     return normalize_identifier_part(name) if name.startswith('"') else name.lower()

@@ -20,13 +20,14 @@ Every file is generated, gitignored, and rebuilt from git or from the database. 
 
 ## The YAML siblings
 
-Three facts are small enough to stay in YAML, a handful of lines a human can read at a glance. They live beside the stores and are gitignored with them.
+Four facts are small enough to stay in YAML, a handful of lines a human can read at a glance. They live beside the stores and are gitignored with them.
 
-| File                                  | Holds                                                                                       | Written by                |
-| ------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------- |
-| `config/internal/recent.yaml`         | The per-scope watermark that bare `-recent` measures from.                                  | [export_db](export_db.md) |
-| `config/internal/ut_timers.yaml`      | How long the last run of each schema and `-name` selection took, for the countdown.         | [ut](ut.md)               |
-| `config/internal/job_signatures.yaml` | The hash of every scheduler job the last windowed export wrote, per environment and schema. | [export_db](export_db.md) |
+| File                                   | Holds                                                                                         | Written by                |
+| -------------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------- |
+| `config/internal/recent.yaml`          | The per-scope watermark that bare `-recent` measures from.                                    | [export_db](export_db.md) |
+| `config/internal/ut_timers.yaml`       | How long the last run of each schema and `-name` selection took, for the countdown.           | [ut](ut.md)               |
+| `config/internal/job_signatures.yaml`  | The hash of every scheduler job the last windowed export wrote, per environment and schema.   | [export_db](export_db.md) |
+| `config/internal/refused_objects.yaml` | Each object the database refused and no export has written since, per environment and schema. | [export_db](export_db.md) |
 
 The generated folders keep their documented places beside these files: `config/commits/` holds the commit stores, and `config/discovery/`, `config/flow/` and `config/temp/` hold command output. None of them moves under `config/internal/`.
 

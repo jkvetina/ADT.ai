@@ -132,19 +132,44 @@ def _scan_applications(
     def scan_segment(segment_schema: str) -> int:
         gateway = selected_gateway_factory(segment_schema)
         _print_connection_block(gateway, connection_for(segment_schema), debug=debug)
+        targets = _scan_targets(gateway, apps, pages)
+        if not targets:
+            # `#980` F16: a `-page` range that selects no page scanned nothing
+            # and exited 0. Same rail as the `-app` range guard above.
+            print_adt_error("INPUT NOT FOUND", "-page RANGE MATCHED NO PAGES")
+            return exit_code_for("INPUT NOT FOUND")
         # The header announces every read under it (`shared/announce.py`), so it
         # is printed BEFORE the scan rather than above its results.
         print_adt_header("SCANNING APPLICATIONS:")
         apex_version = resolve_apex_version(gateway)
-        return _print_component_scans(_scan_reports(gateway, apps, pages, apex_version))
+        return _print_component_scans(_scan_reports(gateway, targets, apex_version))
 
     return run_schema_sections([schema], scan_segment, first_started_at=handler_started_at)
 
 
-def _scan_reports(
+def _scan_targets(
     gateway: QueryGateway,
     apps: list[int],
     pages: ApexPageSelection | None,
+) -> list[tuple[int, int | None]]:
+    """Every `(application, page)` the scan will run, page None for a whole app.
+
+    Resolved before the header so an empty `-page` selection can be refused
+    rather than printed as a scan of nothing (`#980` F16). Explicit page ids
+    always survive (`_selected_pages`), so only a range can leave this empty.
+    """
+    if pages is None:
+        return [(app_id, None) for app_id in apps]
+    return [
+        (app_id, page_id)
+        for app_id in apps
+        for page_id in _selected_pages(gateway, app_id, pages)
+    ]
+
+
+def _scan_reports(
+    gateway: QueryGateway,
+    targets: list[tuple[int, int | None]],
     apex_version: str,
 ) -> list[ApexScanReport]:
     """One report per thing actually scanned: an application, or one of its pages.
@@ -163,15 +188,11 @@ def _scan_reports(
     """
     from adt_ai.patch.apex_scan import scan_application
 
-    if pages is None:
-        return [
-            scan_application(gateway, app_id, apex_version=apex_version)
-            for app_id in apps
-        ]
     return [
-        scan_application(gateway, app_id, page_id=page_id, apex_version=apex_version)
-        for app_id in apps
-        for page_id in _selected_pages(gateway, app_id, pages)
+        scan_application(gateway, app_id, apex_version=apex_version)
+        if page_id is None
+        else scan_application(gateway, app_id, page_id=page_id, apex_version=apex_version)
+        for app_id, page_id in targets
     ]
 
 

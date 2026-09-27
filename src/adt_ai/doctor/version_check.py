@@ -19,7 +19,7 @@ from adt_ai.doctor._base import (
 )
 from adt_ai.doctor.apexlang_floor import apexlang_floor_lines
 from adt_ai.doctor.version_fetch import DoctorLatestVersionMixin
-from adt_ai.shared.env_check import CheckResult
+from adt_ai.shared.env_check import CheckResult, redact_java_options
 
 # The components `doctor` actually checks online. `-update` also reinstalls
 # requirements.txt, which is what a stale `oracledb` needs.
@@ -201,7 +201,11 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
                 self._visible_status(self._adt_key_status()),
             ),
             format_status_line("ARCH", platform.machine() or "unknown"),
-            format_status_line("JAVA_TOOL_OPTIONS", env["JAVA_TOOL_OPTIONS"]),
+            # Masked like ADT_KEY above: a keystore password passed as a `-D`
+            # property is a credential on a screen people paste (#979 F09).
+            format_status_line(
+                "JAVA_TOOL_OPTIONS", redact_java_options(env["JAVA_TOOL_OPTIONS"])
+            ),
             format_status_line("LANG", env["LANG"], None if env["LANG"] else "WARN"),
             format_status_line("NLS_LANG", env["NLS_LANG"]),
             format_status_line(
