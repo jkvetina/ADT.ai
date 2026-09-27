@@ -10,7 +10,7 @@ Lean, agent-neutral router for operating the ADT.ai command line in Oracle and A
 
 ## What it is and why you need it
 
-ADT.ai is a Python CLI for Oracle/APEX deployment work. This skill helps Codex, Claude, Copilot, and similar agents select the correct command, then sends them to only that command's authoritative documentation. It keeps the few operational and safety rules that materially change what an agent should do.
+ADT.ai is a Python CLI for Oracle/APEX deployment work. This skill helps Codex, Claude and similar agents select the correct command, then sends them to only that command's authoritative documentation. It keeps the few operational and safety rules that materially change what an agent should do.
 
 ## How it works
 

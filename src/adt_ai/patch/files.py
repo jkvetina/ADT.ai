@@ -460,6 +460,8 @@ def _order_by_dependencies(
     files: list[str],
     nodes: dict[str, str],
     edges: dict[str, list[str]],
+    *,
+    keep_order: bool = False,
 ) -> list[str]:
     """Sort a group so every file an install file needs is executed before it.
 
@@ -467,9 +469,14 @@ def _order_by_dependencies(
     group off the real graph. Name order is the tie-break, so the result is
     stable, and a dependency cycle degrades to name order for the cycle members
     instead of dropping them.
+
+    ``keep_order`` makes the incoming order the tie-break instead of the name:
+    `-create` hands a group already sorted by `patch_map` type and then path,
+    and only a real edge may move a file out of that (ADT #984).
     """
     if not edges:
         return files
+    position = {path: index for index, path in enumerate(files)} if keep_order else {}
     file_by_node: dict[str, str] = {}
     for path in files:
         node = nodes.get(path)
@@ -486,16 +493,16 @@ def _order_by_dependencies(
             blockers[path].add(required)
             blocked[required].add(path)
 
-    ready = [path for path in files if not blockers[path]]
+    ready = [(position.get(path, 0), path) for path in files if not blockers[path]]
     heapq.heapify(ready)
     ordered: list[str] = []
     while ready:
-        path = heapq.heappop(ready)
+        _, path = heapq.heappop(ready)
         ordered.append(path)
         for dependent in sorted(blocked[path]):
             blockers[dependent].discard(path)
             if not blockers[dependent]:
-                heapq.heappush(ready, dependent)
+                heapq.heappush(ready, (position.get(dependent, 0), dependent))
     placed = set(ordered)
     ordered.extend(path for path in files if path not in placed)
     return ordered

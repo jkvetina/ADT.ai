@@ -90,8 +90,10 @@ class ExportDataRunner:
             gateway = self.gateway_factory(schema)
             discovery = DataDiscovery(gateway)
             schema_export = (request.schema_export or {}).get(schema, {})
+            data_folder = _data_folder(request.root, request.config, schema)
+            _migrate_merge_scripts(data_folder, request.config)
             group_rules_by_schema[schema] = resolve_data_group_rules(
-                _data_folder(request.root, request.config, schema), request.group_rules
+                data_folder, request.group_rules
             )
             # default the name list per schema – data folders may be schema-scoped
             names = request.names or _existing_data_names(request.root, request.config, schema)
@@ -207,8 +209,13 @@ class ExportDataRunner:
         if sidecar_columns and not where_filter:
             _prune_sidecar_folder(path.with_suffix(""), written_sidecars)
         primary_columns = _key_columns(table, csv_columns)
+        identity_columns = _always_identity_columns(columns)
+        # A GENERATED ALWAYS identity is numbered by each environment and never
+        # inserted, so a MERGE joined on it matches nothing on the target and
+        # inserts every row again (`#982`).
+        identity_key = any(column.lower() in identity_columns for column in primary_columns)
         merge_sql = ""
-        if primary_columns:
+        if primary_columns and not identity_key:
             merge_sql = _merge_sql_from_csv(
                 path            = path,
                 table_name      = table.name,
@@ -218,10 +225,10 @@ class ExportDataRunner:
                 sql_table_name  = sql_table_name,
                 null_safe_key   = not _has_primary_key(table, csv_columns),
                 column_types    = column_types,
-                identity_columns = _always_identity_columns(columns),
+                identity_columns = identity_columns,
                 primary_key_columns = _primary_key_columns(columns),
             )
-        merge_path = path.with_suffix(".sql")
+        merge_path = _merge_path(path, request.config)
         if merge_sql:
             text_files.write_text(
                 merge_path,
@@ -239,6 +246,7 @@ class ExportDataRunner:
                     table.name,
                     keyed        = bool(primary_columns),
                     where_filter = where_filter,
+                    identity_key = identity_key,
                 ),
             )
         return path, row_count
@@ -325,6 +333,45 @@ def _data_extension(config: dict[str, Any]) -> str:
     return _data_layout(config)[1]
 
 
+#: The one extension a MERGE was ever written under before `#982`.
+LEGACY_MERGE_EXTENSION = ".sql"
+
+
+def _merge_extension(config: dict[str, Any]) -> str:
+    """The extension a MERGE is written under: the one discovery finds tables by (`#982`).
+
+    It was always `.sql` while `_existing_data_names` globbed the configured
+    extension, so a custom one wrote a file the next bare run could not find.
+    An extension that would land on the CSV itself or on its sidecar folder
+    keeps `.sql`, since writing there would destroy the export.
+    """
+    extension = _data_extension(config)
+    if extension.lower() in {"", ".csv"}:
+        return LEGACY_MERGE_EXTENSION
+    return extension
+
+
+def _merge_path(csv_path: Path, config: dict[str, Any]) -> Path:
+    return csv_path.with_name(csv_path.stem + _merge_extension(config))
+
+
+def _migrate_merge_scripts(data_folder: Path, config: dict[str, Any]) -> None:
+    """Move each MERGE an older export wrote as `.sql` to the configured extension.
+
+    Runs before discovery, so a bare re-export still finds every table it
+    tracked. Only a `<table>.sql` beside its own `<table>.csv` is the export's,
+    flat or one group folder down, and a MERGE already under the configured
+    extension is never overwritten.
+    """
+    if not data_folder.is_dir():
+        return
+    for csv_path in sorted(data_folder.glob("*.csv")) + sorted(data_folder.glob("*/*.csv")):
+        legacy = csv_path.with_suffix(LEGACY_MERGE_EXTENSION)
+        target = _merge_path(csv_path, config)
+        if legacy != target and legacy.is_file() and not target.exists():
+            legacy.rename(target)
+
+
 
 
 def _existing_data_names(root: Path, config: dict[str, Any], schema: str = "") -> list[str]:
@@ -403,6 +450,10 @@ def _key_columns(table: DataTable, columns: list[str]) -> list[str]:
     files differently per environment and matches the wrong row on replay. A
     UNIQUE key is the business key in that case and wins; an identity primary
     key is still used when the table has nothing else (`#811`).
+
+    A UNIQUE key with a nullable column is no key at all: Oracle lets several
+    rows share NULL there, and the NULL-safe join then matched one source row
+    against every one of them (`#982`).
     """
     primary = [
         name
@@ -419,11 +470,14 @@ def _key_columns(table: DataTable, columns: list[str]) -> list[str]:
     )
     if primary and not primary_is_identity:
         return primary
-    unique = sorted(
-        (column.uq, column.name)
+    unique_columns = [
+        column
         for column in table.columns
         if column.uq is not None and column.name in columns
-    )
+    ]
+    if any(column.nullable for column in unique_columns):
+        return primary
+    unique = sorted((column.uq, column.name) for column in unique_columns)
     return [name for _, name in unique] or primary
 
 

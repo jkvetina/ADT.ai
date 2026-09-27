@@ -72,14 +72,19 @@ def resolve_data_group_rules(data_folder: Path, seed: GroupRules | None) -> Grou
     return (seed or GroupRules.empty()).merged(detect_groups_from_tree(type_roots))
 
 
-def plan_data_group_moves(data_folder: Path, rules: GroupRules | None) -> GroupMovePlan:
+def plan_data_group_moves(
+    data_folder: Path,
+    rules: GroupRules | None,
+    merge_extension: str = ".sql",
+) -> GroupMovePlan:
     """Plan how flat table exports relocate into `data/<GROUP>/` subfolders.
 
     Same shape as `export_db.group_moves.plan_group_moves` (one `GroupMove` per
     relocation, unmatched tables left where they are, a name collision aborts
     the run), narrowed to DATA's own file layout, anchored on the CSV rather
     than on `object_types.DATA`'s configured extension: every table export
-    writes one, while the merge `.sql` companion is conditional (only a table
+    writes one, while the merge companion (`merge_extension`, the configured
+    DATA extension since `#982`) is conditional (only a table
     with a primary key gets one) and cannot be the anchor without silently
     excluding every table that lacks it. Every table's export moves as a unit:
     the CSV, its `.sql` merge script when the export wrote one, and its
@@ -104,7 +109,7 @@ def plan_data_group_moves(data_folder: Path, rules: GroupRules | None) -> GroupM
             continue
         dest_dir = data_folder / group.upper()
         moves.append(GroupMove("DATA", file_path, dest_dir / file_path.name))
-        merge_sql = file_path.with_suffix(".sql")
+        merge_sql = file_path.with_name(file_path.stem + merge_extension)
         if merge_sql.is_file():
             moves.append(GroupMove("DATA", merge_sql, dest_dir / merge_sql.name))
         sidecar_dir = file_path.with_suffix("")

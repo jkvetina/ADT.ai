@@ -184,4 +184,8 @@ The rebuild leaves out comments, the empty items an extra comma leaves, and ever
 
 Whitespace inside SQL string literals is part of the value. Generated ADD and MODIFY statements preserve it, including quoted defaults; changing only that whitespace still produces a column change.
 
-The selected commits decide, not the current working tree. A file some later commit deleted, outside the window you patched, gets no DROP helper, and neither does an object the window both added and deleted.
+The selected commits decide, not the current working tree. A file some later commit deleted, outside the window you patched, gets no DROP helper.
+
+What decides is the object's state at the window's two ends: it earns a helper when it existed before the window's first commit that touched it and is gone after its last. An object the window both added and deleted gets none; one it deleted, re-added and deleted again gets one.
+
+A DATA or GRANT file never earns one, because a DROP names neither.

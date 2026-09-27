@@ -56,6 +56,7 @@ from adt_ai.export_db.normalizers import (
     build_table_fix_sql,
     normalize_ddl,
 )
+from adt_ai.export_db.refused_objects import retried_objects
 from adt_ai.export_db.render import (
     ConsoleExportDbReporter,
     ExportDbReporter,
@@ -224,6 +225,21 @@ class ExportDbRunner:
                 changed_since = changed_since,
                 prefer_exact_names = True,
                 known_job_signatures = job_baseline(request, schema),
+            )
+            # A window skips what an earlier run was refused, since its
+            # timestamp is behind the stamp that run still earned (`#981`).
+            database_objects += retried_objects(
+                request,
+                schema,
+                database_objects,
+                discovery,
+                object_types = (
+                    request.object_types or _configured_object_types(request.config)
+                ),
+                prefix       = request.prefix or schema_export.get("prefix"),
+                ignore       = (
+                    request.ignore or _split_patterns(schema_export.get("ignore"))
+                ),
             )
             # Objects the requested authors touched but somebody else changed last.
             # They stay in the export, dropping them would silently lose work the

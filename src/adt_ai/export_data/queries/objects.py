@@ -48,6 +48,7 @@ SELECT
     t.column_name,
     t.data_type,
     t.column_id,
+    t.nullable,
     MIN(CASE WHEN n.constraint_name IS NOT NULL THEN c.position END) AS pk,
     MIN(CASE WHEN u.constraint_name IS NOT NULL THEN c.position END) AS uq,
     -- ADT #670: an INSERT that names a GENERATED ALWAYS identity column raises
@@ -63,10 +64,27 @@ LEFT JOIN user_constraints n
     AND n.constraint_name   = c.constraint_name
     AND n.constraint_type   = 'P'
 LEFT JOIN (
-    SELECT MIN(u.constraint_name) AS constraint_name
-    FROM user_constraints u
-    WHERE u.table_name          = UPPER(:table_name)
-        AND u.constraint_type   = 'U'
+    -- ADT #982: a UNIQUE key over a nullable column lets several rows share
+    -- NULL, so a constraint whose columns are all NOT NULL is preferred; a
+    -- nullable one comes back only when it is all there is, and the export
+    -- refuses it as a replay key
+    SELECT MIN(k.constraint_name) KEEP (DENSE_RANK FIRST ORDER BY k.nullable_columns)
+        AS constraint_name
+    FROM (
+        SELECT
+            u.constraint_name,
+            COUNT(CASE WHEN tc.nullable = 'Y' THEN 1 END) AS nullable_columns
+        FROM user_constraints u
+        JOIN user_cons_columns uc
+            ON uc.table_name        = u.table_name
+            AND uc.constraint_name  = u.constraint_name
+        JOIN user_tab_cols tc
+            ON tc.table_name        = uc.table_name
+            AND tc.column_name      = uc.column_name
+        WHERE u.table_name          = UPPER(:table_name)
+            AND u.constraint_type   = 'U'
+        GROUP BY u.constraint_name
+    ) k
 ) u
     ON u.constraint_name    = c.constraint_name
 LEFT JOIN user_tab_identity_cols i
@@ -87,7 +105,8 @@ WHERE t.table_name          = UPPER(:table_name)
 GROUP BY
     t.column_name,
     t.data_type,
-    t.column_id
+    t.column_id,
+    t.nullable
 ORDER BY
     t.column_id
 """.strip()
@@ -193,15 +212,11 @@ def merge_statement(
     A GENERATED ALWAYS identity column may not be named in an INSERT (ORA-32795,
     `#670`), so it is exported and joined on but never inserted. An empty list
     falls back to every column, which only happens when the INSERT is commented
-    out anyway.
+    out anyway. With both the INSERT and the UPDATE off there is no MERGE at all.
     """
     safe_qualified_identifier(table, role="table name")
     safe_identifiers(columns, role="column name")
-    inserted = insert_columns or columns
-    all_columns = "t." + ",\n        t.".join(inserted)
-    all_values = "s." + ",\n        s.".join(inserted)
-    csv_content = " UNION ALL\n    ".join(csv_selects)
-    return f"""BEGIN
+    header = f"""BEGIN
     DBMS_OUTPUT.PUT_LINE('--');
     DBMS_OUTPUT.PUT_LINE('-- MERGE ' || UPPER('{table}'));
     DBMS_OUTPUT.PUT_LINE('--');
@@ -210,7 +225,16 @@ END;
 --
 {skip_delete}DELETE FROM {table}{where_filter};
 --
-MERGE INTO {table} t
+"""
+    if skip_insert and skip_update:
+        # `#982`: both WHEN clauses off leaves a MERGE Oracle refuses to parse,
+        # so the statement is left out whole and the DELETE runs on its own.
+        return f"{header}COMMIT;\n"
+    inserted = insert_columns or columns
+    all_columns = "t." + ",\n        t.".join(inserted)
+    all_values = "s." + ",\n        s.".join(inserted)
+    csv_content = " UNION ALL\n    ".join(csv_selects)
+    return f"""{header}MERGE INTO {table} t
 USING (
     {csv_content}
 ) s

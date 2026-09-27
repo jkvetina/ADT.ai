@@ -19,6 +19,9 @@ class DataColumn:
     #: column. An ALWAYS one may be exported and joined on but never named in an
     #: INSERT or an UPDATE SET, which raises ORA-32795 / ORA-54015 (`#670`).
     identity : str = ""
+    #: A UNIQUE key over a nullable column lets several rows share NULL, so it
+    #: cannot name one row on replay (`#982`).
+    nullable : bool = False
 
 
 @dataclass(frozen=True)
@@ -82,6 +85,7 @@ class DataDiscovery:
                 pk        = _optional_int(row, "PK"),
                 uq        = _optional_int(row, "UQ"),
                 identity  = _row_value(row, "IDENTITY_GENERATION"),
+                nullable  = _row_value(row, "NULLABLE").upper() == "Y",
             )
             for row in rows
         ]

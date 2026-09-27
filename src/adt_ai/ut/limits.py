@@ -13,6 +13,7 @@ record threaded through the query layer.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -35,6 +36,13 @@ DEFAULT_COVERAGE_GATE = 80.0
 # not a number a real config carries either.
 GATE_FROM_CONFIG = float("-inf")
 
+# What a NaN or an infinity means as a threshold, on the flag and in the config
+# alike (`#980` F10). NaN compares as "not below" against every package, so
+# `-gate nan` used to announce a gate and gate nothing. Jan's answer on `#985`
+# was no error: a coverage problem never fails the run on its own, and every
+# weird value reads as 0.
+_NON_FINITE_GATE = 0.0
+
 
 def error_limit(config: Mapping[str, Any] | None) -> int:
     """How many `ERRORS & FAILURES:` stanzas print. ``0`` means every one.
@@ -53,7 +61,11 @@ def error_limit(config: Mapping[str, Any] | None) -> int:
 def coverage_gate(config: Mapping[str, Any] | None) -> float:
     """The threshold `-gate` uses when passed bare."""
     value = _number(config, "ut_coverage_gate")
-    if value is None or value < 0:
+    if value is None:
+        return DEFAULT_COVERAGE_GATE
+    if not math.isfinite(value):
+        return _NON_FINITE_GATE
+    if value < 0:
         return DEFAULT_COVERAGE_GATE
     return float(value)
 
@@ -71,6 +83,8 @@ def resolve_gate(value: float | None, config: Mapping[str, Any] | None) -> float
         return None
     if value == GATE_FROM_CONFIG:
         return coverage_gate(config)
+    if not math.isfinite(value):
+        return _NON_FINITE_GATE
     return float(value)
 
 

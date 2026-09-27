@@ -53,6 +53,65 @@ IMPORT_COMMAND = 'apex import -input "{input}"'
 
 
 @dataclass(frozen=True)
+class AppIdTemplate:
+    """`-app #6000`: a target id with `#` standing for each application's own id.
+
+    ADT #974, Jan 2026-09-25: *"User should be able to pass # which would be
+    replaced with the specific app_id, and that would allow to deploy multiple
+    apps with this pattern."* One plain id cannot serve two applications
+    (`one_target_refusal`), and a template can, because each application lands
+    on its own expansion: `#6000` puts 122 on 1226000 and 123 on 1236000,
+    `6000#` puts them on 6000122 and 6000123.
+
+    Two applications never expand onto one id. The digits around `#` are fixed,
+    so two expansions differ exactly where the two ids do, and a leading `0`,
+    the one way an integer could swallow that difference, is refused by
+    :func:`parse_app_value`.
+    """
+
+    pattern : str
+
+    def landing(self, app_id: int) -> int:
+        return int(self.pattern.replace("#", str(app_id)))
+
+    def __str__(self) -> str:
+        return self.pattern
+
+
+# What a target is: an id, a template, or nothing when `-app` came bare.
+AppTarget = int | AppIdTemplate
+
+
+def parse_app_value(raw: str) -> AppTarget:
+    """One `patch -app` value, an id or a `#` template, refused when neither.
+
+    The parser's ``type``, so a malformed value stops the run at the argparse
+    edge the way a non-numeric id always has.
+    """
+    digits = raw.replace("#", "", 1)
+    if raw.count("#") > 1 or not digits.isdigit() or not digits.isascii():
+        raise ValueError(f"EXPECTS AN ID OR A # TEMPLATE, GOT {raw!r}")
+    if raw.startswith("0"):
+        raise ValueError(f"CANNOT START WITH 0, GOT {raw!r}")
+    return AppIdTemplate(raw) if "#" in raw else int(raw)
+
+
+def landing_id(target: AppTarget | None, app_id: int) -> int | None:
+    """The id ``app_id`` lands on under ``target``, or ``None`` for its own."""
+    if isinstance(target, AppIdTemplate):
+        return target.landing(app_id)
+    return target
+
+
+# The line a plain id over several applications ends on when no template can be
+# read off it, and the line two plain ids end on: both are someone asking for a
+# landing per application without the spelling for it (ADT #974).
+HASH_HINT = (
+    "Put # where the application id goes, -app #<N> or -app <N>#, to land each on its own."
+)
+
+
+@dataclass(frozen=True)
 class ApexTarget:
     """What `-app` asked for, resolved once at the parse edge.
 
@@ -61,20 +120,25 @@ class ApexTarget:
     the patch touches. Retargeting never narrows the selection, it only moves
     where the selection lands, so a target id still ships every application whole
     and the two questions stay separable below this line.
+
+    ``target_id`` is a template since ADT #974, which lands each application on
+    its own expansion; :func:`landing_id` is the one reader that tells them apart.
     """
 
     selected     : bool
-    target_id    : int | None
+    target_id    : AppTarget | None
     full_app_ids : list[int] | None
 
 
-def resolve_target(values: list[int] | None) -> ApexTarget:
+def resolve_target(values: list[AppTarget] | None) -> ApexTarget:
     """The three states of `-app`, told apart once.
 
     A second id is refused rather than reduced to the first. Several
     applications cannot fold onto one id, and taking ``values[0]`` would deploy
     one of them and drop the other behind a correct-looking screen, which is the
-    shape `#255` was filed on when a patch folder was selected by prefix.
+    shape `#255` was filed on when a patch folder was selected by prefix. Two ids
+    are what someone wanting one landing per application types, so the refusal
+    ends on the `#` spelling that does it (ADT #974).
     """
     if values is None:
         return ApexTarget(selected=False, target_id=None, full_app_ids=None)
@@ -82,7 +146,8 @@ def resolve_target(values: list[int] | None) -> ApexTarget:
         named = ", ".join(str(value) for value in values)
         raise ValueError(
             "-app TAKES ONE TARGET APPLICATION ID\n\n"
-            f"Got {len(values)}: {named}. Several applications cannot land on one id."
+            f"Got {len(values)}: {named}. Several applications cannot land on one id.\n"
+            f"{HASH_HINT}"
         )
     return ApexTarget(
         selected     = True,
@@ -91,22 +156,53 @@ def resolve_target(values: list[int] | None) -> ApexTarget:
     )
 
 
-def one_target_refusal(target_id: int | None, app_ids: list[int]) -> str:
+def one_target_refusal(target: AppTarget | None, app_ids: list[int]) -> str:
     """The message for one numbered `-app` over several applications, else ``""``.
 
     One wording for the two places that meet it: `-deploy`, whose import would
     land one application and drop the other, and `-create` since ADT #935, which
     names both applications' scripts for the one target id and would write the
-    second pair over the first.
+    second pair over the first. A template lands each application on its own id,
+    so it is never refused here (ADT #974).
+
+    The last line is the `#` spelling that would have worked, read off the id
+    when it starts or ends with one of the applications (`1236000` over 123 is
+    `#6000`), and the general form otherwise.
     """
-    if target_id is None or len(app_ids) < 2:
+    if target is None or isinstance(target, AppIdTemplate) or len(app_ids) < 2:
         return ""
-    named = ", ".join(str(app_id) for app_id in sorted(app_ids))
+    ordered = sorted(app_ids)
+    named = ", ".join(str(app_id) for app_id in ordered)
+    template = _template_for(target, ordered)
+    if template is None:
+        hint = HASH_HINT
+    else:
+        landings = ", ".join(str(template.landing(app_id)) for app_id in ordered)
+        hint = f"-app {template} lands each on its own: {landings}."
     return (
-        f"-app {target_id} NAMES ONE TARGET\n\n"
+        f"-app {target} NAMES ONE TARGET\n\n"
         f"This patch ships {len(app_ids)} applications ({named}),\n"
-        "and several applications cannot land on one id."
+        "and several applications cannot land on one id.\n"
+        f"{hint}"
     )
+
+
+def _template_for(target_id: int, app_ids: list[int]) -> AppIdTemplate | None:
+    """The template ``target_id`` is one expansion of, or ``None``.
+
+    Longest application id first, so `1236000` over 12 and 123 reads as
+    `#6000` rather than `#36000`, and the prefix reading before the suffix one.
+    """
+    text = str(target_id)
+    for app_id in sorted(app_ids, key=lambda value: len(str(value)), reverse=True):
+        own = str(app_id)
+        if len(text) <= len(own):
+            continue
+        if text.startswith(own):
+            return AppIdTemplate(f"#{text[len(own):]}")
+        if text.endswith(own):
+            return AppIdTemplate(f"{text[:-len(own)]}#")
+    return None
 
 
 def derive_sandbox_app_id(app_id: int, task: int) -> int:

@@ -53,6 +53,12 @@ UPLOADED_LABEL = "UPLOADED"
 APP_REQUIRED_MESSAGE = (
     "-upload NEEDS AN APPLICATION\n\nPass -app N, the application to upload into."
 )
+# A `#` template lands each application on its own id (ADT #974), and upload
+# mode binds to exactly one.
+UPLOAD_TEMPLATE_MESSAGE = (
+    "-upload TAKES ONE APPLICATION\n\n"
+    "Pass -app N, the application to upload into; # is for -create and -deploy."
+)
 # The default nap between passes, old ADT's own. A folder a person is editing
 # changes a few times a minute, so anything shorter buys nothing.
 DEFAULT_INTERVAL = 1
@@ -135,10 +141,11 @@ def _app_id(args: argparse.Namespace) -> int:
     to be bound to it before `WWV_FLOW_API` will write anything.
 
     Total rather than optional, because two refusals have already run by here.
-    `patch -app` parses as a list (`nargs="*"`, `type=int`), so a bare `-app`
-    reads as empty, which `upload_flag_refusal` answers with
-    `APP_REQUIRED_MESSAGE`; a second id is `resolve_target`'s refusal, ahead of
-    everything. A `None` branch here would be a third answer nothing can reach.
+    `patch -app` parses as a list (`nargs="*"`), so a bare `-app` reads as
+    empty, which `upload_flag_refusal` answers with `APP_REQUIRED_MESSAGE`; a
+    `#` template is `UPLOAD_TEMPLATE_MESSAGE` there too (ADT #974), and a second
+    id is `resolve_target`'s refusal, ahead of everything. A `None` branch here
+    would be a further answer nothing can reach.
     """
     return int(args.app[0])
 

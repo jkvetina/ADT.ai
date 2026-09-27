@@ -23,6 +23,12 @@ the application out for good. So the `end` half is necessary and not enough:
 the application's `> BUILDING APP` row has to have SUCCEEDED in place, and the
 application must be neither reverted nor failed by its scan.
 
+**A deletion lands with the same script its file would have** (ADT #983). The
+receipt names each path the patch deleted; once the install script that
+carries its DROP succeeded, the path leaves the baseline. Before, the merge
+only ever added, so a deployed deletion stayed recorded as held and the next
+`-create -hash` selected it again.
+
 **"In place" is read off the import's own row.** Its `app_id` is the id the tree
 landed on (`ApexImportItem.target_id`), which is the application's own id under
 a bare `-app` and under `-app` naming that same id, and another id under a
@@ -41,7 +47,12 @@ from typing import Any
 
 from adt_ai.patch.apex_deploy import BUILDING_APP_ROW
 from adt_ai.patch.baseline_tables import working_tree_tables, write_baseline_tables
-from adt_ai.patch.hashes import merge_into_baseline, read_patch_hashes, resolve_baseline_path
+from adt_ai.patch.hashes import (
+    merge_into_baseline,
+    read_patch_deletions,
+    read_patch_hashes,
+    resolve_baseline_path,
+)
 from adt_ai.patch.layout import apex_app_id, is_apexlang_path
 from adt_ai.patch.selection import apex_owner_schemas, install_script_name
 
@@ -56,35 +67,46 @@ def merge_landed_files(
     stamp      : str,
     scans      : Iterable[Any] = (),
     reverts    : Iterable[Any] = (),
-) -> tuple[Path, int] | None:
+) -> tuple[Path, int, int] | None:
     """Merge what the patch in ``folder`` landed into ``target_env``'s baseline.
 
-    Answers the baseline's path and how many hashes moved, or ``None`` when the
-    run advances nothing: a commit-built patch carries no `hashes.log` (Jan,
-    2026-08-21: *"For normal patches you dont touch it."*), and a run that landed
-    none of the files it shipped has nothing to record.
+    Answers the baseline's path, how many hashes moved and how many deleted
+    paths left it, or ``None`` when the run advances nothing: a commit-built
+    patch carries no `hashes.log` (Jan, 2026-08-21: *"For normal patches you
+    dont touch it."*), and a run that landed none of the files it carried has
+    nothing to record.
     """
     shipped, commits = read_patch_hashes(folder)
-    if not shipped:
+    deleted = read_patch_deletions(folder)
+    if not shipped and not deleted:
         return None
     advancing = landed_files(root, shipped, results, config, scans=scans, reverts=reverts)
-    if not advancing:
+    removing = set(
+        landed_files(
+            root, dict.fromkeys(deleted, ""), results, config, scans=scans, reverts=reverts
+        )
+    )
+    if not advancing and not removing:
         return None
     path = resolve_baseline_path(root, config, target_env, None)
-    _written, advanced = merge_into_baseline(
+    _written, advanced, removed = merge_into_baseline(
         path,
         advancing,
         {file: number for file, number in commits.items() if file in advancing},
         target_env = target_env,
         stamp      = stamp,
+        removed    = removing,
     )
     # The tables this deploy landed move with their lines (ADT #857), read off
-    # the working tree only where it still holds the bytes that shipped. A
-    # scope claiming nothing, because a deploy advances and never removes.
+    # the working tree only where it still holds the bytes that shipped. The
+    # scope claims only what the deploy removed, so a deleted table's stored
+    # file goes with its line and every other one is left as it was.
     write_baseline_tables(
-        path, working_tree_tables(root, config, advancing), covered=lambda file: False
+        path,
+        working_tree_tables(root, config, advancing),
+        covered = lambda file: file in removing,
     )
-    return path, advanced
+    return path, advanced, removed
 
 
 def landed_files(

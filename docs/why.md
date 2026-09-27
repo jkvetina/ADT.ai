@@ -151,7 +151,7 @@ adtai rebuild
 
 Every command prints one console shape, takes the same shared flags, and turns its verdict into an exit code, which is what an agent branches on. The read-only commands are the ones an agent runs unsupervised: `discovery` cannot write, `search` answers from a local mirror, and `validate` checks exported files with no database at all.
 
-The repository ships [skills/adt/SKILL.md](../skills/adt/SKILL.md), a lean router that sends an agent to only the page it needs, with the safety boundaries stated. Point Claude Code, Codex, Copilot or Cursor at it and the first command it types is a real one.
+The repository ships [skills/adt/SKILL.md](../skills/adt/SKILL.md), a lean router that sends an agent to only the page it needs, with the safety boundaries stated. Point Claude Code, Codex or Cursor at it and the first command it types is a real one.
 
 <br>
 

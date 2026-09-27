@@ -370,9 +370,12 @@ def _run_patch_command(
     if selection.create_requested and patch_ref is not None:
         # Same gate as -install, and for the same reason: a patch built from a
         # graph that predates the objects it orders fails in the target
-        # database. Since ADT #367 it ENSURES rather than only refuses, and
-        # since ADT #933 only for the schemas this patch's files live in. Still
-        # ahead of the first write, so a refusal leaves nothing behind.
+        # database. Until ADT #984 `-create` levelled the graph and then never
+        # read it, linking each group by type and filename; every group is now
+        # ordered off it in `create._dependency_ordered`. Since ADT #367 it
+        # ENSURES rather than only refuses, and since ADT #933 only for the
+        # schemas this patch's files live in. Still ahead of the first write,
+        # so a refusal leaves nothing behind.
         ensure_fresh_dependency_graph(
             args,
             root,

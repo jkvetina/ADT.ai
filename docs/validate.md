@@ -216,7 +216,7 @@ SCANNING APPLICATIONS:
   APP 100 PAGE 40 | SUCCESS | 9 fragments, no errors
 ```
 
-**Several pages are several scans.** APEX has no page-scoped cache clear, so scanning page 40 discards what page 12's scan recorded, and each page is read back before the next one runs. A page the application does not hold is `EMPTY` and fails, as `application 100 holds no page 7777, so the scan verified nothing`.
+**Several pages are several scans.** APEX has no page-scoped cache clear, so scanning page 40 discards what page 12's scan recorded, and each page is read back before the next one runs. A page the application does not hold is `EMPTY` and fails, as `application 100 holds no page 7777, so the scan verified nothing`. A range resolves against the pages each application holds, and one that selects no page at all exits `1` on `-page RANGE MATCHED NO PAGES` before anything is scanned.
 
 **It writes nothing.** No mirror row, no log file, no deploy receipt: the console is the whole report. The helper procedures the scan generates on the schema are dropped again before the run ends, whether or not it succeeded.
 

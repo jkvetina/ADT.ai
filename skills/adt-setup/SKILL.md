@@ -69,7 +69,7 @@ export ADT_ENV="DEV"
 export ADT_SCHEMA="CORE"
 ```
 
-`ADT_KEY` is the decryption key for encrypted connection passwords. `connection -set-pwd -encrypt` (and `-set-wallet-pwd`) write OLD-ADT-compatible encrypted values marked `pwd!: Y` / `wallet_pwd!: Y`, and runtime connection loading decrypts them with `-key` or `ADT_KEY`. Without it, a connection file holding encrypted passwords cannot open. `doctor` never prints the value, it renders as `<redacted>` when set and `<empty>` when missing.
+`ADT_KEY` is the decryption key for encrypted connection passwords. `connection -set-pwd -encrypt` (and `-set-wallet-pwd`) write OLD-ADT-compatible encrypted values marked `pwd!: Y` / `wallet_pwd!: Y`, and runtime connection loading decrypts them with `-key` or `ADT_KEY`. Without it, a connection file holding encrypted passwords cannot open. `doctor` never prints the value, it renders as `<redacted>` when set and `<empty>` when missing. A secret-named `-D` property in `JAVA_TOOL_OPTIONS` (password, secret, token) is masked the same way.
 
 ```bash
 export ADT_KEY="your-key"

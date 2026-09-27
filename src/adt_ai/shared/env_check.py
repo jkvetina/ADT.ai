@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,22 @@ ExecutableResolver = Callable[[str], str | None]
 # Read from the module inside `_run_command` rather than bound as a default
 # argument, so a test can shorten it without a ten-second wait.
 COMMAND_TIMEOUT_SECONDS = 10
+
+
+# A `-D` system property whose value is a credential: a keystore or truststore
+# password, a client secret, an API token. `doctor` prints `JAVA_TOOL_OPTIONS`
+# on the same screen that masks `ADT_KEY`, and that screen is what gets pasted
+# into a support ticket (ADT #979, 1.5.1 audit F09). The name decides, never
+# the value, and the value may be quoted, since the JVM honours quotes there.
+_SECRET_PROPERTY = re.compile(
+    r"""(-D[^=\s]*(?:password|passwd|pwd|secret|token)[^=\s]*=)("[^"]*"|'[^']*'|\S+)""",
+    re.IGNORECASE,
+)
+
+
+def redact_java_options(options: str) -> str:
+    """`options` with the value of every secret-named `-D` property masked."""
+    return _SECRET_PROPERTY.sub(r"\1<redacted>", options)
 
 
 @dataclass(frozen=True)

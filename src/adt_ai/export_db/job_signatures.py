@@ -124,7 +124,9 @@ def job_baseline(request: ExportDbRequest, schema: str) -> dict[str, str] | None
     `request` is untyped for the reason `watermarks.py` gives: annotating it would
     import `ExportDbRequest` back from the module that imports this one.
     """
-    if not request.recent or request.environment is None:
+    # `-recent 0` is a window too, so `None` alone means none: read as falsy,
+    # a zero window exported every job unfiltered (ADT #981).
+    if request.recent is None or request.environment is None:
         return None
     return JobSignatureStore.load(request.root).get(request.environment, schema)
 

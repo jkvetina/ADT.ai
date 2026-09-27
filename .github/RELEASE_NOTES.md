@@ -1,26 +1,19 @@
-- **An application is written `<id>/<alias>` everywhere**, and every APEXlang compile counts down from the time its last compile took.
-- **`patch` compiles the APEXlang tree before `-create` builds or `-deploy -app` runs anything**, and `-deploy -app` compiles before it connects. In `validate` and `patch`, `VALIDATING APPS:` rows name each application, tick once a second and carry the compile's warnings.
-- **`export_apex -apexlang` compiles what it just exported**, each application in its own block, and reports what the compile found as a warning.
-- **`patch`: `-create` replaces an altered table with its ALTER instead of shipping both**, and lists every uncommitted file in the repository as a tree below `PROCESSED FILES:`.
-- **`patch`: `-create` warns when an APEXlang application changed since your export**, names it in the warning header and numbers the way out. It reads the live checksum on APEX 24.2 too, on the environment `export_apex` recorded.
-- **`patch`: `-deploy` no longer writes `logs_<ENV>/deployment.json`**, and a failed application scan prints `ERROR - VERIFICATION FAILED:` with one row per page.
-- **A remedy with more than one step prints as numbered steps**, in `doctor` as in every command, and a `ValueError` or `RuntimeError` gets its own error header.
-- **`connection`: `-test` checks that each connection opens and reports an environment as one status table**, and with `-schema` shows what each schema holds. A connection file that does not parse is refused without printing its contents.
-- **Unsafe connection fields and update redirects are rejected.**
-- **SQLcl stays on the thin driver on Windows too**, where an installed Oracle client older than 23 used to break every SQLcl-backed command.
-- **`export_db`: `-compact` closes its progress bar on `ALL DONE`.**
-- **`export_data` leaves a comment-only `.sql` in place of a MERGE it can no longer generate.**
-- **`export_apex -deep` includes a page's shared components.**
-- **`search`: `TERM` names an exported file it cannot read and carries on**, and the dependency graph attributes an APEX caller to the owner of the object it uses.
-- **The `diff` documentation now ships its schema and APEX pages.**
+- **`patch -create` links every group in dependency order**: a foreign-key child follows its parent, a view follows the function it calls, and a child table's rows follow its parent's.
+- **`patch -app` takes a `#` for each application's own id**: `-app #6000` lands 122 on 1226000 and 123 on 1236000, and `-app 6000#` lands them on 6000122 and 6000123.
+- **`patch` hash mode takes a deployed deletion out of the baseline**, keeps the DROP for an object deleted, re-added and deleted again, and writes no DROP for a deleted DATA script.
+- **`export_db` writes interval-partitioned tables and quoted column comments that re-create**, and a `-recent` window lists a refused object again until a run writes it.
+- **`export_data` writes a MERGE only on a key that names the same row everywhere**, never on an identity or nullable key, stays valid with insert and update both off, and uses the configured file extension.
+- **`doctor` masks the value of any secret-named JVM property** in `JAVA_TOOL_OPTIONS`, quoted values included.
+- **`connection`: `-set-wallet-pwd` removes every competing wallet password command** and says so in its preview.
+- **`ut` fails a run whose report leaves out a discovered test**, and `validate -scan` exits 1 when `-page` matches no page.
 
 ## Verification
 
 | Suite          | Passed | Failed | Unverified | Coverage | Cores |  Time |
 | -------------- | -----: | -----: | ---------: | -------: | ----: | ----: |
-| Unit tests     |  10271 |        |            |     100% |    14 |  2:52 |
-| User stories   |    185 |        |          2 |          |     3 | 19:13 |
-| Security audit |     22 |        |            |          |     1 |  0:41 |
+| Unit tests     |  10389 |        |            |     100% |    14 |  2:10 |
+| User stories   |    191 |        |          2 |          |     3 | 18:32 |
+| Security audit |     25 |        |            |          |     1 |  1:08 |
 
 The 2 unverified user stories are Windows-only contracts, and every release is built on macOS.
 

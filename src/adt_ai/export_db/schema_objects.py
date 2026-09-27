@@ -17,6 +17,7 @@ from adt_ai.export_db.failures import ObjectExportFailure
 from adt_ai.export_db.inventory import DatabaseObject, ObjectDiscovery
 from adt_ai.export_db.job_signatures import JobSignatureStore, advance_job_signatures
 from adt_ai.export_db.object_content import object_content
+from adt_ai.export_db.refused_objects import record_refusals
 from adt_ai.export_db.watermarks import advance_watermark
 from adt_ai.shared.config import is_enabled
 
@@ -154,6 +155,10 @@ def stamp_schema(
     # make the next real `-recent` run skip what this one only read.
     if request.baseline:
         return
+    # What the stamp below steps past, the retry set holds (`#981`): a refused
+    # object's `LAST_DDL_TIME` is behind the new watermark, so without it the
+    # next `-recent` would never list the object again.
+    record_refusals(request, schema, database_objects, refused)
     # Refused objects do not hold the stamp back (`#917`): an hour of
     # written objects is recorded even when Oracle will describe one of
     # them to nobody. A schema where every object was refused wrote

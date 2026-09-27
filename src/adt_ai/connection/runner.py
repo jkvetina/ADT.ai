@@ -14,6 +14,7 @@ from adt_ai.connection.stored_secrets import (
     rekey_secrets,
     write_fingerprint,
 )
+from adt_ai.connection.wallet_commands import drop_wallet_commands, replaced_command_notes
 from adt_ai.shared import crypto, text_files
 from adt_ai.shared.connections import DEFAULT_PORT
 from adt_ai.shared.secret import Secret
@@ -124,6 +125,9 @@ class ConnectionEditResult:
     summary     : str
     preview     : str
     written     : bool
+    # Sentences the CLI prints under the action, in preview and after `-go`
+    # alike: what the edit removes that the user did not name (ADT #979).
+    notes       : tuple[str, ...] = ()
 
 
 def _yaml() -> YAML:
@@ -249,6 +253,7 @@ class ConnectionEditor:
         if data is None:
             data = {}
 
+        notes: tuple[str, ...] = ()
         if request.action == "create":
             summary, preview = self._create_connection(yaml, data, request)
         elif request.action == "add-env":
@@ -258,6 +263,10 @@ class ConnectionEditor:
         elif request.action == "set-pwd":
             summary, preview = self._set_pwd(data, request)
         elif request.action == "set-wallet-pwd":
+            notes = replaced_command_notes(
+                request.environment,
+                self._require_environment(data, request.environment),
+            )
             summary, preview = self._set_wallet_pwd(data, request)
         elif request.action == "rekey":
             summary, preview = rekey_secrets(data, request)
@@ -277,6 +286,7 @@ class ConnectionEditor:
             summary     = summary,
             preview     = preview,
             written     = request.apply,
+            notes       = notes,
         )
 
     def _add_env(
@@ -503,6 +513,10 @@ class ConnectionEditor:
                 if isinstance(node, dict):
                     for key in _LEGACY_WALLET_KEYS:
                         node.pop(key, None)
+            # `_write_password` cleared the wallet block's command; one in the
+            # environment's or a schema's `db:` merges over it just the same
+            # (#979 F11, approved on #985).
+            drop_wallet_commands(env_node)
         summary = f"set wallet password for {request.environment}"
         return summary, ""
 

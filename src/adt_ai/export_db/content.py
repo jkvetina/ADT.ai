@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 from adt_ai.export_db.config import _configured_object_types, _split_patterns
 from adt_ai.export_db.inventory import DatabaseObject
+from adt_ai.export_db.normalizer_identifiers import normalize_identifier_part
 from adt_ai.shared.sql_like import matches_sql_like
 
 if TYPE_CHECKING:
@@ -130,7 +131,7 @@ def _render_comment(
     object_display_name: str | None = None,
 ) -> str | None:
     # Only the object-name half follows the file. A column name is not the
-    # file's name and keeps the lowercase the export has always written.
+    # file's name and is spelled the way the table DDL spells it.
     object_name = object_display_name or database_object.name.lower()
     column_name = comment.get("COLUMN_NAME")
     raw_text = comment.get("COMMENTS")
@@ -138,7 +139,7 @@ def _render_comment(
     if column_name:
         if not include_columns:
             return None
-        column_full = f"{object_name}.{str(column_name).lower()}"
+        column_full = f"{object_name}.{_comment_column(column_name)}"
         if column_width is not None:
             column_full = f"{column_full:<{column_width}}"
         return (
@@ -148,6 +149,18 @@ def _render_comment(
     if not text and database_object.object_type.upper() != "TABLE":
         return None
     return f"COMMENT ON TABLE {object_name} IS '{_escape_sql_text(text)}';"
+
+def _comment_column(column_name: object) -> str:
+    """The dictionary's column name as the table DDL in the same file writes it.
+
+    The dictionary stores the name unquoted, in the case Oracle keeps it, so it
+    is quoted back first and then handed to the one reader the table normalizer
+    uses: `ID` comes back `id`, while `createdAt`, the reserved `ORDER` and
+    `Order Id` keep their quotes. Lowercasing it bare named another column, a
+    parse error and two tokens respectively (`#981`, the class `#923` fixed in
+    `view_columns.py`).
+    """
+    return normalize_identifier_part(f'"{column_name}"')
 
 def _escape_sql_text(value: str) -> str:
     return value.replace("'", "''")
@@ -159,7 +172,7 @@ def _column_comment_width(
 ) -> int | None:
     object_name = object_display_name or database_object.name.lower()
     column_names = [
-        f"{object_name}.{str(comment.get('COLUMN_NAME')).lower()}"
+        f"{object_name}.{_comment_column(comment.get('COLUMN_NAME'))}"
         for comment in comments
         if comment.get("COLUMN_NAME")
     ]

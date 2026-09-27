@@ -47,7 +47,8 @@ Files are grouped by `patch_map`, which fixes the coarse order (sequences, table
 
 - `USER_DEPENDENCIES`, the PL/SQL and view half. A view follows the view it selects from, and a package body follows its spec.
 - `USER_CONSTRAINTS`, the table half. Oracle records no table-to-table rows in `USER_DEPENDENCIES`, so foreign keys are reconstructed from enabled `R` constraints. A table with a foreign key is emitted after the table it references.
-- File name is the tie-break, so the output is stable, and a dependency cycle degrades to name order for the objects inside it.
+- Every group is ordered this way, tables, objects and data alike. A data file orders as its table does, so a child table's rows load after its parent's.
+- Only a real edge moves a file. Otherwise `-create` keeps `patch_map`'s type order and then the path, so a view that calls a function follows it even though `VIEW` is listed first, and `-install` keeps the file name. A dependency cycle keeps that order for the objects inside it.
 
 <br>
 

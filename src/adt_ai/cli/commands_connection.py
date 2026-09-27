@@ -409,6 +409,15 @@ def _test_environment(
     return exit_code_for(_database_error_code(failures[0][1]))
 
 
+def _print_notes(notes: tuple[str, ...]) -> None:
+    """What an edit removes beyond what was asked, under the action row (#979)."""
+    if not notes:
+        return
+    print()
+    for note in notes:
+        print(f"  {note}")
+
+
 def _run_connection_test(
     args: argparse.Namespace,
     gateway_factory: GatewayFactory | None,
@@ -480,6 +489,7 @@ def _run_connection(
 
     if not args.go:
         print("  Mode              preview (re-run with -go to apply)")
+        _print_notes(plan.notes)
         if plan.preview:
             print()
             print(plan.preview)
@@ -521,6 +531,7 @@ def _run_connection(
         return exit_code_for("ARGUMENT INVALID")
     print()
     print(f"  {result.summary}")
+    _print_notes(result.notes)
     if action == "rekey" and result.preview:
         # Which secrets were rewritten is the result of a rekey, not decoration:
         # it is the record that no corner of the file was missed.

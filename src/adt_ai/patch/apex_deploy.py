@@ -54,8 +54,10 @@ from adt_ai.patch import settings
 from adt_ai.patch.apex_backup import ApexBackup, backup_line
 from adt_ai.patch.apex_import import (
     ApexTarget,
+    AppTarget,
     build_import_script,
     derive_sandbox_alias,
+    landing_id,
     one_target_refusal,
     recover_task_number,
 )
@@ -273,7 +275,8 @@ def prepare_apex_imports(
         app_id = resolved.app_id
         if app_id is None:  # pragma: no cover - `precheck_trees` already refused it
             raise PatchError(NO_APPLICATION_ID)
-        landing = target_id if target_id is not None else app_id
+        # A `#` template expands per application (ADT #974).
+        landing = landing_id(target_id, app_id) or app_id
         # **Before the signature is read, which is the whole of the point**
         # (ADT #726). The window this closes runs from that read to the import,
         # so a lock taken after it would leave the race exactly where it was.
@@ -448,7 +451,7 @@ def _source_line(item: ApexImportItem, root: Path) -> str:
 def _full_export_refusal(
     files     : list[str],
     config    : dict[str, Any],
-    target_id : int | None,
+    target_id : AppTarget | None,
 ) -> str:
     """The message for a retarget whose patch also installs a full export.
 

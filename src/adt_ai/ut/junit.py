@@ -168,6 +168,36 @@ def unreported(package: SuitePackage, document: str) -> tuple[TestOutcome, ...]:
     )
 
 
+def unreported_tests(
+    package: SuitePackage,
+    outcomes: tuple[TestOutcome, ...],
+) -> tuple[TestOutcome, ...]:
+    """One outcome per discovered test the report left out (`#980` F05).
+
+    A report is not complete because it parsed: a document cut off after its
+    first `<testcase>` used to pass the run on the one test it named. Every
+    discovered test the report does not account for is an ERROR, because it did
+    not pass, it did not report. A **disabled** one is a SKIP instead, the same
+    verdict the reporter gives it when it does list it, so its absence can never
+    turn a green run red.
+
+    Accounted for means a case resolved to its procedure name, which
+    `_known_test_name` already consumes one position at a time (`#670`), so two
+    tests sharing a description are each accounted for by their own case.
+    """
+    reported = {outcome.test.upper() for outcome in outcomes}
+    return tuple(
+        TestOutcome(
+            package = package.name,
+            test    = test.name,
+            result  = RESULT_SKIPPED if test.disabled else RESULT_ERRORED,
+            message = "" if test.disabled else "utPLSQL reported no result for this test",
+        )
+        for test in package.tests
+        if test.name.upper() not in reported
+    )
+
+
 def _case_result(case: ElementTree.Element) -> tuple[str, str]:
     for tag, result in (("failure", RESULT_FAILED), ("error", RESULT_ERRORED)):
         node = case.find(tag)
