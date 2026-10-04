@@ -57,6 +57,40 @@ def discover_job_names(
     return changed_jobs(signatures, known), signatures
 
 
+#: What a job row names beside its own action: `(type, owner column, name column)`.
+_JOB_REFERENCES = (
+    ("PROGRAM", "PROGRAM_OWNER", "PROGRAM_NAME"),
+    ("SCHEDULE", "SCHEDULE_OWNER", "SCHEDULE_NAME"),
+)
+
+
+def job_references(
+    rows: list[dict[str, Any]],
+    names: list[str],
+    schema: str,
+) -> list[tuple[str, str]]:
+    """The `(PROGRAM | SCHEDULE, name)` pairs the chosen jobs name (ADT #993).
+
+    A job created from a named program fails on a fresh install unless that
+    program is there first, so the export follows every reference it can
+    write: one in the schema being exported. A window-driven job's schedule
+    is a SYS window and another schema's program is that schema's file, so
+    neither is followed. Names may come back quoted, so the quotes go.
+    """
+    chosen = set(names)
+    found: list[tuple[str, str]] = []
+    for row in rows:
+        if str(row["OBJECT_NAME"]) not in chosen:
+            continue
+        for object_type, owner_column, name_column in _JOB_REFERENCES:
+            name = str(row.get(name_column) or "").strip('"')
+            owner = str(row.get(owner_column) or "").strip('"')
+            reference = (object_type, name)
+            if name and owner.upper() in {"", schema.upper()} and reference not in found:
+                found.append(reference)
+    return found
+
+
 def discover_mview_log_names(
     rows: list[dict[str, Any]],
     matches: Matcher,

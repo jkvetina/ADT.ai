@@ -334,7 +334,9 @@ def run_database_refresh(
         if not is_app_segment or plan.flow is None:
             return 1 if runner.refresh(request) else 0
         with FlowRefresh(plan.flow, schema) as flow:
-            scan_failures = runner.refresh(replace(request, on_app_refreshed=flow.app))
+            scan_failures = runner.refresh(
+                replace(request, on_app_opened=flow.read, on_app_refreshed=flow.app)
+            )
             # An application the scan skipped (APEX before 24.2) opened no
             # header, so its page links open the one it would have printed.
             for app in plan.apps:

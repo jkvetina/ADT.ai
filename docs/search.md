@@ -158,6 +158,7 @@ TIMER: 0s
 
 - An object renders as two columns, split from its `TYPE.NAME` node on the first dot, so `PACKAGE BODY` stays whole. `-impact` adds a `DEPTH` column.
 - There is no count column. `USER_DEPENDENCIES` holds one row per object pair, so a count per row would always read one.
+- A materialized view reads `MATERIALIZED VIEW` both ways, never `TABLE`.
 - `-from` titles the table `USES <OBJ>` and `-impact` `IMPACT OF <OBJ>`. `-constraint` prints two tables of its own, under [Walking a foreign key](#walking-a-foreign-key).
 - An empty answer prints `(none)` rather than nothing.
 
@@ -196,7 +197,7 @@ OBJECTS USED BY APP 100 (1):
 
   OBJECT TYPE   OBJECT NAME   PAGES   COMPS
   -----------   -----------   -----   -----
-  SCHEMA        SANDBOX           0       0
+  SCHEMA        SANDBOX           0       1
 
 
 TIMER: 0s
@@ -204,7 +205,7 @@ TIMER: 0s
 
 - Rows sort by type, then name. `PAGES` counts the distinct pages whose components use the object and `COMPS` the components, so a shared component adds to `COMPS` alone.
 - APEX 24.2 and later give a component no id, so there `COMPS` tells components apart by page, type and name.
-- The parsing schema is a row of its own, used by the application rather than by a page, so it reads `0` and `0`.
+- The parsing schema is a row of its own, used by the application rather than by a page, so it reads `0` and `1`.
 
 A text search lists its hits, then what each database object hit uses and is used by:
 
@@ -434,12 +435,12 @@ When a restore matches more than one version of one file, the newest match wins,
 | `-type`, `--type` | Yes | none | Object type, resolved through your `object_types` config against the `path_objects` layout. Oracle's own spelling: `-type "PACKAGE BODY"`. A SQL LIKE pattern, so `-type "PACKAGE%"` takes both halves of the pair. Space-separated, comma-separated and repeated forms are equivalent. With `-app`, the type of an object the application uses. |
 | `-name`, `--name` | Yes | none | Object name, read through the file's own configured extension, so `packages/core.spec.sql` is `CORE`. A SQL LIKE pattern like `-type`, and takes multiple values the same way. With `-app`, the name of an object the application uses. With `-data`, the tables to search. |
 | `-by`, `--by` | Yes | none | Author email, as a SQL LIKE pattern: `-by bob@example.com` or `-by "bob%"`. Repeatable. |
-| `-my`, `--my` | No | off | Keep commits whose author email equals `git config user.email`. |
+| `-my`, `--my` | No | off | Your commits: `email` in `config/IDENTITY.yaml`, else `git config user.email`. |
 | `-commit`, `-commits`, `--commit`, `--commits` | Yes | none | Commit numbers or hashes. `N` is that commit, `N+` is that one and newer, `N-M` is the inclusive span. Several values inside this flag are OR-matched. |
 | `-hash`, `--hash` | Yes | none | Commit hash prefixes, OR-matched. Combined with `-commit`, both filters must match. |
 | `-recent [DAYS]`, `--recent [DAYS]` | No | none | Keep commits newer than today minus DAYS. DAYS may be a fraction of a day, `1/24` for the past hour. A whole-day window compares dates, so `-recent 1` keeps a commit made at 23:00 yesterday; a shorter one compares the commit's own timestamp. Bare `-recent` means one day. |
-| `-since`, `--since` | No | none | Oldest commit date, `YYYY-MM-DD`, or a number of days back. |
-| `-until`, `--until` | No | none | Newest commit date, `YYYY-MM-DD`, or a number of days back. |
+| `-since`, `--since` | No | none | Oldest commit date, `YYYY-MM-DD`, or a number of days back. Else exit `2`. |
+| `-until`, `--until` | No | none | Newest commit date, `YYYY-MM-DD`, or a number of days back. Else exit `2`. |
 | `-restore`, `--restore` | No | off | Write each matching historical version over its original path, the newest match per file, over a `WIP` commit of any uncommitted work. |
 
 Shared options (-root, -schema, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

@@ -24,7 +24,11 @@ from adt_ai.export_db.discovery_filters import normalize_list as _normalize_list
 from adt_ai.export_db.discovery_filters import normalize_patterns as _normalize_patterns
 from adt_ai.export_db.discovery_filters import query_pattern_list as _query_pattern_list
 from adt_ai.export_db.discovery_filters import user_object_types as _user_object_types
-from adt_ai.export_db.timeless_types import discover_job_names, discover_mview_log_names
+from adt_ai.export_db.timeless_types import (
+    discover_job_names,
+    discover_mview_log_names,
+    job_references,
+)
 from adt_ai.shared.db import QueryGateway
 
 
@@ -46,6 +50,7 @@ class ObjectDiscovery:
     MVIEW_LOG_DDL_QUERY    = queries.MVIEW_LOG_DDL_QUERY
     JOB_DDL_QUERY          = queries.JOB_DDL_QUERY
     SCHEDULE_DDL_QUERY     = queries.SCHEDULE_DDL_QUERY
+    PROGRAM_DDL_QUERY      = queries.PROGRAM_DDL_QUERY
     DBMS_METADATA_SETUP_QUERY = queries.DBMS_METADATA_SETUP_QUERY
     GRANTS_MADE_QUERY      = queries.GRANTS_MADE_QUERY
     GRANTS_RECEIVED_QUERY  = queries.GRANTS_RECEIVED_QUERY
@@ -117,13 +122,18 @@ class ObjectDiscovery:
         # the caller that set on demand. Both shapes were wrong in the same way, and
         # the signature is what lets a window mean "what changed" for this type too.
         if _includes_object_type("JOB", filters.object_types):
+            # A job's program and schedule come along whatever the filter says,
+            # once each: a full run has already listed them (ADT #993).
+            listed = set(objects)
             objects.extend(
-                self._discover_jobs(
+                found
+                for found in self._discover_jobs(
                     schema,
                     filters,
                     windowed = recent_days is not None or changed_since is not None,
                     known    = known_job_signatures,
                 )
+                if found not in listed
             )
         if _includes_object_type("MVIEW LOG", filters.object_types):
             objects.extend(
@@ -188,11 +198,17 @@ class ObjectDiscovery:
         `last_job_signatures` so the caller can persist them once the export has
         actually written the files. Recording them here rather than returning them
         keeps the discovery contract a plain list of objects.
+
+        Each chosen job is followed by the program and schedule it names, since
+        its file cannot install without them (ADT #993).
         """
         rows = self.gateway.fetch_all(self.JOBS_QUERY, {"schema": schema})
         names, signatures = discover_job_names(rows, filters.matches, windowed, known)
         self.last_job_signatures[schema] = signatures
-        return [DatabaseObject(schema, "JOB", name) for name in names]
+        return [DatabaseObject(schema, "JOB", name) for name in names] + [
+            DatabaseObject(schema, object_type, name)
+            for object_type, name in job_references(rows, names, schema)
+        ]
 
     def _discover_mview_logs(
         self,

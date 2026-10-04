@@ -209,22 +209,31 @@ END;
 # new has to be configured or threaded down for the block to run. The version
 # is read for the same reason -- it is handed back unchanged, which is all APEX
 # needs to stamp. Moved here from `apex_import.py` by ADT #923, the SQL home.
-APEX_IMPORT_STAMP_BLOCK = """DECLARE
-    l_workspace     apex_applications.workspace%TYPE;
-    l_version       apex_applications.version%TYPE;
-BEGIN
-    SELECT workspace, version
-    INTO   l_workspace, l_version
-    FROM   apex_applications
-    WHERE  application_id = {app_id};
-    --
-    APEX_UTIL.SET_WORKSPACE(p_workspace => l_workspace);
-    APEX_CUSTOM_AUTH.SET_USER('{account}');
-    --
-    APEX_APPLICATION_ADMIN.SET_APPLICATION_VERSION(
-        p_application_id    => {app_id},
-        p_version           => l_version
-    );
+#
+# Every APEX import runs it since ADT #956, not only a numbered `-app`: an
+# import leaves `LAST_UPDATED_ON` empty (measured, `import_stamp_probe.py`), and
+# the stamp is what `locks/check_apps.sql` reads to see a colleague's deploy.
+# ``{set_user}`` is `APEX_IMPORT_STAMP_USER` where the deploy knows its
+# developer, and empty in an install script, which `-create` writes for any
+# deployer: APEX then names the connected schema.
+APEX_IMPORT_STAMP_USER = "\n        APEX_CUSTOM_AUTH.SET_USER('{account}');"
+# A loop over the row rather than a `SELECT INTO` (ADT #956): a script can
+# install components of an application the target does not hold, and the story
+# `patch/21_deploy_order_from_deploy_sql` measured the `INTO` failing that
+# deploy on `ORA-01403: no data found`. No row, nothing to stamp.
+APEX_IMPORT_STAMP_BLOCK = """BEGIN
+    FOR c IN (
+        SELECT workspace, version
+        FROM   apex_applications
+        WHERE  application_id = {app_id}
+    ) LOOP
+        APEX_UTIL.SET_WORKSPACE(p_workspace => c.workspace);{set_user}
+        --
+        APEX_APPLICATION_ADMIN.SET_APPLICATION_VERSION(
+            p_application_id    => {app_id},
+            p_version           => c.version
+        );
+    END LOOP;
     COMMIT;
 END;
 /"""

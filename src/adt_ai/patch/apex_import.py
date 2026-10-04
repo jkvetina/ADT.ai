@@ -280,6 +280,7 @@ def build_import_script(
     target     : ApexTarget,
     alias      : str | None = None,
     account    : str = "",
+    app_id     : int | None = None,
 ) -> str:
     """The SQLcl script that lands ``input_path`` on the target application.
 
@@ -309,10 +310,16 @@ def build_import_script(
     can write it -- which is why `apex_drop.droppable_by` clears an ownerless
     sandbox rather than refusing one.
 
-    **Only a numbered target is stamped.** A bare `-app` lands each application
-    under its own id without replacing the Builder audit author. An explicit
-    `-app <id>` records the deployer and time after import, whether the id names
-    a sandbox or the source application itself.
+    **Every import is stamped since ADT #956**, a bare `-app` on ``app_id``,
+    its own id, as much as a numbered one. It was the sandbox's alone, which
+    left a real application's audit row to the Builder; but an import leaves
+    that row EMPTY rather than as the Builder had it (measured on APEX 26.1,
+    `tests/tools/import_stamp_probe.py`), and the stamp is what the next
+    patch's `locks/check_apps.sql` reads to see this deploy. Jan: *"After the
+    import of the app, you are supose to change app version to same version
+    ... extend it to all apex imports (except workspace files and rest
+    services)."* An empty ``account`` still stamps, naming the connected
+    schema instead of a developer.
     """
     if target.target_id is not None and not alias:
         raise ValueError(
@@ -326,16 +333,20 @@ def build_import_script(
     reject_unquotable(path, role="staging folder")
     command = IMPORT_COMMAND.format(input=path)
     lines = [command]
+    landing = app_id
     if target.target_id is not None and alias:
         reject_unquotable(alias, role="application alias")
         lines = [f'{command} -id {target.target_id} -alias "{alias}"']
-        if account.strip():
-            lines.append(
-                queries.APEX_IMPORT_STAMP_BLOCK.format(
-                    app_id  = target.target_id,
-                    account = escape_literal(account.strip()),
-                )
-            )
+        if landing is None and isinstance(target.target_id, int):
+            landing = target.target_id
+    if landing:
+        set_user = (
+            queries.APEX_IMPORT_STAMP_USER.format(account=escape_literal(account.strip()))
+            if account.strip() else ""
+        )
+        lines.append(
+            queries.APEX_IMPORT_STAMP_BLOCK.format(app_id=landing, set_user=set_user)
+        )
     return "\n".join([*lines, "exit;"])
 
 

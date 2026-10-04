@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 from collections.abc import Callable
 from types import FrameType
 from typing import Any, Protocol, cast
@@ -87,6 +88,19 @@ class ScreenState(Protocol):
 # defect it was written for. Recording also reports every violation in a run
 # instead of stopping at the first.
 _violations: list[str] = []
+
+# One step to the guard (ADT #988): an announcement printed over several writes
+# -- `-debug`'s `SQLCL REQUEST:` echo and the `mark_announced()` after it -- and
+# the guard's own look at the screen never interleave. `diff -rest -debug` runs
+# two exports on two threads; the second one's guard landed between the first
+# one's finished echo line and its `mark_announced()`, and read a screen that
+# was mid-announcement as unannounced.
+_screen_lock = threading.RLock()
+
+
+def announcing() -> threading.RLock:
+    """Hold while printing an announcement that ends in `mark_announced()`."""
+    return _screen_lock
 
 
 def reset_violations() -> None:
@@ -189,8 +203,9 @@ def is_announced() -> bool:
 
 def guard(operation: object) -> None:
     """Record a blocking call the screen has not accounted for."""
-    if is_announced() or not strict_mode():
-        return
+    with _screen_lock:
+        if is_announced() or not strict_mode():
+            return
     _violations.append(f"{_caller()}  {first_line(operation)}")
 
 

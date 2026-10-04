@@ -125,6 +125,8 @@ Each value is written so that reading it back does not depend on the session it 
 
 Dates and timestamps carry their own format model, so a MERGE script runs the same whatever `NLS_DATE_FORMAT` the target session has. Numbers are fetched as exact decimals, so a `NUMBER(16,2)` or an integer above 2^53 keeps the value it had in the source table.
 
+A `TIMESTAMP WITH TIME ZONE` keeps the offset it was stored with: the CSV cell ends in it, such as `+02:00`, and the MERGE carries it after the fractional seconds in `TO_TIMESTAMP_TZ(...)`, so a replay never stamps the target session's own zone on it.
+
 An interval carries its sign on the whole value, the way Oracle writes it, so minus one hour is `-0 01:00:00.000000` and minus two months is `-00-02`. Inside a JSON sidecar an interval is the ISO 8601 duration Oracle's own `JSON_SERIALIZE` prints, such as `P1DT2H` or `-P2M`.
 
 A column type that is not in this table and has no plain text form stops the export and names the column, rather than writing something that reloads as different data. That is what a user-defined object column or a collection does: leave it out with `ignored_columns` if the rest of the table is worth exporting.

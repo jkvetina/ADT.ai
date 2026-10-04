@@ -141,14 +141,26 @@ def stream_on_pty(
             stderr = slave,
             env    = environment,
         )
-        os.close(slave)
-        slave = -1
+        # The parent keeps its own slave descriptor open until the child has
+        # exited and the pty is drained (`finally` closes it). macOS discards
+        # what a child wrote when the LAST slave descriptor closes before the
+        # master has read it, so closing here at once lost a fast child's whole
+        # transcript whenever the reader was scheduled late, `SP2-0640`
+        # included. EOF is therefore not what ends the loop: an empty wait with
+        # the child gone is.
         while True:
             remaining = None if deadline is None else deadline - time.monotonic()
             if remaining is not None and remaining <= 0:
                 raise _timed_out(timeout_seconds, collected, scrub)
-            if not select.select([master], [], [], remaining if remaining else 1.0)[0]:
-                continue
+            wait = 0.2 if remaining is None else min(remaining, 0.2)
+            if not select.select([master], [], [], wait)[0]:
+                if process.poll() is None:
+                    continue
+                # Gone, but it may have written between that wait and this
+                # check: everything it ever wrote is queued by now, so one
+                # more look at the pty is final.
+                if not select.select([master], [], [], 0)[0]:
+                    break
             try:
                 chunk = os.read(master, 65536)
             except OSError:

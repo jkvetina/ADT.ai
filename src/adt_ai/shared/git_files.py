@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from adt_ai.shared import text_files
+from adt_ai.shared.git_batch import batched_blob
 from adt_ai.shared.subprocess_env import safe_subprocess_environment
 
 
@@ -368,7 +369,14 @@ def last_commit_time(root: Path, ref: str, path: str) -> int:
 
 
 def git_show(root: Path, ref: str, path: str) -> bytes | None:
-    """Raw bytes of ``path`` at ``ref``, or ``None`` when it does not resolve."""
+    """Raw bytes of ``path`` at ``ref``, or ``None`` when it does not resolve.
+
+    Inside `git_batch.batched_git_reads` one `cat-file --batch` answers instead
+    of a process per file (ADT #988), with the same bytes.
+    """
+    answered, payload = batched_blob(root, ref, path)
+    if answered:
+        return payload
     result = subprocess.run(
         ["git", "show", f"{ref}:{path}"],
         cwd            = root,

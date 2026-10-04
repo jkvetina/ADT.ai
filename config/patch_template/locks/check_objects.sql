@@ -3,7 +3,7 @@
 --
 -- Reads :objects, the 'NAME:TYPE,' list, and :built_at, the UTC moment the
 -- patch was built ('YYYY-MM-DD HH24:MI:SS'), both set by the install script.
--- Linked by patch -create when patch_signatures is on.
+-- Linked by patch -create when deploy_live_check is on.
 --
 -- Refuses with ORA-20901 OBJECT_CHANGED when a listed object was compiled after
 -- the patch was built. The database reading is converted to UTC on the server,

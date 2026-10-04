@@ -86,26 +86,34 @@ def export_objects(
             reporter.finish_object(failed=True)
             reporter.abort_export()
             raise
-        # The row closes whether the pull came back or raised (`#232`);
-        # `-compact`'s bar needs to know which, to close on `FAILED`.
-        reporter.finish_object(failed=error is not None)
-        if error is None:
-            timer.record(database_object.object_type)
-            try:
-                content, fix_content = object_content(
-                    request,
-                    database_object,
-                    raw_ddl,
-                    registry               = registry,
-                    resolver               = resolver,
-                    discovery              = discovery,
-                    add_if_not_exists      = add_if_not_exists,
-                    keep_owner             = keep_owner,
-                    keep_view_column_names = keep_view_column_names,
-                    dropped_job_arguments  = dropped_job_arguments,
-                )
-            except Exception as caught:
-                error = caught
+        pull_failed = error is not None
+        try:
+            if error is None:
+                timer.record(database_object.object_type)
+                try:
+                    # Under the object's own row, still open (ADT #988): a
+                    # job's arguments and a comment the bulk pre-read did not
+                    # cover are read here, and a finished row announces nothing.
+                    content, fix_content = object_content(
+                        request,
+                        database_object,
+                        raw_ddl,
+                        registry               = registry,
+                        resolver               = resolver,
+                        discovery              = discovery,
+                        add_if_not_exists      = add_if_not_exists,
+                        keep_owner             = keep_owner,
+                        keep_view_column_names = keep_view_column_names,
+                        dropped_job_arguments  = dropped_job_arguments,
+                    )
+                except Exception as caught:
+                    error = caught
+        finally:
+            # The row closes whether the pull came back or raised (`#232`);
+            # `-compact`'s bar needs to know which, to close on `FAILED`. The
+            # pull's verdict, as before: a refused normalization is recorded
+            # below, never on the row.
+            reporter.finish_object(failed=pull_failed)
         if error is not None:
             # One refused object no longer ends the export (`#917`):
             # recorded here, raised by `run` once the rest is written.

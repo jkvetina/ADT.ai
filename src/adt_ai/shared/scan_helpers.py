@@ -23,12 +23,17 @@ from adt_ai.shared.queries.scan_helpers import (
     DROP_SCAN_HELPERS_STATEMENT,
     SCAN_HELPER_NAME_PATTERN,
     SCAN_HELPERS_QUERY,
+    STALE_AFTER_MINUTES,
     not_a_scan_helper,
 )
 
 
 def drop_scan_helpers(gateway: Any) -> None:
-    """Take the helper procedures away, on their own, unconditionally."""
+    """Take the stale helper procedures away, on their own, unconditionally.
+
+    Only helpers older than `STALE_AFTER_MINUTES`: a younger one may be another
+    session's scan in flight, and dropping it fails that scan with `ORA-04043`.
+    """
     gateway.execute(DROP_SCAN_HELPERS_STATEMENT)
 
 
@@ -46,6 +51,7 @@ __all__ = [
     "DROP_SCAN_HELPERS_STATEMENT",
     "SCAN_HELPERS_QUERY",
     "SCAN_HELPER_NAME_PATTERN",
+    "STALE_AFTER_MINUTES",
     "drop_scan_helpers",
     "drop_stray_scan_helpers",
     "not_a_scan_helper",

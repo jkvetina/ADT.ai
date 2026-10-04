@@ -9,7 +9,8 @@ finished for connections.
 Four screens, and the boundary between them is what the reader does next:
 
 * `ConnectionNotFoundError` keeps `CONFIGURATION NOT FOUND:` and its "run from a
-  project folder that has a connection file" remedy. There is no file yet.
+  project folder that has a connection file" remedy. There is no file yet; its
+  `ConnectionFileNotFoundError` subclass adds the `adtai connection -create` line.
 * `InvalidConnectionError` prints `CONFIGURATION INVALID:`. The file was read and
   needs editing.
 * `CredentialUnavailableError` prints `CREDENTIAL UNAVAILABLE:`. The file is fine
@@ -33,6 +34,15 @@ class ConnectionError(Exception):
 
 class ConnectionNotFoundError(ConnectionError):
     """Raised when a requested connection file, environment, or schema is missing."""
+
+
+class ConnectionFileNotFoundError(ConnectionNotFoundError):
+    """No connection file exists at any searched path.
+
+    The one not-found case `adtai connection -create` answers, so its screen
+    names that command beside the -config-dir / -root remedy (ADT #993). A file
+    that exists and lacks an environment or schema stays on the parent class.
+    """
 
 
 class InvalidConnectionError(ConnectionError):

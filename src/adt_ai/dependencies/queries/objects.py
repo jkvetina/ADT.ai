@@ -248,8 +248,22 @@ def owner_in_clause(column: str, count: int) -> str:
     return f"{column} IN ({placeholders})"
 
 
+#: Oracle records PL/SQL reading a materialized view against its container
+#: TABLE of the same name, so `-from` printed `TABLE.X` where `-to` printed
+#: the same object `MATERIALIZED VIEW.X` (ADT #993). A referenced TABLE its
+#: owner also holds as a materialized view is named the way `-to` names it.
+MATERIALIZED_VIEW_CONTAINER = """
+EXISTS (SELECT 1 FROM USER_OBJECTS mview
+        WHERE mview.OWNER = d.REFERENCED_OWNER
+          AND mview.OBJECT_NAME = d.REFERENCED_NAME
+          AND mview.OBJECT_TYPE = 'MATERIALIZED VIEW')
+""".strip()
+
 DEPENDENCY_USES_QUERY = f"""
-SELECT DISTINCT d.REFERENCED_TYPE AS t, d.REFERENCED_NAME AS n
+SELECT DISTINCT
+       CASE WHEN d.REFERENCED_TYPE = 'TABLE' AND {MATERIALIZED_VIEW_CONTAINER}
+            THEN 'MATERIALIZED VIEW' ELSE d.REFERENCED_TYPE END AS t,
+       d.REFERENCED_NAME AS n
 FROM USER_DEPENDENCIES d
 WHERE d.TYPE = ? AND d.NAME = ?
   AND d.REFERENCED_NAME IS NOT NULL

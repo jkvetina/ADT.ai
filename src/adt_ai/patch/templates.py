@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -129,7 +128,6 @@ def _script_payload(
     config: dict[str, Any],
     folder_name: str,
     patch_code: str,
-    keep: Callable[[str], bool] | None = None,
 ) -> list[str]:
     """Link the per-patch scripts `scripts.collect_patch_scripts` already moved.
 
@@ -145,10 +143,7 @@ def _script_payload(
     the reader looked inside a directory literally named `{$PATCH_CODE}` and every
     generated helper went unlinked (ADT #18).
 
-    ``keep`` selects a subset of the slot by filename. One slot is linked in two
-    places since ADT #753: a generated ALTER runs BEFORE the table files and the
-    hand-written scripts in the same slot still run after them. See
-    `create._database_patch_payload` for why.
+    A slot is linked whole, in one place (ADT #990): its name says when it runs.
     """
     if not config.get("patch_add_scripts", True):
         return []
@@ -160,7 +155,6 @@ def _script_payload(
         patch_code,
         label  = "SCRIPT",
         origin = _patch_scripts_folder(root, config, patch_code) / folder_name,
-        keep   = keep,
     )
 
 def _configured_sql_payload(
@@ -172,7 +166,6 @@ def _configured_sql_payload(
     *,
     label: str,
     origin: Path | None = None,
-    keep: Callable[[str], bool] | None = None,
 ) -> list[str]:
     """LINK each file where it already lives, never inline it, never copy it.
 
@@ -204,8 +197,6 @@ def _configured_sql_payload(
     rows: list[str] = []
     for path in sorted(folder.glob("*.sql")):
         tagged_env = _env_tag(path.name)
-        if keep is not None and not keep(path.name):
-            continue
         linked = linked_file_rows(
             root, patch_folder, path, config,
             label  = label,

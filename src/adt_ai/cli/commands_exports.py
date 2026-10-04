@@ -45,6 +45,8 @@ from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.export_db.config import (
     AuthorFilterError,
     ObjectTypeFilterError,
+    delete_refusal,
+    delete_window_flags,
     resolve_author_filter,
     unexportable_object_types_message,
     unexported_requested_types,
@@ -72,6 +74,14 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
             # target (`#452`).
             print_adt_error("ARGUMENT INVALID", refusal(refused))
             return exit_code_for("ARGUMENT INVALID")
+    # Same shape and moment as the baseline refusal: from the arguments alone,
+    # before a file is touched. A window or an author names no files (ADT #993).
+    windowed = delete_window_flags(
+        delete=bool(args.delete), recent=args.recent, by=args.by, my=bool(args.my)
+    )
+    if windowed:
+        print_adt_error("ARGUMENT INVALID", delete_refusal(windowed))
+        return exit_code_for("ARGUMENT INVALID")
     startup = _load_startup_context(args)
     root = startup.root
     config = startup.config

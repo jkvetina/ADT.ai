@@ -37,11 +37,11 @@ from adt_ai.cli.refresh_connect import _resolve_refresh_names
 from adt_ai.cli.search_autobuild import _refresh_namespace
 from adt_ai.rebuild.reveal import REVEAL_DEFAULT_LIMIT
 from adt_ai.search.data import (
-    KIND_LABELS,
     KINDS,
     DataFailure,
     DataHit,
     SearchDiscovery,
+    kind_label,
     search_objects,
 )
 from adt_ai.shared.fixed_width import FixedWidthProgressPrinter
@@ -109,7 +109,7 @@ def _run_search_data(
             group = [item for item in objects if item.kind == kind]
             if not group:
                 continue
-            print_adt_header(f"SEARCHING {len(group)} {KIND_LABELS[kind]}:")
+            print_adt_header(f"SEARCHING {len(group)} {kind_label(kind, len(group))}:")
             hits += search_objects(
                 gateway,
                 group,

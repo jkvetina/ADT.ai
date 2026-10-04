@@ -80,21 +80,41 @@ def recent_components(
     that prints it, rather than on the runner: the three are one concern, and
     the runner was over the 20 KB per-file context budget (`#372`).
     """
+    authors = recent_authors(application, developers, request)
     if not _reports_recent_changes(request, changed_since):
-        # Bare -recent with no watermark for any requested format: nothing to
-        # narrow by, so the export covers the whole app (and may then seed).
-        return None
+        if not filters_by_author(request):
+            # No window and no author: nothing to narrow by, so the export
+            # covers the whole app (and a bare `-recent` may then seed).
+            return None
+        # **An author filter needs no window** (ADT #993). Jan, 2026-10-04:
+        # bare `-by` / `-my` select every component that author last changed,
+        # over all time, and an author matching nothing selects nothing.
+        return _author_rows(
+            gateway,
+            {"app_id": application.app_id, "recent": None, "changed_since": None},
+            authors,
+        )
     binds = {
         "app_id": application.app_id,
         "recent": request.recent_days,
         "changed_since": changed_since,
     }
-    authors = recent_authors(application, developers, request)
     if not authors:
         return gateway.fetch_all(
             queries.RECENT_COMPONENTS_QUERY,
             {**binds, "author": None},
         )
+    return _author_rows(gateway, binds, authors)
+
+def filters_by_author(request: Any) -> bool:
+    """Whether `-by` or `-my` asked for an author filter at all."""
+    return bool(request.changed_by or request.my_changes)
+
+def _author_rows(
+    gateway: QueryGateway,
+    binds: Mapping[str, Any],
+    authors: list[str],
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for author in authors:
         rows.extend(
@@ -234,6 +254,9 @@ WHOLE_APP_ACTIONS = frozenset({"full", "apexlang"})
 class RecentComponentFilter:
     page_ids: frozenset[int] | None = None
     component_slugs: frozenset[str] = frozenset()
+    # Narrowed by `-by` / `-my` alone, with no `CHANGES SINCE` section to list
+    # the selection, so the export lists what it wrote, as `-page` does.
+    lists_written: bool = False
 
     def selects_whole_app(self) -> bool:
         """True when no `-recent` watermark narrows the export.
@@ -252,7 +275,10 @@ class RecentComponentFilter:
         normalized_path = _slug(relative)
         return any(slug in normalized_path for slug in self.component_slugs)
 
-def _recent_component_filter(rows: list[dict[str, Any]] | None) -> RecentComponentFilter:
+def _recent_component_filter(
+    rows: list[dict[str, Any]] | None,
+    lists_written: bool = False,
+) -> RecentComponentFilter:
     if rows is None:
         return RecentComponentFilter(page_ids=None)
     page_ids = {
@@ -272,6 +298,22 @@ def _recent_component_filter(rows: list[dict[str, Any]] | None) -> RecentCompone
     return RecentComponentFilter(
         page_ids        = frozenset(page_ids),
         component_slugs = frozenset(component_slugs),
+        lists_written   = lists_written,
+    )
+
+def export_component_filter(
+    rows: list[dict[str, Any]] | None,
+    request: Any,
+    changed_since: str | None,
+) -> RecentComponentFilter:
+    """The filter one export applies, from the rows `recent_components` read.
+
+    Rows with no `CHANGES SINCE` section above them are a `-by` / `-my`
+    selection with no window (ADT #993), so the export lists what it wrote.
+    """
+    return _recent_component_filter(
+        rows,
+        lists_written = rows is not None and not _reports_recent_changes(request, changed_since),
     )
 
 def _page_id_from_export_path(relative: str) -> int | None:

@@ -226,7 +226,7 @@ The patch templates are scaffolded because `patch -create` reads them from the *
 
 Patch *scripts* are not scaffolded: `patch_scripts/` is per patch code and generated per patch, so there is nothing fixed to seed.
 
-`adtai update`, `adtai upgrade` and `adtai init` are not commands. Each prints the generic error banner and points at the `doctor` flag that does the job.
+`adtai update`, `adtai upgrade` and `adtai init` are not commands, and each prints the generic unknown-command screen. `init` alone adds a line pointing at `adtai doctor -init`, the flag that does its job; `update` and `upgrade` get the plain screen any mistyped command gets.
 
 Before replacing SQLcl, `doctor` downloads, extracts, validates, and makes the new launcher executable in a staging directory beside the live install. Promotion is a same-filesystem rename. If that final swap fails, both the live install and any pre-existing backup are restored; a corrupt or incomplete archive never moves the live install at all.
 

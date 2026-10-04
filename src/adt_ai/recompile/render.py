@@ -25,6 +25,7 @@ from adt_ai.shared.object_list import (
     type_separator,
 )
 from adt_ai.shared.progress import print_adt_header, schema_label
+from adt_ai.shared.sql_like import matches_sql_like, split_patterns
 from adt_ai.shared.tables import (
     _AdtTableLayout,
     _commit_stdout,
@@ -85,7 +86,7 @@ def opening_header(request: RecompileRequest) -> str:
     if request.synonyms:
         return _SYNONYMS_OPENING
     if request.disabled:
-        return _DISABLED_SECTION_TYPES[0][1]
+        return _disabled_sections(request.object_type)[0][1]
     if request.jobs:
         return f"SCHEDULER JOBS - {_JOB_STATUS_ORDER[0]}:"
     if request.vpd:
@@ -132,19 +133,40 @@ def _disabled_type(item: DisabledObject) -> str:
     return (item.object_type or "").upper()
 
 
-def print_disabled_tables(disabled_objects: list[DisabledObject], *, opening: str = "") -> None:
+def _disabled_sections(object_type: str = "%") -> list[tuple[str, str]]:
+    """The -disabled sections a `-type` pattern list picks, in the fixed order.
+
+    `-disabled -type TRIGGER` used to print all three sections, two of them
+    empty (ADT #993). The patterns are the run's comma-joined `-type` LIKE
+    patterns, matched the way the SQL matches them. A list naming none of the
+    three picks nothing, and keeps all three: the read found nothing either, and
+    three empty tables say so where a blank screen would say nothing.
+    """
+    patterns = split_patterns(object_type) or ["%"]
+    picked = [
+        section
+        for section in _DISABLED_SECTION_TYPES
+        if any(matches_sql_like(section[0], pattern) for pattern in patterns)
+    ]
+    return picked or list(_DISABLED_SECTION_TYPES)
+
+
+def print_disabled_tables(
+    disabled_objects: list[DisabledObject], *, opening: str = "", object_type: str = "%"
+) -> None:
     """Render -disabled as one compact table per disabled object type.
 
     `opening` is the header the CLI already printed before the read, never twice.
+    `object_type` is the run's `-type`, which picks the sections that print.
     """
-    for object_type, heading in _DISABLED_SECTION_TYPES:
+    for object_type_name, heading in _disabled_sections(object_type):
         if heading != opening:
             print_adt_header(heading)
         print_adt_table(
             [
                 _disabled_row_cells(item)
                 for item in disabled_objects
-                if _disabled_type(item) == object_type
+                if _disabled_type(item) == object_type_name
             ],
             columns=list(_DISABLED_COLUMNS),
         )

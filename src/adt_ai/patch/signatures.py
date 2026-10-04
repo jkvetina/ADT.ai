@@ -21,7 +21,7 @@ was built, and the links to the shared scripts under
 computed here or in the patch: CORE_LOCKS owns source hashing, and
 `core_lock.create_lock` runs that comparison on every lock it takes.
 
-The lock scripts are owned by `patch_core_locks` and `patch_signatures`, not by
+The lock scripts are owned by `patch_core_locks` and `deploy_live_check`, not by
 `patch_add_templates`: that switch turns off the project's own slot templates,
 and turning it off must not quietly turn off the guard too.
 
@@ -29,7 +29,7 @@ and turning it off must not quietly turn off the guard too.
 
 Only what the database stores a source for and a patch OVERWRITES. Jan: *"objects
 which are supported, tables for example are not"*. A TABLE reaches a target
-through a generated `tables_after/` ALTER rather than a replace.
+through a generated `tables_before/` ALTER rather than a replace.
 
 ## And the two kinds that are not objects at all
 
@@ -37,7 +37,19 @@ through a generated `tables_after/` ALTER rather than a replace.
 application, so neither `user_objects` nor `#592`'s application checksum covers
 them (ADT #724). They get the same drift comparison over their own dictionaries,
 keyed on `updated_on`, and no lock half. An APPLICATION static file is left out,
-its application's checksum covering it already.
+its application's guard covering it.
+
+## And an application installed by SQL
+
+`#592`'s checksum gate is an `apex import` of an APEXlang tree, so a full
+export, split components and application static files, which install
+themselves from the script, had no guard at all until ADT #956. Jan: *"If
+someone deployed something to target after we created our patch, thats bad,
+thats the possible work loss."* `check_apps.sql` compares the application's
+newest audit stamp, its own row or any page, against `:built_at`, and every such
+script stamps its application after the install (`APEX_VERSION_STAMP_BLOCK`),
+because an import alone leaves the stamp empty (measured,
+`tests/tools/import_stamp_probe.py`).
 """
 
 from __future__ import annotations
@@ -52,8 +64,11 @@ from adt_ai.patch.layout import apex_head_for
 from adt_ai.patch.models import PatchError
 from adt_ai.patch.object_identity import _object_identity
 from adt_ai.patch.queries.signatures import (
+    APP_LOCK_HEADING,
+    APPS_BIND,
     BUILT_AT_BIND,
     BUILT_AT_BIND_TYPE,
+    CHECK_APPS,
     CHECK_OBJECTS,
     CHECK_OBJECTS_ALL,
     LIST_BIND_BYTES,
@@ -84,6 +99,13 @@ SIGNED_TYPES = (
     "TYPE BODY",
     "VIEW",
 )
+
+# The config key switching every comparison against the target's own clock:
+# objects, REST modules, workspace files and SQL-installed applications. It was
+# `patch_signatures` until ADT #956, renamed on Jan's *"we should have a config
+# value deploy_live_check = true"* and not aliased, his choice among the three.
+# `patch_core_locks` stays its own key, being the lock rather than the check.
+LIVE_CHECK_KEY = "deploy_live_check"
 
 # How Oracle reads the `:built_at` bind. It is a UTC instant and carries no
 # offset, because the check converts the database's own reading to UTC first.
@@ -247,7 +269,7 @@ def lock_payload(
 ) -> list[str]:
     """The guard, at the top, before the first object is written.
 
-    `patch_core_locks` links `lock_objects.sql`, `patch_signatures` links the
+    `patch_core_locks` links `lock_objects.sql`, `deploy_live_check` links the
     `last_ddl_time` check and sets the `:built_at` it reads. Both off and there is
     no block at all.
 
@@ -257,7 +279,7 @@ def lock_payload(
     schema; with it off, `check_objects_all.sql` checks every schema.
     """
     locking = bool(config.get("patch_core_locks", True))
-    drifting = bool(config.get("patch_signatures", True))
+    drifting = bool(config.get(LIVE_CHECK_KEY, True))
     if not objects or not (locking or drifting):
         return []
     lines = _bind_block(
@@ -373,10 +395,10 @@ def workspace_lock_payload(
 ) -> list[str]:
     """One block per artifact kind the patch carries, beside the object guard.
 
-    `patch_signatures` owns it, being the same comparison over a different
+    `deploy_live_check` owns it, being the same comparison over a different
     table; `patch_core_locks` is not read at all.
     """
-    if not artifacts or not config.get("patch_signatures", True):
+    if not artifacts or not config.get(LIVE_CHECK_KEY, True):
         return []
     stamp = built_at(records or [])
     lines: list[str] = []
@@ -387,6 +409,29 @@ def workspace_lock_payload(
         lines.extend(_bind_block(guard["heading"], guard["bind"], names, stamp))
         lines.extend(_lock_link(root, folder, config, guard["script"]))
     return lines
+
+
+def app_lock_payload(
+    root: Path,
+    folder: Path,
+    app_id: int,
+    config: dict[str, Any],
+    *,
+    records: list[CommitRecord] | None = None,
+) -> list[str]:
+    """The guard of an application its own script installs (ADT #956).
+
+    One application per script, so one id in the list; the bind is a list all
+    the same so `check_apps.sql` reads like its three siblings. The workspace
+    group, id 0, is no application: its REST modules and files carry their own
+    guards.
+    """
+    if not app_id or not config.get(LIVE_CHECK_KEY, True):
+        return []
+    return [
+        *_bind_block(APP_LOCK_HEADING, APPS_BIND, [str(app_id)], built_at(records or [])),
+        *_lock_link(root, folder, config, CHECK_APPS),
+    ]
 
 
 __all__ = [name for name in globals() if not name.startswith("_")]

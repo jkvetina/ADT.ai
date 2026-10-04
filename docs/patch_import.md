@@ -32,15 +32,15 @@ Retargeting is a flag on SQLcl's `apex import`, never an edit to the tree's `dep
 
 <br>
 
-## A numbered target is stamped with the developer who deployed it
+## Every import is stamped with the developer who deployed it
 
-An APEXlang import writes no audit column. After `-app <id>` imports, the same session therefore reads the target application's version and hands it straight back through `SET_APPLICATION_VERSION`, which makes APEX stamp the row without changing the version.
+An APEXlang import writes no audit column. After every `-app` import, the same session therefore reads the target application's version and hands it straight back through `SET_APPLICATION_VERSION`, which makes APEX stamp the row without changing the version.
 
 One call, and the value it passes is identical: the API writes the audit columns whether or not the version changed. The version text never moves. `apex_applications.last_updated_by` then names you and `last_updated_on` the moment, so both a sandbox and an explicitly overwritten main application identify their deployer on sight in the Builder.
 
-The name is `apex_account` from [`IDENTITY.yaml`](config.md), else `git config user.name`. A checkout naming no developer stamps nobody and imports exactly as before.
+The name is `apex_account` from [`IDENTITY.yaml`](config.md), else `git config user.name`. A checkout naming no developer is still stamped, under the connected schema's name.
 
-Only a numbered target is stamped. Bare `-app` still lands each application under its own id without rewriting its audit row. Numbered `-app <id>` records the deployment whether `<id>` is a sandbox id or the source application's own id.
+Bare `-app` is stamped on each application's own id, and numbered `-app <id>` on `<id>`. The stamp is what the next patch's application guard reads to see this deploy, because an import on its own leaves the audit row empty ([patch_signatures.md](patch_signatures.md)).
 
 `created_by` stays empty either way, because APEX exposes nothing that can write it, which is why [`patch -drop`](patch_drop.md) clears an ownerless sandbox rather than refusing one.
 

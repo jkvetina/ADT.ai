@@ -121,6 +121,8 @@ Every type a window narrows is narrowed by a column that dates a **change**, whi
 
 The signature narrows a window, never an explicit request. `-type JOB` with no `-recent` exports every matching job with no comparison, which is how to re-pull a whole job tree on demand.
 
+**An exported job brings the program and schedule it names**, into `job_programs/` and `job_schedules/`, whatever narrowed the run to it: a job file cannot be created without them. Only the schema's own are followed, so a job running in a `SYS` window brings none.
+
 <br>
 
 ## Exporting one author's work
@@ -344,7 +346,7 @@ A typo takes the same path, on purpose. `-type NOSUCHTYPE` used to export nothin
 | `-my`, `--my` | No | off | Export only objects you have changed, taking the schema from `config/IDENTITY.yaml`. Same audit resolution as `-by`. |
 | `-groups`, `--groups` | No | off | Move action: reorganize already-exported files into `<object_type>/<group>/` subfolders. Never connects or exports, and moves nothing until `-force`. See [export_db_layout.md](export_db_layout.md). |
 | `-force [GROUP]`, `--force [GROUP]` | No | off | With `-groups`, apply the listed moves. `-force GROUP` lands every prefix named in one uppercased folder instead of one per prefix, so it needs named prefixes. Without `-groups` it is an error, exit `2`. |
-| `-delete`, `--delete` | No | off | Delete existing object files before export, excluding `DATA`. |
+| `-delete`, `--delete` | No | off | Delete existing object files before export, excluding `DATA`. Beside `-type` or `-name`, only the files they match. Refused beside `-recent`, `-by` or `-my`, which pick objects by a change no file records. |
 | `-baseline [FILE]`, `--baseline [FILE]` | No | off | Record what this environment holds as a patch baseline: every object is rendered as an export renders it, then hashed at the path it would have been written to, and each table is stored beside the baseline as that rendered file. No object file is written or deleted. Refused beside a narrowing flag. See [export_db_layout.md](export_db_layout.md). |
 | `-silent`, `--silent` | No | off | Suppress per-object names and progress callbacks, keeping the banner, connection block, overview, export header and timer. |
 | `-compact`, `--compact` | No | off | Replace the per-object rows with one dotted progress bar per schema, labelled with the type being pulled. `-silent` outranks it. |

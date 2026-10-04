@@ -16,7 +16,7 @@ from __future__ import annotations
 # ruff: noqa: F401 - re-exports keep the pre-split import path working.
 import argparse
 import subprocess
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -48,7 +48,6 @@ from adt_ai.cli.patch_deploy_reporter import ConsoleDeployReporter
 from adt_ai.cli.patch_preview_render import RELEVANT_COMMITS_HEADER
 from adt_ai.export_db.render import _commit_stdout
 from adt_ai.patch.apex_deploy import BUILDING_APP_ROW
-from adt_ai.patch.apex_lock import build_status_timeline
 from adt_ai.patch.models import DeploymentPlanItem, DeploymentResult, ViewMismatch
 from adt_ai.shared.apexlang_line_endings import PrecheckIssue, print_precheck_issues
 from adt_ai.shared.commit_discovery import CommitRecord
@@ -286,28 +285,23 @@ def _print_deployment_errors(results: Sequence[DeploymentResult], root: Path) ->
             print()
             print(f"  LOG: {_project_relative(Path(log_path), root)}")
 
-def _print_apex_scans(
-    reports: Sequence[Any],
-    root: Path,
-    *,
-    locks: Mapping[int, Any] | None = None,
-) -> None:
-    """`VERIFYING APPLICATIONS:`, what the post-deploy scan found (`#676`).
+def _print_apex_scans(reports: Sequence[Any]) -> None:
+    """What the post-deploy scan (`#676`) prints once its rows have closed.
 
-    Unlike every other section in this file, a clean result still prints its row.
-    The whole point of the feature is that "the deploy said SUCCESS" stopped
-    being the last word, so a reader has to be able to see that the question WAS
-    asked; silence here would be indistinguishable from the behaviour this
-    replaced, which is exactly the thing that let a broken application ship.
+    **Nothing, when every application passed** (ADT #988). The scan used to
+    report here, after the fact, as `APP <id> | SUCCESS | <n> fragments, no
+    errors` with its `LOG:` and `BUILD STATUS:` lines. Jan: *"the outcome should
+    be same as other apexlang validation, looks like you invented something new
+    here"*, so every application now gets `validate`'s own streamed row under
+    `VERIFYING APPLICATIONS:` while it is scanned (`patch/deploy_post.py::
+    verify_streamed`), and that row is the proof the question WAS asked, which
+    is what `#676` printed the clean row for.
 
-    A clean run prints one row per application. A failed one prints only the
-    header, a per-page count and the log (`#963`): the findings are in the log,
-    and what the run did about the failure -- the revert (`#727`) or the
-    `-continue` that asked for none (`#749`) -- is the section printed after
+    A failed scan still gets its block after the rows (`#963`): the findings are
+    in the log, and what the run did about the failure -- the revert (`#727`) or
+    the `-continue` that asked for none (`#749`) -- is the section printed after
     this one, `patch_revert_render`.
     """
-    if not reports:
-        return
     # **A failed scan is the header, the table and the log, nothing else**
     # (`#963`). Jan, 2026-09-25: *"I asked for header + table + log."* The
     # deploy table above already reads `SUCCESS`, so `ERROR - VERIFICATION
@@ -316,37 +310,6 @@ def _print_apex_scans(
     # it has its own section after this one (`patch_revert_render`).
     if any(getattr(report, "failed", False) for report in reports):
         _print_failed_scans(reports)
-        return
-    # Not "VERIFYING DEPLOYED APPLICATIONS:". `DEPLOYED` is a word Jan struck
-    # from this command's output (2026-08-10, the invented column), and
-    # `tests/cli/test_patch_deploy_progress.py` guards the whole run's text for
-    # it, not just the table header. The guard is right and the header moved.
-    print_adt_header("VERIFYING APPLICATIONS:")
-    for report in reports:
-        summary = (
-            f"{len(report.findings)} error(s) in {report.analyzed} fragments"
-            if report.findings
-            else f"{report.analyzed} fragments, no errors"
-        )
-        print(f"  APP {report.app_id} | {report.status} | {summary}")
-        # The reason under the row, for every outcome that is not a plain
-        # success (`#701`): `UNSUPPORTED` prints a row that looks quiet, and the
-        # line under it is what says why.
-        if report.reason:
-            print(f"    {report.reason}")
-        # The BASENAME, not the project-relative path (Jan, 2026-09-09): every
-        # log this section names lives in one folder, that folder is
-        # `patch/<code>/logs_<ENV>/`, and both halves of it are already on
-        # screen above -- the patch code on the `DEPLOYING PATCH:` header and the
-        # environment on the connection header. *"it is redundand ... this is
-        # just a clutter adding noise"*.
-        if report.log_path:
-            print(f"    LOG: {Path(report.log_path).name}")
-        lock = (locks or {}).get(report.app_id)
-        timeline = build_status_timeline(lock) if lock is not None else ""
-        if timeline:
-            print(f"    BUILD STATUS: {timeline}")
-    print()
 
 
 def _print_failed_scans(reports: Sequence[Any]) -> None:

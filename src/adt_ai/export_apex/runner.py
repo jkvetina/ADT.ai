@@ -77,6 +77,7 @@ from adt_ai.export_apex.recent import (
     _recent_since,
     _reports_recent_changes,
     _used_on_pages,
+    export_component_filter,
     open_application_section,
     print_recent_changes,
     recent_components,
@@ -289,7 +290,7 @@ class ApexExportRunner(
                 recent_rows = recent_components(
                     gateway, application, request, workspace_developers(), cutoff
                 )
-                recent_filter = _recent_component_filter(recent_rows)
+                recent_filter = export_component_filter(recent_rows, request, cutoff)
                 explicit_filter = ApexExplicitFilter(
                     request.page_selection,
                     component_filters,
@@ -447,7 +448,7 @@ class ApexExportRunner(
                     action,
                     operation,
                 )
-                if _has_explicit(request):
+                if _has_explicit(request) or recent_filter.lists_written:
                     _print_components([*deep_rows, *result.rows])
             else:
                 self._run_action(

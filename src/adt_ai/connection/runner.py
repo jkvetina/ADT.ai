@@ -344,8 +344,12 @@ class ConnectionEditor:
             if not isinstance(defaults, dict):
                 defaults = {}
                 env_node["defaults"] = defaults
-            default_key = "schema_apex" if schema_node.get("apex") else "schema_db"
-            defaults.setdefault(default_key, request.schema)
+            # An APEX schema is a database schema too, so it fills both blanks
+            # and a bare database command on a fresh APEX project resolves (ADT
+            # #993). A default already set is never overwritten.
+            if schema_node.get("apex"):
+                defaults.setdefault("schema_apex", request.schema)
+            defaults.setdefault("schema_db", request.schema)
 
         summary = f"create or update connection {request.environment}.{request.schema}"
         return summary, self._dump_node(yaml, {request.environment: _strip_env_secrets(env_node)})

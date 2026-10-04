@@ -6,7 +6,7 @@ travel with the patch rather than live in ADT: a patch is run by hand in SQLcl,
 or handed to a DBA, and the protection must hold there too.
 
 Until ADT #850 the SQL was generated inline into every install script. It now
-lives in six reusable scripts under `<patch_template_dir>/locks/`, shipped in
+lives in seven reusable scripts under `<patch_template_dir>/locks/`, shipped in
 the reference scaffold, and the install script only sets its binds and links
 the scripts its config asks for, the same `PROMPT -- TEMPLATE:` + `@` pair every
 template uses. Linked, never copied, so a project that edits a lock script edits
@@ -55,12 +55,19 @@ CHECK_OBJECTS_ALL = "check_objects_all.sql"
 UNLOCK_OBJECTS    = "unlock_objects.sql"
 CHECK_REST     = "check_rest.sql"
 CHECK_FILES_WS = "check_files_ws.sql"
+CHECK_APPS     = "check_apps.sql"
 
 LOCK_HEADING   = "OBJECT LOCKS"
 UNLOCK_HEADING = "OBJECT UNLOCK"
 
 OBJECTS_BIND  = "objects"
 BUILT_AT_BIND = "built_at"
+
+# An APEX application a script installs by SQL (ADT #956): a full export, split
+# components, application static files. The APEXlang import has `#592`'s
+# checksum gate instead, and the workspace group (id 0) is `WORKSPACE_GUARDS`'.
+APP_LOCK_HEADING = "APEX APPLICATION LOCKS"
+APPS_BIND        = "apex_apps"
 
 # The widest a SQLcl VARCHAR2 bind is. A list that would not fit fails the build
 # rather than being cut short, because a truncated list guards less than it says.

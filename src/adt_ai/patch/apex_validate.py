@@ -29,7 +29,7 @@ the other refusals builds a tree SQLcl never sees. The CLI always passes one.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -92,16 +92,21 @@ class ApexlangValidationError(PatchError):
 
 
 def check_patch_trees(
-    root       : Path,
-    config     : dict[str, Any],
-    files      : Sequence[str],
-    validation : ApexlangValidation | None,
+    root          : Path,
+    config        : dict[str, Any],
+    files         : Sequence[str],
+    validation    : ApexlangValidation | None,
+    *,
+    after_compile : Callable[[ValidateTarget], None] | None = None,
 ) -> list[PrecheckIssue]:
     """`-create`'s gate: every APEXlang application ``files`` ships, compiled.
 
     Resolved as `-deploy` resolves them, through the recorded export, so both
     halves compile the same folder. An application with no recorded export has
     nothing to compile here; the deploy names it when it would have imported it.
+
+    ``after_compile`` runs inside each tree's open row, after its clean compile
+    (ADT #988: the drift read, `patch/apex_drift.py::DriftReads`).
     """
     if validation is None:
         return []
@@ -114,7 +119,7 @@ def check_patch_trees(
         return []
     targets, _missing = resolve_targets(root, config, app_ids=[str(app_id) for app_id in app_ids])
     issues = precheck_trees(root, config, targets)
-    validate_trees(root, targets, validation, retry=RETRY_CREATE)
+    validate_trees(root, targets, validation, retry=RETRY_CREATE, after_compile=after_compile)
     return issues
 
 
@@ -178,9 +183,10 @@ def precheck_trees(
 def validate_trees(
     root       : Path,
     targets    : Sequence[ValidateTarget],
-    validation : ApexlangValidation,
+    validation    : ApexlangValidation,
     *,
-    retry      : str,
+    retry         : str,
+    after_compile : Callable[[ValidateTarget], None] | None = None,
 ) -> None:
     """Compile each tree this run has not passed yet; refuse on any that fails.
 
@@ -192,10 +198,11 @@ def validate_trees(
         return
     result = ValidateRunner(validation.sqlcl_request).run(
         ValidateRequest(
-            targets      = pending,
-            root         = root,
-            project_root = root,
-            reporter     = validation.reporter,
+            targets       = pending,
+            root          = root,
+            project_root  = root,
+            reporter      = validation.reporter,
+            after_compile = after_compile,
         )
     )
     validation.passed.update(

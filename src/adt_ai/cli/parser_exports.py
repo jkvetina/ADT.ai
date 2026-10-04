@@ -72,7 +72,9 @@ def add_export_parsers(subparsers: SubParsers) -> None:
         "--delete",
         "-delete",
         action = "store_true",
-        help   = "delete existing object files before export, excluding DATA",
+        help   = "delete existing object files before export, excluding DATA; "
+                 "beside -type or -name, only the files they match "
+                 "(refused beside -recent, -by and -my)",
     )
     export_db.add_argument(
         "--silent",
@@ -286,7 +288,8 @@ def add_export_parsers(subparsers: SubParsers) -> None:
         "--by",
         "-by",
         type  = author,
-        help  = "limit to components changed by DEVELOPER, an APEX workspace user",
+        help  = "limit to components last changed by DEVELOPER, an APEX workspace "
+                "user, over all time unless -recent sets a window",
     )
     export_apex.add_argument(
         "--my",
@@ -295,8 +298,9 @@ def add_export_parsers(subparsers: SubParsers) -> None:
         # The one `-my` reading BOTH halves of the commit identity: an APEX
         # workspace login is `FIRST.LAST` rather than an address, which is what
         # `apex_account` is for, so the row names the account key as well.
-        help   = "limit to components changed by you, matched against "
-                 "IDENTITY.yaml apex_account and email, or your git user",
+        help   = "limit to components last changed by you, matched against "
+                 "IDENTITY.yaml apex_account and email, or your git user; "
+                 "over all time unless -recent sets a window",
     )
     export_apex.add_argument("--release", "-release", help="override APEX release in SQL exports")
     export_apex.add_argument(

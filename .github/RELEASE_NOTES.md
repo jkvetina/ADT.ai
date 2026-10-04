@@ -1,20 +1,24 @@
-- **`patch -create` links every group in dependency order**: a foreign-key child follows its parent, a view follows the function it calls, and a child table's rows follow its parent's.
-- **`patch -app` takes a `#` for each application's own id**: `-app #6000` lands 122 on 1226000 and 123 on 1236000, and `-app 6000#` lands them on 6000122 and 6000123.
-- **`patch` hash mode takes a deployed deletion out of the baseline**, keeps the DROP for an object deleted, re-added and deleted again, and writes no DROP for a deleted DATA script.
-- **`export_db` writes interval-partitioned tables and quoted column comments that re-create**, and a `-recent` window lists a refused object again until a run writes it.
-- **`export_data` writes a MERGE only on a key that names the same row everywhere**, never on an identity or nullable key, stays valid with insert and update both off, and uses the configured file extension.
-- **`doctor` masks the value of any secret-named JVM property** in `JAVA_TOOL_OPTIONS`, quoted values included.
-- **`connection`: `-set-wallet-pwd` removes every competing wallet password command** and says so in its preview.
-- **`ut` fails a run whose report leaves out a discovered test**, and `validate -scan` exits 1 when `-page` matches no page.
+- **`patch`: `-create` writes a table's and a sequence's ALTER to `tables_before/`**, and every script in `tables_after/` runs after the table rows, a hand-written `ALTER TABLE` included.
+- **`patch`: `-deploy` refuses a full or split APEX install onto an application changed after the patch was built**, and the `patch_signatures` setting is now `deploy_live_check`.
+- **`patch`: `-create` prints its screen as it builds**, and `PATCH FILES:` lists `DEPLOY.sql` first, then the install scripts in the order it runs them.
+- **`patch`: `-upload -folder` refuses a folder that does not exist before it connects.**
+- **A command that streams its screen no longer loses the output of a child that exits first**, so a fast run keeps its transcript.
+- **`recompile`: `-silent` keeps the errors**: `INVALID OBJECTS:`, `ERROR - RECOMPILATION FAILED:` and `ROOT CAUSES:` still print, and only the overview is dropped.
+- **`recompile`: `-warnings ALL` enables every warning category**, any other unknown value is refused before the run connects, and `-disabled -type TRIGGER` prints only the disabled triggers.
+- **`export_apex`: `-by` and `-my` without `-recent` export only the components that developer last changed.**
+- **`export_db`: `-delete` beside `-type` or `-name` deletes only the files those filters match**, and scheduler programs export to `job_programs/` with every job bringing its program and schedule.
+- **`export_data` keeps the offset of a `TIMESTAMP WITH TIME ZONE`** in the CSV and in the MERGE.
+- **`search`: `-since` and `-until` refuse a value that is not a date before reading any history**, `-from` names a materialized view as such, and a one-object `-data` list reads in the singular.
+- **`validate` and every scan-based command leave another session's `DEPSCAN$` helpers alone**, so two scans at once no longer fail each other.
+- **`connection`: `-create -default` writes `schema_db` beside `schema_apex`**, and the `CONNECTION FILE NOT FOUND` refusal adds a third remedy.
+- **The `discovery` and `doctor` documentation states what the commands do**: comments are read past, not refused, and `adtai doctor` gives no hint for `adtai update` or `adtai upgrade`.
 
 ## Verification
 
 | Suite          | Passed | Failed | Unverified | Coverage | Cores |  Time |
 | -------------- | -----: | -----: | ---------: | -------: | ----: | ----: |
-| Unit tests     |  10389 |        |            |     100% |    14 |  2:10 |
-| User stories   |    191 |        |          2 |          |     3 | 18:32 |
-| Security audit |     25 |        |            |          |     1 |  1:08 |
-
-The 2 unverified user stories are Windows-only contracts, and every release is built on macOS.
+| Unit tests     |  10647 |        |            |     100% |    14 |  4:05 |
+| User stories   |    247 |        |            |          |     3 | 17:29 |
+| Security audit |     21 |        |            |          |     1 |  7:17 |
 
 The maintained private test suite is available with the existing [Company Sponsor membership on Buy Me a Coffee](https://buymeacoffee.com/apexdeploymenttool).

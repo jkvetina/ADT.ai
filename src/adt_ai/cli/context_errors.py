@@ -10,6 +10,7 @@ from adt_ai.export_db.failures import ExportObjectsFailedError
 from adt_ai.shared.config import InvalidConfigValueError
 from adt_ai.shared.connection_errors import (
     ConnectFailedError,
+    ConnectionFileNotFoundError,
     CredentialUnavailableError,
     InvalidConnectionError,
 )
@@ -25,11 +26,18 @@ _PROJECT_FOLDER_REMEDY = (
     "2) or pass -config-dir / -root to point at one"
 )
 
+# No connection file anywhere: a first run has nothing to point -config-dir or
+# -root at, so the refusal also names the command that writes one (ADT #993).
+_CONNECTION_FILE_REMEDY = (
+    _PROJECT_FOLDER_REMEDY + "\n3) or create one with adtai connection -create"
+)
+
 # Code and remedy both branch on the error CLASS, so a raise site says which
 # screen it wants by choosing its exception and nothing here has to recognise a
 # message. Most specific first; a class matching no row is a configuration that
 # could not be located, the one case the remedy above is written for.
 _CONFIG_ERROR_SCREENS: tuple[tuple[type[Exception], str, str | None], ...] = (
+    (ConnectionFileNotFoundError, "CONFIGURATION NOT FOUND", _CONNECTION_FILE_REMEDY),
     (CredentialUnavailableError, "CREDENTIAL UNAVAILABLE", None),
     (InvalidConnectionError, "CONFIGURATION INVALID", None),
     (InvalidConfigValueError, "CONFIGURATION INVALID", None),
