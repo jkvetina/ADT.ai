@@ -23,11 +23,12 @@ behind.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from adt_ai.patch.apex_drift import changed_applications
+from adt_ai.patch.apex_drift import DriftReads, changed_applications
 from adt_ai.patch.apex_import import AppTarget, one_target_refusal
 from adt_ai.patch.apex_validate import ApexlangValidation, check_patch_trees
 from adt_ai.patch.content import CONTENT_MODE_COMMITTED, CONTENT_MODE_LOCAL, file_present
@@ -42,7 +43,7 @@ from adt_ai.patch.full_app import require_fresh_full_app_exports, resolve_full_a
 from adt_ai.patch.hashes import write_patch_hashes
 from adt_ai.patch.immutables import never_recreated
 from adt_ai.patch.layout import apex_app_id, ensure_deploy_log_folder, is_apexlang_path
-from adt_ai.patch.models import DatabasePatchResult, PatchError
+from adt_ai.patch.models import DatabasePatchResult, PartialPatchReport, PatchError
 from adt_ai.patch.report import build_reports
 from adt_ai.patch.scripts import collect_patch_scripts, reset_patch_scripts
 from adt_ai.patch.snapshots import _write_snapshots
@@ -51,6 +52,43 @@ from adt_ai.shared.commit_discovery import CommitRecord
 from adt_ai.shared.git_uncommitted import every_uncommitted_path
 
 HASH_STAMP_FORMAT = "%Y-%m-%d %H:%M"
+
+
+@dataclass(frozen=True)
+class PatchBuildStages:
+    """Optional callbacks so a caller can print `-create`'s screen AS it builds (ADT #988).
+
+    Jan measured the silence this replaces on a real repo: `VALIDATING APEXLANG
+    APPS:` closes, then nothing draws for ~6.7s while `export_freshness`,
+    `changed_applications`, the generated scripts, the writes and the snapshots
+    all run, and the whole rest of the screen -- the warning, both commit
+    tables, every per-schema block and the run-scoped warnings -- lands at once
+    when `create_database_patch` finally returns. *"YOU WERE DONE with
+    validation, you were supposed to print the warning, then relevant commits,
+    then deleted objects and other regions as you go."*
+
+    Two hooks, one per point in the build that already has something worth
+    showing before the whole thing is over: `validated()` fires the moment
+    `check_patch_trees` returns, with the folder and whether `files` resolved
+    to anything at all -- the two facts the commit tables need and the ONLY
+    two, because neither commit table reads the folder off disk any more
+    (ADT #988's own finding: the folder does not exist yet at this point, not
+    even for a re-create -- its old content is still what `_write_patch_files`
+    is about to overwrite). `reported()` fires once `_write_patch_files` and
+    `build_reports` have run, with the per-schema blocks, and BEFORE
+    `_write_snapshots` -- the one read still to come that a run-scoped warning
+    (`print_undecodable_files`) needs.
+
+    `None` (the default on `build_database_patch`) is today's behaviour for
+    every caller but the CLI: nothing printed until the call returns its
+    `DatabasePatchResult`, exactly as before this card. The two hooks are
+    themselves optional so a caller wanting only one stage is not made to stub
+    the other; see `cli/patch_build.py::build_database_patch` for the CLI's own
+    closures, and `cli/patch_create_render.py` for what each one prints.
+    """
+
+    validated: Callable[[Path, bool], None] | None = None
+    reported: Callable[[PartialPatchReport], None] | None = None
 
 
 def build_database_patch(
@@ -74,8 +112,14 @@ def build_database_patch(
     target_app_id: AppTarget | None = None,
     signature_gateway_factory: Callable[[str, str], Any] | None = None,
     validation: ApexlangValidation | None = None,
+    stages: PatchBuildStages | None = None,
 ) -> DatabasePatchResult:
     """Write ``folder`` and report what went into it.
+
+    ``stages`` is the CLI's own hook into a build already in progress (ADT
+    #988): ``None`` for every caller but the CLI, which is every caller in this
+    codebase but `cli/patch_build.py`, so behaviour is unchanged for all of
+    them. See `PatchBuildStages`.
 
     ``content_mode`` selects which version of each file ships (ADT #280);
     ``window`` is the unfiltered commit window the selection was drawn from,
@@ -146,7 +190,32 @@ def build_database_patch(
     # ADT #964: an APEXlang tree the compiler refuses stops the build here, ahead
     # of the ALTER connection and the `mkdir`, so a refusal leaves no folder. Jan:
     # *"It should be validated during patch creation and before you deploy."*
-    apex_notes = check_patch_trees(root, config, files, validation)
+    #
+    # The drift warning's live read (ADT #957) runs INSIDE each application's
+    # validation row, between its compile and its close (ADT #988, Jan: the row
+    # stays open through both, and its clock covers both). Read here, after
+    # the rows had closed, it ran under a screen of finished rows.
+    drift = DriftReads(root, signature_gateway_factory)
+    apex_notes = check_patch_trees(root, config, files, validation, after_compile=drift.read)
+    # The moment validation is over, ahead of every read below: the compile
+    # gate's own warning already printed itself here (`PatchValidateReporter`
+    # no longer holds it), and this is where a streaming caller prints the two
+    # commit tables that answer "what is in this patch" (ADT #988). `folder` is
+    # what the hook needs and everything it did not have before this call: a
+    # fresh `-create` mints it inside `next_folder`, so no earlier point in the
+    # CLI knows it either. `bool(files)` says whether anything is about to be
+    # written at all: `change_summary_comment` (`patch/summary.py`) writes
+    # every one of `records` into every schema script it writes at least one
+    # of, unfiltered by which record contributed which file, so a caller
+    # deriving the commit tables from `records` alone needs only ONE more fact
+    # -- will a schema script exist at all -- to match what a finished build
+    # would show. A `files`-less patch (every selected commit resolves no
+    # patchable path, `tests/cli/test_patch_create_report_output.py::
+    # test_create_lists_a_matching_but_unshippable_commit_as_outstanding`)
+    # writes no schema and so carries no commit anywhere; a caller reading
+    # `True` here is safe to treat every one of `records` as shipped.
+    if stages is not None and stages.validated is not None:
+        stages.validated(folder, bool(files))
     # A file the database has already moved past is snapshotted as-is, and
     # deploying it reverts the live object (ADT #261). Read here rather than in
     # the CLI so every caller of `create_database_patch` gets the answer, and
@@ -159,8 +228,14 @@ def build_database_patch(
     freshness = export_freshness(root, config, files)
     # The `-deploy` signature gate asked early, as a warning (ADT #957): Jan,
     # *"that is a bit late ... so he can rebase before the deployment fail"*.
-    # On the same connection the table ALTERs use, before anything is written.
-    changed_apps = changed_applications(root, config, files, signature_gateway_factory)
+    # Answered from the reads made inside the validation rows above (ADT #988),
+    # and only from them: an application with no row had no tree to ship. Only
+    # a caller that compiles nothing (``validation`` None, no console) still
+    # reads here.
+    changed_apps = changed_applications(
+        root, config, files, signature_gateway_factory,
+        already_read=drift.answers if validation is not None else None,
+    )
     present_files = {
         path: file_present(
             root, path, config, mode=content_mode, records=records,
@@ -229,15 +304,40 @@ def build_database_patch(
             hash_previous = hash_previous,
         ),
         # This run's own ALTERs, generated and claimed (ADT #969): every TABLE
-        # among them stays linked but commented out, and a claiming script
-        # sitting in an `after` slot is pulled ahead of the table files it
-        # names.
+        # among them stays linked but commented out. Each runs from its own
+        # slot, never reordered (ADT #990).
         generated = generated,
         target_app_id = target_app_id,
     )
     # After every install script is on disk, so it sees exactly what the folder
     # holds; a re-create keeps a person's order unless `-force` (ADT #850).
     deploy_file = write_deploy_driver(folder, config, force=force)
+    # Computed here, ahead of `_write_snapshots`, rather than inline in the
+    # `return` below (ADT #988): both read only what is already on disk by this
+    # point -- `build_reports` reads `sql_files` and `generated`, and
+    # `_repo_uncommitted` reads git and this run's own generated paths, neither
+    # a snapshot -- so a streaming caller's `reported()` hook fires with the
+    # per-schema blocks while the snapshot copy still has ~4s left to run
+    # (measured on a real repo), and the `return` below spends the same values
+    # rather than asking the same two questions twice.
+    reports = build_reports(
+        root,
+        files,
+        sql_files,
+        records,
+        window if window is not None else records,
+        config,
+        mode      = content_mode,
+        generated = generated,
+        present_files = present_files,
+    )
+    uncommitted = _repo_uncommitted(
+        root, folder, set(generated.paths), mode=content_mode
+    )
+    if stages is not None and stages.reported is not None:
+        stages.reported(
+            PartialPatchReport(folder=folder, reports=reports, uncommitted=uncommitted)
+        )
     undecodable = _write_snapshots(
         root,
         folder,
@@ -284,24 +384,15 @@ def build_database_patch(
         changed_objects   = freshness.changed,
         unclocked_schemas = freshness.unclocked,
         undecodable_files = undecodable,
-        # Built last, and off the install scripts already on disk: the templates
-        # and per-patch scripts it reports are read back from the
-        # `PROMPT -- TEMPLATE:` / `PROMPT -- SCRIPT:` rows the writer emitted,
-        # never re-derived from config a second time (ADT #18's shape).
-        reports           = build_reports(
-            root,
-            files,
-            sql_files,
-            records,
-            window if window is not None else records,
-            config,
-            mode      = content_mode,
-            generated = generated,
-            present_files = present_files,
-        ),
-        uncommitted = _repo_uncommitted(
-            root, folder, set(generated.paths), mode=content_mode
-        ),
+        # Computed above, ahead of `_write_snapshots`, and spent here rather
+        # than re-derived (ADT #988): the templates and per-patch scripts
+        # `reports` carries are read back from the `PROMPT -- TEMPLATE:` /
+        # `PROMPT -- SCRIPT:` rows the writer emitted, never re-derived from
+        # config a second time (ADT #18's shape), and asking git for
+        # `uncommitted` twice could only disagree with the answer a streaming
+        # caller already printed if the checkout changed mid-build.
+        reports           = reports,
+        uncommitted       = uncommitted,
     )
 
 

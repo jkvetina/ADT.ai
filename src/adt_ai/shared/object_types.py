@@ -50,6 +50,7 @@ ORACLE_OBJECT_TYPES = frozenset(
         "PACKAGE",
         "PACKAGE BODY",
         "PROCEDURE",
+        "PROGRAM",
         "PROPERTY GRAPH",
         "SCHEDULE",
         "SEQUENCE",

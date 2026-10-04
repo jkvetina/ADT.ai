@@ -14,6 +14,8 @@ moment the obligation to remove them starts rather than the moment the scan
 returns. The cleanup statement is idempotent on its own terms: it loops over
 whatever `user_objects` currently matches the helper pattern and drops that, so a
 run with nothing to clean is a no-op and a second run after a first is another.
+It takes only helpers older than `STALE_AFTER_MINUTES` (ADT #991): a younger one
+may be another session's scan in flight, and APEX drops its own scan's anyway.
 
 **What the schema actually carries afterwards, measured rather than assumed.**
 `tests/tools/depscan_lifecycle_probe.py` issues the scan by hand against a live

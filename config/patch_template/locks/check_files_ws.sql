@@ -3,7 +3,7 @@
 --
 -- Reads :ws_files, the 'name,' list of workspace static files the patch installs,
 -- and :built_at, the UTC moment the patch was built, both set by the install
--- script. Linked by patch -create when patch_signatures is on and the patch
+-- script. Linked by patch -create when deploy_live_check is on and the patch
 -- carries a workspace file, below apex_init, because wwv_flow_files returns no
 -- rows until a workspace is set.
 --

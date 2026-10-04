@@ -11,6 +11,7 @@ from adt_ai.shared.config import is_enabled
 from adt_ai.shared.connection_errors import (
     ConnectFailedError,
     ConnectionError,
+    ConnectionFileNotFoundError,
     ConnectionNotFoundError,
     CredentialUnavailableError,
     InvalidConnectionError,
@@ -39,6 +40,7 @@ __all__ = [
     "ConnectFailedError",
     "Connection",
     "ConnectionError",
+    "ConnectionFileNotFoundError",
     "ConnectionLoader",
     "ConnectionNotFoundError",
     "ConnectionResult",
@@ -360,7 +362,7 @@ class ConnectionLoader:
             searched_text = "\n".join(
                 file_rows([str(path) for path in candidates], nested=False)
             )
-            raise ConnectionNotFoundError(
+            raise ConnectionFileNotFoundError(
                 "CONNECTION FILE NOT FOUND\n\nSearched:\n" + searched_text
             )
 

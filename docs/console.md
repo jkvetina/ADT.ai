@@ -118,6 +118,7 @@ ERROR - CONFIGURATION NOT FOUND:
 
   1) run ADT.ai from a project folder that has a connection file
   2) or pass -config-dir / -root to point at one
+  3) or create one with adtai connection -create
 
 
 TIMER: 0s
@@ -130,9 +131,9 @@ The code is chosen by what your next move is rather than by which layer raised t
 | Code | What happened | What follows the description |
 | --- | --- | --- |
 | `ARGUMENT INVALID` | What you typed cannot be parsed or cannot be combined: an unknown flag, two actions that are exclusive, a required value that is missing, a prompt that produced no password. | The `-h` pointer for that command, or the flag to use instead. |
-| `UNKNOWN COMMAND` | The first word is not a command. | The `MODULES:` overview, plus the `adtai doctor` line for `init`, `update` and `upgrade`. |
+| `UNKNOWN COMMAND` | The first word is not a command. | The `MODULES:` overview, plus the `adtai doctor -init` line for `init`. |
 | `INPUT NOT FOUND` | The thing to work on is not there yet: a branch that is not in the repo, a commit store no `rebuild` has built. | What to run first. |
-| `CONFIGURATION NOT FOUND` | No connection or config file could be located, or the file names no such environment or schema. | Run from a project folder that has a connection file, or pass `-config-dir` or `-root`. |
+| `CONFIGURATION NOT FOUND` | No connection or config file could be located, or the file names no such environment or schema. | Run from a project folder that has a connection file, or pass `-config-dir` or `-root`. When no connection file exists at all, also `adtai connection -create`. |
 | `CONFIGURATION INVALID` | A file was found and read and cannot be used as written: unparsable YAML, a document that is not a mapping, a value ADT cannot use, external auth naming no TNS alias. | None. The message names the key. |
 | `CREDENTIAL UNAVAILABLE` | The connection is described and its secret could not be obtained: a vault command that failed or timed out, a missing or wrong key, two sources configured for one secret. | None. The message names the key. |
 | `DATABASE CONNECTION FAILED` | A connect attempt was made and refused: SQLcl reported no session, or Oracle returned a known connection ORA, DPY, DPI or TNS code. Ordinary application text that merely says connection, listener or wallet does not select this screen. | Check the connection file and the wallet folder. |

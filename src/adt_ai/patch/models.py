@@ -303,7 +303,10 @@ class DatabasePatchResult:
     # learns the build rewrote his files and commits them.
     apex_notes: list[PrecheckIssue] = field(default_factory=list)
     # `DEPLOY.sql`, written when the folder holds two or more install scripts,
-    # or None (ADT #850). `PATCH FILES:` lists it after the scripts it orders.
+    # or None (ADT #850). `PATCH FILES:` lists it FIRST, ahead of the scripts
+    # it orders (ADT #988): it is the file `-deploy` reads first and the one a
+    # person edits to change the run order, so the section reads top to bottom
+    # in execution order rather than closing on the file that decides it.
     deploy_file: Path | None = None
     # Every dirty or untracked path in the WHOLE repo, computed once per build
     # (ADT #967, Jan mid-run: *"if we have uncommitted changes in the repo, it
@@ -314,6 +317,28 @@ class DatabasePatchResult:
     # whatever it just wrote under its own patch folder, and stays empty under
     # `-local` (`patch/build.py::_repo_uncommitted`).
     uncommitted: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class PartialPatchReport:
+    """What a build streams to `reported()` before it has a `DatabasePatchResult` (ADT #988).
+
+    `_write_patch_files` and `build_reports` have both returned by the time this
+    exists, so it carries exactly what the per-schema blocks read --
+    `PROCESSED FILES:`, `ALTER STATEMENTS:`, `DELETED OBJECTS:`,
+    `USER ALTER SCRIPTS:`, `WARNING - UNCOMMITTED FILES:` and
+    `WARNING - OUTDATED FILES:` -- and nothing a later phase of the same build
+    still has to read (`_write_snapshots`'s `undecodable_files`, the run-scoped
+    warnings, the final `DatabasePatchResult` itself). A caller that streams the
+    console prints these blocks off it the moment it arrives rather than
+    holding them until the whole build returns; see
+    `cli/patch_create_render.print_create_schema_blocks`.
+    """
+
+    folder: Path
+    reports: list[SchemaReport]
+    uncommitted: list[str]
+
 
 @dataclass(frozen=True)
 class DeploymentPlanItem:

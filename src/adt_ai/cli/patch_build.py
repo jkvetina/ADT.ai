@@ -42,14 +42,21 @@ from adt_ai.cli.constants import (
     PatchError,
     PatchWorkspace,
 )
-from adt_ai.cli.patch_create_render import print_create_screen
+from adt_ai.cli.patch_create_render import (
+    print_create_patch_files,
+    print_create_schema_blocks,
+    print_create_warnings,
+)
+from adt_ai.cli.patch_create_upfront import print_create_commit_listings_upfront
 from adt_ai.cli.patch_hash_mode import HashSelection, apply_hash_mode, hash_mode_error
 from adt_ai.cli.patch_preview_render import _content_mode, _selected_content_modes
 from adt_ai.patch import settings as patch_settings
 from adt_ai.patch.apex_import import AppIdTemplate, resolve_target
 from adt_ai.patch.apex_validate import ApexlangValidation
 from adt_ai.patch.baseline_tables import read_baseline_tables
+from adt_ai.patch.build import PatchBuildStages
 from adt_ai.patch.content import CONTENT_MODE_FLAGS
+from adt_ai.patch.models import PartialPatchReport
 from adt_ai.shared.patch_folders import PatchFolder
 
 
@@ -354,10 +361,15 @@ def build_database_patch(
     signature_gateway_factory: Callable[[str, str], Any] | None = None,
     validation: ApexlangValidation | None = None,
 ) -> None:
-    """Write the patch folder and print the whole `-create` screen.
+    """Write the patch folder, printing the `-create` screen AS it builds (ADT #988).
 
     The screen's section order is the render module's business, not this
-    function's (ADT #443).
+    function's (ADT #443); this is now also true of WHEN each section prints.
+    `PatchBuildStages` fires `on_validated` the moment `patch/build.py` is done
+    compiling and `on_reported` once the per-schema blocks have something to
+    say, both DURING `workspace.create_database_patch`; the run-scoped warnings
+    and `PATCH FILES:` still print after it returns, because
+    `print_undecodable_files` needs the snapshot copy that call makes last.
 
     `-create` connects since ADT #753, for the table ALTERs and nothing else:
     the comparison between two versions of a table is `DBMS_METADATA_DIFF`'s
@@ -371,16 +383,22 @@ def build_database_patch(
     never `-target`.
 
     ``validation`` is the run's compile gate (ADT #964), the one a `-deploy` in
-    the same run reads to skip a tree this build already compiled.
+    the same run reads to skip a tree this build already compiled. Its
+    reporter no longer holds `WARNING - APEXLANG ISSUES:` back (ADT #971
+    introduced the hold, #988 drops it for `-create`): the section prints
+    itself the moment validation closes, same as it always has for `-deploy`,
+    and this function no longer reaches into the reporter to time it.
     """
     target = resolve_target(args.app)
-    # `PatchValidateReporter`'s hold (ADT #971); duck-typed, as every reporter
-    # hook is, so a caller's own reporter without it still runs.
-    reporter = validation.reporter if validation else None
-    flush_issues = getattr(reporter, "flush_issues", None)
-    hold_issues = getattr(reporter, "hold", None)
-    if hold_issues is not None:
-        hold_issues()
+
+    def on_validated(folder: Path, will_write: bool) -> None:
+        del folder  # Read nothing off disk: see `print_create_commit_listings_upfront`.
+        print_create_commit_listings_upfront(records, will_write, config)
+
+    def on_reported(partial: PartialPatchReport) -> None:
+        print_create_schema_blocks(partial.reports, partial.uncommitted, config)
+
+    stages = PatchBuildStages(validated=on_validated, reported=on_reported)
     result = workspace.create_database_patch(
         config,
         patch_code = (
@@ -432,14 +450,16 @@ def build_database_patch(
         # Every workspace static file rather than only the changed ones (ADT #812).
         files_ws   = bool(getattr(args, "files_ws", False)),
         validation = validation,
+        stages     = stages,
     )
-    # Directly under the compile rows, as if printed there (ADT #971), once the
-    # build's own reads are over.
-    if flush_issues is not None:
-        flush_issues()
-    print_create_screen(
-        workspace, config, result, records, root, debug=bool(getattr(args, "debug", False)),
-    )
+    # The run-scoped warnings and the closing artifact list, once the build's
+    # own reads are over (ADT #988): `print_undecodable_files` needs
+    # `result.undecodable_files`, which only exists once `_write_snapshots` has
+    # run, and `PATCH FILES:` reads the folder's finished `DEPLOY.sql`. Every
+    # section ahead of these two already printed itself through `stages` above.
+    debug = bool(getattr(args, "debug", False))
+    print_create_warnings(result, config, debug=debug)
+    print_create_patch_files(result, config, root)
 
 
 __all__ = [

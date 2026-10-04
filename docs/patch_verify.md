@@ -31,9 +31,13 @@ An application whose own deploy row errored is not scanned at all. The deploy ha
 ## What a run prints
 
 ```text
+VERIFYING APPLICATIONS:
+-----------------------
+  1000/ORDERS ........................................................ 0:00:07
+
+
 ERROR - VERIFICATION FAILED:
 ----------------------------
-  APP 1000 | ERROR | 4 error(s) in 1116 fragments
 
   PAGE   ISSUES
   ----   ------
@@ -44,13 +48,11 @@ ERROR - VERIFICATION FAILED:
   LOG: 20260902-194318_apex_scan_1000.txt
 ```
 
-**The header says the application failed, not the deploy.** The deploy table above it still reads `SUCCESS` for every script that ran, so `ERROR - VERIFICATION FAILED:` is what tells a reader that the patch went in and the application it produced does not compile. A clean run keeps `VERIFYING APPLICATIONS:`.
+**Each application is scanned under its own row, the one `VALIDATING APEXLANG APPS:` prints.** `VERIFYING APPLICATIONS:` opens before the first scan; each application's row is painted at `0:00:00` the moment its scan starts, counts down from the scan time `apex.db` last recorded for it, and closes on the time the scan took. The label is the application at the id the deploy landed it on, with the alias APEX holds there, so a `-app` retarget reads `<target id>/<alias for target>`. A failed scan closes its row the same way, and the revert it triggers runs inside that row before it closes. **The header says the application failed, not the deploy.** The deploy table above it still reads `SUCCESS` for every script that ran, so `ERROR - VERIFICATION FAILED:` after the rows is what tells a reader that the patch went in and the application it produced does not compile.
 
 **The console counts issues per page; the log lists them.** One row per page, in page order, and a finding that sits on no page (a shared LOV, an application process) counts under `APPLICATION`. Every finding, with its component, property and the database's own error, is in the log named under the table, which is the file a reader opens to fix them.
 
-**A finding fails the deploy**, unless the run passed `-continue`. Unlike the invalid-object list on the deploy page, this read is patch-scoped. It asks the application this patch just deployed, so it cannot fail a run over an object somebody else left invalid a month ago. What `-continue` changes is below, in "Waiving the verdict for one run".
-
-**A clean scan still prints its row.** The point of the section is that `SUCCESS` in the table above is no longer the last word, so the run has to show the question was asked. A section that appeared only on failure would read exactly like the behaviour it replaced.
+**A finding fails the deploy**, unless the run passed `-continue`. Unlike the invalid-object list on the deploy page, this read is patch-scoped. It asks the application this patch just deployed, so it cannot fail a run over an object somebody else left invalid a month ago. What `-continue` changes is below, in "Waiving the verdict for one run". **A clean scan prints its row and nothing after it.** The point of the section is that `SUCCESS` in the table above is no longer the last word, so the run has to show the question was asked; the streamed row is that proof. An `UNSUPPORTED` scan says why on a line under its row.
 
 <br>
 
@@ -158,7 +160,7 @@ Every failing outcome reaches the deploy status and the process exit code, exact
 
 It sets the workspace security context and the session PL/Scope flag on the connection the deploy already opened, and opens none of its own.
 
-**The `DEPSCAN$` helper procedures the scan generates are always taken away again.** Install, scan and cleanup sit behind one lifecycle boundary, and the cleanup runs in a `finally`: the obligation to remove the helpers starts when the scan statement is issued, not when it returns, so a scan that fails halfway leaves none of them standing. The cleanup drops whatever currently matches the helper pattern, so running it twice is safe. A deploy that silently grew helper objects would be a worse bug than the one this closes.
+**The `DEPSCAN$` helper procedures the scan generates are always taken away again.** Install, scan and cleanup sit behind one lifecycle boundary, and the cleanup runs in a `finally`: the obligation to remove the helpers starts when the scan statement is issued, not when it returns, so a scan that fails halfway leaves none of them standing. APEX drops a finished scan's helpers itself, so the cleanup takes only helpers older than 30 minutes: a younger one may belong to a scan another session is running against the same schema, and dropping it would fail that scan with `ORA-04043`. Running the cleanup twice is safe. A deploy that silently grew helper objects would be a worse bug than the one this closes.
 
 Measured on APEX 26.1, a bare scan with no cleanup behind it left no `DEPSCAN` object on the schema at all, so on that release there is nothing to strand in the first place. The boundary is there for the release or the application that does leave one, and it costs a `finally`.
 
@@ -292,17 +294,16 @@ patch/260907-1-CARGO/logs_DEV/20260907-194318_apex_build_status_1000.txt
 --   FINAL            | Run Only
 ```
 
-And the three moments that belong to this deploy on the `VERIFYING APPLICATIONS:` row, so a run says where it left the application without anyone opening a file:
+And the three moments that belong to this deploy on the application's `VERIFYING APPLICATIONS:` row, so a run says where it left the application without anyone opening a file:
 
 ```text
 VERIFYING APPLICATIONS:
 -----------------------
-  APP 1000 | SUCCESS | 1116 fragments, no errors
-    LOG: 20260907-194318_apex_scan_1000.txt
+  1000/ORDERS ........................................................ 0:00:07
     BUILD STATUS: Run and Develop -> RUN_ONLY -> Run Only
 ```
 
-**An application nothing locked prints no row**, which is every deploy under `off` and every task sandbox. The import log still carries its `BUILD STATUS` row with the reason on it.
+**The lock is released inside that row**, after the scan and after any revert, so the final status is known before the row closes and the release's own reads run under a row that is still open. An application the scan does not cover is released under the deploy table's last row instead. A failed scan prints no `BUILD STATUS:` line; its screen is `ERROR - VERIFICATION FAILED:`. **An application nothing locked prints no row**, which is every deploy under `off` and every task sandbox. The import log still carries its `BUILD STATUS` row with the reason on it.
 
 **`AFTER IMPORT` is APEX's own doing, not ADT's.** An APEXlang import resets build status every time, and `apex_application_install.set_build_status`, which does pin the classic `f<id>.sql` path, is ignored by SQLcl's APEXlang importer, so there is nothing to pin with. The deploy therefore re-applies the final status after the scan instead of trying to carry the lock through the import.
 

@@ -9,6 +9,7 @@ from adt_ai.export_apex.recent import (
 )
 
 _COMPONENT_TYPES = {
+    "authentications": "AUTHENTICATION",
     "authorizations": "AUTHORIZATION",
     "authorization_schemes": "AUTHORIZATION",
     "build_options": "BUILD OPTION",

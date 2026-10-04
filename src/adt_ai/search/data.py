@@ -40,13 +40,23 @@ from adt_ai.shared.row_values import row_value
 #: behind a synonym: *"TABLES + VIEWS + MVIEWS + SYNONYMS TO OTHER TABLES +
 #: VIEWS + MVIEWS !"*, one list per object type.
 KINDS = ("TABLE", "VIEW", "MATERIALIZED VIEW", "SYNONYM")
-#: The heading word of each kind's list.
+#: The heading word of each kind's list, singular; the plural is this plus `S`.
 KIND_LABELS = {
-    "TABLE"             : "TABLES",
-    "VIEW"              : "VIEWS",
-    "MATERIALIZED VIEW" : "MVIEWS",
-    "SYNONYM"           : "SYNONYMS",
+    "TABLE"             : "TABLE",
+    "VIEW"              : "VIEW",
+    "MATERIALIZED VIEW" : "MVIEW",
+    "SYNONYM"           : "SYNONYM",
 }
+
+
+def kind_label(kind: str, count: int) -> str:
+    """``TABLE`` for one object, ``TABLES`` for any other count: the heading's noun.
+
+    ADT #993: one object printed `SEARCHING 1 TABLES:`, which read as a typo.
+    """
+    label = KIND_LABELS[kind]
+    return label if count == 1 else f"{label}S"
+
 
 @dataclass(frozen=True)
 class DataObject:

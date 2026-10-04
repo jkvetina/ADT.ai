@@ -58,16 +58,33 @@ def linked_group(object_type: str | None, config: dict[str, Any]) -> str:
 
 
 def alter_helper_slot(config: dict[str, Any]) -> str:
-    """The slot the ALTER writers write into: `after` the group linking tables.
+    """The slot the ALTER writers write into: `before` the group linking tables.
 
-    Read off the config rather than spelled `tables_after` (ADT #923). The slot
-    the install script links is `<group><patch_postfix_after>`, and
+    `before` because the ALTER has to run ahead of the table files (ADT #753):
+    the exported file's `COMMENT ON COLUMN` lines describe the shape the ALTER
+    produces. A slot's name is its promise of when it runs, so the ALTER is
+    written where it runs rather than pulled out of an `after` slot at link
+    time, which is what `#753` did until ADT #990 (Jan, 2026-09-30: *"If we
+    have folder name TABLES_AFTER, IT MUST RUN AFTER THE TABLES, NOT BEFORE"*).
+
+    Read off the config rather than spelled `tables_before` (ADT #923). The slot
+    the install script links is `<group><patch_postfix_before>`, and
     `scripts._known_slots` reads it the same way since ADT #430, so a fixed name
     was UNKNOWN on any project with another postfix or its tables in another
     group: the ALTER stayed in the source folder and the change never shipped.
     The table group rather than the sequence group for a sequence ALTER too, so
-    one slot keeps holding every generated ALTER (`sequence_alter.py`), and ADT
-    #753 runs each one ahead of that group's files.
+    one slot keeps holding every generated ALTER (`sequence_alter.py`).
+    """
+    return settings.slot_name(linked_group("TABLE", config), "before", config)
+
+
+def legacy_alter_helper_slot(config: dict[str, Any]) -> str:
+    """Where the ALTER writers wrote before ADT #990: `after` the table group.
+
+    Read, never written. A patch built before the move still holds its helpers
+    here, and a forced re-create has to recognise them as the generator's
+    (`scripts._is_generated_helper`) or it carries the stale copy forward as an
+    author's script, which then claims its table and runs after the rows.
     """
     return settings.slot_name(linked_group("TABLE", config), "after", config)
 

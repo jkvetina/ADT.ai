@@ -58,7 +58,9 @@ adtai recompile -env DEV -vpd TENANT_ID
 
 A run reads the overview, recompiles, retries whatever failed on a fresh connection, then re-checks.
 
-First it drops any stray `DEPSCAN$<n>#<n>` procedures, silently. APEX's dependency scan generates these helpers, and `rebuild -app`, `validate -scan` and `patch` already remove them after their own scan. They are never compiled, counted or rewritten, here or under `-trailing`, and `export_db` never writes one. The report-only modes leave them alone.
+First it drops any stray `DEPSCAN$<n>#<n>` procedures older than 30 minutes, silently; a younger one may belong to a scan still running in another session.
+
+APEX's dependency scan generates these helpers, and `rebuild -app`, `validate -scan` and `patch` already remove them after their own scan. They are never compiled, counted or rewritten, here or under `-trailing`, and `export_db` never writes one. The report-only modes leave them alone.
 
 Recycle-bin objects (`BIN$...`) are left out the same way: Oracle takes no DDL on one, so they are not counted, compiled or listed with their errors. An object whose name no plain identifier spells fails on its own and the run carries on, as a failed compile does.
 
@@ -210,7 +212,7 @@ Every report prints its first header before it reads anything, so while the data
 
 **`-mviews`** renders a live stream: each view's name prints first, its `COMPILE` or `REFRESH` runs at that point, and only then does the rest of the row print, so the pause attaches to the view being worked on. `TYPE` is derived from the view's **configured** refresh method, never the volatile last-refresh type, and a `FORCE` method resolves to `F` when a usable log backs it or `C` when none does, which is what the `LOG` column reports. `TIMER` is Oracle's own recorded duration rather than a tool-measured clock, rounded up, so a genuinely sub-second refresh reads `1s` and a view that has never been refreshed leaves the cell blank. With `-force`, every matching view is refreshed regardless of staleness.
 
-**`-disabled`** is the one report spanning several object types, so `-type` picks which of `CONSTRAINT`, `INDEX` and `TRIGGER` to report. It lists disabled constraints, indexes whose status is not `VALID` or whose function-index status is not `ENABLED`, and disabled triggers.
+**`-disabled`** is the one report spanning several object types, so `-type` picks which of `CONSTRAINT`, `INDEX` and `TRIGGER` to report: `-type TRIGGER` prints `DISABLED TRIGGERS:` alone, and the other two sections are left out. A `-type` naming none of the three keeps all three, empty. It lists disabled constraints, indexes whose status is not `VALID` or whose function-index status is not `ENABLED`, and disabled triggers.
 
 **`-vpd`** reports Virtual Private Database (row-level security) policies grouped by the function that implements them. `VPD FUNCTIONS:` lists each function as `PACKAGE.FUNCTION` with `COLUMNS`, `DYNAMIC` and how many `TABLES` it protects, one column name per row: the function's row carries its first column, and each further column gets a row of its own. Then each function gets its own `VPD POLICIES - <FUNCTION>:` table, one row per table and policy:
 
@@ -257,13 +259,13 @@ A disabled policy protects nothing, so it is left out of the policy tables, and 
 | `-native`, `--native` | No | off | Compile PL/SQL to native code. |
 | `-interpreted`, `--interpreted` | No | off | Compile PL/SQL to interpreted code (`-native` takes precedence). Neither flag leaves the code type untouched. |
 | `-scope`, `--scope` | Yes | none | PL/Scope settings (`IDENTIFIERS`, `STATEMENTS`, `ALL`); space-, comma-, `+`- or repeated-flag-separated. |
-| `-warnings`, `--warnings` | Yes | none | PL/SQL warnings (`SEVERE`, `PERF`, `INFO`); same separators as `-scope`. |
+| `-warnings`, `--warnings` | Yes | none | PL/SQL warnings (`SEVERE`, `PERF`, `INFO`, or `ALL` for all three); same separators as `-scope`. Any other value is refused before the run starts. |
 | `-mviews`, `--mviews` | No | off | Report materialized views (scoped by `-name`), then compile invalid ones and refresh stale ones. With `-force`, refresh every match. |
 | `-synonyms`, `--synonyms` | No | off | Report-only: one table per target owner mapping each synonym to its target, one privilege per row, with `GRNT` and `VALID`. |
-| `-disabled`, `--disabled` | No | off | Report-only: disabled constraints, invalid or function-disabled indexes, and disabled triggers, scoped by `-name` and by `-type` to one of `CONSTRAINT`/`INDEX`/`TRIGGER`. |
+| `-disabled`, `--disabled` | No | off | Report-only: disabled constraints, invalid or function-disabled indexes, and disabled triggers, scoped by `-name`; `-type` picks which of the `CONSTRAINT`/`INDEX`/`TRIGGER` sections print. |
 | `-jobs`, `--jobs` | No | off | Report-only: today's scheduler job runs in status-grouped compact tables, scoped by `-name`. |
 | `-vpd`, `--vpd` | No | off | Report-only: VPD policy definitions, their table assignments and a coverage count; with an optional `COLUMN` value, also the tables carrying it but no enabled policy. Scoped by `-name`, and by `-type` to one of `TABLE`/`POLICY`/`FUNCTION`. |
 | `-trailing`, `--trailing` | No | off | Strip trailing whitespace from stored source through `CREATE OR REPLACE`, scoped by `-type` and `-name`. |
-| `-silent`, `--silent` | No | off | Suppress object overview details while keeping the banner, connection block and final timer. |
+| `-silent`, `--silent` | No | off | Suppress object overview details while keeping the banner, connection block and final timer. An object that still fails prints `INVALID OBJECTS:`, `ERROR - RECOMPILATION FAILED:` and `ROOT CAUSES:` as without the flag. |
 
 Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

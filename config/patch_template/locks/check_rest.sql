@@ -3,7 +3,7 @@
 --
 -- Reads :rest_modules, the 'name,' list of ORDS modules the patch installs, and
 -- :built_at, the UTC moment the patch was built, both set by the install script.
--- Linked by patch -create when patch_signatures is on and the patch carries a
+-- Linked by patch -create when deploy_live_check is on and the patch carries a
 -- REST module.
 --
 -- Refuses with ORA-20901 REST_MODULE_CHANGED when a listed module was changed

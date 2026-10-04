@@ -41,16 +41,17 @@ The scripts are plain SQL. You do not need ADT to get the protection, so a patch
 
 ### The shared lock scripts
 
-The SQL itself lives in six scripts under `locks/` in your `patch_template_dir`, `config/patch_template/locks/` by default. ADT.ai ships them in its reference scaffold, and `doctor -init` copies them with the rest of that folder:
+The SQL itself lives in seven scripts under `locks/` in your `patch_template_dir`, `config/patch_template/locks/` by default. ADT.ai ships them in its reference scaffold, and `doctor -init` copies them with the rest of that folder:
 
 | Script                  | Linked when                                                | Reads                        |
 | ----------------------- | ---------------------------------------------------------- | ---------------------------- |
 | `lock_objects.sql`      | `patch_core_locks`                                         | `:objects`                   |
-| `check_objects.sql`     | `patch_signatures` and `patch_core_locks`                  | `:objects`, `:built_at`      |
-| `check_objects_all.sql` | `patch_signatures` without `patch_core_locks`              | `:objects`, `:built_at`      |
+| `check_objects.sql`     | `deploy_live_check` and `patch_core_locks`                 | `:objects`, `:built_at`      |
+| `check_objects_all.sql` | `deploy_live_check` without `patch_core_locks`             | `:objects`, `:built_at`      |
 | `unlock_objects.sql`    | `patch_core_locks`, at the bottom                          | `:objects`                   |
-| `check_rest.sql`        | `patch_signatures` and the patch carries a REST module     | `:rest_modules`, `:built_at` |
-| `check_files_ws.sql`    | `patch_signatures` and the patch carries a workspace file  | `:ws_files`, `:built_at`     |
+| `check_rest.sql`        | `deploy_live_check` and the patch carries a REST module    | `:rest_modules`, `:built_at` |
+| `check_files_ws.sql`    | `deploy_live_check` and the patch carries a workspace file | `:ws_files`, `:built_at`     |
+| `check_apps.sql`        | `deploy_live_check` and the script installs an application | `:apex_apps`, `:built_at`    |
 
 Each is **linked in place, never copied**, the way a template is ([patch_templates.md](patch_templates.md)). Edit one and every patch built afterwards runs your version. `patch_add_templates: False` does not switch them off; the two keys below do.
 
@@ -149,7 +150,30 @@ A file created and never edited carries no `updated_on` at all, so the compariso
 
 One placement note. The workspace-file block sits below your `apex_init` template rather than at the very top, because `wwv_flow_files` returns nothing until a workspace is set and that is where the script sets one. It is still above every file the patch installs.
 
-`__enable_schema.sql` is not guarded. It carries the roles and privileges no single module owns, so there is no module row named after it. An application's own static files are not guarded here either, being covered by that application's signature.
+`__enable_schema.sql` is not guarded. It carries the roles and privileges no single module owns, so there is no module row named after it. An application's own static files are not guarded here either, being covered by that application's own guard, below.
+
+<br>
+
+### APEX applications installed by SQL
+
+A full export, split components and an application's static files install themselves from the script, so the application gets a block of its own, below your `apex_init` template and above the first component:
+
+```text
+PROMPT -- APEX APPLICATION LOCKS
+```
+
+It sets `:apex_apps` to the application's id and links `check_apps.sql`, which reads the newest `last_updated_on` of the application row and of its pages. A change made after the build refuses the deploy and names who made it:
+
+```text
+ORA-20901: APP_CHANGED: 100 was changed by NOVAK on 2026-09-30 14:02:11 after
+this patch was built, deploying it would overwrite work this patch never saw
+```
+
+An import of a full or split export leaves those audit columns empty, so a colleague's deploy would pass unseen. Every script therefore ends by writing the application's version back unchanged, right after its last component, which stamps the application with the deploying schema and the moment.
+
+An APEXlang import through `-deploy -app` is stamped the same way, naming you when `config/IDENTITY.yaml` does. The next patch's guard reads that stamp.
+
+Like `last_ddl_time`, the check is approximate on purpose: a second run of a patch that already deployed refuses too. An application the target does not hold yet passes. An APEXlang import is not guarded here; its own checksum check is on [patch_verify.md](patch_verify.md).
 
 <br>
 
@@ -158,10 +182,12 @@ One placement note. The workspace-file block sits below your `apex_init` templat
 Two keys in `config.yaml`, both on by default:
 
 ```yaml
-patch_signatures        : True
+deploy_live_check       : True
 patch_core_locks        : True
 ```
 
-Separate, because the halves are: `patch_core_locks` links the lock and the unlock, `patch_signatures` links the `last_ddl_time` check for a target with no CORE_LOCKS. Both off and no block is written at all. `patch_signatures` owns the REST and workspace-file checks too, being the same comparison over a different table; `patch_core_locks` does not reach them.
+Separate, because the halves are: `patch_core_locks` links the lock and the unlock, `deploy_live_check` links the `last_ddl_time` check for a target with no CORE_LOCKS. Both off and no block is written at all. `deploy_live_check` owns the REST, workspace-file and application checks too, being the same comparison over a different table; `patch_core_locks` does not reach them.
+
+`deploy_live_check` was `patch_signatures` through 1.5.1, and the old key is no longer read.
 
 This is not `-hash` mode, which picks which files a patch carries by comparing your working tree against a recorded baseline ([patch_hash.md](patch_hash.md)) and never asks the database. This rides whatever patch you built.

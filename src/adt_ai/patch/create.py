@@ -23,7 +23,7 @@ from adt_ai.patch.files import (
     _order_by_dependencies,
     _patch_map,
 )
-from adt_ai.patch.generated_helpers import is_alter_helper_filename, linked_group
+from adt_ai.patch.generated_helpers import linked_group
 from adt_ai.patch.helpers import (  # noqa: F401  (re-exported for existing importers)
     _drop_helper_sql,
     _path_is_deleted,
@@ -156,15 +156,10 @@ def _write_patch_files(
 
     ``generated`` is this run's own answer for which TABLE files carry an
     ALTER, generated or claimed (ADT #969): read once here rather than per
-    group, since the merge (`_table_alter_scripts`) and the claiming script's
-    basenames (``claimed_names``) are the same for every group's payload.
+    group, since the merge (`_table_alter_scripts`) is the same for every
+    group's payload.
     """
     altered_tables = _table_alter_scripts(generated, config)
-    claimed_names = frozenset(
-        Path(script).name
-        for claim in generated.claimed_tables
-        for script in claim.scripts
-    )
     sql_files: dict[str, Path] = {}
     # One store read for the whole write, the same reason `_patch_files` reads it
     # once: the group an APEX file lands in is the application's own schema.
@@ -232,7 +227,6 @@ def _write_patch_files(
                     present_files=present_files,
                     never_recreated=never_recreated,
                     altered_tables=altered_tables,
-                    claimed_names=claimed_names,
                     edges=edges,
                 )
             }
@@ -259,7 +253,6 @@ def _database_patch_payload(
     present_files: Mapping[str, bool],
     never_recreated: Mapping[str, str] | None = None,
     altered_tables: Mapping[str, tuple[str, ...]],
-    claimed_names: frozenset[str],
     edges: Mapping[str, list[str]] | None = None,
 ) -> str:
     signatures = signatures or []
@@ -303,36 +296,20 @@ def _database_patch_payload(
         # `patch_postfix_*` through the resolver `_known_slots` also reads (#430).
         before_slot = _settings.slot_name(group, "before", config)
         after_slot = _settings.slot_name(group, "after", config)
+        # A slot runs where its name says, every file in it and nothing moved
+        # (ADT #990). The generated ALTERs run ahead of the object files because
+        # they are WRITTEN to the `before` slot (`alter_helper_slot`), not
+        # because anything here pulls them out of an `after` one, as `#753` and
+        # `#969` did: Jan, reading a TABLES section that opened on
+        # `tables_after/test.454.sql`, *"If we have folder name TABLES_AFTER, IT
+        # MUST RUN AFTER THE TABLES, NOT BEFORE."* A hand-written ALTER that
+        # claims its table runs from whichever slot its author chose.
         before = [
             *_script_payload(root, folder, config, before_slot, patch_code),
             *_template_payload(root, folder, config, before_slot, patch_code),
         ]
-        # The generated ALTERs leave the `after` slot they are WRITTEN to and run
-        # ahead of the object files (ADT #753). A table with a generated ALTER
-        # already exists in the target, so its exported file contributes only a
-        # no-op `CREATE TABLE IF NOT EXISTS` and its `COMMENT ON COLUMN` lines,
-        # and those describe the shape the ALTER is about to produce. Run after
-        # the file, an added column's comment is `ORA-00904: invalid identifier`
-        # and the whole patch rolls back, which is every "add a column and deploy
-        # it" on any project whose export carries comments (measured on the
-        # `patch/table_change` story fixture, 2026-09-09).
-        #
-        # A hand-written script in the same slot keeps its place behind the
-        # files: that one was put there by a person who meant "after".
-        #
-        # A claiming user script runs there too, even a `*_after` one (ADT
-        # #969): Jan's rule is that the ALTER always precedes the table it
-        # touches, and a script that already IS the ALTER is no different from
-        # one Oracle's diff generated, whatever filename a person gave it.
-        alters = _script_payload(
-            root, folder, config, after_slot, patch_code,
-            keep=lambda name: is_alter_helper_filename(name) or name in claimed_names,
-        )
         after = [
-            *_script_payload(
-                root, folder, config, after_slot, patch_code,
-                keep=lambda name: not is_alter_helper_filename(name) and name not in claimed_names,
-            ),
+            *_script_payload(root, folder, config, after_slot, patch_code),
             *_template_payload(root, folder, config, after_slot, patch_code),
         ]
         # Old ADT's own condition (patch.py:1401): a group earns a section when it
@@ -342,11 +319,10 @@ def _database_patch_payload(
         # linked by nothing, which is the silent non-delivery that card exists to
         # stop. Found by running `-create`, not by a test: every fixture happened
         # to put a script in a slot whose group also had a file.
-        if not group_files and not before and not after and not alters:
+        if not group_files and not before and not after:
             continue
         payload.extend(["", "PROMPT --;", f"PROMPT -- {group.upper()}", "PROMPT --;"])
         payload.extend(before)
-        payload.extend(alters)
         for path in group_files:
             # Presence belongs to the selected source; deletion remains an
             # object-identity question so a group move never claims a DROP.

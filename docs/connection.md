@@ -206,7 +206,7 @@ adtai connection -create -env DEV -schema APP -user APP \
   -default -encrypt -key /secure/adt.key -go
 ```
 
-With `-default`, ADT.ai writes the APEX default schema when an APEX workspace is configured, and the database default schema otherwise.
+With `-default`, ADT.ai writes the database default schema, and the APEX default schema too when an APEX workspace is configured. A default the environment already names is never overwritten.
 
 <br>
 
@@ -272,7 +272,7 @@ Exactly one action flag is required, and each names the further arguments it nee
 | `-app`, `--app` | No | none | With `-create`, set the schema's APEX application scope. |
 | `-prefix`, `--prefix` | No | none | With `-create`, set the export prefix filter, which exports only matching names. |
 | `-ignore`, `--ignore` | No | none | With `-create`, set the export ignore filter, the SQL LIKE patterns `export_db` and `export_data` skip. Fills a blank or missing entry and never overwrites one already holding a value. |
-| `-default`, `--default` | No | off | With `-create`, mark the schema as the default database or APEX schema. |
+| `-default`, `--default` | No | off | With `-create`, mark the schema as the default database schema, and as the APEX one too when it has an APEX workspace. |
 | `-encrypt`, `--encrypt` | No | off | With a password-writing action, encrypt the stored value using `-key` or `ADT_KEY`. |
 | `-go`, `--go` | No | off | Apply the change. Without it the command previews and writes nothing. |
 

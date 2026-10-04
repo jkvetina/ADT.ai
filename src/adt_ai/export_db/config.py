@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from adt_ai.export_db.discovery_filters import has_exact_name_filter
 from adt_ai.shared.config import DEFAULT_PATH_OBJECTS
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.identity import load_identity, session_identifier
@@ -200,6 +201,53 @@ def _has_runtime_filter(request: ExportDbRequest) -> bool:
             request.authors is not None,
         )
     )
+
+def delete_window_flags(
+    *, delete: bool, recent: object, by: object, my: bool
+) -> list[str]:
+    """The flags `-delete` is refused beside, every one this run carries (ADT #993).
+
+    A window or an author picks objects by a change no file records, so it has
+    nothing to hold a file to and cannot say which files to delete.
+    """
+    if not delete:
+        return []
+    carried = (("-recent", recent is not None), ("-by", by is not None), ("-my", my))
+    return [flag for flag, present in carried if present]
+
+def delete_refusal(refused: list[str]) -> str:
+    """A short uppercase headline naming the flags, the reason and the way out under it."""
+    return (
+        f"-delete CANNOT BE NARROWED BY {', '.join(refused)}\n\n"
+        "A window or an author picks objects by a change no file records,\n"
+        "so it cannot say which files to delete.\n"
+        "Narrow -delete with -type or -name instead."
+    )
+
+def delete_selection(request: ExportDbRequest) -> Callable[[str, str], bool] | None:
+    """Which object files `-delete` may clear on this run, `None` meaning all.
+
+    `-type` and `-name` narrow the deletion exactly as they narrow the export
+    (ADT #993), so `-delete -type SEQUENCE` clears the sequences and no other
+    folder. Both are patterns a file name can be held to, so a stale file they
+    cover goes too, and a wildcard-free `-name` is matched exactly, as discovery
+    matches it. `-recent`, `-by` and `-my` never reach here beside `-delete`:
+    the command line refuses them (`delete_window_flags`).
+    """
+    if request.object_types is None and request.names is None:
+        return None
+    types = [pattern.upper() for pattern in request.object_types or []]
+    names = [pattern.upper() for pattern in request.names or []]
+    exact = has_exact_name_filter(names)
+
+    def selects(object_type: str, object_name: str) -> bool:
+        if types and not any(matches_sql_like(object_type, item) for item in types):
+            return False
+        if exact:
+            return object_name in names
+        return not names or any(matches_sql_like(object_name, item) for item in names)
+
+    return selects
 
 def _audit_config(config: dict[str, Any]) -> AuditConfig | None:
     raw = config.get("audit")

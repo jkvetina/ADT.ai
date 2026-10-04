@@ -107,6 +107,18 @@ class LiveUploadRunner:
         # `time.sleep` once at import and leave a test with no way to end the
         # loop it is driving.
         self.sleep = sleep if sleep is not None else time.sleep
+        # The application `bind` already set the session up for, if any.
+        self._bound: int | None = None
+
+    def bind(self, app_id: int) -> None:
+        """Set the session's APEX security context for ``app_id`` (ADT #988).
+
+        Public so the CLI can run it under `MONITORING FOLDER:` before that
+        section's first row: once the folder row has printed, the header no
+        longer announces anything. `_start` skips it when this already ran.
+        """
+        self.gateway.execute(queries.APEX_SECURITY_CONTEXT, {"app_id": app_id})
+        self._bound = app_id
 
     def run(self, request: LiveUploadRequest) -> LiveUploadResult:
         """Watch until the user interrupts, and report what went up.
@@ -167,7 +179,8 @@ class LiveUploadRunner:
 
     def _start(self, request: LiveUploadRequest) -> dict[Path, float]:
         """Bind the session to the application, and read what the folder holds."""
-        self.gateway.execute(queries.APEX_SECURITY_CONTEXT, {"app_id": request.app_id})
+        if self._bound != request.app_id:
+            self.bind(request.app_id)
         known = files.scan(request.folder)
         if request.show:
             self.reporter.listing([files.upload_name(request.folder, path) for path in known])

@@ -65,16 +65,41 @@ def ensure_plscope(
     the console contract's own answer and the one it prefers over minting a new
     label.
     """
-    _progress = progress or (lambda _: None)
+    return recompile_plscope(
+        gateway,
+        prepare_plscope(gateway, candidates=candidates),
+        progress=progress,
+        bar=bar,
+    )
 
-    # 1. Turn full PL/Scope on for this session so the recompiles below populate
-    #    the identifier / statement dictionaries.
-    gateway.execute(PLSCOPE_SESSION_STATEMENT)
 
-    # 2. Discover VALID PL/SQL objects whose stored PL/Scope settings are not
-    #    already IDENTIFIERS:ALL + STATEMENTS:ALL (reuses the recompile catalog
-    #    read, no RecompileRunner, no second connection).
-    pending = RecompileDiscovery(gateway).objects_missing_plscope()
+def prepare_plscope(
+    gateway: QueryGateway,
+    *,
+    candidates: Iterable[tuple[str, str]] | None = None,
+    on_error: Callable[[], None] | None = None,
+) -> list[RecompileObject]:
+    """Steps 1 and 2 of `ensure_plscope`: the session setting and what still lacks scope.
+
+    Split out so the dependency refresh can run these two reads under the
+    `USER_OBJECTS` row while it is still OPEN (ADT #988), the way it already
+    runs its `FROM DUAL` offset read there: once that row has finished, the
+    section header no longer announces anything, and a finished row is a result.
+    ``on_error`` closes that row on `FAILED` before a read's error propagates.
+    """
+    try:
+        # 1. Turn full PL/Scope on for this session so the recompiles below
+        #    populate the identifier / statement dictionaries.
+        gateway.execute(PLSCOPE_SESSION_STATEMENT)
+
+        # 2. Discover VALID PL/SQL objects whose stored PL/Scope settings are
+        #    not already IDENTIFIERS:ALL + STATEMENTS:ALL (reuses the recompile
+        #    catalog read, no RecompileRunner, no second connection).
+        pending = RecompileDiscovery(gateway).objects_missing_plscope()
+    except Exception:
+        if on_error is not None:
+            on_error()
+        raise
     if candidates is not None:
         candidate_keys = set(candidates)
         pending = [
@@ -82,6 +107,18 @@ def ensure_plscope(
             for database_object in pending
             if (database_object.object_type, database_object.object_name) in candidate_keys
         ]
+    return pending
+
+
+def recompile_plscope(
+    gateway: QueryGateway,
+    pending: list[RecompileObject],
+    *,
+    progress: Callable[[str], None] | None = None,
+    bar: DottedProgressBar | None = None,
+) -> list[RecompileObject]:
+    """Step 3 of `ensure_plscope`: recompile ``pending`` under its own crawling row."""
+    _progress = progress or (lambda _: None)
     if not pending:
         return []
 

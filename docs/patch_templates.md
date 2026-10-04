@@ -43,7 +43,7 @@ Two consequences worth knowing before you rely on either:
 
 ADT.ai ships a reference scaffold in its own checkout. It is not read from there: copy it into your project and edit it. Read `db_end/` before you keep it, since those files refresh every materialized view, gather schema stats and run every enabled daily job.
 
-One folder beside the slots is not a slot. `locks/` holds the six shared scripts that guard a patch against overwriting a colleague's work, and nothing in it is injected by folder: ADT links each one by name, under `patch_core_locks` and `patch_signatures` rather than `patch_add_templates` ([patch_signatures.md](patch_signatures.md)).
+One folder beside the slots is not a slot. `locks/` holds the seven shared scripts that guard a patch against overwriting a colleague's work, and nothing in it is injected by folder: ADT links each one by name, under `patch_core_locks` and `deploy_live_check` rather than `patch_add_templates` ([patch_signatures.md](patch_signatures.md)).
 
 <br>
 
@@ -136,9 +136,11 @@ Two kinds of one-off are written into `patch_scripts_dir` (default `patch_script
 | Written to       | When                                                                          |
 | ---------------- | ----------------------------------------------------------------------------- |
 | `objects_after/` | the patch window **deleted** an object file, as a `drop.<type>.<name>.sql` |
-| `tables_after/`  | a table file that changed, as the `ALTER TABLE` Oracle itself writes, per version step; a sequence file that changed, as its `ALTER SEQUENCE` |
+| `tables_before/` | a table file that changed, as the `ALTER TABLE` Oracle itself writes, per version step; a sequence file that changed, as its `ALTER SEQUENCE` |
 
-Those are the shipped names. The folders follow your config: the DROP goes after the `objects` group and the ALTER after the `patch_map` group holding `TABLE` (`objects` when none does), each with your `patch_postfix_after`.
+Those are the shipped names. The folders follow your config: the DROP goes after the `objects` group, with your `patch_postfix_after`, and the ALTER before the `patch_map` group holding `TABLE` (`objects` when none does), with your `patch_postfix_before`.
+
+A folder's name is when it runs. The ALTER runs ahead of the table files because the exported `COMMENT ON COLUMN` lines describe the shape it produces.
 
 The DROP helper is written for any object your `path_objects` layout resolves, and it runs on deploy, so review it first and delete it if the deletion was a repository-side move rather than a real drop.
 
@@ -168,7 +170,9 @@ So the coverage is Oracle's own: columns added, dropped and retyped, `NOT NULL` 
 
 Every table carrying an ALTER, generated or one you wrote yourself, is linked commented out in the patch script rather than run: the ALTER is what reaches the new shape, so the exported `CREATE TABLE` and its `COMMENT ON COLUMN` lines never run a second time.
 
-A reference line above the commented `@` names the ALTER script(s) that replace it, and that link is never removed, so uncommenting it is your own reversible call. The ALTER itself, hand-written scripts included, always runs **ahead of** the table's own row, even one you put in `tables_after/`, which for anything else still runs after the files.
+A reference line above the commented `@` names the ALTER script(s) that replace it, and that link is never removed, so uncommenting it is your own reversible call.
+
+Every script runs from its own folder and nothing reorders it: the generated ALTER from `tables_before/`, ahead of the table's row, and a hand-written one from whichever folder you put it in, so `tables_after/` runs after the table files.
 
 **A hand-written `ALTER TABLE` claims its table before `-create` ever asks Oracle for a diff.** Put the statement anywhere under `patch_scripts/{$PATCH_CODE}/`, whatever slot or filename, and `-create` scans your own scripts for it first: an ALTER can need data work a diff cannot express, a `NOT NULL` backfill, or be a rename the diff would read as drop-and-add.
 

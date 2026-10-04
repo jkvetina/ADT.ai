@@ -10,7 +10,7 @@ from typing import Any
 from adt_ai.patch import queries, settings
 from adt_ai.patch.apex_import import AppTarget
 from adt_ai.patch.apex_validate import ApexlangValidation
-from adt_ai.patch.build import HASH_STAMP_FORMAT, build_database_patch
+from adt_ai.patch.build import HASH_STAMP_FORMAT, PatchBuildStages, build_database_patch
 from adt_ai.patch.content import (
     CONTENT_MODE_COMMITTED,
     CONTENT_MODE_HEAD,
@@ -106,6 +106,7 @@ from adt_ai.shared.commit_discovery import (
     matches_patch_selector,
     named_patch_refs,
 )
+from adt_ai.shared.git_batch import batched_git_reads
 from adt_ai.shared.patch_folders import script_changed_files
 from adt_ai.shared.queries import diff_tables as shared_diff_queries
 from adt_ai.shared.sql_identifiers import safe_identifier
@@ -410,39 +411,48 @@ class PatchWorkspace:
         target_app_id: AppTarget | None = None,
         signature_gateway_factory: Callable[[str, str], Any] | None = None,
         validation: ApexlangValidation | None = None,
+        stages: PatchBuildStages | None = None,
     ) -> DatabasePatchResult:
         """Build the patch folder and report what went into it.
 
         The build is `patch/build.py` since ADT #576; what a workspace owns is
         the one decision that needs a patch ROOT, which folder is being written,
         and every argument below travels through unchanged.
+
+        ``stages`` is `patch/build.py::PatchBuildStages` (ADT #988), the CLI's
+        hook into the build while it runs. `None` for every caller here too.
         """
         # An explicit folder is one the caller already RESOLVED against disk, so a
         # re-create rewrites that exact folder (ADT #289, Jan's call). Without one
         # the code mints its own name, which `next_folder` already makes a rewrite
         # for a same-day same-code patch (`#266`), the two paths agree, they just
         # learn the folder differently.
-        return build_database_patch(
-            self.root,
-            folder or self.next_folder(patch_code, today=today),
-            config,
-            patch_code    = patch_code,
-            records       = records,
-            target_env    = target_env,
-            full_app_ids  = full_app_ids,
-            content_mode  = content_mode,
-            window        = window,
-            force         = force,
-            hash_shipped  = hash_shipped,
-            hash_commits  = hash_commits,
-            hash_previous = hash_previous,
-            hash_tables   = hash_tables,
-            gateway_factory = gateway_factory,
-            files_ws      = files_ws,
-            target_app_id = target_app_id,
-            signature_gateway_factory = signature_gateway_factory,
-            validation    = validation,
-        )
+        #
+        # One `git cat-file --batch` answers every blob the build reads (ADT
+        # #988): a process per snapshot file was seconds of silence on screen.
+        with batched_git_reads(self.root):
+            return build_database_patch(
+                self.root,
+                folder or self.next_folder(patch_code, today=today),
+                config,
+                patch_code    = patch_code,
+                records       = records,
+                target_env    = target_env,
+                full_app_ids  = full_app_ids,
+                content_mode  = content_mode,
+                window        = window,
+                force         = force,
+                hash_shipped  = hash_shipped,
+                hash_commits  = hash_commits,
+                hash_previous = hash_previous,
+                hash_tables   = hash_tables,
+                gateway_factory = gateway_factory,
+                files_ws      = files_ws,
+                target_app_id = target_app_id,
+                signature_gateway_factory = signature_gateway_factory,
+                validation    = validation,
+                stages        = stages,
+            )
 
 __all__ = [
     "AlterHelper",
@@ -466,6 +476,7 @@ __all__ = [
     "InstallScriptResult",
     "Mapping",
     "PREVIEW_LINE_WIDTH",
+    "PatchBuildStages",
     "PatchContentsGroup",
     "PatchError",
     "PatchFolder",

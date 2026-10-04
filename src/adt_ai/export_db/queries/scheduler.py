@@ -53,6 +53,7 @@ WITH job_arguments AS (
     GROUP BY a.job_name
 )
 SELECT 'JOB' AS object_type, j.job_name AS object_name, j.schedule_type,
+    j.program_owner, j.program_name, j.schedule_owner, j.schedule_name,
     RAWTOHEX(STANDARD_HASH(
         NVL(j.job_name, '~')                                            || CHR(1) ||
         NVL(j.job_style, '~')                                           || CHR(1) ||
@@ -121,6 +122,16 @@ SCHEDULE_DDL_QUERY = """
 SELECT DBMS_METADATA.GET_DDL('PROCOBJ', schedule_name) AS ddl
 FROM user_scheduler_schedules
 WHERE schedule_name = :object_name
+""".strip()
+
+# A PROGRAM is the third procedural object a job can lean on, read through the
+# same 'PROCOBJ' token. A job naming one fails to create without it, so every
+# exported job brings the program and schedule it names (ADT #993); the four
+# name columns JOBS_QUERY selects outside the signature are what it follows.
+PROGRAM_DDL_QUERY = """
+SELECT DBMS_METADATA.GET_DDL('PROCOBJ', program_name) AS ddl
+FROM user_scheduler_programs
+WHERE program_name = :object_name
 """.strip()
 
 JOB_ARGUMENTS_QUERY = """

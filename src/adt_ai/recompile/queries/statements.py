@@ -29,18 +29,29 @@ def _scope_flags(scope: list[str] | None) -> tuple[bool, bool]:
     return (identifiers, statements)
 
 
+#: Every token ``-warnings`` takes, legacy spellings included. Anything else is
+#: refused at the parser (ADT #993): an unknown token used to compile with
+#: ``PLSQL_WARNINGS = ''`` and exit 0, so ``-warnings ENABLE:ALL`` looked applied
+#: and applied nothing.
+WARNING_KEYWORDS = frozenset(
+    {"SEVERE", "PERF", "PERFORMANE", "INFO", "INFORMATIONAL", "ALL"}
+)
+
+
 def _warning_flags(warnings: list[str] | None) -> tuple[bool, bool, bool]:
     """Which warning groups a ``-warnings`` list asks for: (severe, perf, info).
 
-    Mirrors :func:`build_compile_statement`'s own token tests (including the legacy
-    ``PERFORMANE`` misspelling) so drift detection asks for exactly the warnings the
-    compile would enable.
+    ``ALL`` turns all three on, the way ``-scope ALL`` does for :func:`_scope_flags`;
+    the legacy ``PERFORMANE`` and ``INFORMATIONAL`` spellings still count. Shared by
+    :func:`build_compile_statement` and :func:`compile_drift_binds`, so drift
+    detection asks for exactly the warnings the compile would enable.
     """
     if not isinstance(warnings, list):
         return (False, False, False)
-    severe = "SEVERE" in warnings
-    perf   = "PERF" in warnings or "PERFORMANE" in warnings
-    info   = "INFO" in warnings or "INFORMATIONAL" in warnings
+    every  = "ALL" in warnings
+    severe = every or "SEVERE" in warnings
+    perf   = every or "PERF" in warnings or "PERFORMANE" in warnings
+    info   = every or "INFO" in warnings or "INFORMATIONAL" in warnings
     return (severe, perf, info)
 
 

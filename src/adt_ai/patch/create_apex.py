@@ -109,6 +109,12 @@ def _apex_patch_payload(
             records=records,
         )
     )
+    # The application's own guard, beside it and for the same reason (ADT #956):
+    # a full export or a split one overwrites whatever a colleague deployed onto
+    # the target after this patch was built.
+    payload.extend(
+        _signatures.app_lock_payload(root, folder, app_id, config, records=records)
+    )
     if _is_full_app(app_id, full_app_ids):
         for path in files:
             if present_files[path]:
@@ -119,11 +125,27 @@ def _apex_patch_payload(
             root, folder, files, records, config,
             content_mode=content_mode, present_files=present_files,
         ))
+    # The import left the audit stamp empty (measured, ADT #956), so the version
+    # is written back unchanged: that stamp is what the next patch's guard reads.
+    # Right after the last component, ahead of the project's own `apex_end`.
+    payload.extend(_apex_version_stamp_payload(app_id))
     # Same as the database payload: one commit list, in the `--` header (ADT #263).
     payload.extend(_template_payload(root, folder, config, "apex_end", patch_code))
     payload.extend(_apex_build_status_payload(config, app_id))
     payload.extend(_apex_script_closing(config))
     return "\n".join(payload)
+
+
+def _apex_version_stamp_payload(app_id: int) -> list[str]:
+    """`#682`'s stamp, naming no developer: `-create` cannot know the deployer.
+
+    None for the workspace group (id 0), which is no application; its REST
+    modules and files carry their own `updated_on`. Jan: *"extend it to all apex
+    imports (except workspace files and rest services)"*.
+    """
+    if not app_id:
+        return []
+    return ["", *queries.APEX_IMPORT_STAMP_BLOCK.format(app_id=app_id, set_user="").splitlines()]
 
 
 def _apexlang_patch_payloads(

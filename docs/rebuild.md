@@ -126,7 +126,7 @@ It is a floor rather than a mode:
 
 - An incremental run never re-cuts an existing store. Commits already below the floor are already numbered, and dropping them would open a hole.
 - An explicit `-limit` or `-since` outranks it, and may reach further back than the project default.
-- Raising the value pulls the extra commits in underneath, leaving every assigned number where it was.
+- Raising it later moves no stored branch; a wider `-since` fills in underneath, numbers unchanged.
 
 Set it to `0` to walk the whole history.
 

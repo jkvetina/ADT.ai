@@ -28,7 +28,7 @@ already running. It narrows the window; the signature gate remains the guard.
 carries.** Fact 2: an APEXlang import resets build status to `Run and Develop`
 every time, and `apex_application_install.set_build_status` -- which does pin the
 classic `f<id>.sql` path -- is ignored by SQLcl's APEXlang importer. There is
-nothing to pin with. The deploy therefore locks before the signature read, lets
+nothing to pin with. The deploy therefore reads the signature, then locks, lets
 the import reset it, and sets the final status as the last step, recording all
 four moments so the log shows what happened rather than what was intended.
 
@@ -142,7 +142,7 @@ def lock_target(
     workspace : str,
     mode      : str,
 ) -> BuildStatusLock:
-    """Read ``app_id``'s build status and set it to `RUN_ONLY`, before the read.
+    """Read ``app_id``'s build status and signature, then set it to `RUN_ONLY`.
 
     An empty ``workspace`` is an application `export_apex` never recorded, and
     the setter refuses without one, so the lock is skipped rather than attempted
@@ -376,9 +376,8 @@ def build_status_timeline(lock: BuildStatusLock) -> str:
     it is in the timeline file for a reader who wants it.
 
     An application nothing locked answers "" and prints no row at all. Jan,
-    2026-09-09, on a `(not locked)` row: *"dont show, it is a noise"* -- the key
-    is off by default, so on most deploys that row would be a line per
-    application saying nothing happened.
+    2026-09-09, on a `(not locked)` row: *"dont show, it is a noise"* -- that
+    row would be a line per unlocked application saying nothing happened.
 
     The vocabulary is the timeline file's own, display text either side of the
     API value `RUN_ONLY`, because the row summarises that file and a second
@@ -405,11 +404,10 @@ def build_status_log_text(lock: BuildStatusLock) -> str:
     lines = [
         f"-- APEX application {lock.app_id} and its build status across this deploy.",
         "--",
-        "-- The lock is set BEFORE the signature is read, so the window between the",
-        "-- check and the import is covered. RUN_ONLY refuses Builder ENTRY, not a",
-        "-- save from a session that is already open, and the APEXlang import resets",
-        "-- the status on its own, which is why FINAL is set as the last step rather",
-        "-- than carried through the import.",
+        "-- The signature is read, then the lock set, so the window between the check",
+        "-- and the import is covered. RUN_ONLY refuses Builder ENTRY, not a save from",
+        "-- a session that is already open, and the APEXlang import resets the status",
+        "-- on its own, which is why FINAL is set as the last step.",
         "",
         _row("APPLICATION", str(lock.app_id)),
         _row("MODE", lock.mode),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -227,7 +228,18 @@ class ObjectFileResolver:
                     deleted.append(file_path)
         return deleted
 
-    def delete_configured_object_files(self, schema: str) -> list[Path]:
+    def delete_configured_object_files(
+        self,
+        schema: str,
+        selects: Callable[[str, str], bool] | None = None,
+    ) -> list[Path]:
+        """`-delete`: unlink the schema's object files, `DATA` never among them.
+
+        `selects(object_type, OBJECT_NAME)` narrows it to the files a runtime
+        filter picks (ADT #993); without it every object file goes. Under a
+        filter each file is first given to the type that owns it, because
+        `packages/*.sql` also globs the `.spec.sql` beside the body.
+        """
         deleted: list[Path] = []
         for object_type, layout in self.object_types.items():
             if object_type == "DATA":
@@ -237,6 +249,13 @@ class ObjectFileResolver:
                     continue
                 for file_path in sorted(search_root.glob(f"*{layout.extension}")):
                     if not file_path.is_file():
+                        continue
+                    if selects is not None and not (
+                        self._is_best_layout_for_file(object_type, layout, file_path)
+                        and selects(
+                            object_type, object_name_from_file(file_path, layout.extension)
+                        )
+                    ):
                         continue
                     file_path.unlink()
                     deleted.append(file_path)

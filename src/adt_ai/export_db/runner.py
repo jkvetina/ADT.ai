@@ -16,6 +16,7 @@ from adt_ai.export_db.config import (
     _requested_object_type_matches,
     _split_patterns,
     _with_default_layout,
+    delete_selection,
     unexportable_object_types,
     unexportable_object_types_message,
 )
@@ -317,7 +318,8 @@ class ExportDbRunner:
                 if is_enabled(request.config.get("auto_delete")):
                     resolver.delete_missing_objects(missing_objects)
             if request.clean:
-                resolver.delete_configured_object_files(schema)
+                # Only what a runtime filter selects (ADT #993).
+                resolver.delete_configured_object_files(schema, delete_selection(request))
             # Before, not after, the DBMS_METADATA setup and the comment
             # pre-read: neither prints a row, so the header is all there is.
             # `-compact`'s countdown is priced here rather than in the reporter:

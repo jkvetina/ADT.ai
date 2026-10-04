@@ -97,7 +97,7 @@ def _write_generated_patch_scripts(
     The return value feeds `TABLE CHANGES DETECTED:`, the `[ALT:n]` marker, and
     the exclusion the `UNCOMMITTED FILES` warning needs (ADT #276). It is the
     writer's own answer rather than a directory scan at report time:
-    `tables_after/` accumulates helpers across patches, so a scan would credit
+    `tables_before/` accumulates helpers across patches, so a scan would credit
     this run with every helper any previous one generated.
 
     ``hash_previous`` switches the ALTER half to hash mode (ADT #447): the

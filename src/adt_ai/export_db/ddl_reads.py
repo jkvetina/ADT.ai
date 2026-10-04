@@ -81,6 +81,11 @@ def _ddl_query(database_object: DatabaseObject) -> tuple[str, dict[str, str]]:
             queries.SCHEDULE_DDL_QUERY,
             {"object_name": database_object.name},
         )
+    if object_type == "PROGRAM":
+        return (
+            queries.PROGRAM_DDL_QUERY,
+            {"object_name": database_object.name},
+        )
     if object_type == "ASSERTION":
         # `DBMS_METADATA` has no handler for the type at all (`ORA-31600`), so the
         # dictionary's own `DEFINITION_SQL` is the source rather than a fallback.

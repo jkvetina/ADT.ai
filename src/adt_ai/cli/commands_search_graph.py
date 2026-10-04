@@ -70,6 +70,7 @@ from adt_ai.cli.search_autobuild import changed_apps, refresh_stores, stamped_ap
 from adt_ai.dependencies.store import DEFAULT_MAX_DEPTH
 from adt_ai.flow.store import ApexFlowStore
 from adt_ai.search.term_model import parse_layers
+from adt_ai.shared.dates import resolve_since
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.internal_paths import internal_path
 
@@ -167,6 +168,16 @@ def _search_argument_error(args: argparse.Namespace) -> str | None:
     if getattr(args, "layer", None):
         return "-layer NEEDS A TERM\n\n-layer narrows a TERM search, and the TERM is written first."
     if not graph:
+        # A history date that is not a date, refused here as `rebuild` refuses
+        # its own `-since`: read inside the handler, it levelled the commit
+        # store first and then failed as a configuration error with exit 1.
+        for flag in ("-since", "-until"):
+            value = getattr(args, flag[1:], None)
+            if value is not None:
+                try:
+                    resolve_since(value, option=flag)
+                except ValueError as exc:
+                    return str(exc)
         offenders = [
             flag
             for flag, present in (

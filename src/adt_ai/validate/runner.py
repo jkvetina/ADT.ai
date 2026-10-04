@@ -42,17 +42,31 @@ def compile_estimate(root: Path, app_id: int | None) -> float:
     Nothing to read for a tree that is no recorded application (`-input`), or a
     project with no `apex.db` yet, and the store is never created just to ask.
     """
+    return timer_estimate(root, app_id, VALIDATE_TIMER)
+
+
+def timer_estimate(root: Path, app_id: int | None, timer: str) -> float:
+    """Any per-application `apex.db` timer, read the way `compile_estimate` reads.
+
+    Shared with `-deploy`'s scan rows (ADT #988), which count down exactly as a
+    compile row does, from their own `scan` timer.
+    """
     if app_id is None or not apex_store_path(root).is_file():
         return 0.0
     with ApexStore.load(root) as store:
-        return float(store.timers().get(app_id, {}).get(VALIDATE_TIMER) or 0.0)
+        return float(store.timers().get(app_id, {}).get(timer) or 0.0)
 
 
-def _record_compile(root: Path, app_id: int | None, elapsed: float) -> None:
+def record_timer(root: Path, app_id: int | None, timer: str, elapsed: float) -> None:
+    """Roll ``elapsed`` into ``app_id``'s ``timer``; nothing without a store."""
     if app_id is None or not apex_store_path(root).is_file():
         return
     with ApexStore.load(root) as store:
-        store.roll_timer(app_id, VALIDATE_TIMER, elapsed)
+        store.roll_timer(app_id, timer, elapsed)
+
+
+def _record_compile(root: Path, app_id: int | None, elapsed: float) -> None:
+    record_timer(root, app_id, VALIDATE_TIMER, elapsed)
 
 VALIDATE_COMMAND = 'apex validate -input "{input}"'
 
@@ -90,6 +104,11 @@ class ValidateRequest:
     root         : Path
     project_root : Path | None = None
     reporter     : ValidateReporter | None = None
+    #: Run between a tree's clean compile and its row's close, so the row --
+    #: and its clock -- covers it too (ADT #988: `patch -create`'s live APEX
+    #: checksum read, `patch/apex_drift.py::DriftReads`). Not called for a
+    #: failed compile.
+    after_compile : Callable[[ValidateTarget], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -154,6 +173,12 @@ class ValidateRunner:
                 raise
             _record_compile(store_root, target.app_id, time.monotonic() - started)
             report = parse_validate_output(output)
+            if request.after_compile is not None and not report.failed:
+                try:
+                    request.after_compile(target)
+                except Exception:
+                    reporter.finish(target.label, "FAILED")
+                    raise
             reporter.finish(target.label, report.status)
             outcomes.append(FolderOutcome(target, report))
         result = tuple(outcomes)

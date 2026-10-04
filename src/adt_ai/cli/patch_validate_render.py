@@ -29,25 +29,32 @@ from adt_ai.validate.report import import_error_lines
 from adt_ai.validate.runner import FolderOutcome
 
 PATCH_VALIDATING_HEADER = "VALIDATING APEXLANG APPS:"
+#: `-deploy`'s post-deploy scan (ADT #676), on these same rows since ADT #988.
+PATCH_VERIFYING_HEADER = "VERIFYING APPLICATIONS:"
 
 
 class PatchValidateReporter(ConsoleValidateReporter):
-    """`validate`'s rows under `validate`'s header, opened by the first tree."""
+    """`validate`'s rows under `validate`'s header, opened by the first tree.
 
-    def __init__(self, *, debug: bool = False, live: bool | None = None) -> None:
+    ``header`` is the one other section that streams these rows: `-deploy`'s
+    application scan (ADT #988, Jan: *"the outcome should be same as other
+    apexlang validation"*), under `PATCH_VERIFYING_HEADER`.
+    """
+
+    def __init__(
+        self,
+        *,
+        debug: bool = False,
+        live: bool | None = None,
+        header: str = PATCH_VALIDATING_HEADER,
+    ) -> None:
         super().__init__(debug=debug, live=live)
         self.opened = False
-        # `-create` holds the warning until its build returns (`flush_issues`):
-        # the build reads the target's APEX checksum right after compiling, and
-        # the blank above the warning's pointer line closes the section that
-        # read would otherwise run under (`tests/conftest.py::
-        # no_silent_blocking_phase`). A deploy on its own prints it at once.
-        self.hold_issues = False
-        self._held: list[FolderOutcome] = []
+        self.header = header
 
     def _open(self) -> None:
         if not self.opened:
-            print_adt_header(PATCH_VALIDATING_HEADER)
+            print_adt_header(self.header)
             self.opened = True
 
     def request(self, script: str) -> None:
@@ -77,31 +84,22 @@ class PatchValidateReporter(ConsoleValidateReporter):
         follows a refusal, never a warning beside it. That also leaves nothing
         but warnings to count here.
 
+        Prints the moment validation closes, on `-create` as much as on
+        `-deploy` (ADT #988). Between ADT #971 and #988 `-create` held this
+        back with `hold()`/`flush_issues()` until `create_database_patch`
+        returned, because the build read the live APEX checksum right after
+        the rows closed and only the still-announcing header covered that
+        read -- a loophole #988 closed in the guard. The read now runs inside
+        each app's own row, before it closes (`patch/apex_drift.py::
+        DriftReads`), so nothing is left for this section to wait on.
+
         No trailing blank of its own: `patch` always renders another section
         right after this one, and `print_adt_header` normalizes the gap above
-        whatever that is (`shared/progress.print_adt_header`) regardless of what
-        this leaves on the stream. Printing one anyway would additionally close
-        this section's on-screen announcement two lines early, ahead of the live
-        signature-drift read `build_database_patch` still has to make before the
-        next header -- a silent database call the console guard exists to catch
-        (`tests/conftest.py::no_silent_blocking_phase`).
+        whatever that is (`shared/progress.print_adt_header`).
         """
         if not folders or any(outcome.report.failed for outcome in folders):
             return
-        if self.hold_issues:
-            self._held.extend(folders)
-            return
         print_apexlang_issues(folders)
-
-    def hold(self) -> None:
-        """Keep the warning back until `flush_issues`: a `-create` build is running."""
-        self.hold_issues = True
-
-    def flush_issues(self) -> None:
-        """Print what `close` held, and stop holding: the `-create` build is done."""
-        held, self._held = self._held, []
-        self.hold_issues = False
-        print_apexlang_issues(held)
 
 
 def print_validation_failure(error: ApexlangValidationError) -> None:
@@ -124,6 +122,7 @@ def print_validation_failure(error: ApexlangValidationError) -> None:
 
 __all__ = [
     "PATCH_VALIDATING_HEADER",
+    "PATCH_VERIFYING_HEADER",
     "PatchValidateReporter",
     "print_validation_failure",
 ]

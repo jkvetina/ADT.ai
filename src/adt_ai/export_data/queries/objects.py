@@ -147,17 +147,14 @@ def data_query(
         for name, data_type in (column_types or {}).items()
     }
     spatial = {column for column in columns if types.get(column.upper()) in SPATIAL_TYPES}
-    if not spatial:
-        return f"SELECT {', '.join(columns)}\nFROM {table_name}{where_filter}\nORDER BY {order_by}"
     selected = ", ".join(
-        _wkt_projection(column) if column in spatial else column
+        _wkt_projection(column) if column in spatial
+        else _zoned_projection(column) if _ZONED.match(types.get(column.upper(), ""))
+        else column
         for column in columns
     )
-    return (
-        f"SELECT {selected}\n"
-        f"FROM {table_name} {SOURCE_ALIAS}{where_filter}\n"
-        f"ORDER BY {order_by}"
-    )
+    alias = f" {SOURCE_ALIAS}" if spatial else ""
+    return f"SELECT {selected}\nFROM {table_name}{alias}{where_filter}\nORDER BY {order_by}"
 
 
 #: Every Oracle type this export renders through WKT rather than reading raw.
@@ -182,6 +179,22 @@ def _wkt_projection(column: str) -> str:
         f"'SRID=' || NVL(TO_CHAR({reference}.SDO_SRID), 'NULL') || ';' || "
         f"SDO_UTIL.TO_WKTGEOMETRY({reference}) END AS {column}"
     )
+
+
+#: `TIMESTAMP(6) WITH TIME ZONE`, and never its `WITH LOCAL TIME ZONE` sibling,
+#: which the driver already returns in the session zone (`_temporal_literal`).
+_ZONED = re.compile(r"^TIMESTAMP(\(\d\))? WITH TIME ZONE$")
+
+
+def _zoned_projection(column: str) -> str:
+    """One SELECT item: a TIMESTAMP WITH TIME ZONE as ISO text with its offset (`#1004`).
+
+    The driver hands the type back as a naive datetime, so the offset is gone
+    before Python sees the row and a replay would stamp the target session's own
+    zone on the moment. Oracle writes the text instead, and `_temporal_literal`
+    reads the offset back into `TO_TIMESTAMP_TZ`.
+    """
+    return f"TO_CHAR({column}, '{_DATE_MASK}.FF6TZH:TZM') AS {column}"
 
 
 def update_assignments(columns: list[str], skip_update: str) -> str:

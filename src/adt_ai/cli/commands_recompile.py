@@ -269,21 +269,25 @@ def _run_recompile_for_schema(
             )
         return 0 if result.success else 1
 
-    if not silent and not console_reporter.streamed:
-        # -mviews, -synonyms, -disabled, -jobs, and -trailing are focused/report-only
-        # runs: skip the objects overview, invalid-object summary, and compile-error
-        # report (no object recompile ran), keeping only their specific report
-        # sections below.
-        if not _is_focused_run(request):
+    # -mviews, -synonyms, -disabled, -jobs, and -trailing are focused/report-only
+    # runs: skip the objects overview, invalid-object summary, and compile-error
+    # report (no object recompile ran), keeping only their specific report
+    # sections below.
+    if not console_reporter.streamed and not _is_focused_run(request):
+        # -silent drops the overview and never the failure: silence that swallowed
+        # INVALID OBJECTS turned a broken deploy into a quiet exit 1 (ADT #1010).
+        if not silent:
             # The header for this table went up before the run, see above.
             _print_recompile_overview_table(result.overview)
-            if result.invalid:
-                print_adt_header("INVALID OBJECTS:")
-                _print_invalid_object_errors(result.invalid, result.error_details)
-                # The verdict reads under the evidence, not over it: ROOT CAUSES
-                # keys off the IDs the tables above just introduced (#209).
-                if result.root_causes:
-                    print_root_causes(result.root_causes, result.invalid)
+        if result.invalid:
+            print_adt_header("INVALID OBJECTS:")
+            _print_invalid_object_errors(result.invalid, result.error_details)
+            # The verdict reads under the evidence, not over it: ROOT CAUSES
+            # keys off the IDs the tables above just introduced (#209).
+            if result.root_causes:
+                print_root_causes(result.root_causes, result.invalid)
+
+    if not silent and not console_reporter.streamed:
         if request.mview:
             # Batch fallback for non-streamed callers (silent path aside, this is the
             # CLI test fakes). Shares _mview_row_cells with the streamed reporter so
@@ -307,7 +311,9 @@ def _run_recompile_for_schema(
         if request.synonyms:
             print_synonym_tables(result.synonyms, opening=opening)
         if request.disabled:
-            print_disabled_tables(result.disabled_objects, opening=opening)
+            print_disabled_tables(
+                result.disabled_objects, opening=opening, object_type=request.object_type
+            )
         if request.jobs:
             print_job_tables(result.jobs, opening=opening)
         if request.vpd:

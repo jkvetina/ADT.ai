@@ -41,6 +41,7 @@ from adt_ai.patch.generated_helpers import (
     drop_helper_slot,
     is_alter_helper_filename,
     is_drop_helper_filename,
+    legacy_alter_helper_slot,
 )
 from adt_ai.patch.harden import harden_patch_script
 from adt_ai.patch.models import PatchScripts
@@ -130,7 +131,9 @@ def _is_generated_helper(relative: Path, config: dict[str, Any]) -> bool:
     slot = relative.parts[0]
     if slot == drop_helper_slot(config):
         return is_drop_helper_filename(relative.name, config)
-    if slot == alter_helper_slot(config):
+    # The pre-#990 `after` slot too: a patch built before the move holds its
+    # helpers there, and carried forward it would claim its table (ADT #990).
+    if slot in (alter_helper_slot(config), legacy_alter_helper_slot(config)):
         return is_alter_helper_filename(relative.name)
     return False
 

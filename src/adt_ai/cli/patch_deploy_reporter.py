@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
+from typing import Any
 
 from adt_ai.cli.constants import print_adt_header
 from adt_ai.cli.patch_deploy_layout import (
@@ -108,7 +110,14 @@ class ConsoleDeployReporter:
     # few thousand short writes.
     TICK_SECONDS = 1.0
 
-    def __init__(self, live: bool | None = None, folder: str = "") -> None:
+    def __init__(
+        self,
+        live: bool | None = None,
+        folder: str = "",
+        *,
+        scan_rows: Any = None,
+        after_table: Callable[..., None] | None = None,
+    ) -> None:
         # The resolved patch folder, appended to the section header (ADT #443).
         # `RELEVANT COMMITS:` used to carry it, and shortening that header left
         # `-deploy` with nothing on screen naming which folder a ref resolved to
@@ -118,6 +127,11 @@ class ConsoleDeployReporter:
         # new line, so the console gains no string.
         self.folder = folder
         self.streamed = False
+        # ADT #988: the post-deploy scan streams its rows through `scan_rows`
+        # (the `validate` row reporter under `VERIFYING APPLICATIONS:`), and
+        # `after_table` prints the table's own sections before that one opens.
+        self.scan_rows = scan_rows
+        self._after_table = after_table
         self._live = live
         self._table: StreamedTable | None = None
         self._item: DeploymentPlanItem | None = None
@@ -211,6 +225,11 @@ class ConsoleDeployReporter:
         # is open, and deciding it here as well would be the second reader of one
         # fact.
         self._open_table().end_row(_deployment_row_values(result))
+
+    def deployed(self, results: list[DeploymentResult], *sections: Any) -> None:
+        """The sections that follow the closed table, before the scan's (ADT #988)."""
+        if self._after_table is not None:
+            self._after_table(results, *sections)
 
     def end_deploy(self, results: list[DeploymentResult]) -> None:
         self._stop_ticker()

@@ -1,9 +1,31 @@
 from __future__ import annotations
 
+import argparse
+
 from adt_ai.cli.constants import DEFAULT_ROW_LIMIT
 from adt_ai.cli.parser_common import SubParsers, add_connection_key_argument
 from adt_ai.cli.parser_diff import add_diff_parser
 from adt_ai.ut.limits import GATE_FROM_CONFIG
+
+
+def warning_keywords(value: str) -> str:
+    """`recompile -warnings`'s ``type``: refuse a token it does not know (ADT #993).
+
+    An unknown token used to compile with ``PLSQL_WARNINGS = ''`` and exit 0, so
+    `-warnings ENABLE:ALL` looked applied and applied nothing. Jan, 2026-10-04:
+    `ALL` enables all three, anything unknown is a parser error. The value is
+    returned unchanged, splitting and casing stay with the CLI's flattener.
+    Imported here rather than at module scope, as `app_target` does.
+    """
+    from adt_ai.recompile.queries import WARNING_KEYWORDS
+
+    for chunk in value.split(","):
+        for part in chunk.split("+"):
+            if part.strip() and part.strip().upper() not in WARNING_KEYWORDS:
+                raise argparse.ArgumentTypeError(
+                    f"UNKNOWN WARNING '{part.strip()}'\n\nUse SEVERE, PERF, INFO or ALL."
+                )
+    return value
 
 
 def add_database_parsers(subparsers: SubParsers) -> None:
@@ -90,8 +112,9 @@ def add_database_parsers(subparsers: SubParsers) -> None:
         "-warnings",
         action = "append",
         nargs  = "+",
-        help   = "PL/SQL warnings (SEVERE, PERF, INFO); separate with space, comma, "
-                 "+, or a repeated flag",
+        type   = warning_keywords,
+        help   = "PL/SQL warnings (SEVERE, PERF, INFO, ALL); separate with space, "
+                 "comma, +, or a repeated flag; any other value is refused",
     )
     # Every ACTION is a bare flag scoped by the shared -name/-type filters. None of
     # them carries its own name pattern: that was pure duplication of -name, and a
@@ -150,7 +173,8 @@ def add_database_parsers(subparsers: SubParsers) -> None:
         "--silent",
         "-silent",
         action = "store_true",
-        help   = "suppress object overview details; keep required command chrome",
+        help   = "suppress object overview details; keep the compile errors and "
+                 "required command chrome",
     )
     recompile.add_argument(
         "--debug",

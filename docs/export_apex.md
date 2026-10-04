@@ -254,9 +254,9 @@ When a token resolves to nothing at all for an application, the export stops and
 
 Without an explicit format, a non-reveal `-recent` is report-only: it exports nothing and advances no watermark. With split, readable or embedded selected it also limits the output to those components, and each format advances its own watermark key. With `-reveal` it filters the application list to applications changed in that window, with no per-application detail.
 
-`-by` filters by exact APEX developer username. `-my` compares your `git config user.name` and `user.email` against the workspace developers, which covers short initials-style logins as well as email-form authors.
+`-by` keeps the components an exact APEX developer username changed last. `-my` matches your `git config user.name` and `user.email` against the workspace developers, covering initials-style and email-form logins.
 
-Either one leaves the application list complete, and an application with no matching change still gets its `CHANGES SINCE` section, empty, the way an unfiltered `-recent` prints one. Developer-filtered exports do not update the application cache.
+With no window either reaches over all time and the export lists what it wrote, like `-page`. Inside one, an application with no matching change gets its `CHANGES SINCE` section, empty. A filter matching nothing writes nothing; none updates the application cache.
 
 <br>
 
@@ -278,8 +278,8 @@ Either one leaves the application list complete, and an application with no matc
 | `-component`, `--component` | Yes | none | Shared component filters as `TYPE:NAME_PATTERN`, with `%` and `*` as wildcards. Requires an explicit component-based format. |
 | `-max_app_id`, `--max_app_id`, `--max-app-id` | No | none | In reveal mode, list only applications below this id, and scope the owner and application counts the same way. |
 | `-recent [DAYS]`, `--recent [DAYS]` | No | off | Report components changed in the last DAYS days, or since the stored watermark when bare. Report-only without an explicit format. See above. |
-| `-by`, `--by` | No | none | Filter the recent report and export set by exact APEX developer username. |
-| `-my`, `--my` | No | off | Filter them to the current git user, resolving author aliases from the cache and the discovered workspace developers. |
+| `-by`, `--by` | No | none | Keep what one APEX developer changed last, over all time unless `-recent` sets a window. |
+| `-my`, `--my` | No | off | The same for the current git user, aliases resolved from the cache and workspace developers. |
 | `-release`, `--release` | No | none | Override `p_release` values in the exported SQL. |
 | `-reveal [APP ...]`, `--reveal [APP ...]` | No | off | Show the matching workspaces and applications, exporting nothing. Ids after it act as `-app` and are searched for beyond the configured owners. |
 | `-owners`, `--owners` | No | off | In reveal mode, count applications for all APEX owners rather than only the configured schemas. It widens the counts, never the list. |

@@ -55,6 +55,7 @@ from adt_ai.cli.patch_preview_render import (
     patch_scan_commits,
 )
 from adt_ai.cli.patch_revert_render import print_apex_reverts
+from adt_ai.cli.patch_validate_render import PATCH_VERIFYING_HEADER, PatchValidateReporter
 from adt_ai.patch.apex_import import resolve_target
 from adt_ai.patch.apex_validate import ApexlangValidation, check_deploy_trees
 from adt_ai.patch.baseline_advance import merge_landed_files
@@ -149,7 +150,18 @@ def run_patch_deploy(
     )
     if args.debug:
         _print_startup_debug(_load_startup_context(args))
-    reporter = ConsoleDeployReporter(folder=_resolved_folder_name(workspace, config, ref))
+    def table_sections(results: list[DeploymentResult], views: Any, invalid: Any) -> None:
+        _print_deployment_errors(results, root)
+        _print_view_mismatches(views)
+        _print_still_invalid_objects(invalid)
+
+    # The table's own sections print as it closes, ahead of the application scan's
+    # rows, which stream under `validate`'s row reporter (ADT #988).
+    reporter = ConsoleDeployReporter(
+        folder      = _resolved_folder_name(workspace, config, ref),
+        scan_rows   = PatchValidateReporter(debug=args.debug, header=PATCH_VERIFYING_HEADER),
+        after_table = table_sections,
+    )
     result = workspace.deploy_patch(
         config,
         ref                = ref,
@@ -181,10 +193,7 @@ def run_patch_deploy(
         # half of this run passed is not compiled again.
         validation         = validation,
     )
-    _print_deployment_errors(result.results, root)
-    _print_view_mismatches(result.view_mismatches)
-    _print_still_invalid_objects(result.still_invalid)
-    _print_apex_scans(result.apex_scans, root, locks=result.apex_locks)
+    _print_apex_scans(result.apex_scans)
     # What the run did about each application that failed its scan (`#963`),
     # right under the verification section that names the failure.
     print_apex_reverts(result.apex_scans, result.apex_backups, result.apex_reverts)

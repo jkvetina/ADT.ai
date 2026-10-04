@@ -23,7 +23,7 @@ Files inside a slot are injected in filename order, which is what the numeric pr
 
 ## The locks folder is not a slot
 
-`locks/` holds the six shared scripts that stop a deploy from overwriting a colleague's work: `lock_objects.sql`, `check_objects.sql`, `check_objects_all.sql` and `unlock_objects.sql` for database objects, `check_rest.sql` and `check_files_ws.sql` for REST modules and workspace files. Nothing in it is injected by folder. `patch -create` links each script by name, under `patch_core_locks` and `patch_signatures`, after setting the binds it reads (`:objects`, `:built_at`, `:rest_modules`, `:ws_files`). `patch_add_templates: False` does not switch them off.
+`locks/` holds the seven shared scripts that stop a deploy from overwriting a colleague's work: `lock_objects.sql`, `check_objects.sql`, `check_objects_all.sql` and `unlock_objects.sql` for database objects, `check_rest.sql` and `check_files_ws.sql` for REST modules and workspace files, `check_apps.sql` for an APEX application the script installs by SQL. Nothing in it is injected by folder. `patch -create` links each script by name, under `patch_core_locks` and `deploy_live_check`, after setting the binds it reads (`:objects`, `:built_at`, `:rest_modules`, `:ws_files`, `:apex_apps`). `patch_add_templates: False` does not switch them off.
 
 Keep the file names. A script `patch -create` wants but cannot find is not linked; the install script carries `PROMPT -- LOCK FILE MISSING: <path>` in its place, and that guard does not run. The scripts use `APEX_STRING.SPLIT`, so the target needs APEX.
 

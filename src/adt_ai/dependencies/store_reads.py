@@ -32,6 +32,16 @@ from adt_ai.dependencies.owner_case import owner_params as _owner_params
 DEFAULT_MAX_DEPTH = 20
 
 
+def _without_self(nodes: set[str], types: Iterable[str], name: str) -> list[str]:
+    """``nodes`` sorted, the queried object itself left out.
+
+    Oracle records a materialized view depending on its own container TABLE,
+    which, once `uses` names that container a `MATERIALIZED VIEW` (ADT #993),
+    answered `-from` and `-to` with the object asked about.
+    """
+    return sorted(nodes - {f"{type_}.{name}" for type_ in types})
+
+
 class DependencyQueries:
     """Every read `DependencyStore` answers, over `self.connection`."""
 
@@ -68,14 +78,15 @@ class DependencyQueries:
         """
         type_, name = split_node(node)
         owner_params = _owner_params(owners)
+        types = self._resolve_types(type_, name, owner_params)
         result: set[str] = set()
-        for t in self._resolve_types(type_, name, owner_params):
+        for t in types:
             rows = self.connection.execute(
                 queries.dependency_uses_query(len(owner_params)),
                 (t, name, *owner_params),
             ).fetchall()
             result.update(f"{row['t']}.{row['n']}" for row in rows)
-        return sorted(result)
+        return _without_self(result, types, name)
 
     def used_by(self, node: str, owners: Iterable[str] | None = None) -> list[str]:
         """Direct internal objects that depend on ``node``.
@@ -86,14 +97,19 @@ class DependencyQueries:
         """
         type_, name = split_node(node)
         owner_params = _owner_params(owners)
+        types = self._resolve_types(type_, name, owner_params)
+        # What reads a materialized view is recorded against its container
+        # TABLE, the name `uses` prints as `MATERIALIZED VIEW` (ADT #993).
+        if "MATERIALIZED VIEW" in types and "TABLE" not in types:
+            types.append("TABLE")
         result: set[str] = set()
-        for t in self._resolve_types(type_, name, owner_params):
+        for t in types:
             rows = self.connection.execute(
                 queries.dependency_used_by_query(len(owner_params)),
                 (t, name, *owner_params),
             ).fetchall()
             result.update(f"{row['t']}.{row['n']}" for row in rows)
-        return sorted(result)
+        return _without_self(result, types, name)
 
     def impact(
         self,

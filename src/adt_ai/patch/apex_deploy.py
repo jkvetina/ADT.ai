@@ -46,6 +46,7 @@ overriding a refusal rather than acquiring a third meaning.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -277,9 +278,10 @@ def prepare_apex_imports(
             raise PatchError(NO_APPLICATION_ID)
         # A `#` template expands per application (ADT #974).
         landing = landing_id(target_id, app_id) or app_id
-        # **Before the signature is read, which is the whole of the point**
-        # (ADT #726). The window this closes runs from that read to the import,
-        # so a lock taken after it would leave the race exactly where it was.
+        # **Before the import, which is the whole of the point** (ADT #726). The
+        # window this closes runs from the signature read to the import, so
+        # `lock_target` reads the signature and locks one statement later; the
+        # read comes first because the lock's own write moves it (ADT #745).
         # Only an import landing on the application's own id: a retargeted task
         # sandbox is a throwaway nobody is editing, and locking it would strand
         # a prototype on RUN_ONLY (Jan, 2026-09-07).
@@ -352,6 +354,7 @@ def run_apex_imports(
     account         : str = "",
     backups         : dict[int, ApexBackup] | None = None,
     locks           : dict[int, BuildStatusLock] | None = None,
+    before_import   : Callable[[ApexImportItem], None] | None = None,
 ) -> list[DeploymentResult]:
     """Import each staged tree, one row per application.
 
@@ -377,14 +380,23 @@ def run_apex_imports(
     `BUILD STATUS` row, saying whether the application was held shut over the
     window this import closes. The lock's own timeline is a separate report,
     because its last two moments happen after this log is written.
+
+    ``before_import`` runs once the application's `> BUILDING APP` row is open,
+    ahead of the import itself (ADT #988): the pre-import backup (`#727`) is
+    part of that step, so the row -- and its clock -- announces it, rather than
+    the backup reading the target under the finished `init` row above. It
+    never raises (`back_up_application` reports every failure as an outcome).
     """
     results: list[DeploymentResult] = []
     for offset, item in enumerate(items, start=1):
         if reporter is not None:
             reporter.begin_script(item.plan_item(order_from + offset, commits))
         started_at = time.monotonic()
+        if before_import is not None:
+            before_import(item)
         script = build_import_script(
-            item.staged, item.target, item.alias_for_target, account=account
+            item.staged, item.target, item.alias_for_target, account=account,
+            app_id=item.target_id,
         )
         execution_failed = False
         try:

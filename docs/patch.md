@@ -202,7 +202,7 @@ PROMPT -- SCRIPT: patch_scripts/PATCH830/objects_after/drop.table.app_orders.sql
 
 Nor is either created a second time. A table carrying an ALTER, Oracle's own diff or one you wrote yourself, is always linked commented out this way, marked `REPLACED BY ITS ALTER` and naming the script, whether or not the file says `IF NOT EXISTS`.
 
-A table or sequence with no ALTER at all is still commented out when the target already holds it and the file says no `IF NOT EXISTS`, marked `NEVER RE-CREATED BY A PATCH`; a changed sequence otherwise ships an `ALTER SEQUENCE` under `tables_after/` instead, both described on [patch_templates.md](patch_templates.md). `immutables: []` turns all of this off.
+A table or sequence with no ALTER at all is still commented out when the target already holds it and the file says no `IF NOT EXISTS`, marked `NEVER RE-CREATED BY A PATCH`; a changed sequence otherwise ships an `ALTER SEQUENCE` under `tables_before/` instead, both described on [patch_templates.md](patch_templates.md). `immutables: []` turns all of this off.
 
 Three deletions earn nothing, and each is a different question:
 
@@ -265,7 +265,7 @@ adtai patch -upload -app 100
 | `-baseline [FILE]`, `--baseline [FILE]` | No | off | Record every current file hash as this target's deployed baseline, and store every table beside it under `baseline.<TARGET_ENV>/`, overwriting both whole. Builds nothing and opens no database. |
 | `-install`, `--install` | No | off | Write `config/install/<SCHEMA>.sql` for each exported schema from the checked-out files; `-schema` picks the schemas. Needs no name. Details on [patch_install.md](patch_install.md#the-install-script). |
 | `-upload`, `--upload` | No | off | Upload static files into APEX as you save them, or the whole folder once with `-once`. Needs `-app ID`, no name, and is refused beside every other verb. On [patch_upload.md](patch_upload.md). |
-| `-folder`, `--folder` | No | the exported folder | With `-upload`, the folder to watch. |
+| `-folder`, `--folder` | No | the exported folder | With `-upload`, the folder to watch; one that is not there is refused before anything connects. |
 | `-interval`, `--interval` | No | `1` | With `-upload`, seconds between passes over the folder. Refused with `-once`. |
 | `-once`, `--once` | No | off | With `-upload`, upload the folder once and exit instead of watching. |
 | `-show`, `--show` | No | off | With `-upload`, list what the folder holds before the watch starts. |

@@ -88,6 +88,8 @@ class DependencyIndexRequest:
     # application's header opens: `rebuild -app` reads the page links there, so
     # they print under the one header the scan opened (`#30`).
     on_app_refreshed: Callable[[int], None] | None = None
+    # Called under that header before its first row (ADT #988).
+    on_app_opened: Callable[[int], None] | None = None
 
 
 GatewayFactory = Callable[[str], QueryGateway]
@@ -179,22 +181,19 @@ class DependencyIndexRunner:
                         schema, object_rows, force=request.force
                     )
                 changed = set(changed_objects)
+                # No PL/Scope row (`#372`): its reads run under this open one (#988).
+                pending_scope = None if id(gateway) in prepared else plscope.prepare_plscope(
+                    gateway,
+                    candidates=changed_objects,
+                    on_error=lambda: progress.fail("USER_OBJECTS"),
+                )
                 if request.force or scope_names:
                     progress.finish("USER_OBJECTS", len(object_rows))
                 else:
                     progress.finish("USER_OBJECTS", len(changed_objects), total=len(object_rows))
-                if id(gateway) not in prepared:
-                    # No row of its own (`#372`). The refresh header above says
-                    # what is happening and stands for every call in the
-                    # section, and "objects recompiled" is not the mirrored-row
-                    # count the dictionary rows beside it report, so a `0` there
-                    # read as a table that returned nothing. Skips still print:
-                    # a locked object is news.
-                    plscope.ensure_plscope(
-                        gateway,
-                        candidates=changed_objects,
-                        progress=progress.line,
-                        bar=progress.bar(),
+                if pending_scope is not None:
+                    plscope.recompile_plscope(
+                        gateway, pending_scope, progress=progress.line, bar=progress.bar()
                     )
                     prepared.add(id(gateway))
                 tables = {}
@@ -253,6 +252,8 @@ class DependencyIndexRunner:
                     continue
                 label = (request.app_labels or {}).get(app, str(app))
                 print_adt_header(f"APP {label}, REFRESHING:")
+                if request.on_app_opened is not None:
+                    request.on_app_opened(app)
                 gateway = self.gateway_factory(app_schema)
                 if id(gateway) not in prepared:
                     plscope.ensure_plscope(

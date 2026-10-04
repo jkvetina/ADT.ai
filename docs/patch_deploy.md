@@ -104,7 +104,7 @@ RELEVANT COMMITS:
 ALTER STATEMENTS:
 -----------------
   - patch_scripts/REPORTING/
-    - tables_after/
+    - tables_before/
       - app_import.211.sql
 
 DELETED OBJECTS:
@@ -134,7 +134,7 @@ WARNING - UNCOMMITTED FILES:
 ```
 
 - **A build opens with two commit tables.** `RELEVANT COMMITS:` holds what went into this patch; `RECENT UNPATCHED COMMITS:` holds what is still outstanding and is omitted when nothing is left. They lead because they are the input a reviewer checks. A `-deploy` run prints only the first.
-- **`ALTER STATEMENTS:` and `DELETED OBJECTS:`** list the generated `tables_after/` helpers and the objects the window dropped, each closing with its own blank line. They list different things and print differently: the helpers are FILES, so they carry paths; the drops are OBJECTS, so they carry the shared `TYPE | NAME` listing ([console](console.md)). A dropped path holding no database object keeps a plain `  - <path>` row underneath.
+- **`ALTER STATEMENTS:` and `DELETED OBJECTS:`** list the generated `tables_before/` helpers and the objects the window dropped, each closing with its own blank line. They list different things and print differently: the helpers are FILES, so they carry paths; the drops are OBJECTS, so they carry the shared `TYPE | NAME` listing ([console](console.md)). A dropped path holding no database object keeps a plain `  - <path>` row underneath.
 - **`PROCESSED FILES:` lists the files the patch CARRIES**, so a path it ships no content for is not among them. A dropped object is named by `DELETED OBJECTS:` above instead, and the old side of a renamed or `export_db -groups` moved file is named nowhere: its object moved rather than left, so the patch neither installs it nor drops it. A commit that renames a file therefore contributes one row, the target.
 - **Every warning is a section of its own**, `WARNING - <SUBJECT>:` with a `  - ` list under it. `OBJECTS CHANGED:` is the exception, listing objects rather than files. `PROCESSED FILES:` above lists files and nothing else.
 - **A file list opens on its anchor folder and gives every directory below it a row**, two spaces further in each time. The anchor is the `path_objects` type folder for an exported object, so an `export_db -groups` sub-folder reads as its own row under it, and the directory above its own for anything else, which is what puts a per-patch script's slot on a row of its own. `PATCH FILES:` is the one exception and keeps each whole path on one line. `nested_files: False` in `config.yaml` restores the flat one-path-per-row list everywhere; the rule is on [config.md](config.md).
@@ -153,7 +153,7 @@ PATCH FILES:
   - patch/260822-1-12/SANDBOX.sql
 ```
 
-A patch with two or more install scripts lists its `DEPLOY.sql` last, the file that sets their deploy order.
+A patch with two or more install scripts lists its `DEPLOY.sql` FIRST, then the scripts below it in the exact order it runs them: `DEPLOY.sql` is the file `-deploy` reads first and the one a person edits to change that order, so the section reads top to bottom in execution order.
 
 <br>
 

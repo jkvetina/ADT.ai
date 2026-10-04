@@ -30,10 +30,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from adt_ai.cli.constants import (
-    PatchWorkspace,
     folder_commit_entries,
-    outstanding_records,
-    preview_rows,
     preview_rows_from,
     print_adt_header,
     print_adt_table,
@@ -51,15 +48,13 @@ from adt_ai.cli.patch_create_warnings import (
     print_unresolved_tables,
 )
 from adt_ai.cli.patch_preview_render import (
-    RECENT_COMMITS_HEADER,
     RELEVANT_COMMITS_HEADER,
-    patch_show_commits,
 )
+from adt_ai.patch.deploy_driver import deploy_order
 from adt_ai.patch.layout import is_apex_comment, listed_patch_paths
 from adt_ai.patch.models import DatabasePatchResult, SchemaReport
 from adt_ai.patch.object_folders import object_folder_resolver
 from adt_ai.shared.apexlang_line_endings import print_precheck_issues
-from adt_ai.shared.commit_discovery import CommitRecord
 from adt_ai.shared.file_list import nested_files, print_file_rows
 from adt_ai.shared.object_list import print_object_rows
 from adt_ai.shared.patch_folders import PatchFolder
@@ -123,120 +118,32 @@ def print_folder_commits(folder: PatchFolder) -> None:
     print_adt_table(preview_rows_from(entries), columns=["#", "MESSAGE"])
 
 
-def print_create_commit_listings(
-    workspace: PatchWorkspace,
+def print_create_schema_blocks(
+    reports: list[SchemaReport],
+    uncommitted: list[str],
     config: dict[str, object],
-    result: DatabasePatchResult,
-    records: list[CommitRecord],
 ) -> None:
-    """The two commit tables a finished `-create` closes with (ADT #417).
+    """One block per schema: what changed, what it carries (ADT #443, streamed since #988).
 
-    The patch's own commits, then the commits still to be addressed. Both
-    headers already existed and neither is minted here: `-deploy` prints
-    `RELEVANT COMMITS:` over these same entries, and `RECENT COMMITS:` is what
-    `_preview_header` returns when nothing narrowed a listing.
+    `-create` prints this via `PatchBuildStages.reported`, right after
+    `_write_patch_files`/`build_reports` and before `_write_snapshots` -- ahead
+    of the run-scoped warnings below, which need a read
+    (`print_undecodable_files`) these two arguments never carry.
 
-    The patch's commits are read back off the folder this run just wrote rather
-    than re-derived from ``records``: that header is what a later `-deploy` will
-    read, so listing anything else here would let two screens disagree about one
-    patch. A folder the discovery pass cannot see yet, or one carrying no header
-    rows, simply prints no first table.
+    `config` arrived with ADT #504: every section below lists file paths, and
+    whether they group under their folder is a project setting (`nested_files`)
+    read against a project layout (`path_objects`). Threaded rather than read
+    from a module global, so a test can render either shape without patching.
+
+    No blank line is emitted between sections here: `print_adt_header` opens
+    with one, and adding a second is the per-call spacing override the console
+    contract forbids, the same one that put four empty lines before `TIMER`
+    in ADT #269.
     """
-    folders = workspace.discover()
-    built = next(
-        (folder for folder in folders if folder.folder == result.folder.name),
-        None,
-    )
-    if built:
-        print_folder_commits(built)
-    outstanding = outstanding_records(records, folders)
-    if not outstanding:
-        # Every commit in the window is now carried by a patch, which is a real
-        # answer and the one this build was working towards. An empty table would
-        # be a header and a column rule over nothing.
-        return
-    print_adt_header(RECENT_COMMITS_HEADER)
-    print_adt_table(preview_rows(outstanding, patch_show_commits(config)))
-
-
-def print_create_screen(
-    workspace: PatchWorkspace,
-    config: dict[str, object],
-    result: DatabasePatchResult,
-    records: list[CommitRecord],
-    root: Path,
-    *,
-    debug: bool = False,
-) -> None:
-    """The finished `-create` screen, in the order Jan reads it (ADT #443).
-
-    Commits, then one block per schema, then the artifact. Old ADT closed with
-    the commit tables and ADT.ai inherited that, which reads backwards: the
-    commits are the INPUT a reviewer checks before looking at what the build made
-    of them. Jan, 2026-08-21: *"before you even print PROCESSING SCHEMA section I
-    want to see RELEVANT COMMITS section"*.
-
-    `RECENT COMMITS:` travels with `RELEVANT COMMITS:` rather than staying behind:
-    they are one pair from one function since `#417`, and `PATCH FILES:` has to be
-    the closing section, so leaving the outstanding table below would have
-    stranded it between the schema blocks and an artifact it says nothing about.
-
-    Assembling the screen here rather than in `commands_patch` is what `#443`
-    fixed structurally: that module is the command's control flow and was 400
-    bytes over the 20 KB context guard with the order spelled inline, while this
-    module already owned every section the order arranges.
-    """
-    print_create_commit_listings(workspace, config, result, records)
-    print_create_report(result, config, debug=debug)
-    # Two empty lines above it, like every other header on the screen, and asked
-    # for by name: Jan, `#443`, *"a dedicated section at the bottom (with 2 empty
-    # lines above it) where you will list these schema driving files in 1 list"*.
-    # It took a `lead_gap=True` argument to get them until `#468`, and that
-    # argument is what made this one call render THREE whenever the section above
-    # it had closed itself with a blank. The renderer normalizes the gap now, so
-    # the wider spacing this section wanted is what every section has.
-    print_adt_header("PATCH FILES:")
-    # A plain list of project-relative paths, nothing else (ADT #415). Rows
-    # arrive sorted by group (`_write_patch_files` iterates `sorted(...)`), so
-    # reading the values without their key changes no order.
-    #
-    # **The one section that does NOT group**, asked for by name (ADT #507):
-    # *"Create exception for PATCH FILES: and keep whole filenames on a single
-    # line"*. `#504` grouped it under the patch folder, which reads as one folder
-    # line and one file under it; `#507` splits a directory per row, which would
-    # have made three rows of a section whose whole content is one path per
-    # schema. That path IS the answer here, so it stays on one line and `#415`'s
-    # shape comes back exactly. `nested=False` is the renderer's own flag, so this
-    # is an argument at the call site and not a second way to build a row.
-    #
-    # `DEPLOY.sql` closes the list when the patch has one (ADT #850): it is the
-    # file a person edits to change the order the scripts above deploy in.
-    driving = list(result.sql_files.values())
-    if result.deploy_file is not None:
-        driving.append(result.deploy_file)
-    print_file_rows([_project_relative(path, root) for path in driving], nested=False)
-    print()
-
-
-def print_create_report(
-    result: DatabasePatchResult,
-    config: dict[str, object],
-    *,
-    debug: bool = False,
-) -> None:
-    # `config` arrived with ADT #504: every section below lists file paths, and
-    # whether they group under their folder is a project setting (`nested_files`)
-    # read against a project layout (`path_objects`). Threaded rather than read
-    # from a module global, so a test can render either shape without patching.
-    #
-    # No blank line is emitted between sections here: `print_adt_header` opens
-    # with one, and adding a second is the per-call spacing override the console
-    # contract forbids, the same one that put four empty lines before `TIMER`
-    # in ADT #269.
     nested = nested_files(config)
     folder_of = object_folder_resolver(config)
-    last_index = len(result.reports) - 1
-    for index, report in enumerate(result.reports):
+    last_index = len(reports) - 1
+    for index, report in enumerate(reports):
         # No `PROCESSING SCHEMA <s>:` header. `#443` took its object count off,
         # and `#444` took the line itself: it stood over `PROCESSED FILES: <s>`,
         # naming the same schema one line above the section that names it. Jan,
@@ -275,16 +182,27 @@ def print_create_report(
         # `WARNING - UNCOMMITTED FILES:` section sat when it was still one
         # section per schema.
         if index == last_index:
-            print_uncommitted(result.uncommitted, config)
+            print_uncommitted(uncommitted, config)
         print_outdated(report, config)
-    if not result.reports:
+    if not reports:
         # No schema block to hang it under, so nothing else printed it either.
-        print_uncommitted(result.uncommitted, config)
-    # The run-scoped warnings, after the per-schema loop, because each is about
-    # the patch rather than about one schema's block. `OBJECTS CHANGED:` leads
-    # them: it is the only one that says the patch will ship something OTHER than
-    # what the database holds, which is a bigger claim than an unresolved table
-    # version or an unmoved per-patch script (ADT #468).
+        print_uncommitted(uncommitted, config)
+
+
+def print_create_warnings(
+    result: DatabasePatchResult,
+    config: dict[str, object],
+    *,
+    debug: bool = False,
+) -> None:
+    """The run-scoped warnings, printed after the build returns (ADT #468, #988).
+
+    After the build rather than during it (ADT #988): `print_undecodable_files`
+    reads `result.undecodable_files`, which exists only once `_write_snapshots`
+    has run. `OBJECTS CHANGED:` leads them: it is the only one that says the
+    patch will ship something OTHER than what the database holds, a bigger
+    claim than an unresolved table version or an unmoved per-patch script.
+    """
     print_changed_apps(result)
     # A tree the compile gate converted to LF (ADT #964): `-deploy`'s own
     # warning, since the conversion now happens here when both run.
@@ -295,6 +213,64 @@ def print_create_report(
     print_refused_tables(result, config)
     print_undecodable_files(result, config, debug=debug)
     print_script_warnings(result, config)
+
+
+def print_create_patch_files(
+    result: DatabasePatchResult,
+    config: dict[str, object],
+    root: Path,
+) -> None:
+    """`PATCH FILES:`, the closing section (ADT #443, streamed since #988).
+
+    Two empty lines above it, like every other header, asked for by name:
+    Jan, `#443`, *"a dedicated section at the bottom (with 2 empty lines
+    above it) where you will list these schema driving files in 1 list"*. The
+    renderer normalizes the gap, so the wider spacing this section wanted is
+    what every section has.
+    """
+    print_adt_header("PATCH FILES:")
+    # A plain list of project-relative paths, nothing else (ADT #415). Rows
+    # arrive sorted by group (`_write_patch_files` iterates `sorted(...)`), so
+    # reading the values without their key changes no order.
+    #
+    # **The one section that does NOT group**, asked for by name (ADT #507):
+    # *"Create exception for PATCH FILES: and keep whole filenames on a single
+    # line"*. `#504` grouped it under the patch folder, which reads as one folder
+    # line and one file under it; `#507` splits a directory per row, which would
+    # have made three rows of a section whose whole content is one path per
+    # schema. That path IS the answer here, so it stays on one line and `#415`'s
+    # shape comes back exactly. `nested=False` is the renderer's own flag, so this
+    # is an argument at the call site and not a second way to build a row.
+    #
+    # `DEPLOY.sql` opens the list when the patch has one (ADT #988), execution
+    # order top to bottom rather than closing it: Jan, *"These files should be
+    # printed in the same order as they are going to be executed. DEPLOY.sql
+    # should be always first."* `deploy_order` reads that order back off the
+    # folder this call just wrote (the driver itself, or the default order
+    # with none or one script), so a hand-edited `DEPLOY.sql` is honoured
+    # rather than re-derived from `result.sql_files`'s own build order.
+    driving: list[Path] = []
+    if result.deploy_file is not None:
+        driving.append(result.deploy_file)
+    driving.extend(deploy_order(result.folder, config))
+    print_file_rows([_project_relative(path, root) for path in driving], nested=False)
+    print()
+
+
+def print_create_report(
+    result: DatabasePatchResult,
+    config: dict[str, object],
+    *,
+    debug: bool = False,
+) -> None:
+    """The per-schema blocks and the run-scoped warnings, both at once (ADT #443).
+
+    Split into `print_create_schema_blocks`/`print_create_warnings` by ADT
+    #988 so `-create` can stream them apart; this stays combined for every
+    existing caller that already has a `DatabasePatchResult` in hand.
+    """
+    print_create_schema_blocks(result.reports, result.uncommitted, config)
+    print_create_warnings(result, config, debug=debug)
 
 
 def _print_object_changes(
@@ -312,7 +288,7 @@ def _print_object_changes(
     now a header that says it in words.
 
     `ALTER STATEMENTS:` is `TABLE CHANGES DETECTED:` renamed, same rows, the
-    generated `tables_after/*.sql` helpers. Jan settled the rename on chips the
+    generated `tables_before/*.sql` helpers. Jan settled the rename on chips the
     same day; the old header said what ADT noticed rather than what it wrote.
 
     **Each block closes with its own blank**, which `TABLE CHANGES DETECTED:`

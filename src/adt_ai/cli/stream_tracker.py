@@ -101,16 +101,16 @@ class _StdoutTracker:
         announcement. And a section header, which ends its line like any
         finished row and so says so explicitly through `mark_announced()`.
 
-        **A header announces the whole section under it, not just the next
-        call.** `#360` cleared the flag on every real write, so a result row
-        printed under a header retired that header's claim and the next
-        database call read as unannounced. The guard sits on the gateway and
-        fires per `fetch_all`/`execute`, so that rule demanded a printed label
-        for all 118 of them, and the sweep supplied 32 new ones. Jan, 2026-08-16
-        (`#372`): *"I did not asked you to ADD NEW HEADERS, I asked you to print
-        PRECEEDING header!"* The header is the announcement; its rows are the
-        answer to it, and the blank line under the last of them is where the
-        section ends and the claim with it (see `_expire_header_at_section_end`).
+        **A header announces the wait for its first row, not its whole
+        section** (ADT #988, see `_expire_header_at_first_finished_row`). A
+        finished row is a result; the next unit's wait is announced by that
+        unit's own label, streamed open before the wait, or by a new header.
+        `#372` had let the header cover everything down to the blank that
+        closes its section, after `#360` answered a per-write expiry with 32
+        new labels -- Jan: *"I did not asked you to ADD NEW HEADERS, I asked
+        you to print PRECEEDING header!"*. #988 keeps that answer: the fix a
+        violation asks for is the existing row opened before its wait, never a
+        new line; a wait no existing row or header can own is Jan's call.
 
         Read from the cursor rather than from the text: `#359` tried to classify
         the last printed line and could not tell a header from a data row, which
@@ -158,22 +158,27 @@ class _StdoutTracker:
         self._section_has_body = False
         self._sections_opened += 1
 
-    def _expire_header_at_section_end(self) -> None:
-        """A blank line under a printed row closes the section, and the claim.
+    def _expire_header_at_first_finished_row(self) -> None:
+        """A finished row under the header retires the header's claim (ADT #988).
 
-        Two trailing newlines mean a line ended and an empty one followed, which
-        is the console's only punctuation for "that subject is finished". Read
-        from the counters rather than from the text, for the reason the property
-        above gives, and both are summed because `commit_pending()` moves them
-        from one to the other: a section that flushed its own trailing blank
-        through `print_adt_table` holds it in `_committed_trailing_newlines` and
-        nowhere else.
+        One trailing newline after body text means a line under the header has
+        ENDED: it is a result, and a result announces only the work that already
+        happened (`AI/RULES/DETAILS/cli/output_reaches_the_screen_as_the_work_
+        happens`: *"A header covers the rows under it; with no rows, it covers
+        nothing"*). From `#372` until #988 this waited for TWO -- the blank that
+        closes a section -- so a section that never printed its closing blank
+        kept its header announcing across every later read: `VALIDATING
+        APEXLANG APPS:` covered `patch -create`'s live APEX checksum read, with
+        nothing on screen but finished rows. Read from the counters rather than
+        from the text, for the reason the property above gives, and both are
+        summed because `commit_pending()` moves them from one to the other.
 
-        **The body flag is what tells the two blanks apart.** A header may print
-        its own blank before the first row -- `EXPORTING <n> OBJECTS:` does, and
-        the DBMS_METADATA setup and comment pre-read that follow it print
-        nothing, so that header is all the announcement they get. A blank there
-        opens the section; a blank after a row closes it.
+        **The body flag is what keeps the header's own block announcing.** A
+        header may print its own blank before the first row -- `EXPORTING <n>
+        OBJECTS:` does, and the DBMS_METADATA setup and comment pre-read that
+        follow it print nothing, so that header is all the announcement they
+        get. Newlines with no row under the header are the header's; a newline
+        ending a row is the row's result.
 
         Without any of this the latch was write-once: `mark_announced()` set it,
         the banner every command opens with goes through `print_adt_header`, and
@@ -183,7 +188,7 @@ class _StdoutTracker:
         """
         if not self._section_has_body:
             return
-        if len(self._pending_newlines) + self._committed_trailing_newlines >= 2:
+        if len(self._pending_newlines) + self._committed_trailing_newlines >= 1:
             self._announced_header = False
 
     def write(self, text: str) -> int:
@@ -193,7 +198,7 @@ class _StdoutTracker:
         stripped = text.rstrip("\n")
         if not stripped:
             self._pending_newlines += text
-            self._expire_header_at_section_end()
+            self._expire_header_at_first_finished_row()
             return len(text)
 
         trailing_count = len(text) - len(stripped)
@@ -213,7 +218,7 @@ class _StdoutTracker:
         self.wrapped.flush()
         self._committed_trailing_newlines = 0
         self._pending_newlines = "\n" * trailing_count
-        self._expire_header_at_section_end()
+        self._expire_header_at_first_finished_row()
         return len(text)
 
     def normalize_trailing_newlines(self, count: int) -> None:

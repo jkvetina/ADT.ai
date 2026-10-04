@@ -78,7 +78,7 @@ TIMER: 0s
 
 Two controls narrow the session:
 
-- **The validator.** Each statement must have the shape of one `SELECT` or `WITH ... SELECT`. DML, DDL, transaction control, PL/SQL blocks, inline `WITH FUNCTION` / `WITH PROCEDURE`, `FOR UPDATE`, several statements in one string, and commands smuggled inside comments are rejected, recorded as errors, and never sent to the database.
+- **The validator.** Each statement must have the shape of one `SELECT` or `WITH ... SELECT`. DML, DDL, transaction control, PL/SQL blocks, inline `WITH FUNCTION` / `WITH PROCEDURE`, `FOR UPDATE` and several statements in one string are rejected, recorded as errors, and never sent to the database. Comments are read past, not refused: `/* SELECT */ DELETE FROM emp` is rejected for the `DELETE` it is, and a `DELETE` written inside a comment stays a comment Oracle never runs.
 - **The transaction.** What survives the validator runs under `SET TRANSACTION READ ONLY` and is rolled back after the query. This stops writes in that transaction and makes the non-committing path explicit.
 
 The boundary matters: a SELECT may invoke a stored function or view whose implementation the client cannot inspect. Discovery deliberately permits function calls. An autonomous transaction is separate, so the caller cannot roll it back. Database grants are the final control: give an agent only the dictionary, object and function privileges its exploration requires.

@@ -16,14 +16,15 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from datetime import datetime
+from functools import partial
 from typing import Any
 
 from adt_ai.patch import settings
 from adt_ai.patch.apex_backup import ApexBackup, back_up_targets, revert_failed_scans
 from adt_ai.patch.apex_deploy import ApexImportItem, prepare_apex_imports, run_apex_imports
 from adt_ai.patch.apex_import import ApexTarget
-from adt_ai.patch.apex_lock import build_status_lock
-from adt_ai.patch.apex_scan import scanned_app_ids, verify_applications
+from adt_ai.patch.apex_lock import build_status_lock, release_targets
+from adt_ai.patch.apex_scan import scanned_app_ids
 from adt_ai.patch.apex_validate import ApexlangValidation
 from adt_ai.patch.deploy import (
     _deployment_error_excerpt,
@@ -36,6 +37,7 @@ from adt_ai.patch.deploy import (
     _write_deployment_log,
     reset_deployment_spool,
 )
+from adt_ai.patch.deploy_post import EarlyRelease, HeldLastRow, scan_labels, verify_streamed
 from adt_ai.patch.deploy_progress import (
     _countable_references,
     _deploy_progress_reader,
@@ -128,18 +130,23 @@ def run_deployment(
     # deploy. The schemas come off the plan rather than off the prepared items,
     # because the release has to work on the path where `prepare_apex_imports`
     # raised and there are no items to read.
+    lock_schemas = {app_id: item.schema for item in plan if (app_id := item.app_id) is not None}
     with build_status_lock(
         gateways,
         gateway_factory,
         root       = workspace.root,
         config     = config,
-        schemas    = {
-            app_id: item.schema for item in plan if (app_id := item.app_id) is not None
-        },
+        schemas    = lock_schemas,
         target_env = target,
         log_folder = log_folder,
         moment     = moment,
     ) as apex_locks:
+        releases = EarlyRelease(apex_locks, partial(
+            release_targets,
+            gateway_factory = lambda schema: gateways.get(schema) or gateway_factory(schema),
+            root = workspace.root, config = config, schemas = lock_schemas,
+            target_env = target, log_folder = log_folder, moment = moment,
+        ))
         # Before `begin_deploy`, so the streamed table sizes itself on every row it
         # is going to show, and before the first script, so a refused signature check
         # leaves the database untouched (ADT #592).
@@ -169,6 +176,8 @@ def run_deployment(
         apex_backups: dict[int, ApexBackup] = {}
         if reporter is not None:
             reporter.begin_deploy([step.plan_item for step in sequence])
+            # The table's last row stays open over the post-deploy reads (ADT #988).
+            reporter = HeldLastRow(reporter)
         for position, step in enumerate(sequence):
             if step.imported is not None:
                 # A tree imports onto the objects its pages query, so an import
@@ -189,16 +198,19 @@ def run_deployment(
                     # copy is taken once its `init` half has run and before the
                     # first byte of the import is written. Into the patch's own
                     # `backup_<ENV>/`, where a file an earlier deploy of this
-                    # patch kept is left as it is (`#963`).
-                    if settings.revert_on_scan_failure(config):
+                    # patch kept is left as it is (`#963`). Taken under the
+                    # import's own open row (ADT #988): the `init` row above
+                    # has finished, and a finished row announces nothing.
+                    def back_up(item: ApexImportItem) -> None:
                         apex_backups.update(
                             back_up_targets(
-                                [step.imported],
+                                [item],
                                 gateway_factory,
                                 folder     = folder.path,
                                 target_env = target,
                             )
                         )
+
                     results.extend(
                         run_apex_imports(
                             [step.imported],
@@ -216,6 +228,9 @@ def run_deployment(
                                 apex_backups if settings.revert_on_scan_failure(config) else None
                             ),
                             locks      = apex_locks,
+                            before_import = (
+                                back_up if settings.revert_on_scan_failure(config) else None
+                            ),
                         )
                     )
             else:
@@ -248,77 +263,73 @@ def run_deployment(
                     for skipped in unrun:
                         reporter.end_script(skipped)
                 break
-        # **The deploy section closes after the post-deploy reads, not before
-        # them** (`#372`). Recompiling whatever the scripts invalidated and
-        # checking the view columns print no row of their own, so closing the
-        # table first left both running under a blank line; leaving it open one
-        # moment longer puts them under `DEPLOYING PATCH:`, which is the header
-        # they belong to anyway, and costs no new string. `#360` answered this
-        # with `FINISHING THE DEPLOY:`, `RECOMPILING INVALID OBJECTS` and
-        # `VERIFYING VIEW COLUMNS`; Jan deleted all three.
-        recompiled = _recompile_invalid_objects(gateways)
-        # **What the pass FIXED is a second read, never the worklist** (`#658`). A
-        # COMPILE that fails leaves the object invalid and raises nothing, so the
-        # only honest answer comes from asking `USER_OBJECTS` again. Skipped when
-        # nothing was invalid, which is the ordinary case and costs a round trip.
-        still_invalid = _invalid_objects(gateways) if recompiled else []
-        view_mismatches = (
-            _verify_view_columns(folder.files, config, gateways, dev_gateway_factory)
-            if dev_gateway_factory
-            else []
-        )
-        # **The application is asked whether its own SQL still parses** (`#676`). An
-        # import that reported SUCCESS proves the tree landed, never that a region
-        # query still resolves against the schema it landed on, and the gap between
-        # those two facts is where a home page full of `ORA-00904` lived. One pass
-        # over the applications this run actually deployed, both flavours together:
-        # the per-app install script and the APEXlang import each carry `app_id` on
-        # their result row, so an application touched by both is scanned once.
+        # **The post-deploy reads run under the table's LAST row, held open**
+        # (ADT #988, Jan's call): recompiling what the scripts invalidated and
+        # checking the view columns print no row of their own. `#372` held the
+        # whole table open for them, which the tightened guard no longer counts
+        # once its rows have finished; `#360`'s `FINISHING THE DEPLOY:`,
+        # `RECOMPILING INVALID OBJECTS` and `VERIFYING VIEW COLUMNS` stay deleted.
+        try:
+            recompiled = _recompile_invalid_objects(gateways)
+            # **What the pass FIXED is a second read, never the worklist** (`#658`):
+            # a COMPILE that fails raises nothing. Skipped when nothing was invalid.
+            still_invalid = _invalid_objects(gateways) if recompiled else []
+            view_mismatches = (
+                _verify_view_columns(folder.files, config, gateways, dev_gateway_factory)
+                if dev_gateway_factory
+                else []
+            )
+            # A lock no scan row will cover is released under this row (ADT #988).
+            landed = scanned_app_ids(results)
+            scanning = set(landed) if settings.verify_deploy_scan(config) else set()
+            releases(set(apex_locks) - scanning)
+        finally:
+            if isinstance(reporter, HeldLastRow):
+                reporter.release()
+        if reporter is not None:
+            reporter.end_deploy(results)
+            # What the table's own sections say, printed before the scan opens
+            # its section so the screen keeps its order (optional hook).
+            deployed = getattr(reporter, "deployed", None)
+            if deployed is not None:
+                deployed(results, view_mismatches, still_invalid)
+        # **The application is asked whether its own SQL still parses** (`#676`),
+        # once per application this run landed, each under its own streamed row
+        # (ADT #988). **The write a failed scan condemns is undone** (`#727`)
+        # inside that same row: only an application THIS run imported has a
+        # backup, and under `-continue` nothing is reverted -- the backup is
+        # still the way back if the waived findings turn out to matter. Its
+        # build-status lock is released last, after any revert has imported.
+        apex_reverts: list[Any] = []
+
+        def revert(report: Any) -> list[str]:
+            if apex_backups and not continue_on_error:
+                apex_reverts.extend(revert_failed_scans(
+                    [report], apex_backups, _gateway_for_app(results, gateways),
+                    root=workspace.root, log_folder=log_folder, config=config, moment=moment,
+                ))
+            releases([report.app_id])
+            return releases.note(report)
+
         apex_scans = (
-            verify_applications(
-                scanned_app_ids(results),
+            verify_streamed(
+                landed,
                 _gateway_for_app(results, gateways),
+                rows         = getattr(reporter, "scan_rows", None),
+                labels       = scan_labels(workspace.root, landed, apex_items),
+                root         = workspace.root,
+                after_scan   = revert,
                 apex_version = apex_version,
-                log_folder   = folder.path / deploy_log_folder(config, target),
+                log_folder   = log_folder,
                 config       = config,
                 moment       = moment,
             )
             if settings.verify_deploy_scan(config)
             else []
         )
-        # **`-continue` waives the verdict** (`#749`, Jan 2026-09-09). The flag
-        # reached only the install scripts, so a run that asked not to be stopped
-        # was still stopped dead here. Computed once, so the console and the
-        # status cannot disagree about whether a waiver happened.
+        # **`-continue` waives the verdict** (`#749`), computed once so the console
+        # and the status cannot disagree about whether a waiver happened.
         scan_waived = continue_on_error and any(report.failed for report in apex_scans)
-        # **The write the scan just condemned is undone** (`#727`). Before this, a
-        # scan that found an application whose region queries no longer compile
-        # failed the deploy and left that application installed: the import is a
-        # whole-app replacement and nothing had kept what it replaced. Only the
-        # applications THIS run imported are in `apex_backups`, so an application a
-        # per-app install script landed is reported and never touched, and a deploy
-        # with the key off keeps the pre-`#727` behaviour exactly.
-        #
-        # Under `-continue` it does not run at all: putting the application back
-        # is the strongest show-stopper here, and a run that continued past a
-        # failure only to lose its application has not continued. The backup is
-        # still taken -- same round trip either way, and it is the way back if
-        # the waived findings turn out to matter.
-        apex_reverts = (
-            revert_failed_scans(
-                apex_scans,
-                apex_backups,
-                _gateway_for_app(results, gateways),
-                root       = workspace.root,
-                log_folder = log_folder,
-                config     = config,
-                moment     = moment,
-            )
-            if apex_backups and not continue_on_error
-            else []
-        )
-        if reporter is not None:
-            reporter.end_deploy(results)
         # A findings row fails the run (Jan, 2026-09-02). Unlike `still_invalid`
         # beside it, this IS patch-scoped -- the scan reads one application, the one
         # this patch just deployed -- so it cannot fail a deploy over somebody
@@ -350,7 +361,7 @@ def run_deployment(
             apex_scans      = apex_scans,
             apex_reverts    = apex_reverts,
             apex_backups    = apex_backups,
-            apex_locks      = apex_locks,
+            apex_locks      = releases.ledger(),
             scan_waived     = scan_waived,
         )
 

@@ -46,7 +46,12 @@ from adt_ai.cli.refresh_connect import _connecting_mode_gateways
 # (ADT #895): the hub ships in every release and the store only with `rebuild`
 # and `search`, so the hub is to stop re-exporting it.
 from adt_ai.flow.files import write_all_dumps
-from adt_ai.flow.runner import ApexFlowError, ApexFlowRefreshRequest, ApexFlowRefreshRunner
+from adt_ai.flow.runner import (
+    ApexFlowError,
+    ApexFlowRefreshRequest,
+    ApexFlowRefreshResult,
+    ApexFlowRefreshRunner,
+)
 from adt_ai.flow.store import ApexFlowStore
 from adt_ai.shared.connections import Connection
 from adt_ai.shared.internal_paths import internal_path
@@ -172,6 +177,8 @@ class FlowRefresh:
         self.failed = plan.failed
         #: Applications already handed to `app`, whether or not they refreshed.
         self.seen: set[int] = set()
+        #: What `read` fetched ahead of `app`, the result or the error it raised.
+        self._read: dict[int, ApexFlowRefreshResult | Exception] = {}
         plan.blocks.add(segment_schema)
         self._store = ApexFlowStore.open(internal_path(plan.root, "flow.db"))
 
@@ -190,6 +197,26 @@ class FlowRefresh:
     def exit_code(self) -> int:
         """1 when any application failed, the plan's own warnings included."""
         return 1 if self.failed else 0
+
+    def read(self, app_id: int) -> None:
+        """Read one application's page links under its `REFRESHING:` header (ADT #988).
+
+        The three reads have no row of their own, so they run while the
+        header is the newest thing on screen, ahead of the scan's first row:
+        once a row under it has finished, the header announces nothing more.
+        `app` prints what they found, where it always has. An application
+        whose owner needs its own connection block first is left to `app`,
+        which prints that block before reading.
+        """
+        schema = self.plan.owner_schemas.get(app_id)
+        if schema is None or schema not in self.plan.blocks:
+            return
+        try:
+            self._read[app_id] = ApexFlowRefreshRunner(self.plan.gateway_factory).refresh(
+                ApexFlowRefreshRequest(app_id=app_id, schema=schema, store=self._store)
+            )
+        except Exception as error:  # noqa: BLE001 - raised again by `app`, where it always was
+            self._read[app_id] = error
 
     def app(self, app_id: int, *, header: str | None = None) -> None:
         """Read one application's page links and write its diagrams.
@@ -212,9 +239,11 @@ class FlowRefresh:
             print_adt_header(header)
 
         try:
-            result = ApexFlowRefreshRunner(plan.gateway_factory).refresh(
-                ApexFlowRefreshRequest(app_id=app_id, schema=schema, store=self._store)
-            )
+            result = self._read.pop(app_id, None) or ApexFlowRefreshRunner(
+                plan.gateway_factory
+            ).refresh(ApexFlowRefreshRequest(app_id=app_id, schema=schema, store=self._store))
+            if isinstance(result, Exception):
+                raise result
         except ApexFlowError:
             # The owner answered and the application read came back empty.
             _print_warning(

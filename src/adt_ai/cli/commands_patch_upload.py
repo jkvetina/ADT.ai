@@ -74,6 +74,13 @@ def run_patch_upload(
     second module banner inside one command is the screen `#764` ended.
     """
     app_id = _app_id(args)
+    # A named folder needs no database to be wrong, so a typo is refused before
+    # the configuration is read or a connection is opened (ADT #1021).
+    if args.folder and not Path(args.folder).expanduser().resolve().is_dir():
+        named = Path(args.folder).expanduser().resolve()
+        root = Path(args.root).expanduser().resolve() if args.root else Path.cwd()
+        print_adt_error("INPUT NOT FOUND", f"FOLDER NOT FOUND: {_project_relative(named, root)}")
+        return exit_code_for("INPUT NOT FOUND")
     startup = _load_startup_context(args)
     root = startup.root
     connections = startup.connections
@@ -101,6 +108,15 @@ def run_patch_upload(
     folder = _folder(args, startup, gateway, schema, app_id)
     if folder is None:
         return 1
+    runner = LiveUploadRunner(
+        gateway,
+        reporter  = ConsoleLiveUploadReporter(progress),
+        minifiers = minifiers,
+    )
+    if folder.is_dir():
+        # Under the header, before its first row (ADT #988): once the folder
+        # row below has printed, `MONITORING FOLDER:` announces nothing more.
+        runner.bind(app_id)
     print(f"  {_project_relative(folder, root)}")
     if not folder.is_dir():
         print_adt_error(
@@ -110,11 +126,6 @@ def run_patch_upload(
     if not args.once:
         print(f"  {QUIT_HINT}")
 
-    runner = LiveUploadRunner(
-        gateway,
-        reporter  = ConsoleLiveUploadReporter(progress),
-        minifiers = minifiers,
-    )
     request = LiveUploadRequest(
         folder    = folder,
         app_id    = app_id,
