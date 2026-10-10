@@ -1,6 +1,6 @@
 # ADT.ai Documentation
 
-This is the public documentation index for ADT.ai `1.5.3`.
+This is the public documentation index for ADT.ai `1.6.0`.
 
 <br>
 
@@ -43,6 +43,7 @@ This is the public documentation index for ADT.ai `1.5.3`.
 | [ut / coverage](ut_coverage.md) | The coverage column, the module figure, the gate, and what moved since the last run. |
 | [ut / choosing what runs](ut_discovery.md) | The naming convention, the `-name` patterns, and utPLSQL's annotation cache. |
 | [validate](validate.md) | Run the APEXlang compiler over exported `apexlang/` folders with no database, or scan a live application for components that no longer compile. |
+| [validate / the code scan](validate_codescan.md) | The baseline each tree is held to, what fails, suppressing a finding with a reason, and the one-line CI chain. |
 
 <br>
 

@@ -72,6 +72,7 @@ sandbox/database/procedures/adt_fixture_recent_prc.sql
 sandbox/database/tables/adt_fixture_ddl_log.sql
 sandbox/database/views/adt_fixture_ddl_log_v.sql
 sandbox/database/grants/SANDBOX.sql
+sandbox/database/grants/data_grants/emp_self.sql
 ```
 
 `object_types` gives each type its folder and its file extension, and takes either spelling. The two-item list the shipped config uses and the mapping form mean the same thing to every command that reads the key:

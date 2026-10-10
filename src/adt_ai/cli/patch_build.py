@@ -35,6 +35,7 @@ from adt_ai.cli.commands_patch_drop import run_drop_applications
 from adt_ai.cli.commands_patch_upload import (
     APP_REQUIRED_MESSAGE,
     UPLOAD_TEMPLATE_MESSAGE,
+    UPLOAD_WORKING_COPY_MESSAGE,
     run_patch_upload,
 )
 from adt_ai.cli.constants import (
@@ -51,10 +52,11 @@ from adt_ai.cli.patch_create_upfront import print_create_commit_listings_upfront
 from adt_ai.cli.patch_hash_mode import HashSelection, apply_hash_mode, hash_mode_error
 from adt_ai.cli.patch_preview_render import _content_mode, _selected_content_modes
 from adt_ai.patch import settings as patch_settings
-from adt_ai.patch.apex_import import AppIdTemplate, resolve_target
+from adt_ai.patch.apex_import import AppIdTemplate, WorkingCopy, resolve_target
 from adt_ai.patch.apex_validate import ApexlangValidation
 from adt_ai.patch.baseline_tables import read_baseline_tables
 from adt_ai.patch.build import PatchBuildStages
+from adt_ai.patch.codescan_gate import PatchCodescan
 from adt_ai.patch.content import CONTENT_MODE_FLAGS
 from adt_ai.patch.models import PartialPatchReport
 from adt_ai.shared.patch_folders import PatchFolder
@@ -161,6 +163,9 @@ def upload_flag_refusal(args: argparse.Namespace) -> str | None:
     # template that expands per application has nothing to expand over (ADT #974).
     if any(isinstance(value, AppIdTemplate) for value in args.app):
         return UPLOAD_TEMPLATE_MESSAGE
+    # Nor a working copy, which only a deploy creates (ADT #1069).
+    if any(isinstance(value, WorkingCopy) for value in args.app):
+        return UPLOAD_WORKING_COPY_MESSAGE
     schemas = [value for group in (args.schema or []) for value in group]
     if len(schemas) > 1:
         named = ", ".join(schemas)
@@ -360,6 +365,7 @@ def build_database_patch(
     gateway_factory: GatewayFactory | None = None,
     signature_gateway_factory: Callable[[str, str], Any] | None = None,
     validation: ApexlangValidation | None = None,
+    codescan: PatchCodescan | None = None,
 ) -> None:
     """Write the patch folder, printing the `-create` screen AS it builds (ADT #988).
 
@@ -388,6 +394,9 @@ def build_database_patch(
     introduced the hold, #988 drops it for `-create`): the section prints
     itself the moment validation closes, same as it always has for `-deploy`,
     and this function no longer reaches into the reporter to time it.
+
+    ``codescan`` is `patch_codescan`'s gate (ADT #1025), ``None`` when `off`:
+    the files the patch carries, scanned after the compile and before a write.
     """
     target = resolve_target(args.app)
 
@@ -451,6 +460,7 @@ def build_database_patch(
         files_ws   = bool(getattr(args, "files_ws", False)),
         validation = validation,
         stages     = stages,
+        codescan   = codescan,
     )
     # The run-scoped warnings and the closing artifact list, once the build's
     # own reads are over (ADT #988): `print_undecodable_files` needs

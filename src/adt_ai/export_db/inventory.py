@@ -60,6 +60,8 @@ class ObjectDiscovery:
     ASSERTION_DDL_QUERY    = queries.ASSERTION_DDL_QUERY
     MLE_MODULE_DDL_QUERY   = queries.MLE_MODULE_DDL_QUERY
     DIRECTORIES_QUERY      = queries.DIRECTORIES_QUERY
+    DATA_GRANTS_QUERY      = queries.DATA_GRANTS_QUERY
+    DATA_ROLES_QUERY       = queries.DATA_ROLES_QUERY
     COMMENTS_QUERY         = queries.COMMENTS_QUERY
     TABLE_RETENTION_QUERY  = queries.TABLE_RETENTION_QUERY
 
@@ -71,6 +73,9 @@ class ObjectDiscovery:
         # Per-schema {job name: fresh signature} for the jobs this run selected,
         # so the caller can stamp the baseline once the files are actually written.
         self.last_job_signatures: dict[str, dict[str, str]] = {}
+        # Per-schema cross-table Data Grant names the dictionary cannot rebuild,
+        # for the warning printed once the schema's export is done (`#1063`).
+        self.skipped_data_grants: dict[str, list[str]] = {}
 
     def discover(
         self,

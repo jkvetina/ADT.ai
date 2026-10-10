@@ -56,7 +56,7 @@ def resolve_targets(
         # against a resolved root made ``_label`` fall back to the absolute path
         # for a folder sitting right under the root (card `#164`).
         path = Path(value).expanduser().resolve()
-        targets.append(ValidateTarget(path, _label(path, root)))
+        targets.append(ValidateTarget(path, tree_label(path, root)))
 
     if app_ids:
         resolved, app_notes = _targets_for_apps(root, config, app_ids)
@@ -64,7 +64,7 @@ def resolve_targets(
         notes.extend(app_notes)
 
     if not inputs and not app_ids:
-        discovered = _discover(root, config)
+        discovered = discover_targets(root, config)
         if discovered:
             targets.extend(discovered)
         else:
@@ -113,7 +113,7 @@ def _targets_for_apps(
             folder = resolver.for_schema(application.owner).apexlang_root(application)
             if not folder.is_dir():
                 notes.append(
-                    f"app {raw_id}: nothing to validate, no export at {_label(folder, root)} "
+                    f"app {raw_id}: nothing to validate, no export at {tree_label(folder, root)} "
                     f"- run `adtai export_apex -app {raw_id} -apexlang` first."
                 )
                 continue
@@ -154,7 +154,12 @@ def _application(entry: Mapping[str, Any], raw_id: str) -> ApexApplication:
     )
 
 
-def _discover(root: Path, config: Mapping[str, Any]) -> list[ValidateTarget]:
+def discover_targets(root: Path, config: Mapping[str, Any]) -> list[ValidateTarget]:
+    """Every exported `apexlang/` tree, named as a bare run names it.
+
+    Public since ADT #1026: `validate -codescan` scans the same trees a bare
+    `validate` compiles, and a second walk would be a second answer.
+    """
     recorded = _recorded_labels(root, config)
     return [
         ValidateTarget(
@@ -198,12 +203,13 @@ def _export_label(folder: Path, root: Path) -> str:
     the path it was handed, may be a zip or a single `.apx`, and its refusal
     screen has to echo what the user typed for them to recognise the typo.
     """
-    label = _label(folder, root)
+    label = tree_label(folder, root)
     suffix = f"/{APEXLANG_DIR}"
     return label[:-len(suffix)] if label.endswith(suffix) else label
 
 
-def _label(path: Path, root: Path) -> str:
+def tree_label(path: Path, root: Path) -> str:
+    """A tree named relative to the project root, or in full when outside it."""
     try:
         return path.relative_to(root).as_posix()
     except ValueError:

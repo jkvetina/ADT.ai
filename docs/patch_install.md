@@ -2,7 +2,7 @@
 
 ![One check refuses. The other only warns.](images/patch_install.png)
 
-Which committed files a patch picks up, the order they run in, the two checks that stand in front of a build, and the project SQL a generated install script injects around them. The command itself is on [patch.md](patch.md).
+Which committed files a patch picks up, the order they run in, the checks that stand in front of a build, the code scan, and the project SQL a generated install script injects around them. The command itself is on [patch.md](patch.md).
 
 <br>
 
@@ -143,7 +143,7 @@ WARNING - NO DATABASE CLOCK:
 
 ## The application check
 
-`-deploy -app` refuses to import an APEXlang application somebody changed since your export ([patch_deploy.md](patch_deploy.md)). `-create` asks the same question first, so you can rebase before the deploy fails.
+`-deploy -app` refuses to import an APEXlang application somebody changed since your export ([patch_deploy.md](patch_deploy.md)). `-create` asks the same question first, so you can reconcile before the deploy fails.
 
 It reads the application's live signature on the environment `export_apex` recorded ([export_apex.md](export_apex.md#the-application-checksum)), never `-target`, and compares it with the checksum recorded there. An export taken before that environment was recorded falls back to the connection `-create` itself opens (`-target`, or the connection file's default), exactly as before:
 
@@ -154,18 +154,78 @@ WARNING - APP 100 CHANGED SINCE YOUR EXPORT:
   CHANGED ON  | 2026-09-24 22:26
   YOUR BASE   | 2026-09-24 22:26 (64d9c42b)
 
-  1) run: adtai export_apex -apexlang -app 100
-  2) reconcile the tree, commit changes
+  1) run: adtai export_apex -app 100 -apexlang -files
+  2) reconcile your change with it
   3) create the patch again
 ```
 
-Each changed application gets its own warning. The rows are the ones the deploy refusal prints, and the steps are the way back to a patch that deploys. The patch is still written and the run exits `0`.
+Each changed application gets its own warning. The rows are the ones the deploy refusal prints, and the first two steps are its own ([patch_import.md](patch_import.md)): fetch the live application, which records its new checksum, then reconcile your change with it. The patch is still written and the run exits `0`.
 
-- **An export that shared a base with `-mirror` rebases instead**: `1) run: git rebase db/dev`, then `2) create the patch again`.
 - **The source application is read**, the one the tree was exported from, never the `-app <id>` it will land on.
 - **An application missing from the environment is not reported.** One with no recorded export is reported as `WARNING - APP <id> HAS NO RECORDED SIGNATURE:`, with the steps to export it, commit the export and create the patch again.
 - **A read that fails prints nothing**, since the deploy still checks.
 - **Only APEXlang trees are checked.**
+
+<br>
+
+## The APEX release check
+
+An APEXlang tree records the APEX release that exported it, in `apexlang/.apex/apexlang.json`. After an APEX upgrade the tree has to be exported again on the new release, so when the target runs a newer release than the tree, `-create` warns inside the same validation rows:
+
+```text
+WARNING - APP 100 EXPORTED ON APEX 26.1, TARGET RUNS 26.2:
+----------------------------------------------------------
+  1) run: adtai export_apex -app 100 -apexlang on APEX 26.2
+  2) commit the export
+  3) create the patch again
+```
+
+The target is the connection `-create` opens for its table ALTERs (`-target`, or the connection file's default). Releases are compared on major and minor, so a patch level is not drift. The patch is still written, a release either side cannot read prints nothing, and `-deploy -app` repeats the warning ([patch_import.md](patch_import.md#the-tree-is-older-than-the-target)).
+
+<br>
+
+## The code scan
+
+`patch_codescan` in `config.yaml` runs SQLcl's `codescan` over the files the patch carries, after the APEXlang compile and before anything is written. `off`, the default, scans nothing. `warn` lists what it found and builds the patch. `block` lists it and writes nothing.
+
+Each carried file is copied, in the version the patch ships, into a folder of its own under `config/temp/`, named for the patch folder and removed once the scan is read. One row, named for the patch folder, and findings in the carried files only:
+
+```text
+CODESCAN:
+---------
+  000000-1-1025 ...................................................... 0:00:06
+
+
+NEW VIOLATIONS IN 000000-1-1025:
+--------------------------------
+
+  sandbox/apex/100_ORDERS/apexlang/pages/p00001-orders.apx:182:5
+    APEX-005
+    Component dynamic actions require an authorization scheme
+
+BASELINE: 1 known, 1 new, 0 fixed
+```
+
+**An APEXlang file is scanned with its application beside it**, because codescan reads application-scope settings off the rest of the tree. Scanned alone, a page reports rules its application already satisfies. A finding in a file the patch does not carry is never listed.
+
+Each finding is held to the baseline `adtai validate -codescan` keeps for the tree its file sits in ([validate_codescan.md](validate_codescan.md#the-baseline)), read for only the files this patch carries. The gate never records a baseline itself.
+
+`codescan_ignore` suppresses findings here exactly as it does for `validate -codescan`, each `file` read as the path from the project root ([validate_codescan.md](validate_codescan.md#suppressing-a-finding)). `codescan_rules` narrows what counts here as it does there ([validate_codescan.md](validate_codescan.md#the-rule-profile)).
+
+**A file no baseline covers has every finding counted as new**, so a tree `validate -codescan` never scanned fails the gate rather than passing it. Run that first to accept what a tree already holds.
+
+`codescan_fail_on` decides what counts, as it does for `validate`: `new` lists the new findings, `any` lists every finding under `ERRORS IN <folder>:`, and `none` lists the new ones and never stops the build. Under `block` a refusal reads:
+
+```text
+ERROR - PATCH FAILED:
+---------------------
+  CODESCAN REFUSED THE PATCH
+
+  patch_codescan is block, so nothing was written.
+  Fix what is listed above and create the patch again.
+```
+
+**A scan that proves nothing is a violation too**: output SQLcl did not finish, a scan that read none of the files, or a file opening on a UTF-8 byte order mark, which codescan reads as clean. A patch carrying no code starts no scan.
 
 <br>
 

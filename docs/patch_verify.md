@@ -250,7 +250,7 @@ The signature is read off the target, then the tree is imported over it. A devel
 deploy_build_status     : restore
 ```
 
-The deploy reads the signature and sets the application to `RUN_ONLY` as one step, before it stages a thing, and puts back the status it found afterwards.
+The deploy reads the signature and locks the application as one step, before it stages a thing, and puts back the status it found afterwards. Below APEX 26.2 the lock is build status `RUN_ONLY`, or page locks where granted; on 26.2 and newer it is the App Builder's own application lock.
 
 **The read comes one statement before the write, because setting build status changes the application's export checksum.** Measured on APEX 26.1.0: `Run and Develop` and `Run Only` hash differently. Reading the target after the lock would compare a value the deploy itself had just written, and refuse every deploy the gate exists to protect.
 
@@ -260,7 +260,7 @@ The deploy reads the signature and sets the application to `RUN_ONLY` as one ste
 | `run_only` | Locks and leaves it locked, for a target nobody develops on |
 | `off` | Leaves build status alone, and writes no timeline |
 
-**Build status is the lock because APEX offers no other.** The Builder's own application lock has no public API (`WWV_FLOW_LOCK.LOCK_APPLICATION` and its siblings carry no grant to any user), and an import deletes the lock row anyway (bug 39557252, reproduced on APEX 26.1.0). A lock the deploy itself drops cannot guard the deploy. Build status needs no version floor either: it goes through `APEX_UTIL.SET_APP_BUILD_STATUS`, the same call `patch_apex_build_status` already emits into a generated install script.
+**Below APEX 26.2 build status is the lock; on 26.2 and newer the App Builder's application lock is.** On 26.1.0 an import deletes the application lock (bug 39557252), so `RUN_ONLY`, set through `APEX_UTIL.SET_APP_BUILD_STATUS`, holds the deploy there. Measured on 26.2.0, an APEXlang or `f<id>.sql` import keeps the application lock, so the deploy locks the application as you (`config/IDENTITY.yaml` `apex_account`, else git `user.name`) with the comment `ADT deploy <patch folder>`, writes no `RUN_ONLY`, still sets the final status after the import resets it, and then unlocks. A lock you already held is locked again and handed back with your own comment. Another developer's lock refuses the deploy before any import, naming them and since when; `-force` deploys anyway, leaves their lock in place and uses build status for that application. A name that is no workspace developer (`ORA-20003`), or any other lock failure, falls back to `RUN_ONLY` and says why under `NOTES:` and on the import log's `BUILD STATUS` row. Page locks below 26.2, and the warning about those an import removes: [patch_import.md](patch_import.md#page-locks-hold-a-deploy-below-apex-262).
 
 **It closes the door, not the room.** Measured on APEX 26.1.0: a Page Designer session that is already open saves successfully under `RUN_ONLY`, and the save lands. What `RUN_ONLY` refuses is Builder ENTRY, and reloading the page answers `Application not available for edit`. So the lock stops a new editing session starting mid-deploy and does not evict one already running. It narrows the window; the signature gate remains the guard.
 
@@ -294,7 +294,7 @@ patch/260907-1-CARGO/logs_DEV/20260907-194318_apex_build_status_1000.txt
 --   FINAL            | Run Only
 ```
 
-And the three moments that belong to this deploy on the application's `VERIFYING APPLICATIONS:` row, so a run says where it left the application without anyone opening a file:
+And the three moments that belong to this deploy on the application's `VERIFYING APPLICATIONS:` row. Where the application lock held it, the middle moment reads `APP LOCK <user>` (`PAGE LOCKS <user>` below 26.2), and the timeline report adds `APP LOCK BEFORE` and `APP LOCK RELEASE` (`unlocked`, `comment restored` or `(not released)`):
 
 ```text
 VERIFYING APPLICATIONS:
@@ -307,7 +307,7 @@ VERIFYING APPLICATIONS:
 
 **`AFTER IMPORT` is APEX's own doing, not ADT's.** An APEXlang import resets build status every time, and `apex_application_install.set_build_status`, which does pin the classic `f<id>.sql` path, is ignored by SQLcl's APEXlang importer, so there is nothing to pin with. The deploy therefore re-applies the final status after the scan instead of trying to carry the lock through the import.
 
-**A lock that could not be taken never fails the deploy.** The signature gate is the guard and this is the courtesy in front of it, so a status that could not be read or set is reported as `FAILED` on the row and in the timeline, and the run continues.
+**A lock that could not be taken never fails the deploy.** The signature gate is the guard and this is the courtesy in front of it, so a status that could not be read or set, or an application lock that could not be released, is reported as `FAILED` on the row and in the timeline, and the run continues. The one refusal is another developer's application lock on 26.2+, above.
 
 **An id holding no application is `SKIPPED`, not a failure.** A fresh sandbox id is the ordinary case: there was nothing to export, and removing the application this run created would be a drop, which is [patch_drop.md](patch_drop.md)'s job and its ownership rail.
 

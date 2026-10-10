@@ -1,4 +1,4 @@
-"""The ten warning sections `patch -create` can close a schema block with.
+"""The eleven warning sections `patch -create` can close a schema block with.
 
 Split out of `patch_create_render.py` when ADT #465 pushed that module past the
 20 KB context guard (`tests/contracts/test_context_file_size.py`). The same call
@@ -18,11 +18,12 @@ already-built report or result and turns it into rows.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from adt_ai.cli.constants import print_adt_header
 from adt_ai.patch.apex_drift import drift_warning_rows
+from adt_ai.patch.apex_release import ReleaseDrift, release_warning_rows
 from adt_ai.patch.apex_signature import UNKNOWN
 from adt_ai.patch.layout import listed_patch_paths
 from adt_ai.patch.models import DatabasePatchResult, SchemaReport
@@ -30,7 +31,7 @@ from adt_ai.patch.object_folders import object_folder_resolver
 from adt_ai.shared.file_list import nested_files, parent_folder, plain_row, print_file_rows
 from adt_ai.shared.object_list import print_object_rows
 
-# The ten warning sections `-create` can print, spelled once each. Constants
+# The eleven warning sections `-create` can print, spelled once each. Constants
 # rather than literals at the call sites so `tests/helpers/console_surface.py`
 # records every one by name: it folds a module-level `NAME = "literal"` at the
 # call site AND reads any `*_HEADER` constant on its own, which is what keeps a
@@ -69,6 +70,9 @@ NOT_UTF8_HEADER = "WARNING - NOT UTF-8:"
 # ADT #957, the tenth, is the `-deploy` signature refusal asked at `-create` so
 # the developer can rebase first. It has no constant: since ADT #961 its header
 # names the application, one per application, spelled at `print_changed_apps`.
+# ADT #1064, the eleventh, is a tree exported on an older APEX than the target
+# runs; its header names the application and both releases, spelled at
+# `print_apex_release_blocks`, which `-deploy` prints too.
 
 # The newer-commit rows sit inside the same 78-character budget the commit
 # preview uses, rather than old ADT's flat `summary_len = 36`, a constant that
@@ -127,7 +131,7 @@ def print_uncommitted(uncommitted: list[str], config: dict[str, Any]) -> None:
     uncommitted changes in the repo, it should list the files as a file tree
     (reuse this component). Should be just below PROCESSED FILES section. Looks
     like you are printing something, but not all uncommitted files, why is
-    that?"* `DatabasePatchResult.uncommitted` (`patch/build.py::_repo_uncommitted`)
+    that?"* `DatabasePatchResult.uncommitted` (`patch/uncommitted.py::repo_uncommitted`)
     is where the repo-wide read and its exclusions live; this only renders it,
     through the same `warning_rows` file-tree component every other section
     here uses.
@@ -304,6 +308,27 @@ def print_changed_apps(result: DatabasePatchResult) -> None:
         else:
             print_adt_header(f"WARNING - APP {signatures.app_id} CHANGED SINCE YOUR EXPORT:")
         for row in drift_warning_rows(signatures):
+            print(row)
+
+
+def print_release_drifts(result: DatabasePatchResult) -> None:
+    """APEXlang trees exported on an older APEX than the target runs (ADT #1064)."""
+    print_apex_release_blocks(result.release_drifts)
+
+
+def print_apex_release_blocks(drifts: Iterable[ReleaseDrift]) -> None:
+    """One header per application naming both releases, then the way out.
+
+    Shared with `patch -deploy`'s reporter, so the warning read at `-create`
+    and the one read at the deploy say the same thing. The header is spelled
+    here as an f-string so the console inventory reads it.
+    """
+    for drift in drifts:
+        print_adt_header(
+            f"WARNING - APP {drift.app_id} EXPORTED ON APEX {drift.tree}, "
+            f"TARGET RUNS {drift.target}:"
+        )
+        for row in release_warning_rows(drift):
             print(row)
 
 

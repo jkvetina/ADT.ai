@@ -24,7 +24,12 @@ from adt_ai.ut.render import (
     print_summary_rows,
 )
 from adt_ai.ut.reporter import ConsoleUt3Reporter
-from adt_ai.ut.rollup import print_compact_row, print_module_summary
+from adt_ai.ut.rollup import (
+    print_compact_row,
+    print_compact_units,
+    print_module_summary,
+    print_units,
+)
 from adt_ai.ut.runner import Ut3Request, Ut3Runner
 from adt_ai.ut.store import record_run, run_history
 from adt_ai.ut.timers import previous_seconds, record_seconds, timers_path, variant_key
@@ -177,10 +182,15 @@ def _run_ut_for_schema(
     # the same run grouped per module when `ut_module` is configured. Neither
     # heading carries `names`: they say what they group, and the section the run
     # happened under said what it covered. `-compact` replaces both with one row.
+    # The non-package units sit directly under the suite table, informational
+    # only (`#666`, Jan's "Under suite").
+    units = result.coverage.objects
     if args.compact:
         print_compact_row(result, passed=passed)
+        print_compact_units(units)
     else:
         print_summary_rows(result)
+        print_units(units)
         if result.modules:
             print_module_summary(result)
 
@@ -189,7 +199,9 @@ def _run_ut_for_schema(
     # store that only remembered verbose runs would compare against whenever
     # somebody last passed the flag rather than against last time (`#251`).
     if result.coverage.packages:
-        record_run(startup.root, owner, result.coverage.packages, variant=variant)
+        record_run(
+            startup.root, owner, result.coverage.packages, units=units, variant=variant
+        )
 
     # The gate reads the report rather than replacing it: every table above has
     # already printed, and what follows is only the list of packages under the

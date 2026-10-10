@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 import textwrap
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 # Jan's terminal is 80 columns, the same ceiling recompile's compile-error
 # rendering already assumes (`_MAX_COMPILE_ERROR_LINE_WIDTH`).
@@ -218,10 +218,21 @@ def _parse_block(text: str, marker: str, closing_field: str) -> tuple[CompileMes
 
     records: list[CompileMessage] = []
     current: dict[str, str] = {}
+    # A closed record's message runs on until the blank line ending it: 26.2
+    # explains `INVALID_EXTERNAL_IDENTIFIER` on a second line (`Value cannot
+    # contain a tab character.`, ADT #1065), and keeping only the `Error:` value
+    # printed the identifier without the reason it was refused.
+    continuing = False
     for line in region.splitlines():
         match = _FIELD_RE.match(line)
         if match is None:
+            if continuing and line.strip():
+                last = records[-1]
+                records[-1] = replace(last, message=f"{last.message}\n{line.rstrip()}")
+            else:
+                continuing = False
             continue
+        continuing = False
         field, value = match.group(1), match.group(2)
         if field in {"Error", "Warning"}:
             if field != closing_field:
@@ -237,6 +248,7 @@ def _parse_block(text: str, marker: str, closing_field: str) -> tuple[CompileMes
                 )
             )
             current = {}
+            continuing = True
             continue
         if field == "File" and "File" in current:
             # A new File before the previous record closed: drop the partial one
@@ -288,7 +300,7 @@ def _locator(message: CompileMessage) -> str:
     read as a parser bug. A column never appears without its line: the pair is
     only meaningful in order.
     """
-    parts = [message.file or "(no file)"]
+    parts = [visible_tabs(message.file) or "(no file)"]
     if message.line is not None:
         parts.append(str(message.line))
         if message.column is not None:
@@ -296,21 +308,34 @@ def _locator(message: CompileMessage) -> str:
     return ":".join(parts)
 
 
+def visible_tabs(text: str) -> str:
+    """A Tab spelled `\\t`, never left for the terminal to expand (ADT #1065).
+
+    APEX 26.2 refuses a Static ID holding a Tab, and the compiler names it with
+    the raw byte, in the identifier and, for a component exported to its own
+    file, in the path. Expanded, `adt1065<Tab>setting` reads as four spaces, and
+    nothing on screen says which character to remove.
+    """
+    return text.replace("\t", "\\t")
+
+
 def _wrapped(text: str, width: int) -> list[str]:
-    """Wrap the message body under the detail indent.
+    """Wrap the message body under the detail indent, each compiler line on its own.
 
     Long words are never broken. A token wider than the remaining space is almost
     always a path, the one thing in the message a reader wants to select and
     paste, so it is allowed to overhang rather than be split across lines.
     """
-    body = text.strip()
-    if not body:
-        return []
-    return textwrap.wrap(
-        body,
-        width             = width,
-        initial_indent    = _DETAIL_INDENT,
-        subsequent_indent = _DETAIL_INDENT,
-        break_long_words  = False,
-        break_on_hyphens  = False,
-    )
+    lines: list[str] = []
+    for paragraph in text.strip().split("\n"):
+        lines.extend(
+            textwrap.wrap(
+                visible_tabs(paragraph.strip()),
+                width             = width,
+                initial_indent    = _DETAIL_INDENT,
+                subsequent_indent = _DETAIL_INDENT,
+                break_long_words  = False,
+                break_on_hyphens  = False,
+            )
+        )
+    return lines

@@ -33,7 +33,6 @@ WHERE 1 = 1
     AND (UPPER(a.workspace)     = UPPER(:workspace)    OR :workspace IS NULL)
     AND (a.application_group    = :group_id     OR :group_id IS NULL)
     AND ('|' || :app_id || '|' LIKE '%|' || a.application_id || '|%' OR :app_id IS NULL)
-    AND (a.application_id < :max_app_id OR :max_app_id IS NULL)
     AND (:recent IS NULL OR a.last_updated_on >= CASE
         WHEN :recent >= 1 THEN TRUNC(SYSDATE) + 1 - :recent
         ELSE SYSDATE - :recent
@@ -72,6 +71,12 @@ FROM apex_applications a
 WHERE a.application_id = :app_id
 """.strip()
 
+# The three count queries below are aggregates, so the `-app` ranges that filter
+# the application list in Python reach them as one inclusive span instead,
+# lowest range bound to highest, open above when any range is `MIN+`. That is
+# what `-app 0-10000` hides temp and backup applications from the counts with,
+# since ADT #1074 retired `-max_app_id`. The list query carries no such bound.
+#
 # Grouped by workspace as well as owner since `#564`, so the owner table can
 # name the workspace each count sits in. An owner with applications in two
 # workspaces is two rows here, which is the honest shape: the single row it used
@@ -84,7 +89,8 @@ SELECT
 FROM apex_applications t
 WHERE t.is_working_copy = 'No'
     AND (UPPER('|' || :owners || '|') LIKE '%|' || UPPER(t.owner) || '|%' OR :owners IS NULL)
-    AND (t.application_id < :max_app_id OR :max_app_id IS NULL)
+    AND t.application_id BETWEEN NVL(:min_app_id, t.application_id)
+        AND NVL(:max_app_id, t.application_id)
 GROUP BY
     t.owner,
     t.workspace
@@ -101,13 +107,15 @@ SELECT
         SELECT COUNT(DISTINCT a.owner)
         FROM apex_applications a
         WHERE a.workspace = t.workspace
-            AND (a.application_id < :max_app_id OR :max_app_id IS NULL)
+            AND a.application_id BETWEEN NVL(:min_app_id, a.application_id)
+                AND NVL(:max_app_id, a.application_id)
     )                   AS owners,
     (
         SELECT COUNT(*)
         FROM apex_applications a
         WHERE a.workspace = t.workspace
-            AND (a.application_id < :max_app_id OR :max_app_id IS NULL)
+            AND a.application_id BETWEEN NVL(:min_app_id, a.application_id)
+                AND NVL(:max_app_id, a.application_id)
     )                   AS applications,
     t.apex_developers   AS developers
 FROM apex_workspaces t
@@ -150,7 +158,8 @@ WHERE 1 = 1
     AND a.workspace     NOT IN ('INTERNAL')
     AND a.workspace     NOT LIKE 'COM.ORACLE.%'
     AND (UPPER('|' || :schemas || '|') LIKE '%|' || UPPER(a.owner) || '|%' OR :schemas IS NULL)
-    AND (a.application_id < :max_app_id OR :max_app_id IS NULL)
+    AND a.application_id BETWEEN NVL(:min_app_id, a.application_id)
+        AND NVL(:max_app_id, a.application_id)
 GROUP BY
     a.workspace,
     a.workspace_id
@@ -389,6 +398,11 @@ END;
 # `REFERENCE_NOT_FOUND` per file, 67 of them on a live application. Jan,
 # 2026-09-23: *"export plugins in apexlang as they are (untouched) so the import
 # does not require anything extra"*.
+#
+# APEX 26.2 carries the Translation Repository of an Application-Based
+# translated application as `generated-artifacts/translations.sql`, but only
+# when asked (ADT #1066, measured on FREEPDB262 2026-10-09: no flag, no file), so
+# `apex_with_translations` binds here as it does for the SQL formats.
 EXPORT_APEXLANG_QUERY = """
 DECLARE
     l_files apex_t_export_files;
@@ -396,7 +410,8 @@ BEGIN
     l_files := APEX_EXPORT.GET_APPLICATION (
         p_application_id        => :app_id,
         p_split                 => TRUE,
-        p_type                  => 'APEXLANG'
+        p_type                  => 'APEXLANG',
+        p_with_translations     => (:with_translations = 'Y')
     );
     APEX_COLLECTION.CREATE_COLLECTION (
         p_collection_name       => 'ADT_APEX_EXPORT',

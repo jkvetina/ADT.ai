@@ -109,13 +109,14 @@ A normal wheel installed inside another repository's `.venv` is still a package 
 `ACTIONS:` closes the run and lists only upgrades an online check actually found:
 
 - `-update` appears when ADT.ai, `oracledb` or SQLcl is behind. `oracledb` counts because the full update reinstalls `requirements.txt`.
-- `-sqlcl` appears only when SQLcl itself is behind, or when it is below the APEXlang floor below.
+- `-sqlcl` appears only when SQLcl itself is behind, or when it is below one of the two floors below.
 - A schema folder rename appears when the exported tree disagrees with the case your layout would write.
 - The APEXlang SQLcl floor appears when this project exports APEXlang and your SQLcl is too old to do it correctly.
+- The codescan SQLcl floor appears when this project gates on `validate -codescan` or `patch_codescan` and your SQLcl is older than the release it was measured on.
 
 When none applies the whole section is omitted, header included: an up-to-date machine is offered nothing. Under `-update` and `-sqlcl` it always prints, because there it reports the actions that ran.
 
-`-offline` checks nothing online, so the two staleness offers cannot appear there. The last two read your repository rather than the network, and are reported whether or not you are offline.
+`-offline` checks nothing online, so the two staleness offers cannot appear there. The last three read your repository rather than the network, and are reported whether or not you are offline.
 
 The offer is always for the latest release. A specific version is something you ask for, never something `doctor` proposes.
 
@@ -156,6 +157,14 @@ ACTIONS:
 Only a project that already holds `apexlang/` exports at its configured export shape (`path_apex` / `apex_path_app` / `apexlang`, the same shape [validate](validate.md) matches) is held to the floor. A database-only project has no reason to care which SQLcl it has, and `doctor` still diagnoses a machine that has no project at all.
 
 The verdict compares your installed version against a fixed number, so `-offline` reports it exactly as a plain run does.
+
+<br>
+
+### Codescan SQLcl floor
+
+[`validate -codescan`](validate_codescan.md) needs **SQLcl 26.3 or newer**, the release its report format was measured on. Below it the `SQLcl` row reads `FAIL`, the run exits non-zero, and `ACTIONS:` names both numbers and the `-sqlcl` upgrade, printed once when both floors apply.
+
+A project that has run codescan, so holds `config/internal/codescan.db`, and gates on it is held to it: `codescan_fail_on: none` reads the scan as a report and is not. So is any project with `patch_codescan` at `warn` or `block`, since every `patch -create` then runs the scan.
 
 <br>
 

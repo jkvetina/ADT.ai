@@ -23,6 +23,7 @@ from adt_ai.export_apex.inventory import (
     ApexApplication,
     ApexDiscovery,
     ApexWorkspace,
+    AppSpan,
     with_derived_workspaces,
 )
 
@@ -42,7 +43,7 @@ def print_reveal_screen(
     configured_workspace: str | None = None,
     is_filtered: bool = False,
     widen_owner_counts: bool = False,
-    max_app_id: int | None = None,
+    app_span: AppSpan | None = None,
 ) -> None:
     """Print `WORKSPACES:`, `APPLICATIONS PER LISTED OWNERS:`, then each schema.
 
@@ -58,6 +59,9 @@ def print_reveal_screen(
     filtered screen does not head its own answer with the whole instance.
     ``widen_owner_counts`` is `-owners`, which drops the schema filter from the
     owner counts alone; it has never applied to the application list.
+    ``app_span`` is the `-app` ranges as one bound on both count tables, so
+    `-app 0-10000` hides temp and backup applications from the counts as well
+    as from the list (ADT #1074, which retired `-max_app_id`).
     """
     schemas = list(schemas)
     active_workspaces = {
@@ -67,7 +71,7 @@ def print_reveal_screen(
     }
     schema_filter = None if is_filtered else schemas
     all_workspaces = discovery.workspaces(
-        workspace=workspace, schemas=schema_filter, max_app_id=max_app_id
+        workspace=workspace, schemas=schema_filter, app_span=app_span
     )
     all_workspaces = with_derived_workspaces(
         discovery,
@@ -75,10 +79,10 @@ def print_reveal_screen(
         configured_workspace=workspace,
         named_by_applications=active_workspaces,
         schemas=schema_filter,
-        max_app_id=max_app_id,
+        app_span=app_span,
     )
     owner_filter = None if widen_owner_counts else schemas
-    all_owner_counts = discovery.owner_app_counts(owner_filter, max_app_id=max_app_id)
+    all_owner_counts = discovery.owner_app_counts(owner_filter, app_span=app_span)
     listed = (
         [w for w in all_workspaces if w.workspace in active_workspaces]
         if (is_filtered and active_workspaces) else all_workspaces

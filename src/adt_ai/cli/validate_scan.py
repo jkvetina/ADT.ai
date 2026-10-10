@@ -46,8 +46,11 @@ from adt_ai.cli.refresh_connect import (
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.dependencies import queries as dependency_queries
 from adt_ai.export_apex.filters import ApexPageSelection
+from adt_ai.shared.apex_version import apex_version_tuple
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.internal_paths import internal_path
+from adt_ai.validate.queries import STATIC_ID_TAB_QUERY
+from adt_ai.validate.report import visible_tabs
 
 # `patch`'s scan and `export_apex`'s owner routing are imported inside the
 # functions that run a scan, never here (ADT #895). `cli/runtime.py` imports
@@ -76,6 +79,10 @@ def _scan_argument_error(args: argparse.Namespace) -> str | None:
     connection.
     """
     scanning = bool(getattr(args, "scan", False))
+    if scanning and getattr(args, "codescan", False):
+        # Two different runs: `-scan` asks a live application, `-codescan`
+        # reads exported files (ADT #1026), and neither is a part of the other.
+        return "-codescan CANNOT BE COMBINED WITH -scan\n\n-codescan scans exported files."
     if scanning:
         if args.input:
             return "-input CANNOT BE COMBINED WITH -scan\n\n-input validates exported files."
@@ -142,9 +149,64 @@ def _scan_applications(
         # is printed BEFORE the scan rather than above its results.
         print_adt_header("SCANNING APPLICATIONS:")
         apex_version = resolve_apex_version(gateway)
-        return _print_component_scans(_scan_reports(gateway, targets, apex_version))
+        reports = _scan_reports(gateway, targets, apex_version)
+        # Read while `SCANNING APPLICATIONS:` still announces the reads under it,
+        # printed in a section of its own once the scan rows are out.
+        tabs = _static_id_tabs(gateway, apps, apex_version)
+        scanned = _print_component_scans(reports)
+        return _print_static_id_tabs(tabs) or scanned
 
     return run_schema_sections([schema], scan_segment, first_started_at=handler_started_at)
+
+
+#: The release that refuses to save a Static ID holding a Tab (ADT #1065).
+STATIC_ID_TAB_FROM = (26, 2)
+
+
+def _static_id_tabs(
+    gateway: QueryGateway,
+    apps: list[int],
+    apex_version: str,
+) -> list[tuple[int, str, str]]:
+    """Every component 26.2 will not save as it stands, `(app, type, Static ID)`.
+
+    APEX 26.2 refuses to save any of 21 component types while its Static ID holds
+    a Tab, and leaves the values already stored alone until somebody edits one,
+    so an application can scan clean and still be one an edit cannot be saved
+    in. The compile scan cannot see it, the dictionary can
+    (`validate/queries/static_id_tab.py`).
+
+    Below 26.2 the rule does not exist, so nothing is read; an unknown version
+    stays permissive, as `shared/apex_version.py` has every caller do.
+    """
+    parsed = apex_version_tuple(apex_version)
+    if parsed and parsed < STATIC_ID_TAB_FROM:
+        return []
+    return [
+        (app_id, str(row["COMPONENT_TYPE"]), visible_tabs(str(row["STATIC_ID"])))
+        for app_id in apps
+        for row in (
+            {key.upper(): value for key, value in found.items()}
+            for found in gateway.fetch_all(STATIC_ID_TAB_QUERY, {"app_id": app_id})
+        )
+    ]
+
+
+def _print_static_id_tabs(rows: list[tuple[int, str, str]]) -> int:
+    """`STATIC IDS HOLDING A TAB:`, after the scan rows, and an error (ADT #1065).
+
+    Jan picked the shape with chips: a section of its own, the run exiting
+    non-zero. A clean application prints nothing here: its scan row above
+    already says it was looked at.
+    """
+    if not rows:
+        return 0
+    width = max(len(component_type) for _, component_type, _ in rows)
+    print_adt_header("STATIC IDS HOLDING A TAB:")
+    for app_id, component_type, static_id in rows:
+        print(f"  APP {app_id} | {component_type:<{width}} | {static_id}")
+    print()
+    return 1
 
 
 def _scan_targets(

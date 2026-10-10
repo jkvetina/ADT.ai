@@ -1,6 +1,6 @@
 # Run History (adtai ut)
 
-`ut` records every run in `config/internal/ut.db`: one row per run per schema, and one row per package the run measured, so `-verbose` can say what moved since the last run that differed. The last twenty runs per schema and `-name` selection are kept, and a root that cannot be written skips the history and runs normally.
+`ut` records every run in `config/internal/ut.db`: one row per run per schema, one per package it measured, so `-verbose` can say what moved since the last run that differed, and one per other unit listed. The last twenty runs per schema and `-name` selection are kept, and a root that cannot be written skips the history and runs normally.
 
 <br>
 
@@ -18,10 +18,20 @@ erDiagram
         package TEXT PK
         percent REAL
     }
+    unit_coverage {
+        run_id INTEGER PK, FK
+        object_type TEXT PK
+        object_name TEXT PK
+        lines INTEGER
+        blocks_total INTEGER
+        blocks_covered INTEGER
+        disabled INTEGER
+    }
     runs ||--o{ package_coverage : measures
+    runs ||--o{ unit_coverage : lists
 ```
 
-The foreign key is declared with a cascade and switched on by the opener, so pruning a run takes its package rows with it.
+The foreign keys are declared with a cascade and switched on by the opener, so pruning a run takes its package and unit rows with it.
 
 <br>
 
@@ -51,6 +61,22 @@ Nullable is No where the column is declared NOT NULL or belongs to the primary k
 
 <br>
 
+### unit_coverage
+
+Every non-package unit the run listed, entered or not, kept apart from the packages so no comparison can read one; `OTHER UNITS:` prints the entered ones.
+
+| Column         | Type    | Nullable | Key                | Meaning                                                                                   |
+| -------------- | ------- | -------- | ------------------ | ----------------------------------------------------------------------------------------- |
+| run_id         | INTEGER | No       | PK, FK runs.run_id | The run.                                                                                  |
+| object_type    | TEXT    | No       | PK                 | `TYPE BODY`, `PROCEDURE`, `FUNCTION` or `TRIGGER`; a trigger and a procedure share names. |
+| object_name    | TEXT    | No       | PK                 | The unit name, upper case.                                                                |
+| lines          | INTEGER | No       |                    | Its source line count.                                                                    |
+| blocks_total   | INTEGER | No       |                    | Blocks the collector saw, `NOT_FEASIBLE` excluded; 0 when nothing entered the unit.       |
+| blocks_covered | INTEGER | No       |                    | Of those, the blocks that ran.                                                            |
+| disabled       | INTEGER | No       |                    | 1 for a DISABLED trigger, which has no figure; 0 otherwise.                               |
+
+<br>
+
 ## Indexes
 
 | Index          | Table | Columns             | Unique |
@@ -63,10 +89,10 @@ One index, for the one question the store answers: this schema's runs, newest fi
 
 ## Version and lifetime
 
-The file is at version 2. A file from before version 1 is lifted in place with every run kept: the index takes its prefix and a file older than the `variant` column gets the column.
+The file is at version 3. A file from before version 1 is lifted in place with every run kept: the index takes its prefix and a file older than the `variant` column gets the column.
 
-A version 1 file loses the columns no comparison read, the run's `recorded_at` and each package's `lines`, `blocks_total` and `blocks_covered`, and keeps every run and every percent.
+A version 1 file loses the columns no comparison read, the run's `recorded_at` and each package's `lines`, `blocks_total` and `blocks_covered`, and keeps every run and every percent. A version 2 file gains `unit_coverage`, empty for the runs it already held.
 
-After each write the store keeps the newest twenty runs of that schema and `-name` selection, the key a comparison reads them by, and deletes the rest with their package rows. Twenty `-name` runs therefore never push out the full runs' baseline.
+After each write the store keeps the newest twenty runs of that schema and `-name` selection, the key a comparison reads them by, and deletes the rest with their package and unit rows. Twenty `-name` runs therefore never push out the full runs' baseline.
 
 Delete the file to start over; the next run recreates it and the comparison table stays empty until a second run differs.

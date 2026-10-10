@@ -24,11 +24,27 @@ Without `-app` nothing here runs, and the deploy is byte for byte what it was be
 
 ## Where the tree lands
 
-**The value is where the tree LANDS, not which applications ship.** Bare `-app` changes no application id. `-app <id>` installs the same tree on that id, with the alias derived in the same step, since an APEX alias is unique per workspace and a copied id keeping the source alias collides with the application it came from. One id per run: several applications cannot fold onto one id, and a second value is refused rather than reduced to the first.
+**The value is where the tree LANDS, not which applications ship.** Bare `-app` changes no application id. `-app <id>` installs the same tree on that id, with the alias derived in the same step, since an APEX alias is unique per workspace and a copied id keeping the source alias collides with the application it came from. One id per run: several applications cannot fold onto one id, and a second value is refused rather than reduced to the first. `-app 0` lands each application on a working copy of itself on APEX 26.2+, with the id and alias APEX picked ([patch_app.md](patch_app.md#a-working-copy-with--app-0)).
 
 The sandbox id is derived, never configured per developer: the application number carrying the task number, so application `100` under task `601` is `100601` and its alias `ORDERS_601`. Uniqueness comes from the task number, which is already unique across developers.
 
 Retargeting is a flag on SQLcl's `apex import`, never an edit to the tree's `deployments/default.json`, which is what lets a promote install the byte-identical tree a sandbox import validated.
+
+<br>
+
+## Into the same application, only what the patch changed
+
+On APEX 26.2 and newer, a deploy into the application's own id imports only the `.apx` files the patch lists, through SQLcl's `apex import -files`. There is no flag: bare `-app` and `-app <own id>` both qualify. A retarget, `-app <other id>`, always imports the whole tree, so a prototype or a sandbox is complete.
+
+The whole tree is imported instead whenever a subset could leave the application different from the tree:
+
+- the target does not hold the application yet, or APEX is older than 26.2;
+- `-force` overrides a drift refusal, which means overwrite;
+- a file the patch lists under the tree is gone, since only a whole-tree import removes a page;
+- the patch changed a file under the tree that is not an `.apx`, such as a static file or a deployment;
+- the patch lists nothing under the tree.
+
+The compile gate, and SQLcl's own import, still compile the whole tree; only the named files are written. The `> BUILDING APP` row counts the files the import carried, and the import log's `IMPORTED FILES` rows, under `DEPLOYED FROM`, name them; a whole-tree import has none.
 
 <br>
 
@@ -105,14 +121,14 @@ The first two are APEX's own `CHECKSUM-SH256`, independent of ids and comparable
 -- APEX APPLICATION 100 IMPORTED AS 100601
 --   LATEST ON TARGET | (no application)
 --   CHANGE BASED ON  | SH256:795mkyqBRAN1UkZCYSV6l3ntA3JyqzBP8fmKN6LOT7k=
---   MERGE BASE       | 9f2c1ab7d0e34c5f8b6a2d1e7c0f4a93b5d8e621 (db/dev)
+--   MERGE BASE       | 9f2c1ab7d0e34c5f8b6a2d1e7c0f4a93b5d8e621
 --   DEPLOYING        | TREE:785c6726ff679a37894c1eb3157b4f9862e797b5
 --   DEPLOYED FROM    | sandbox/apex/100_ORDERS/apexlang
 ```
 
 `DEPLOYED FROM` names the folder the application was read out of. The patch carries no copy of an APEXlang tree ([patch_content.md](patch_content.md)), so the log is the one place a reader finds where the bytes came from.
 
-`MERGE BASE` is the commit `export_apex -apexlang` recorded when it wrote the tree, and in brackets the ref [`-mirror`](export_apex.md) shares it on. It is not a signature and moves no verdict; it is what the refusal below turns into an instruction.
+`MERGE BASE` is the commit `export_apex -apexlang` recorded when it wrote the tree ([export_apex.md](export_apex.md#the-merge-base)). It is not a signature and moves no verdict.
 
 The row is absent for a tree exported without a recorded commit, which is every tree exported before this existed.
 
@@ -129,30 +145,31 @@ The refusal says who changed the application, when, and how old your base is:
 
   CHANGED BY  | DEVELOPER
   CHANGED ON  | 2026-09-23 17:02
-  YOUR BASE   | 2026-09-23 16:58 (a5e59eb0 on db/dev)
+  YOUR BASE   | 2026-09-23 16:58 (a5e59eb0)
 
-  1) git rebase db/dev
-  2) deploy again
-  3) or -force to overwrite
+  1) adtai export_apex -app 100 -apexlang -files
+  2) reconcile your change with it
+  3) deploy again
+  4) or -force to overwrite
 ```
 
 `CHANGED BY` and `CHANGED ON` are APEX's own `LAST_UPDATED_BY` and `LAST_UPDATED_ON`, the newer of the application and its pages. A Builder save names the developer. A deploy names the developer identity it ran under ([`IDENTITY.yaml`](config.md), and the stamp above), or the database user when there is none.
 
 They are read before the deploy locks the application, because the lock's build-status write stamps the application with this deploy's own user. An application nobody has touched since its import carries no author, and both rows then read `(not recorded)`.
 
-`YOUR BASE` is when `export_apex` took the checksum the change was made against, so the gap to `CHANGED ON` is how far behind you are, with the commit and the ref the rebase lands on. A tree exported before ADT recorded that time reads `(export time not recorded)`.
+`YOUR BASE` is when `export_apex` took the checksum the change was made against, so the gap to `CHANGED ON` is how far behind you are, with the commit the tree was exported at. A tree exported before ADT recorded that time reads `(export time not recorded)`.
 
 The checksums stay in the import log, which also records the author as a `LAST CHANGED` row, left out when APEX has none.
 
-**`Run: git rebase` needs both halves of the merge base.** A recorded commit is only a base this checkout has; a shared ref is what makes it everybody's.
-
-With both, the state now live on the target is a commit on that ref, disjoint pages merge as text, and the recovery is a rebase. With either missing, the recovery is the one it always was, a re-export and a reconciliation by hand.
+**The first step is always the fetch.** The checksum the deploy compares against lives in `config/internal/apex.db`, and only an export refreshes it, so step 1 exports the live application and records its new checksum. How your change is then reconciled with it is yours, or your AI's: ADT names the step and no git command, because it cannot rebase or merge somebody's change reliably. The `-create` warning names the same two steps ([patch_install.md](patch_install.md#the-application-check)).
 
 <br>
 
 ## What else is refused
 
 **A target id refuses a patch that also installs a full export.** `-app <id>` moves where the TREE lands and can do nothing about an `f<source>.sql` install script, so the two together would write the source application in place while the tree went to the sandbox. Several applications on one target id are refused for the same class of reason: one would land and the other would be dropped behind a correct-looking screen.
+
+**On APEX 26.2 and newer, an application another developer has locked in the App Builder is refused** before any import, naming who holds the lock and since when. `-force` deploys anyway and leaves their lock in place ([patch_verify.md](patch_verify.md#holding-the-application-shut-deploy_build_status)). While the deploy holds the lock, every other developer opening the application in the App Builder gets its `Application Locked` page, naming you and `ADT deploy <patch folder>`. A workspace administrator still sees `Unlock Application` there and can break the lock mid-deploy, so the drift check stays the guard.
 
 **`-force` overrides every refusal here** in the sense it already carries on `patch`, and the log records that it was set whether or not it changed the outcome:
 
@@ -161,6 +178,50 @@ With both, the state now live on the target is a commit on that ref, disjoint pa
 ```
 
 A completed deployment of the same payload to the same target is skipped without `-force` ([patch_deploy.md](patch_deploy.md)). Changing the application target or source invalidates that completion. Retargeted imports verify the application they landed on; a failed verification leaves the deployment incomplete.
+
+<br>
+
+## The import removes page locks
+
+An import deletes every page lock of the application it lands on, measured on APEX 26.1 and 26.2. So before the first script, on every APEX release, the deploy reads `apex_application_locked_pages` for each application it imports and warns when any page is locked:
+
+```text
+WARNING - PAGE LOCKS REMOVED BY THE IMPORT:
+-------------------------------------------
+  lock these pages again once the deploy is done
+
+  APP ID   PAGE ID   PAGE NAME   LOCKED BY   LOCKED ON
+  ------   -------   ---------   ---------   ----------------
+     100         1   Home        DEVELOPER   2026-10-07 09:12
+```
+
+The warning is read-only: the deploy still runs. A read that fails prints nothing, and a deploy with no locked page prints no warning.
+
+<br>
+
+## The tree is older than the target
+
+Before the first script, the deploy compares each imported tree's recorded APEX release (`apexlang/.apex/apexlang.json`) with the target's, and prints the `-create` warning again when the target is newer ([patch_install.md](patch_install.md#the-apex-release-check)):
+
+```text
+WARNING - APP 100 EXPORTED ON APEX 26.1, TARGET RUNS 26.2:
+```
+
+The import still runs; the tree only has to be exported again on the new release.
+
+<br>
+
+## Page locks hold a deploy below APEX 26.2
+
+Below 26.2 there is no application lock to take, so the deploy locks the application's pages instead, where the target allows it. The calls are the App Builder's own, `WWV_FLOW_PROPERTY_DEV.LOCK_PAGE` and `UNLOCK_PAGE`: undocumented, and granted to nobody until a DBA opens the target once:
+
+```sql
+grant execute on apex_260100.wwv_flow_property_dev to <parsing schema>;
+```
+
+The deploy then locks every page nobody holds, as your `apex_account` with the comment `ADT deploy <patch folder>`, and writes no `RUN_ONLY`. A page another developer holds stays theirs and is in the warning above; a page you already held keeps your own comment.
+
+The import deletes the deploy's page locks with the rest, and the release unlocks whatever a deploy that never imported left behind. Without the grant nothing changes and nothing is printed. With it, a page that would not lock, or no developer named, falls back to `RUN_ONLY` and says why under `NOTES:`.
 
 <br>
 

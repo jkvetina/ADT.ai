@@ -371,7 +371,7 @@ class ApexExportRunner(
                         ),
                     )
                 self._store_checksum(request, application, checksum)
-                self._record_merge_base(request, resolver, application)
+                self._record_merge_base(request, application)
                 # Reached only when every requested format wrote successfully, so
                 # an app that raised mid-export keeps its previous watermarks.
                 self._advance_watermarks(request, application, candidate, store)
@@ -484,28 +484,20 @@ class ApexExportRunner(
     def _record_merge_base(
         self,
         request     : ApexExportRequest,
-        resolver    : ApexFileResolver,
         application : ApexApplication,
     ) -> None:
         """Record what the APEXlang tree this run wrote descends from.
 
         `-apexlang` only, and only where the instance has the format at all. The
-        merge base answers "what do I rebase onto", and that needs a whole
-        application in files git can three-way merge; a `-full` export is one
-        generated SQL script and a `-page` slice is not an application, so
-        neither has an answer to give (ADT #725).
+        merge base names the commit a whole application's tree in files was
+        exported at; a `-full` export is one generated SQL script and a `-page`
+        slice is not an application, so neither has an answer to give (ADT #725).
         """
         if not request.actions.get("apexlang") or skipped_by_apex_release(
             "apexlang", request.apex_version
         ):
             return
-        _record_application_merge_base(
-            request.root,
-            application.app_id,
-            resolver.apexlang_root(application),
-            request.mirror_ref or "",
-            request.environment or "",
-        )
+        _record_application_merge_base(request.root, application.app_id)
 
 
 __all__ = [

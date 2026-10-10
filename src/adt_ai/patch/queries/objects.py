@@ -96,6 +96,75 @@ BEGIN
 END;
 """.strip()
 
+# Who holds the Builder's own application lock right now (ADT #1056). The view
+# reads the current lock on APEX 26.1 and 26.2 alike; no rows, or a null
+# `locked_by`, is an application nobody holds. Dates are the database's clock.
+APEX_APP_LOCK_QUERY = """
+SELECT locked_by, lock_comment,
+       TO_CHAR(locked_on, 'YYYY-MM-DD HH24:MI') AS locked_on
+FROM   apex_applications
+WHERE  application_id = :app_id
+""".strip()
+
+# The application lock a 26.2+ deploy holds instead of `RUN_ONLY` (ADT #1056).
+# Callable by the parsing schema with no extra grant, but only once a workspace
+# is set: without it both procedures raise `ORA-20001: Package variable
+# g_security_group_id must be set` (APEX 26.2.0, 2026-10-07). `DETACH` for the
+# reason `APEX_SET_BUILD_STATUS_BLOCK` gives: the release runs after the scan.
+# Measured: a user who is no workspace developer raises `ORA-20003`, a lock held
+# by another developer raises `ORA-20001 ... already locked by another user`,
+# and the same user locking again succeeds and replaces the comment, which is
+# how the release puts a developer's own comment back.
+APEX_LOCK_APPLICATION_BLOCK = """
+BEGIN
+    BEGIN
+        APEX_SESSION.DETACH;
+    EXCEPTION WHEN OTHERS THEN
+        NULL;
+    END;
+    APEX_UTIL.SET_WORKSPACE (
+        p_workspace => '{workspace}'
+    );
+    APEX_APPLICATION_ADMIN.LOCK_APPLICATION (
+        p_application_id    => {app_id},
+        p_lock_as_user      => '{user}',
+        p_lock_comment      => '{comment}'
+    );
+    COMMIT;
+END;
+""".strip()
+
+# Named rather than null: a null user removes ANY lock, so naming the deploy's
+# own one is what keeps a release from clearing somebody else's (fact 4).
+APEX_UNLOCK_APPLICATION_BLOCK = """
+BEGIN
+    BEGIN
+        APEX_SESSION.DETACH;
+    EXCEPTION WHEN OTHERS THEN
+        NULL;
+    END;
+    APEX_UTIL.SET_WORKSPACE (
+        p_workspace => '{workspace}'
+    );
+    APEX_APPLICATION_ADMIN.UNLOCK_APPLICATION (
+        p_application_id    => {app_id},
+        p_unlock_as_user    => '{user}'
+    );
+    COMMIT;
+END;
+""".strip()
+
+# The page locks an import is about to delete (ADT #1056). An APEXlang import on
+# 26.2 removes every row here for the application it lands on, so the deploy
+# reads them first and warns. Readable on 26.1 and 26.2.
+APEX_LOCKED_PAGES_QUERY = """
+SELECT page_id, page_name, locked_by,
+       TO_CHAR(locked_on, 'YYYY-MM-DD HH24:MI') AS locked_on
+FROM   apex_application_locked_pages
+WHERE  application_id = :app_id
+ORDER  BY page_id
+""".strip()
+
 # The application `-app` keeps before it overwrites one, as one full SQL export
 # (ADT #727, reshaped by #963). `p_split => FALSE` is `export_apex -full`'s
 # format, the `f<id>.sql` a deploy already installs with an `@` line, so the

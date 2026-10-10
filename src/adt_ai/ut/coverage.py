@@ -31,8 +31,8 @@ from adt_ai.ut.inventory import CoverageReport, PackageCoverage, SuitePackage
 #: utPLSQL instruments five and card `#648` collects all five, but every consumer
 #: of ``CoverageReport.packages`` (each summary row, the module roll-up, the run
 #: history) reads its members as the packages the run's suites test. So this
-#: constant is the seam: package bodies on the rendered side, the other four in
-#: ``CoverageReport.objects``, which nothing renders yet.
+#: constant is the seam: package bodies on the summary side, the other four in
+#: ``CoverageReport.objects``, which only the `OTHER UNITS:` block reads (`#666`).
 PACKAGE_BODY = "PACKAGE BODY"
 
 
@@ -136,9 +136,9 @@ def build_coverage_report(
         name = str(row.get("OBJECT_NAME") or "")
         object_type = _type(row)
         # **The two tuples part here, and only here.** A package body the run's
-        # suites test is rendered; everything else is collected and rendered by
-        # nothing, so an untested package still drops out exactly as it did
-        # before card `#648` while a trigger never has to earn a target at all.
+        # suites test goes to the summaries; an untested package still drops
+        # out exactly as it did before card `#648`, and every other unit goes to
+        # `OTHER UNITS:` without ever having to earn a target (`#666`).
         if object_type == PACKAGE_BODY:
             if name.upper() not in targets:
                 continue
@@ -153,6 +153,7 @@ def build_coverage_report(
                 blocks_total   = int(found.get("BLOCKS_TOTAL") or 0),
                 blocks_covered = int(found.get("BLOCKS_COVERED") or 0),
                 type           = object_type,
+                disabled       = bool(int(row.get("DISABLED") or 0)),
             )
         )
     report = CoverageReport(packages=tuple(listed), objects=tuple(objects))

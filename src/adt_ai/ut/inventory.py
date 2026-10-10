@@ -143,6 +143,10 @@ class PackageCoverage:
     label: triggers occupy their own Oracle namespace, so ``AUDIT_ROW`` can be a
     trigger and a procedure in one schema, and a lookup by name alone would
     collapse the two into whichever row was read last.
+
+    ``disabled`` is a trigger the dictionary reads as DISABLED (card `#666`). It
+    cannot fire, so no test could have reached it and no figure is honest: it
+    renders `?`, never `0.0`, and stays out of the `UNITS:` sum.
     """
 
     name           : str
@@ -150,6 +154,7 @@ class PackageCoverage:
     blocks_total   : int = 0
     blocks_covered : int = 0
     type           : str = "PACKAGE BODY"
+    disabled       : bool = False
 
     @property
     def measured(self) -> bool:
@@ -182,14 +187,15 @@ class CoverageReport:
     An empty report is the honest state for a run that measured nothing, and it
     renders as blank `COVERAGE` cells rather than as a missing column.
 
-    **``objects`` is the other four source types, and nothing renders it**
-    (card `#648`). utPLSQL instruments type bodies, procedures, functions and
-    triggers alongside package bodies, so the run measures them whether or not
-    anything asks; keeping them here rather than in ``packages`` is what makes
-    that free. Every consumer (each summary row, the module roll-up, the run
-    history) reads ``packages`` and treats its members as the packages the
-    run's suites test, so one trigger folded in there would move a printed
-    percentage with no test failing.
+    **``objects`` is the other four source types** (card `#648`), and only the
+    `OTHER UNITS:` block and `-compact`'s `UNITS:` line read it (card `#666`).
+    utPLSQL instruments type bodies, procedures, functions and triggers
+    alongside package bodies, so the run measures them whether or not anything
+    asks. Every other consumer (each summary row, the module roll-up, the gate,
+    the compared history) reads ``packages`` and treats its members as the
+    packages the run's suites test, so one trigger folded in there would move a
+    printed percentage with no test failing. Jan's call is that units are
+    informational only.
     """
 
     packages : tuple[PackageCoverage, ...] = field(default_factory=tuple)

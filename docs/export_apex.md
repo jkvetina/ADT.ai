@@ -14,7 +14,7 @@ See what is there before exporting anything:
 
 ```bash
 adtai export_apex -reveal
-adtai export_apex -reveal -owners -max_app_id 10000
+adtai export_apex -reveal -owners -app 0-10000
 adtai export_apex -ws HUB -group CORE -app 100 200 -reveal
 adtai export_apex -reveal 430 431
 ```
@@ -212,25 +212,13 @@ It is not a format and there is no flag for it. APEX computes it over the whole 
 
 <br>
 
-## The merge base and the export mirror
+## The merge base
 
-The checksum says whether the target moved. It cannot say what to do about it, and until this existed the only answer a refused deploy could give was "export again and reconcile by hand". That is compare-and-swap: a three-way merge needs base, ours and theirs, and ADT recorded the base's identity without recording the base.
+The checksum says whether the target moved. The commit says what the tree on disk descends from.
 
-**`-apexlang` now records the commit its tree was exported at, beside the checksum.** No flag, and nothing else to run: an export from a checkout at `9f2c1ab` stores `9f2c1ab` as the base of the tree it just wrote. A project outside version control records nothing and exports exactly as before.
+**`-apexlang` records the commit its tree was exported at, beside the checksum.** No flag, and nothing else to run: an export from a checkout at `9f2c1ab` stores `9f2c1ab` as the base of the tree it just wrote. A project outside version control records nothing and exports exactly as before. The export reads where the repository sits and writes nothing to git.
 
-**`-mirror db/<ENV>` commits every export onto one ref, so the base is shared.** It needs `-apexlang`, because no other format writes an application as files git can three-way merge:
-
-```bash
-adtai export_apex -app 100 -apexlang -files -mirror db/dev
-```
-
-The exported tree is committed onto `refs/heads/db/dev` at its own repository path, so a mirror commit and a branch commit touch the same files and merge as text. A full `refs/...` spelling is taken as given.
-
-Nothing else moves: not HEAD, not the branch, not the index, not the working tree, and an export that changed nothing adds no commit. Two exporters racing for the ref end with one of them recording no base rather than one overwriting the other.
-
-What it buys is on the deploy side. When `patch -deploy -app` refuses because the target moved, the refusal names `BASE` and `CURRENT` and ends in the `git rebase` that clears it, because the state now live on the target is a commit on that ref ([patch_import.md](patch_import.md)). Two branches that touched different pages then merge, with no re-export at all.
-
-A base with no mirror, or a mirror that could not be written, degrades to the re-export instruction rather than naming a rebase onto a base the tree never descended from.
+A refused deploy prints it as `YOUR BASE`, and its first step is this export again, since only an export refreshes the recorded checksum ([patch_import.md](patch_import.md)). A team that wants a shared DEV branch makes its own and points `patch -branch` at it.
 
 <br>
 
@@ -272,11 +260,10 @@ With no window either reaches over all time and the export lists what it wrote, 
 | -------------- | ---------- | ------- | ----------- |
 | `-ws`, `--ws` | No | connection `apex.workspace` | APEX workspace scope. |
 | `-group`, `--group` | No | connection `apex.group` | APEX application group scope. |
-| `-app`, `--app` | Yes | connection `apex.app` | Application ids to reveal or export. Each value is a plain id, a closed range `MIN-MAX`, or an open range `MIN+`; combine freely. Any range makes the scan run without an id filter and select the matches locally. |
+| `-app`, `--app` | Yes | connection `apex.app` | Application ids to reveal or export. Each value is a plain id, a closed range `MIN-MAX`, or an open range `MIN+`; combine freely. Any range makes the scan run without an id filter and select the matches locally. In reveal mode the ranges also bound the owner and application counts, lowest bound to highest, so `-app 0-10000` hides temp and backup applications from both. |
 | `-page`, `--page` | Yes | none | Page ids for the split, readable and embedded exports. Plain ids, closed ranges, open ranges, comma-separated values. Requires an explicit component-based format. |
 | `-deep`, `--deep` | No | off | Valid only with `-page`. Adds the shared components those pages use to the export and prints the database objects they use. |
 | `-component`, `--component` | Yes | none | Shared component filters as `TYPE:NAME_PATTERN`, with `%` and `*` as wildcards. Requires an explicit component-based format. |
-| `-max_app_id`, `--max_app_id`, `--max-app-id` | No | none | In reveal mode, list only applications below this id, and scope the owner and application counts the same way. |
 | `-recent [DAYS]`, `--recent [DAYS]` | No | off | Report components changed in the last DAYS days, or since the stored watermark when bare. Report-only without an explicit format. See above. |
 | `-by`, `--by` | No | none | Keep what one APEX developer changed last, over all time unless `-recent` sets a window. |
 | `-my`, `--my` | No | off | The same for the current git user, aliases resolved from the cache and workspace developers. |
@@ -293,6 +280,5 @@ With no window either reaches over all time and the export lists what it wrote, 
 | `-files`, `--files` | No | off | Export the static application files. |
 | `-files_ws`, `--files_ws`, `--files-ws` | No | off | Export the static workspace files. **Schema-level**, exactly like `-rest`. |
 | `-compact`, `--compact` | No | off | Replace the per-application blocks and their action rows with one time-weighted progress row per unit of work: one per application, one per schema-level slice. The `APEX APPLICATIONS:` overview stays above them, and a closed row names the unit without the slice it ran last. |
-| `-mirror REF`, `--mirror REF` | No | off | Commit each `-apexlang` export onto REF (for example `db/dev`) as a shared merge base, so a refused deploy ends in `git rebase REF` instead of a re-export. Requires `-apexlang`, refused without it. A bare name lands under `refs/heads/`; a full `refs/...` spelling is taken as given. HEAD, the branch, the index and the working tree are untouched, and an export that changed nothing adds no commit. |
 
 Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

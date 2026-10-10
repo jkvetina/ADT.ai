@@ -32,6 +32,7 @@ from adt_ai.doctor._base import (
     format_status_line,
 )
 from adt_ai.doctor.apexlang_floor import apexlang_sqlcl_shortfall
+from adt_ai.doctor.codescan_floor import codescan_sqlcl_shortfall
 from adt_ai.doctor.init import DoctorInitMixin
 from adt_ai.doctor.layout_check import schema_case_action_lines
 from adt_ai.doctor.upgrade import DoctorUpgradeMixin
@@ -239,6 +240,7 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
         self.version_cache_ttl   = version_cache_ttl
         # Rewritten by every `run()`, before the version rows stream.
         self._apexlang_sqlcl_shortfall = ""
+        self._codescan_sqlcl_shortfall = ""
 
     def run(self, request: DoctorRequest) -> DoctorResult:
         if request.init:
@@ -248,10 +250,17 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
         check_results = self._check_results()
         # Resolved before the rows stream, because the SQLcl row's status word
         # and the `ACTIONS:` section both read it and must agree (ADT #723).
+        installed_sqlcl = self._check_value(self._checks_by_name(check_results), "SQLcl")
         self._apexlang_sqlcl_shortfall = apexlang_sqlcl_shortfall(
             request.root,
             request.config,
-            self._check_value(self._checks_by_name(check_results), "SQLcl"),
+            installed_sqlcl,
+        )
+        # The same verdict for a project gating on `validate -codescan` (ADT #1026).
+        self._codescan_sqlcl_shortfall = codescan_sqlcl_shortfall(
+            request.root,
+            request.config,
+            installed_sqlcl,
         )
         self._extend(
             lines,
@@ -279,11 +288,13 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
             # section is already the place a read-only run puts its offers.
             action_lines = self._status_action_lines()
             action_lines.extend(self._apexlang_floor_action_lines(action_lines))
+            action_lines.extend(self._codescan_floor_action_lines(action_lines))
             action_lines.extend(self._layout_action_lines(request))
             # A floor breach is the one thing here that is not an offer: the
             # exports on disk were taken, or will be taken, with a SQLcl that
             # gets them wrong silently, so the run reports a failure (ADT #723).
-            if self._apexlang_sqlcl_shortfall:
+            # A codescan gate below its floor is the same kind of failure.
+            if self._apexlang_sqlcl_shortfall or self._codescan_sqlcl_shortfall:
                 exit_code = max(exit_code, 1)
             if action_lines:
                 self._begin_actions_section(lines)

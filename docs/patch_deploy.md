@@ -255,6 +255,8 @@ The tail carries the last object that did compile, which is what locates the fai
 
 `-app` on a `-deploy` run also lands the application's committed `apexlang/` tree in the Builder, through SQLcl's `apex import`; its row reads `> BUILDING APP`, a command rather than a file. Where it lands, how it is staged, what is read first and what is refused are on [patch_import.md](patch_import.md); the loop around it, export to promotion, is on apex_round_trip.md.
 
+Into the application's own id on APEX 26.2+, only the `.apx` files the patch changed are imported ([patch_import.md](patch_import.md#into-the-same-application-only-what-the-patch-changed)).
+
 The tree is compiled before `CONNECTING TO SCHEMA`, under `VALIDATING APEXLANG APPS:`, and a tree the compiler refuses stops the deploy under `ERROR - VALIDATION FAILED:` with nothing run ([patch_import.md](patch_import.md#the-tree-is-compiled-before-anything-runs)).
 
 <br>

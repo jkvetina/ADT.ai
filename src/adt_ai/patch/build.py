@@ -12,12 +12,12 @@ it needs from the workspace is which folder that is, so the workspace resolves
 the name and hands it over.
 
 **Everything that can refuse runs before the first byte is written**, which is
-the ordering rule the four gates below share: `require_forced_refresh` (a folder
+the ordering rule the five gates below share: `require_forced_refresh` (a folder
 already deployed), `require_fresh_full_app_exports` (an APEX full export older
 than its own components), `_reject_unresolved_merges` (a file still carrying
-conflict markers) and `check_patch_trees` (an APEXlang tree the compiler refuses,
-ADT #964). A refusal therefore leaves no folder, no scripts and no snapshots
-behind.
+conflict markers), `check_patch_trees` (an APEXlang tree the compiler refuses,
+ADT #964) and `check_patch_codescan` (#1025). A refusal therefore leaves no
+folder, no scripts and no snapshots behind.
 """
 
 from __future__ import annotations
@@ -30,8 +30,10 @@ from typing import Any
 
 from adt_ai.patch.apex_drift import DriftReads, changed_applications
 from adt_ai.patch.apex_import import AppTarget, one_target_refusal
+from adt_ai.patch.apex_release import ReleaseReads
 from adt_ai.patch.apex_validate import ApexlangValidation, check_patch_trees
-from adt_ai.patch.content import CONTENT_MODE_COMMITTED, CONTENT_MODE_LOCAL, file_present
+from adt_ai.patch.codescan_gate import PatchCodescan, check_patch_codescan, shipped_reader
+from adt_ai.patch.content import CONTENT_MODE_COMMITTED, file_present
 from adt_ai.patch.create import (
     _patch_files,
     _write_generated_patch_scripts,
@@ -48,8 +50,8 @@ from adt_ai.patch.report import build_reports
 from adt_ai.patch.scripts import collect_patch_scripts, reset_patch_scripts
 from adt_ai.patch.snapshots import _write_snapshots
 from adt_ai.patch.staleness import export_freshness, require_forced_refresh
+from adt_ai.patch.uncommitted import repo_uncommitted
 from adt_ai.shared.commit_discovery import CommitRecord
-from adt_ai.shared.git_uncommitted import every_uncommitted_path
 
 HASH_STAMP_FORMAT = "%Y-%m-%d %H:%M"
 
@@ -113,6 +115,7 @@ def build_database_patch(
     signature_gateway_factory: Callable[[str, str], Any] | None = None,
     validation: ApexlangValidation | None = None,
     stages: PatchBuildStages | None = None,
+    codescan: PatchCodescan | None = None,
 ) -> DatabasePatchResult:
     """Write ``folder`` and report what went into it.
 
@@ -196,7 +199,12 @@ def build_database_patch(
     # stays open through both, and its clock covers both). Read here, after
     # the rows had closed, it ran under a screen of finished rows.
     drift = DriftReads(root, signature_gateway_factory)
-    apex_notes = check_patch_trees(root, config, files, validation, after_compile=drift.read)
+    # ADT #1064's release probe rides the same rows, after the drift read.
+    releases = ReleaseReads(root, gateway_factory, after=drift.read)
+    apex_notes = check_patch_trees(root, config, files, validation, after_compile=releases.read)
+    # ADT #1025: `patch_codescan`, over only the files shipped, before any write.
+    check_patch_codescan(root, config, files, codescan, folder=folder, read=shipped_reader(
+        root, config, mode=content_mode, records=records, pinned=pinned))
     # The moment validation is over, ahead of every read below: the compile
     # gate's own warning already printed itself here (`PatchValidateReporter`
     # no longer holds it), and this is where a streaming caller prints the two
@@ -236,6 +244,10 @@ def build_database_patch(
         root, config, files, signature_gateway_factory,
         already_read=drift.answers if validation is not None else None,
     )
+    # ADT #1064: a tree exported on an older APEX than the target runs, asked
+    # of the connection the ALTERs below resolve (`-target`, else the default),
+    # which is the one `-deploy -target` writes to. A warning, like the one above.
+    release_drifts = releases.answer(config, files, compiled=validation is not None)
     present_files = {
         path: file_present(
             root, path, config, mode=content_mode, records=records,
@@ -315,7 +327,7 @@ def build_database_patch(
     # Computed here, ahead of `_write_snapshots`, rather than inline in the
     # `return` below (ADT #988): both read only what is already on disk by this
     # point -- `build_reports` reads `sql_files` and `generated`, and
-    # `_repo_uncommitted` reads git and this run's own generated paths, neither
+    # `repo_uncommitted` reads git and this run's own generated paths, neither
     # a snapshot -- so a streaming caller's `reported()` hook fires with the
     # per-schema blocks while the snapshot copy still has ~4s left to run
     # (measured on a real repo), and the `return` below spends the same values
@@ -331,7 +343,7 @@ def build_database_patch(
         generated = generated,
         present_files = present_files,
     )
-    uncommitted = _repo_uncommitted(
+    uncommitted = repo_uncommitted(
         root, folder, set(generated.paths), mode=content_mode
     )
     if stages is not None and stages.reported is not None:
@@ -380,6 +392,7 @@ def build_database_patch(
         refused_tables    = generated.refused_tables,
         claimed_tables    = generated.claimed_tables,
         changed_apps      = changed_apps,
+        release_drifts    = release_drifts,
         apex_notes        = apex_notes,
         changed_objects   = freshness.changed,
         unclocked_schemas = freshness.unclocked,
@@ -394,51 +407,6 @@ def build_database_patch(
         reports           = reports,
         uncommitted       = uncommitted,
     )
-
-
-def _repo_uncommitted(
-    root: Path,
-    folder: Path,
-    generated_paths: set[str],
-    *,
-    mode: str,
-) -> list[str]:
-    """Every file this build's own commit does not yet cover, repo-wide (ADT #967).
-
-    Jan, mid-run: *"if we have uncommitted changes in the repo, it should list
-    the files as a file tree ... Looks like you are printing something, but not
-    all uncommitted files, why is that?"* The old `WARNING - UNCOMMITTED FILES:`
-    asked a narrower question, `SchemaReport.uncommitted`'s own `_uncommitted()`
-    (removed by this card) only ever checked the patch's OWN files; this asks
-    git about the whole checkout, once, and `cli/patch_create_warnings.py`
-    renders whatever comes back as a file tree.
-
-    Two exclusions, both about what THIS build itself just did rather than what
-    was already sitting in the checkout dirty: a generated helper this run wrote
-    (``generated_paths``, the same set `report.py` excludes from its own,
-    narrower listing) and anything under the patch folder this call is in the
-    middle of writing -- a brand new `patch/<code>/` is untracked by
-    definition, and reporting it here would be the build warning about its own
-    output.
-
-    **Silent under `-local`**, the same carve-out the old `_uncommitted` made:
-    that mode ships the working tree on purpose, so an uncommitted file there is
-    the instruction rather than a surprise.
-    """
-    if mode == CONTENT_MODE_LOCAL:
-        return []
-    try:
-        folder_prefix = folder.resolve().relative_to(root.resolve()).as_posix() + "/"
-    except ValueError:
-        # The patch folder sits outside `root` (a caller's own arrangement,
-        # never the CLI's): nothing to strip, so every dirty path is reported.
-        folder_prefix = None
-    return [
-        path
-        for path in every_uncommitted_path(root)
-        if path not in generated_paths
-        and (folder_prefix is None or not path.startswith(folder_prefix))
-    ]
 
 
 def _reset_generated_artifacts(folder: Path, config: dict[str, Any]) -> None:

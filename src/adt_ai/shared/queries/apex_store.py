@@ -9,9 +9,9 @@ Version 2 (ADT #642) keys `watermarks` by an INTEGER `app_id` like every other
 table, and gives `_meta` the NOT NULL `value` every store's version table has.
 
 Version 3 (ADT #725) records what an APEXlang export was BASED ON beside the
-checksum that identifies it: `base_commit`, the commit the repository sat at, and
-`mirror_ref`, the ref `-mirror` shares that commit on. A checksum says whether
-the target moved; these two say what to rebase onto when it did.
+checksum that identifies it: `base_commit`, the commit the repository sat at.
+Until version 7 it also recorded the ref a since-removed export flag shared
+that commit on.
 
 Version 4 (ADT #873) drops `applications.workspace_id`, which every export
 fetched and stored and nothing read back.
@@ -25,6 +25,9 @@ the environment it was taken from: exporting from PLAYGROUND and deploying to
 WHATEVER compares WHATEVER's live checksum against PLAYGROUND's recorded one,
 which can never match. Recording the environment beside the checksum is what
 lets a drift check read the RIGHT live value instead of the target's.
+
+Version 7 (ADT #1062) drops every `applications` column the schema above no
+longer declares, which is that ref.
 """
 
 from __future__ import annotations
@@ -54,7 +57,6 @@ CREATE TABLE IF NOT EXISTS applications (
     checksum     TEXT,
     checksum_at  TEXT,
     base_commit  TEXT,
-    mirror_ref   TEXT,
     checksum_env TEXT
 );
 CREATE TABLE IF NOT EXISTS developers (
@@ -90,14 +92,14 @@ DROP TABLE _meta_v1;
 COMMIT;
 """
 
-# Version 2 to 3, two added columns. `ALTER TABLE ... ADD COLUMN` rather than a
+# Version 2 to 3, one added column. `ALTER TABLE ... ADD COLUMN` rather than a
 # rename-and-copy: nothing about the existing rows changes, so a rebuild would
 # only be a longer way to keep them, and the schema script above cannot add a
-# column to a table that already exists.
+# column to a table that already exists. The second column this step once
+# added is gone by version 7, so a store lifting from 2 never gains it.
 APEX_STORE_LIFT_2 = """
 BEGIN;
 ALTER TABLE applications ADD COLUMN base_commit TEXT;
-ALTER TABLE applications ADD COLUMN mirror_ref TEXT;
 COMMIT;
 """
 
@@ -143,14 +145,13 @@ APEX_CHECKSUM_UPSERT = (
     "checksum_env = excluded.checksum_env"
 )
 
-# Written verbatim rather than through the COALESCE upsert above, because both
-# values describe THIS export: a re-export from a checkout outside version
+# Written verbatim rather than through the COALESCE upsert above, because the
+# value describes THIS export: a re-export from a checkout outside version
 # control has no base, and leaving the previous one standing would hand the
 # deploy a commit the tree on disk no longer descends from.
 APEX_MERGE_BASE_UPSERT = (
-    "INSERT INTO applications (app_id, base_commit, mirror_ref) VALUES (?, ?, ?) "
-    "ON CONFLICT(app_id) DO UPDATE SET "
-    "base_commit = excluded.base_commit, mirror_ref = excluded.mirror_ref"
+    "INSERT INTO applications (app_id, base_commit) VALUES (?, ?) "
+    "ON CONFLICT(app_id) DO UPDATE SET base_commit = excluded.base_commit"
 )
 
 APEX_DEVELOPERS_QUERY = (

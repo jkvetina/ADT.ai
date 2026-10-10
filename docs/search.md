@@ -339,7 +339,7 @@ Every link carries a flag saying how far its target resolved:
 | `DYNAMIC` | The target page is computed at runtime, from a substitution string or an item value, and cannot be resolved statically. |
 | `NONE` | The link leaves APEX entirely, or carries no page target at all. |
 
-`-to` and `-from` list only `PAGE` and `CROSS_APP`, and so do the Mermaid and DOT diagrams `rebuild -app` writes. The JSON diagram keeps every link, `DYNAMIC` and `NONE` included, so other tooling can decide for itself what to draw.
+`-to` and `-from` list only `PAGE` and `CROSS_APP`, and so do the Mermaid and DOT diagrams `rebuild -app` writes. The JSON diagram keeps every link, `DYNAMIC` and `NONE` included, so other tooling can decide for itself what to draw, as does the CSV.
 
 <br>
 

@@ -143,6 +143,9 @@ def export_objects(
     reporter.finish_export(schema)
     reporter.objects_not_exported(schema, failures[failures_before:])
     reporter.job_arguments_not_exported(schema, dropped_job_arguments)
+    reporter.cross_table_data_grants_not_exported(
+        schema, discovery.skipped_data_grants.get(schema, [])
+    )
     return failures[failures_before:]
 
 

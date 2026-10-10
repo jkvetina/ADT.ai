@@ -60,8 +60,9 @@ STORE_NAME = "ut.db"
 #: Version 1 (ADT #642) is the first the file carries. A file from before it has
 #: no `_meta`, an index with no prefix, an ISO stamp with a `T`, and possibly no
 #: `variant` column; :func:`_lift_legacy` fixes all four, history intact.
-#: Version 2 (ADT #873) drops the columns no comparison reads.
-SCHEMA_VERSION = "2"
+#: Version 2 (ADT #873) drops the columns no comparison reads. Version 3
+#: (ADT #666) adds `unit_coverage`, which the schema script creates.
+SCHEMA_VERSION = "3"
 
 #: What this store was called while the command was ``ut3`` (ADT #390).
 #:
@@ -97,10 +98,16 @@ class RunSnapshot:
     ``percents`` holds only the packages that run could measure, so two
     snapshots comparing equal means the two runs found the same thing, which is
     the test :func:`baseline_percents` walks back on.
+
+    ``units`` is the type bodies, procedures, functions and triggers that run
+    listed (ADT #666), empty for a run recorded before they were kept. They are
+    informational only and no comparison reads them, so a unit can never move
+    the baseline.
     """
 
     run_id   : int
     percents : dict[str, float]
+    units    : tuple[PackageCoverage, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -179,6 +186,20 @@ def run_history(
                             (run_id,),
                         )
                     },
+                    units    = tuple(
+                        PackageCoverage(
+                            name           = str(name),
+                            lines          = int(lines),
+                            blocks_total   = int(total),
+                            blocks_covered = int(covered),
+                            type           = str(unit_type),
+                            disabled       = bool(disabled),
+                        )
+                        for unit_type, name, lines, total, covered, disabled in connection.execute(
+                            queries.RUN_UNITS_QUERY,
+                            (run_id,),
+                        )
+                    ),
                 )
                 for (run_id,) in runs
             )
@@ -234,6 +255,7 @@ def record_run(
     schema: str,
     packages: tuple[PackageCoverage, ...],
     *,
+    units: tuple[PackageCoverage, ...] = (),
     variant: str = ALL_SUITES_VARIANT,
     retain: int = DEFAULT_RETAINED_RUNS,
 ) -> int | None:
@@ -245,6 +267,9 @@ def record_run(
 
     ``variant`` is the run's own `-name` selection, so a filtered run keeps its
     own history instead of standing in front of the full runs either side of it.
+
+    ``units`` lands in a table of its own (ADT #666), so nothing that reads the
+    packages' percents can see one.
     """
     path = store_path(root)
     try:
@@ -261,6 +286,21 @@ def record_run(
                 [
                     (run_id, package.name.upper(), package.percent)
                     for package in packages
+                ],
+            )
+            connection.executemany(
+                queries.INSERT_UNIT_STATEMENT,
+                [
+                    (
+                        run_id,
+                        unit.type,
+                        unit.name.upper(),
+                        unit.lines,
+                        unit.blocks_total,
+                        unit.blocks_covered,
+                        int(unit.disabled),
+                    )
+                    for unit in units
                 ],
             )
             _prune(connection, _key(schema), variant, retain)
@@ -384,9 +424,14 @@ def _lift_1(connection: sqlite3.Connection) -> None:
         drop_columns(connection, table, columns)
 
 
+def _lift_2(connection: sqlite3.Connection) -> None:
+    """Nothing to move: `unit_coverage` is new and the schema script creates it."""
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(None, "1", _lift_legacy),
     Migration("1", "2", _lift_1),
+    Migration("2", "3", _lift_2),
 )
 
 
@@ -424,6 +469,7 @@ def _prune(connection: sqlite3.Connection, schema: str, variant: str, retain: in
     # connection and a future reader opening this file without it would leave
     # orphan rows behind.
     connection.execute(queries.DELETE_PACKAGES_STATEMENT.format(marks=marks), doomed)
+    connection.execute(queries.DELETE_UNITS_STATEMENT.format(marks=marks), doomed)
     connection.execute(queries.DELETE_RUNS_STATEMENT.format(marks=marks), doomed)
 
 

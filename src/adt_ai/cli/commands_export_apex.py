@@ -145,7 +145,6 @@ def run_apex_reveal(run: ApexRun) -> int:
             group     = scope.group,
             app_ids   = scope.app_ids,
             recent_days = run.recent_days,
-            max_app_id = args.max_app_id,
         )
         run.applications_by_schema[schema] = run.in_selection(applications)
     # Still a read, so it runs before the first table prints (`#858`).
@@ -159,7 +158,7 @@ def run_apex_reveal(run: ApexRun) -> int:
         configured_workspace = configured_workspace,
         is_filtered          = bool(args.app) or bool(args.schema),
         widen_owner_counts   = bool(args.owners),
-        max_app_id           = args.max_app_id,
+        app_span             = run.app_selection.span if run.app_selection else None,
     )
     print_apex_owner_not_configured(located.not_configured)
     print_apex_app_not_found(located.not_found, reveal=True)
@@ -193,7 +192,6 @@ def run_apex_export(run: ApexRun) -> int:
             group     = scope.group,
             app_ids   = scope.app_ids,
             recent_days = None,
-            max_app_id = args.max_app_id,
         )
         run.applications_by_schema[schema] = run.in_selection(applications)
         # Exports no application, so it lists none (`schema_level_only`).
@@ -339,7 +337,6 @@ def _export_one_schema(
             # gates read it rather than asking the DB again.
             apex_version=versions.get("APEX"),
             compact=args.compact,
-            mirror_ref=args.mirror,
             validate_apexlang=validate_apexlang,
         )
     )

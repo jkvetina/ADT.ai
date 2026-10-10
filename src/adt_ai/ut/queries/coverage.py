@@ -155,6 +155,10 @@ ORDER BY u.type, u.name
 # agree. The CASE maps one vocabulary onto the other so a record's type is the
 # coverage spelling throughout and nothing downstream has to translate. Two
 # vocabularies keyed against each other is how a join silently matches nothing.
+#
+# DISABLED is 1 for a trigger `ALL_TRIGGERS` reads as DISABLED (card `#666`): it
+# cannot fire, so `OTHER UNITS:` prints `?` for it rather than a figure no test
+# could have moved. A scalar subquery, so every other row reads 0 at no join cost.
 SCHEMA_PACKAGES_QUERY = """
 SELECT
     o.object_name,
@@ -174,7 +178,16 @@ SELECT
                                       WHEN 'TYPE'     THEN 'TYPE BODY'
                                       ELSE o.object_type
                                   END
-    )                       AS lines
+    )                       AS lines,
+    (
+        SELECT COUNT(*)
+        FROM all_triggers t
+        WHERE 1 = 1
+            AND o.object_type   = 'TRIGGER'
+            AND t.owner         = o.owner
+            AND t.trigger_name  = o.object_name
+            AND t.status        = 'DISABLED'
+    )                       AS disabled
 FROM all_objects o
 WHERE 1 = 1
     AND o.owner             = :owner

@@ -325,11 +325,6 @@ def _run_export_apex(
     if not reveal and not any(actions.values()) and not recent_report_only:
         _print_missing_apex_format_guidance()
         return 2
-    # Checked here rather than in the parser because `-all` selects `apexlang`
-    # without naming it, and only `_apex_actions` knows that (`#725`).
-    if args.mirror and not actions.get("apexlang"):
-        print_adt_error("ARGUMENT INVALID", "-mirror REQUIRES -apexlang")
-        return exit_code_for("ARGUMENT INVALID")
 
     def default_gateway_factory(schema: str) -> QueryGateway:
         return build_gateway(startup, schema_connections[schema], project_root=root)
