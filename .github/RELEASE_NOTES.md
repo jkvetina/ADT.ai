@@ -1,24 +1,21 @@
-- **`patch`: `-create` writes a table's and a sequence's ALTER to `tables_before/`**, and every script in `tables_after/` runs after the table rows, a hand-written `ALTER TABLE` included.
-- **`patch`: `-deploy` refuses a full or split APEX install onto an application changed after the patch was built**, and the `patch_signatures` setting is now `deploy_live_check`.
-- **`patch`: `-create` prints its screen as it builds**, and `PATCH FILES:` lists `DEPLOY.sql` first, then the install scripts in the order it runs them.
-- **`patch`: `-upload -folder` refuses a folder that does not exist before it connects.**
-- **A command that streams its screen no longer loses the output of a child that exits first**, so a fast run keeps its transcript.
-- **`recompile`: `-silent` keeps the errors**: `INVALID OBJECTS:`, `ERROR - RECOMPILATION FAILED:` and `ROOT CAUSES:` still print, and only the overview is dropped.
-- **`recompile`: `-warnings ALL` enables every warning category**, any other unknown value is refused before the run connects, and `-disabled -type TRIGGER` prints only the disabled triggers.
-- **`export_apex`: `-by` and `-my` without `-recent` export only the components that developer last changed.**
-- **`export_db`: `-delete` beside `-type` or `-name` deletes only the files those filters match**, and scheduler programs export to `job_programs/` with every job bringing its program and schedule.
-- **`export_data` keeps the offset of a `TIMESTAMP WITH TIME ZONE`** in the CSV and in the MERGE.
-- **`search`: `-since` and `-until` refuse a value that is not a date before reading any history**, `-from` names a materialized view as such, and a one-object `-data` list reads in the singular.
-- **`validate` and every scan-based command leave another session's `DEPSCAN$` helpers alone**, so two scans at once no longer fail each other.
-- **`connection`: `-create -default` writes `schema_db` beside `schema_apex`**, and the `CONNECTION FILE NOT FOUND` refusal adds a third remedy.
-- **The `discovery` and `doctor` documentation states what the commands do**: comments are read past, not refused, and `adtai doctor` gives no hint for `adtai update` or `adtai upgrade`.
+- **`patch`: `-deploy -app` on APEX 26.2+ imports only the changed `.apx` files into the same application**, and `-deploy -app 0` lands the tree on a working copy of the application instead.
+- **`patch`: `-deploy -app` holds the target with the App Builder application lock on APEX 26.2+ instead of RUN_ONLY**, and with page locks on an older APEX where a DBA has granted them.
+- **`patch`: `-create` and `-deploy -app` warn when the target runs a newer APEX than the APEXlang tree was exported on.**
+- **`validate -codescan` runs the SQLcl codescan over the exported code with a baseline ratchet**, and `patch -create` scans the files the patch carries. `codescan_rules` picks the rules reported, `codescan_ignore` suppresses a finding with its reason, and a new finding names who last changed its file.
+- **`doctor` names the SQLcl 26.3 that codescan needs** once a project gates on codescan, and says how to upgrade.
+- **`export_apex`: `-apexlang` keeps the translations of a translated application on APEX 26.2.** `-max_app_id` and `-mirror` are removed; `-app 0-10000` now also bounds the counts `-reveal` prints.
+- **`export_db` exports 26ai Deep Data Security Data Grants and Data Roles.**
+- **`validate` names every Static ID holding a Tab**, which APEX 26.2 will not save.
+- **`rebuild -app` writes the whole application flow as one CSV.**
+- **`ut` lists type bodies, procedures, functions and triggers in an `OTHER UNITS:` block of their own.**
+- **A drift refusal names the fetch to run first.**
 
 ## Verification
 
 | Suite          | Passed | Failed | Unverified | Coverage | Cores |  Time |
 | -------------- | -----: | -----: | ---------: | -------: | ----: | ----: |
-| Unit tests     |  10647 |        |            |     100% |    14 |  4:05 |
-| User stories   |    247 |        |            |          |     3 | 17:29 |
-| Security audit |     21 |        |            |          |     1 |  7:17 |
+| Unit tests     |  11072 |        |            |     100% |    14 |  3:05 |
+| User stories   |    256 |        |            |          |     3 | 31:20 |
+| Security audit |     21 |        |            |          |     1 |  1:50 |
 
 The maintained private test suite is available with the existing [Company Sponsor membership on Buy Me a Coffee](https://buymeacoffee.com/apexdeploymenttool).

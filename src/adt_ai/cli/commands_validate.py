@@ -250,6 +250,13 @@ def _run_validate(
         # The one mode that connects: it asks the running application what the
         # exported files cannot answer (`#30`), see `cli/validate_scan.py`.
         return _scan_applications(args, root, gateway_factory)
+    if getattr(args, "codescan", False):
+        # SQLcl's code scanner over the exports, gated by a baseline (ADT
+        # #1026). Imported here because that module builds on this one. The
+        # module global is handed over so the CLI facade's patch sync reaches it.
+        from adt_ai.cli.validate_codescan import run_codescan
+
+        return run_codescan(args, root, run_sqlcl_script)
     inputs = _flatten_arg_groups(args.input)
     app_ids = _flatten_arg_groups(args.app)
     config = _optional_config(args, root, inputs, app_ids)

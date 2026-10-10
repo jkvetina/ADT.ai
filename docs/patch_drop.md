@@ -77,6 +77,8 @@ So `-drop 100` refuses and names what actually sits at that id, and an id the sc
 
 The source has to sit in the same workspace as the target. An APEX alias is unique per workspace, so the derivation only holds inside one, and matching across the boundary would let an application in one workspace authorize removing an application in another.
 
+**A working copy `-deploy -app 0` made is the one other droppable id**, on APEX 26.2 and newer ([patch_app.md](patch_app.md#a-working-copy-with--app-0)). APEX picks its id, so no derivation applies, and its fingerprint is the description the deploy wrote, `adtai patch -deploy -app 0`; its main application is the `SOURCE`, and has to sit in the same workspace. Dropping the main application leaves its copies standing, so nothing else removes them. A copy made in the App Builder carries no such description and is refused.
+
 **`-force` never reaches the rail.** Everywhere else on `patch` that flag overrides a refusal, and here the rail is the whole safety property: a destructive drop a flag can widen has no rail at all. What the flag overrides is the ownership check below.
 
 Every id named in one run is checked before the first one is removed, so a run naming one sandbox and one production id removes neither.

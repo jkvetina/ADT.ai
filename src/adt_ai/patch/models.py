@@ -9,6 +9,7 @@ from adt_ai.shared.commit_discovery import PatchFolder
 if TYPE_CHECKING:
     # Annotation only: `patch/staleness.py` imports `patch/files.py`, which
     # imports this module, so a runtime import here would close the cycle.
+    from adt_ai.patch.apex_release import ReleaseDrift
     from adt_ai.patch.apex_signature import ApexSignatures
     from adt_ai.patch.staleness import StaleExport
     from adt_ai.shared.apexlang_line_endings import PrecheckIssue
@@ -298,6 +299,9 @@ class DatabasePatchResult:
     # can rebase before the deploy (ADT #957): moved since the export in the
     # current environment, or never exported with a checksum at all.
     changed_apps: list[ApexSignatures] = field(default_factory=list)
+    # APEXlang trees exported on an older APEX than the target runs (ADT
+    # #1064), so the developer re-exports before `-deploy` ships stale metadata.
+    release_drifts: list[ReleaseDrift] = field(default_factory=list)
     # APEXlang trees the compile gate had to convert before SQLcl could read
     # them (ADT #964, the warning `-deploy` gives since #928), so the developer
     # learns the build rewrote his files and commits them.
@@ -315,7 +319,7 @@ class DatabasePatchResult:
     # narrower per-schema `SchemaReport.uncommitted`, which only ever asked
     # about the patch's OWN files; excludes this run's own generated helpers and
     # whatever it just wrote under its own patch folder, and stays empty under
-    # `-local` (`patch/build.py::_repo_uncommitted`).
+    # `-local` (`patch/uncommitted.py::repo_uncommitted`).
     uncommitted: list[str] = field(default_factory=list)
 
 

@@ -196,7 +196,12 @@ REMOVED_COMPATIBILITY_FLAGS = {
     # proved: argparse resolves an unambiguous prefix, and `-checksum` is not a
     # prefix of any surviving `export_apex` flag only until the next flag is
     # added. Rejecting on the raw argv does not depend on today's flag set.
-    "export_apex": ("-checksum", "--checksum"),
+    # ADT #1074 removed `-max_app_id`: `-app 0-10000` says the same, and its
+    # span bounds the `-reveal` counts the way the cap did.
+    "export_apex": (
+        "-checksum", "--checksum",
+        "-max_app_id", "--max_app_id", "--max-app-id",
+    ),
 }
 # `patch` also used to reject `-head` and `-local` here. That entry was the
 # honest form of "never built" while they were unimplemented (SOP §Command

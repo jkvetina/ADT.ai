@@ -266,6 +266,7 @@ class ExportDbRunner:
                     if last_changed_by and last_changed_by not in requested_authors
                 }
             grants = exports_grants(request)
+            schema_grants: list[tuple[DatabaseObject, str]] = []
             if not has_exact_name_filter(request.names):
                 reporter.overview(
                     schema,
@@ -310,7 +311,11 @@ class ExportDbRunner:
             if not _has_runtime_filter(request) and not request.baseline:
                 # A measured run reports no deletions and makes none: a file the
                 # target lacks is a difference for `patch -hash` to decide about.
-                missing_objects = resolver.missing_objects(database_objects, schema=schema)
+                # The artifacts count as listed, so a Data Grant file survives
+                # while its grant does and goes with it (`#1063`).
+                missing_objects = resolver.missing_objects(
+                    database_objects + [item for item, _ in schema_grants], schema=schema
+                )
                 reporter.deleted_objects(
                     schema,
                     missing_objects,

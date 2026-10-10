@@ -10,7 +10,8 @@ The store keeps one row per run per schema plus one row per package that run
 measured. Version 1 (ADT #642) is the first the file carries; a file from
 before it is lifted in place, history intact, on the way past. Version 2
 (ADT #873) keeps only what a comparison reads: the run's stamp and each
-package's line and block counts are dropped.
+package's line and block counts are dropped. Version 3 (ADT #666) adds one row
+per non-package unit the run listed, beside the packages and never among them.
 """
 
 from __future__ import annotations
@@ -40,6 +41,16 @@ CREATE TABLE IF NOT EXISTS package_coverage (
     package TEXT NOT NULL,
     percent REAL,
     PRIMARY KEY (run_id, package)
+);
+CREATE TABLE IF NOT EXISTS unit_coverage (
+    run_id         INTEGER NOT NULL REFERENCES runs (run_id) ON DELETE CASCADE,
+    object_type    TEXT NOT NULL,
+    object_name    TEXT NOT NULL,
+    lines          INTEGER NOT NULL,
+    blocks_total   INTEGER NOT NULL,
+    blocks_covered INTEGER NOT NULL,
+    disabled       INTEGER NOT NULL,
+    PRIMARY KEY (run_id, object_type, object_name)
 );
 CREATE INDEX IF NOT EXISTS ix_runs_schema ON runs (schema_name, run_id);
 """
@@ -94,6 +105,19 @@ INSERT_PACKAGE_STATEMENT = (
     "INSERT INTO package_coverage (run_id, package, percent) VALUES (?, ?, ?)"
 )
 
+#: The type bodies, procedures, functions and triggers a run listed (ADT #666),
+#: raw counts rather than a percent: `disabled` is what decides whether a figure
+#: exists at all, and the counts are what the `UNITS:` sum adds up.
+RUN_UNITS_QUERY = (
+    "SELECT object_type, object_name, lines, blocks_total, blocks_covered, disabled "
+    "FROM unit_coverage WHERE run_id = ? ORDER BY object_type, object_name"
+)
+
+INSERT_UNIT_STATEMENT = (
+    "INSERT INTO unit_coverage (run_id, object_type, object_name, lines, "
+    "blocks_total, blocks_covered, disabled) VALUES (?, ?, ?, ?, ?, ?, ?)"
+)
+
 #: What version 2 drops, table by table (ADT #873).
 LIFT_1_DROPPED_COLUMNS: dict[str, tuple[str, ...]] = {
     "runs": ("recorded_at",),
@@ -114,16 +138,19 @@ EXPIRED_RUNS_QUERY = (
 #: Both halves of the purge. The ``IN`` list is built from ids this module just
 #: selected, never from user input, and the caller parameterises it.
 DELETE_PACKAGES_STATEMENT = "DELETE FROM package_coverage WHERE run_id IN ({marks})"
+DELETE_UNITS_STATEMENT = "DELETE FROM unit_coverage WHERE run_id IN ({marks})"
 DELETE_RUNS_STATEMENT = "DELETE FROM runs WHERE run_id IN ({marks})"
 
 __all__ = [
     "ADD_VARIANT_STATEMENT",
     "DELETE_PACKAGES_STATEMENT",
     "DELETE_RUNS_STATEMENT",
+    "DELETE_UNITS_STATEMENT",
     "DROP_LEGACY_INDEX_STATEMENT",
     "EXPIRED_RUNS_QUERY",
     "INSERT_PACKAGE_STATEMENT",
     "INSERT_RUN_STATEMENT",
+    "INSERT_UNIT_STATEMENT",
     "LIFT_1_DROPPED_COLUMNS",
     "LIFT_RECORDED_AT_STATEMENT",
     "META_TABLE_DDL",
@@ -131,6 +158,7 @@ __all__ = [
     "RUN_COLUMNS_PRAGMA",
     "RUN_COUNT_QUERY",
     "RUN_PERCENTS_QUERY",
+    "RUN_UNITS_QUERY",
     "STORE_SCHEMA_SCRIPT",
     "annotations",
 ]

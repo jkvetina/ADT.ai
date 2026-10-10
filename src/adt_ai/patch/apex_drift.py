@@ -37,6 +37,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from adt_ai.patch import apex_signature
 from adt_ai.patch.apex_signature import (
     UNKNOWN,
     ApexSignatures,
@@ -119,7 +120,6 @@ def application_drift(
         based_on    = recorded.checksum,
         deploying   = "",
         base_commit = recorded.base_commit,
-        mirror_ref  = recorded.mirror_ref,
         based_at    = recorded.checksum_at,
     )
     if signatures.verdict == UNKNOWN:
@@ -198,17 +198,16 @@ def drift_warning_rows(signatures: ApexSignatures) -> list[str]:
 def recovery_steps(signatures: ApexSignatures) -> list[str]:
     """`  1) run: <command>` and what follows it, through `create the patch again`.
 
-    The command is the `-deploy` refusal's own (`recovery_command` up to its
-    comma): the rebase when the export shared a base, else the re-export, which
-    alone leaves a tree to reconcile. The indent and the lowercase are the
-    option lists `patch -create` already prints (`cli/patch_no_commits.py`).
+    The fetch and the reconcile are the `-deploy` refusal's own
+    (`apex_signature.recovery_steps`, ADT #1062), so the warning names exactly
+    the way out the deploy will. The `run:`, the indent and the lowercase are
+    the option lists `patch -create` already prints (`cli/patch_no_commits.py`).
     """
     if signatures.verdict == UNKNOWN:
         steps = [f"run: {export_command(signatures)}", "commit the export"]
-    elif signatures.rebase_command:
-        steps = [f"run: {signatures.rebase_command}"]
     else:
-        steps = [f"run: {export_command(signatures)}", "reconcile the tree, commit changes"]
+        fetch, reconcile = apex_signature.recovery_steps(signatures)
+        steps = [f"run: {fetch}", reconcile]
     steps.append("create the patch again")
     return [f"  {number}) {step}" for number, step in enumerate(steps, start=1)]
 

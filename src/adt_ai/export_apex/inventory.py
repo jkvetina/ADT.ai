@@ -8,6 +8,10 @@ from adt_ai.export_apex import queries
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.row_values import row_value
 
+#: The `-app` ranges as one inclusive bound for the count queries: lowest range
+#: bound, highest range bound, `None` above when any range is open (ADT #1074).
+AppSpan = tuple[int, int | None]
+
 
 @dataclass(frozen=True)
 class ApexWorkspace:
@@ -61,13 +65,13 @@ class ApexDiscovery:
     def owner_app_counts(
         self,
         owners: Iterable[str] | None = None,
-        max_app_id: int | None = None,
+        app_span: AppSpan | None = None,
     ) -> list[ApexOwnerCount]:
         rows = self.gateway.fetch_all(
             self.OWNER_APP_COUNTS_QUERY,
             {
                 "owners": _pipe_list(owners),
-                "max_app_id": max_app_id,
+                **_span_binds(app_span),
             },
         )
         return [_owner_count_from_row(row) for row in rows]
@@ -88,14 +92,14 @@ class ApexDiscovery:
         self,
         workspace: str | None = None,
         schemas: Iterable[str] | None = None,
-        max_app_id: int | None = None,
+        app_span: AppSpan | None = None,
     ) -> list[ApexWorkspace]:
         rows = self.gateway.fetch_all(
             self.WORKSPACES_QUERY,
             {
                 "workspace": workspace,
                 "schemas": _pipe_list(schemas),
-                "max_app_id": max_app_id,
+                **_span_binds(app_span),
             },
         )
         return [_workspace_from_row(row) for row in rows]
@@ -103,7 +107,7 @@ class ApexDiscovery:
     def workspaces_from_applications(
         self,
         schemas: Iterable[str] | None = None,
-        max_app_id: int | None = None,
+        app_span: AppSpan | None = None,
     ) -> list[ApexWorkspace]:
         """The workspaces the schemas' own applications sit in (`#561`).
 
@@ -117,7 +121,7 @@ class ApexDiscovery:
             self.WORKSPACES_FROM_APPLICATIONS_QUERY,
             {
                 "schemas": _pipe_list(schemas),
-                "max_app_id": max_app_id,
+                **_span_binds(app_span),
             },
         )
         return [_workspace_from_row(row) for row in rows]
@@ -129,7 +133,6 @@ class ApexDiscovery:
         group: str | None = None,
         app_ids: Iterable[str | int] | None = None,
         recent_days: int | float | None = None,
-        max_app_id: int | None = None,
     ) -> list[ApexApplication]:
         rows = self.gateway.fetch_all(
             self.APPLICATIONS_QUERY,
@@ -139,7 +142,6 @@ class ApexDiscovery:
                 "group_id": group,
                 "app_id": _pipe_list(app_ids),
                 "recent": recent_days,
-                "max_app_id": max_app_id,
             },
         )
         return [_application_from_row(row) for row in rows]
@@ -151,7 +153,7 @@ def with_derived_workspaces(
     configured_workspace: str | None,
     named_by_applications: Iterable[str],
     schemas: Iterable[str] | None = None,
-    max_app_id: int | None = None,
+    app_span: AppSpan | None = None,
 ) -> list[ApexWorkspace]:
     """The `-reveal` workspace list, with the registry's blind spots filled in.
 
@@ -183,13 +185,18 @@ def with_derived_workspaces(
     derived = [
         workspace
         for workspace in discovery.workspaces_from_applications(
-            schemas=schemas, max_app_id=max_app_id
+            schemas=schemas, app_span=app_span
         )
         if workspace.workspace.upper() in missing
     ]
     if not derived:
         return registry
     return sorted([*registry, *derived], key=lambda workspace: workspace.workspace)
+
+
+def _span_binds(app_span: AppSpan | None) -> dict[str, int | None]:
+    low, high = app_span if app_span is not None else (None, None)
+    return {"min_app_id": low, "max_app_id": high}
 
 
 def _workspace_from_row(row: dict[str, Any]) -> ApexWorkspace:

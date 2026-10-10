@@ -61,6 +61,8 @@ The folder is swept on every export, so a component deleted in App Builder leave
 
 **Plugin and theme files are written into the tree**, under each plugin's and each theme's own `static-files/` folder, byte for byte as APEX holds them. `-files` never exports those, so the tree is their only copy, and the import refuses a tree that names one and lacks it. A file APEX no longer holds is swept from those folders like any other member.
 
+**From APEX 26.2 a translated application carries its translations in the tree.** An application using Application-Based translations exports its Translation Repository as `generated-artifacts/translations.sql`, while `application.apx` holds the language mapping. `apex_with_translations` in `config.yaml`, on by default, is what asks for the file, as it does for `-full` and `-split`. The file is written verbatim, and `patch -deploy -app` imports it with the rest of the tree. APEX 26.1 refuses an APEXlang export of such an application outright.
+
 The tree is still directly validatable and importable. `-files` hardlinks each payload into the tree's own `shared-components/static-files/` as it writes it, one inode under two names.
 
 The checkout's private `.git/info/exclude` keeps those links out of git without putting an ignore sentinel inside the compiler input tree. An export also removes the retired `.gitignore` descriptor from applications affected by older ADT builds.

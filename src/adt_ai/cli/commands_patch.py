@@ -42,12 +42,18 @@ from adt_ai.cli.patch_inputs import (
 )
 from adt_ai.cli.patch_no_commits import answer_without_commits
 from adt_ai.cli.patch_preview_render import print_patch_preview
-from adt_ai.cli.patch_validate_render import PatchValidateReporter, print_validation_failure
+from adt_ai.cli.patch_validate_render import (
+    PatchValidateReporter,
+    patch_codescan_gate,
+    print_validation_failure,
+)
 from adt_ai.patch.apex_import import resolve_target
 from adt_ai.patch.apex_validate import ApexlangValidation, ApexlangValidationError
+from adt_ai.patch.codescan_gate import CodescanGateError
 from adt_ai.patch.install_paths import SchemaSelectionError
 from adt_ai.patch.topup import ConsoleTopUpReporter
 from adt_ai.shared import text_files
+from adt_ai.shared.codescan_settings import CodescanSettingError
 from adt_ai.shared.db import run_sqlcl_script
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.git_files import fetch_origin, git_ref_exists
@@ -65,6 +71,15 @@ def _run_patch(
         # would say nothing about a tree the compiler already explained.
         print_validation_failure(error)
         return exit_code_for("PATCH FAILED")
+    except CodescanGateError as error:
+        # ADT #1025: the findings already printed; `-debug` or not, a traceback
+        # would say nothing the sections above it did not.
+        print_adt_error("PATCH FAILED", str(error))
+        return exit_code_for("PATCH FAILED")
+    except CodescanSettingError as error:
+        headline, _, detail = str(error).partition("\n\n")
+        print_adt_error("CONFIGURATION INVALID", headline, detail)
+        return exit_code_for("CONFIGURATION INVALID")
     except SchemaSelectionError as error:
         # ADT #807: a mistyped `-schema` is what the user typed, not what broke.
         print_adt_error("ARGUMENT INVALID", error.description, error.details)
@@ -411,6 +426,11 @@ def _run_patch_command(
                 args, root, patch_config(), gateway_factory
             ),
             validation      = validation,
+            # `patch_codescan` (ADT #1025), read only by a build: a key it cannot
+            # read refuses `-create` and never a deploy or a listing.
+            codescan        = patch_codescan_gate(
+                patch_config(), run_sqlcl_script, debug=args.debug
+            ),
         )
         # `-create -deploy` on a name with no folder behind it: the build just
         # happened, so the deploy ships what this run produced.

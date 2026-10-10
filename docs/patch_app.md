@@ -47,6 +47,26 @@ One id per run. Retargeting is a flag on the import, never an edit to `deploymen
 
 <br>
 
+## A working copy with -app 0
+
+A sandbox on a derived id has no relation to the application it came from. `-app 0` lands the tree on a working copy instead, on APEX 26.2 and newer, so the sandbox carries `MAIN_APPLICATION_ID` and the Builder and a front-end test both know which application it copies:
+
+```bash
+adtai patch -name 1069-sandbox -target DEV -deploy -app 0
+```
+
+- **APEX picks the id.** `APEX_APPLICATION_ADMIN.CREATE_WORKING_COPY` takes no id, so app `100`'s first copy lands where APEX puts it, `101` with alias `ORDERS101`, and the deploy table and logs name that id. An id of your choosing is `-app <id>`, which stays a plain application with no `MAIN_APPLICATION_ID`.
+- **One copy per patch.** The copy is named for the patch folder, so deploying the same patch again imports over the copy its first run made, and another patch makes its own.
+- **A new copy passes the drift check, a reused one is checked like any target.** A copy this run created holds nobody's work, the same as a fresh derived id; a copy an earlier deploy made is read, and refuses if it moved since your export.
+- **Below 26.2 it refuses before anything is written**, under `-app 0 NEEDS APEX 26.2`. Nothing else about `-app` changes on any release.
+- **Each application gets its own copy**, so `-app 0` over a patch shipping two applications is not refused the way one plain id is.
+- **`-create -app 0` names the scripts for the application's own id**, since the copy has no id until the deploy makes it. `-upload -app 0` is refused.
+- **`-drop <id>` removes a copy `-app 0` made**, and no other: the copy carries the description the deploy wrote, `adtai patch -deploy -app 0`, which is what proves ADT made it, and its main application must sit in the same workspace. Dropping the main application leaves its copies standing, so this is the step that does. A copy made in the App Builder is refused.
+
+Measured on APEX 26.2.0: the API's arguments, the id and alias it picks, and that an APEXlang import over the copy keeps `IS_WORKING_COPY = Yes` and `MAIN_APPLICATION_ID`.
+
+<br>
+
 ## The stale export refusal
 
 A full export older than its own components refuses the build, since it cannot hold a change committed after it, and one missing from the window refuses for the same reason. The `ERROR - PATCH FAILED:` screen names the export's commit, the newer ones, and the `export_apex -full -app <id>` that clears it.

@@ -156,6 +156,7 @@ COMMAND_SUMMARIES = {
         "the application in a state someone has to undo.",
         "Checking the files needs no database, no credentials and no environment, so it "
         "runs anywhere, including on every change before anyone sees it. It can also ask "
-        "a running application which of its components no longer compile.",
+        "a running application which of its components no longer compile, or hold the "
+        "exported code to quality rules, failing only on problems that are new.",
     ),
 }

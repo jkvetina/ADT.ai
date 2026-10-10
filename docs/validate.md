@@ -8,6 +8,8 @@
 
 `-scan` is the one mode that connects. It asks a running application which of its components no longer compile, and writes nothing ([Scanning a live application](#scanning-a-live-application)).
 
+`-codescan` runs SQLcl's own code scanner over the exported database and APEXlang code instead, connectionless as well, and fails only on findings that are new since each tree's last clean run ([Scanning the code with codescan](#scanning-the-code-with-codescan)).
+
 <br>
 
 ## Examples
@@ -36,6 +38,7 @@ Use it as a gate straight after an export:
 
 ```bash
 adtai export_apex -app 100 -apexlang -files && adtai validate -app 100
+adtai export_apex -app 100 -apexlang -files && adtai validate -app 100 && adtai validate -codescan -app 100
 ```
 
 Ask a running application which of its components no longer compile, whole or page by page:
@@ -44,6 +47,13 @@ Ask a running application which of its components no longer compile, whole or pa
 adtai validate -scan -app 100
 adtai validate -scan -env DEV -app 100 200
 adtai validate -scan -app 100 -page 12 40-60
+```
+
+Scan the exported code for rule violations, failing only on new ones:
+
+```bash
+adtai validate -codescan
+adtai validate -codescan -app 100
 ```
 
 <br>
@@ -75,6 +85,7 @@ TIMER: 20s
 - **A row ends in the compile's clock, never its verdict.** The sections under the rows say what failed, and the exit code says whether the run passed. On a terminal the clock ticks once a second while the compile runs, counting down from the application's stored compile time in `apex.db`, or up from `0:00:00` before its first compile; a redirected run, CI and a captured test still get exactly the one line above, printed once its verdict lands. The scan rows `patch -deploy` prints run the same clock, counting down from that application's own stored scan time.
 - One stanza per message: `file:line:col` on its own line, the locator format an editor or terminal will linkify, then the compile type and the message text nested under it. The folder is the section header rather than a repeated field.
 - **Messages wrap at 80 columns rather than being truncated.** The message *is* the answer here, since a `REFERENCE_NOT_FOUND` names the file that is missing, so no width may cut it. That is also why this is a list and not a table: the compiler's prose runs well past 150 characters. A single unbreakable token, almost always a path, is allowed to overhang.
+- **A Tab prints as `\t`**, in the locator and the message alike, never as the spaces a terminal expands it to. A message the compiler runs onto a second line keeps that line under the first.
 - A folder that also produced warnings prints a `WARNINGS IN <folder>:` section above its errors, in the same shape.
 - **The rows are always printed.** There is no `-silent` on this command: a run validates a handful of folders, so the rows are the report rather than noise above it, and the section that says what went wrong needs the row that says which folder it was.
 
@@ -205,6 +216,7 @@ TIMER: 3s
 | `ERROR` | Something does not compile: the row counts the errors, one line each under it. | `1` |
 | `FAILED` | The scan did not complete. | `1` |
 | `EMPTY` | It analyzed nothing although the application holds pages. | `1` |
+| `STATIC IDS HOLDING A TAB:` | A section after the rows, any verdict: APEX 26.2 will not save these components. | `1` |
 
 **`-page` narrows the work, not just the answer.** The scan takes a page, so APEX compiles that page's fragments and nothing else. Measured against a 42-page application on APEX 26.1, that is 1.8s for a page against 4.0s for all of it, and the gap widens with the page count. Each page is its own scan, row and verdict:
 
@@ -218,11 +230,32 @@ SCANNING APPLICATIONS:
 
 **Several pages are several scans.** APEX has no page-scoped cache clear, so scanning page 40 discards what page 12's scan recorded, and each page is read back before the next one runs. A page the application does not hold is `EMPTY` and fails, as `application 100 holds no page 7777, so the scan verified nothing`. A range resolves against the pages each application holds, and one that selects no page at all exits `1` on `-page RANGE MATCHED NO PAGES` before anything is scanned.
 
+**A Static ID holding a Tab fails the run on APEX 26.2 and newer.** 26.2 will not save any of 21 component types while its Static ID holds one, and leaves the values already stored alone until someone edits the component, so an application can scan clean and still hold a component nobody can save. The scan asks the dictionary for all 21, the workspace's credentials and remote servers included:
+
+```text
+STATIC IDS HOLDING A TAB:
+-------------------------
+  APP 1065 | Application Setting | adt1065\tsetting
+  APP 1065 | Email Template      | adt1065\temail
+  APP 1065 | Shortcut            | adt1065\tshortcut
+  APP 1065 | Text Message        | 1065\tmessage
+```
+
+A clean application prints no such section, and below 26.2 nothing is asked. A check of the exported files catches the same components without connecting: the compiler refuses each as `INVALID_EXTERNAL_IDENTIFIER`, `Value cannot contain a tab character.`
+
 **It writes nothing.** No mirror row, no log file, no deploy receipt: the console is the whole report. The helper procedures the scan generates on the schema are dropped again before the run ends, whether or not it succeeded.
 
 The run connects through the application's owner as `config/internal/apex.db` records it, or the environment's default schema when that store cannot say. `-app` takes ranges here, `MIN-MAX` or `MIN+`, resolved against the applications the configured schemas can see.
 
 `-scan` needs `-app`, and `-page` and `-env` need `-scan`, since a check of exported files has no page scope and no connection. `-input` names exported files, so it is refused beside `-scan`. Each of those refusals exits `2`.
+
+<br>
+
+## Scanning the code with codescan
+
+`-codescan` runs SQLcl's `codescan` over the trees `codescan_paths` names, one row per tree, holds each tree to the baseline its last clean run recorded in `config/internal/codescan.db`, and fails on what is new. It needs SQLcl 26.3 or newer.
+
+The screen, the baseline, `codescan_fail_on`, suppressing a finding with `codescan_ignore`, the `codescan_rules` profile and the one-line CI chain are on [validate_codescan.md](validate_codescan.md).
 
 <br>
 
@@ -241,6 +274,7 @@ The run connects through the application's owner as `config/internal/apex.db` re
 | `-input`, `--input` | Yes | every exported `apexlang/` folder | APEXlang folder or folders, or zips, to validate. Comma-separated, space-separated, or the flag repeated. |
 | `-app`, `--app` | Yes | none | Application id or ids whose exported `apexlang/` folder to validate, resolved offline through `config/internal/apex.db`. Under `-scan`, the live applications to scan, where a range `MIN-MAX` or `MIN+` resolves against the discovered applications. |
 | `-scan`, `--scan` | No | off | Connect and compile every component of the `-app` applications, reporting each fragment that does not compile. Writes nothing. Requires `-app`; refused beside `-input`. |
+| `-codescan`, `--codescan` | No | off | Run SQLcl `codescan` over the trees `codescan_paths` names, or the ones `-app` and `-input` name, and fail on findings new since each tree's last clean run (`codescan_fail_on`). Refused beside `-scan`. |
 | `-page`, `--page` | Yes | whole application | Scan only: scan these page ids instead of the whole application, repeated, space-separated, or as a `MIN-MAX` / `MIN+` range. One scan and one row per page. |
 
 Shared options (-root, -env, -config-dir, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).

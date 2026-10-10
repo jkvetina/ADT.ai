@@ -24,6 +24,21 @@ class ApexAppSelection:
     def has_ranges(self) -> bool:
         return bool(self.ranges)
 
+    @property
+    def span(self) -> tuple[int, int | None] | None:
+        """Lowest to highest range bound, what the `-reveal` counts are scoped by.
+
+        The counts are aggregates the database computes, so they cannot take
+        the per-id filter the list gets; this bound is how `-app 0-10000` keeps
+        temp and backup applications out of them too (ADT #1074). Plain ids
+        never bound it, and any open `MIN+` range leaves the top open.
+        """
+        if not self.ranges:
+            return None
+        highs = [high for _low, high in self.ranges]
+        high = None if None in highs else max(h for h in highs if h is not None)
+        return (min(low for low, _high in self.ranges), high)
+
 def _parse_apex_app_selection(tokens: list[str] | None) -> ApexAppSelection | None:
     if not tokens:
         return None

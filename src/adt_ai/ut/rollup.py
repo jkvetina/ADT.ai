@@ -14,6 +14,10 @@ two different figures for one run, which is the whole reason a reader can trust
 the short form without opening the long one. `_module_row` builds a named group,
 the unnamed total, and the compact row alike, exactly as ``coverage_percent``
 one layer down builds a group's figure and the total's.
+
+`OTHER UNITS:` and its `-compact` line live here too (`#666`): their unit is
+the run's measurement as a whole, never one suite, and they read
+``CoverageReport.objects`` alone, so no figure above them can move.
 """
 
 from __future__ import annotations
@@ -25,6 +29,8 @@ from adt_ai.ut.cells import (
     percent_cell,
     seconds_cell,
     status_cell,
+    unit_blocks_cell,
+    unit_coverage_cell,
 )
 from adt_ai.ut.grouping import (
     ModuleRow,
@@ -34,7 +40,8 @@ from adt_ai.ut.grouping import (
     target_packages,
     total_seconds,
 )
-from adt_ai.ut.inventory import coverage_percent
+from adt_ai.ut.inventory import PackageCoverage, coverage_percent
+from adt_ai.ut.layout import HEADING_INDENT
 
 # Through ``render`` rather than straight from ``export_db.runner``, the edge
 # ``changes.py`` already borrows for the same reason: this module is imported by
@@ -76,6 +83,20 @@ _MODULE_COLUMNS = (
 # `COVERAGE` how much of it was reached, and `STATUS` whether it is green: the
 # same questions the wide tables answer, over the run instead of over a group.
 _COMPACT_COLUMNS = ("PACKAGES", "LINES", "TIMER", "COVERAGE", "STATUS")
+
+# **The units no suite targets, in a block of their own** (card `#666`, Jan's
+# layout A). Type bodies, procedures, functions and triggers belong to no
+# suite's row, so they are listed beside the summaries rather than folded into
+# a figure on them: Jan's call is "informational only".
+UNITS_TITLE = "OTHER UNITS:"
+_UNIT_COLUMNS = ("OBJECT_TYPE", "OBJECT_NAME", "LINES", "BLOCKS", "COVERAGE")
+
+# Callables first, A-Z by type, then the triggers, which nothing calls: the
+# order Jan was shown. An unknown type sorts after all four.
+_UNIT_ORDER = ("FUNCTION", "PROCEDURE", "TYPE BODY", "TRIGGER")
+
+# `-compact`'s one line for the same units, under the `RESULTS:` row.
+UNITS_LABEL = "UNITS:"
 
 
 def print_module_summary(result: Ut3Result) -> None:
@@ -173,6 +194,59 @@ def print_compact_row(result: Ut3Result, *, passed: bool) -> None:
         columns = list(_COMPACT_COLUMNS),
         numeric = SUMMARY_NUMERIC,
     )
+
+
+def print_units(units: tuple[PackageCoverage, ...]) -> None:
+    """`OTHER UNITS:`, one row per non-package unit the run entered.
+
+    **Entered units only, plus disabled triggers** (Jan's call on `#666`): a
+    unit Oracle measured nothing for says nothing about this run, and the
+    whole schema's worth of them buried the few that ran. A DISABLED trigger
+    stays, reading `?` (see `cells.unit_coverage_cell`), because "cannot fire"
+    is itself the finding. No row qualifies, no block. `BLOCKS` is covered
+    over total so a reader can check the figure beside it.
+    """
+    units = tuple(unit for unit in units if unit.measured or unit.disabled)
+    if not units:
+        return
+    print_adt_header(UNITS_TITLE)
+    print_adt_table(
+        [
+            {
+                "OBJECT_TYPE" : unit.type,
+                "OBJECT_NAME" : unit.name,
+                "LINES"       : count_cell(unit.lines),
+                "BLOCKS"      : unit_blocks_cell(unit),
+                "COVERAGE"    : unit_coverage_cell(unit),
+            }
+            for unit in sorted(units, key=_unit_order)
+        ],
+        columns = list(_UNIT_COLUMNS),
+        numeric = ("LINES", "BLOCKS", "COVERAGE"),
+    )
+
+
+def print_compact_units(units: tuple[PackageCoverage, ...]) -> None:
+    """`UNITS: <covered>/<total> blocks <figure>`, `-compact`'s one line for them.
+
+    Summed over the measurable units only, the ones a figure prints for in
+    `OTHER UNITS:`, and rounded by `coverage_percent`, the helper every other
+    figure goes through; over measured units alone its reach scaling is 1, so
+    it is the plain pooled ratio. Nothing measurable prints no figure.
+    """
+    if not units:
+        return
+    measurable = tuple(unit for unit in units if unit.measured and not unit.disabled)
+    covered = sum(unit.blocks_covered for unit in measurable)
+    total = sum(unit.blocks_total for unit in measurable)
+    figure = percent_cell(coverage_percent(measurable))
+    print(f"{HEADING_INDENT}{UNITS_LABEL} {covered}/{total} blocks {figure}".rstrip())
+    print(flush=True)
+
+
+def _unit_order(unit: PackageCoverage) -> tuple[int, str, str]:
+    rank = _UNIT_ORDER.index(unit.type) if unit.type in _UNIT_ORDER else len(_UNIT_ORDER)
+    return rank, unit.type, unit.name
 
 
 def _module_row(name: str, rows: list[ModuleRow]) -> dict[str, object]:

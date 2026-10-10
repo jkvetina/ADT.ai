@@ -34,10 +34,15 @@ PLSQL_OBJECT_TYPES = ("PACKAGE", "PACKAGE BODY", "PROCEDURE", "FUNCTION", "TRIGG
 # Each one is spelled here the way ``user_objects`` spells it, which for the
 # environment is NOT the way its DDL is written: the row says ``MLE ENVIRONMENT``
 # and the keyword is ``MLE ENV``, so the alias table below carries the second.
+#
+# DATA GRANT and DATA ROLE are 26ai Deep Data Security (`#1063`). Neither has a
+# ``user_objects`` row, so both are read from their own views beside GRANT.
 ORACLE_OBJECT_TYPES = frozenset(
     {
         "ASSERTION",
         "DATA",
+        "DATA GRANT",
+        "DATA ROLE",
         "DOMAIN",
         "FUNCTION",
         "GRANT",
@@ -62,6 +67,11 @@ ORACLE_OBJECT_TYPES = frozenset(
         "VIEW",
     }
 )
+
+# The two Deep Data Security types, role first because a grant names its role.
+# Written beside GRANT rather than discovered, so every place that sets the two
+# pseudo-types apart from `user_objects` sets these apart as well.
+DATA_SECURITY_OBJECT_TYPES = ("DATA ROLE", "DATA GRANT")
 
 # Spellings that name a canonical type without being one. Keys are matched against
 # the whole token (never word-by-word), so MVIEW -> MATERIALIZED VIEW cannot corrupt

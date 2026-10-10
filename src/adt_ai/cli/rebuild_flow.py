@@ -1,9 +1,9 @@
 """`rebuild -app`'s page picture: the links between an application's pages (`#30`).
 
 Moved here from the retired `flow` command's refresh. The refresh reads the
-application, its pages and its navigation edges into `flow.db`, then writes the
-Mermaid, DOT and JSON diagrams under `config/flow/` that `search -to APP.PAGE`
-and `-from APP.PAGE` answer from.
+application, its pages and its navigation edges into `flow.db`, which
+`search -to APP.PAGE` and `-from APP.PAGE` answer from, then writes the Mermaid,
+DOT and JSON diagrams and the CSV of every link under `config/flow/` (`#842`).
 
 It runs in two halves because the screen needs it to. **Every owner lookup
 happens in the plan, under the module banner** (`#372`): one dictionary read per
@@ -45,7 +45,7 @@ from adt_ai.cli.refresh_connect import _connecting_mode_gateways
 # The page store straight from its package, not through `cli/constants.py`
 # (ADT #895): the hub ships in every release and the store only with `rebuild`
 # and `search`, so the hub is to stop re-exporting it.
-from adt_ai.flow.files import write_all_dumps
+from adt_ai.flow.files import diagram_paths, write_all_dumps
 from adt_ai.flow.runner import (
     ApexFlowError,
     ApexFlowRefreshRequest,
@@ -261,7 +261,7 @@ class FlowRefresh:
                 {
                     "pages": result.page_count,
                     "edges": result.edge_count,
-                    "diagrams": len(dump_paths),
+                    "diagrams": len(diagram_paths(dump_paths)),
                 }
             ]
         )

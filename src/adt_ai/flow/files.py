@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 from collections.abc import Iterable, Sequence
 from pathlib import Path
@@ -7,8 +9,28 @@ from pathlib import Path
 from adt_ai.flow.model import FlowApp, FlowEdge, FlowPage
 from adt_ai.shared import text_files
 
-EXTENSIONS = {"mermaid": "mmd", "dot": "dot", "json": "json"}
+EXTENSIONS = {"mermaid": "mmd", "dot": "dot", "json": "json", "csv": "csv"}
+FORMATS = ("mermaid", "dot", "json", "csv")
+# The CSV is a table to search, not a picture, so the refresh's `diagrams`
+# count leaves it out.
+DIAGRAM_FORMATS = ("mermaid", "dot", "json")
 GRAPH_FLAGS = ("PAGE", "CROSS_APP")
+# The data exports' shipped delimiter, the one `diff` writes too.
+CSV_DELIMITER = ";"
+CSV_COLUMNS = (
+    "app_id",
+    "src_type",
+    "src_page",
+    "src_page_name",
+    "component_id",
+    "component",
+    "raw_target",
+    "target_app",
+    "target_app_id",
+    "target_page",
+    "target_page_name",
+    "flag",
+)
 
 
 def _page_label(page_id: int, page_names: dict[int, str | None]) -> str:
@@ -124,10 +146,46 @@ def _edge_dict(edge: FlowEdge) -> dict[str, object]:
     }
 
 
+def render_csv(app: FlowApp, pages: Iterable[FlowPage], edges: Iterable[FlowEdge]) -> str:
+    # Every edge of every flag, like the JSON, with both ends' page names
+    # joined in, so the whole flow is one sheet to filter. A target page in
+    # another application has no name here: its pages are not in this scrape.
+    page_names = _page_names(pages)
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, delimiter=CSV_DELIMITER, lineterminator="\n")
+    writer.writerow(CSV_COLUMNS)
+    for edge in edges:
+        same_app = edge.flag != "CROSS_APP"
+        writer.writerow(
+            [
+                app.app_id,
+                edge.src_type,
+                _cell(edge.src_page),
+                _cell(page_names.get(edge.src_page)) if edge.src_page is not None else "",
+                _cell(edge.component_id),
+                _cell(edge.component),
+                _cell(edge.raw_target),
+                _cell(edge.target_app),
+                _cell(edge.target_app_id),
+                _cell(edge.target_page),
+                _cell(page_names.get(edge.target_page))
+                if same_app and edge.target_page is not None
+                else "",
+                edge.flag,
+            ]
+        )
+    return buffer.getvalue()
+
+
+def _cell(value: object) -> str:
+    return "" if value is None else str(value)
+
+
 _RENDERERS = {
     "mermaid": render_mermaid,
     "dot": render_dot,
     "json": render_json,
+    "csv": render_csv,
 }
 
 
@@ -168,10 +226,12 @@ def write_all_dumps(
     *,
     root: str | Path = ".",
 ) -> list[Path]:
-    return [
-        write_dump(app, pages, edges, fmt=fmt, root=root)
-        for fmt in ("mermaid", "dot", "json")
-    ]
+    return [write_dump(app, pages, edges, fmt=fmt, root=root) for fmt in FORMATS]
+
+
+def diagram_paths(paths: Iterable[Path]) -> list[Path]:
+    suffixes = {f".{EXTENSIONS[fmt]}" for fmt in DIAGRAM_FORMATS}
+    return [path for path in paths if path.suffix in suffixes]
 
 
 def _mermaid_text(value: str) -> str:

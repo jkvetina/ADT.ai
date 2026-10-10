@@ -21,10 +21,11 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
-from adt_ai.cli.constants import print_adt_header
+from adt_ai.cli.constants import print_adt_header, print_adt_table
+from adt_ai.cli.patch_create_warnings import print_apex_release_blocks
 from adt_ai.cli.patch_deploy_layout import (
     DEPLOY_COLUMNS,
     DEPLOY_STATUS_RUNNING,
@@ -32,7 +33,9 @@ from adt_ai.cli.patch_deploy_layout import (
     _deployment_row_values,
     import_blocks,
 )
+from adt_ai.patch.apex_app_lock import PageLock
 from adt_ai.patch.apex_deploy import BUILDING_APP_ROW
+from adt_ai.patch.apex_release import ReleaseDrift
 from adt_ai.patch.models import DeploymentPlanItem, DeploymentResult
 from adt_ai.shared.streamed_table import ERASE_TO_END_OF_LINE, StreamedTable
 
@@ -153,6 +156,38 @@ class ConsoleDeployReporter:
         if self._table is None:  # pragma: no cover, ordering is the runner's
             raise RuntimeError("begin_deploy must open the table before a row is drawn")
         return self._table
+
+    def page_locks(self, locks: Sequence[PageLock]) -> None:
+        """The pages the imports are about to unlock, before the table (ADT #1056).
+
+        An APEXlang import on APEX 26.2 deletes every page lock of the
+        application it lands on, and nothing else on screen would say so. The
+        deploy still runs: this is read-only, and the runner calls it only when
+        there are rows, so an ordinary deploy prints nothing new.
+        """
+        print_adt_header("WARNING - PAGE LOCKS REMOVED BY THE IMPORT:")
+        print("  lock these pages again once the deploy is done")
+        print_adt_table(
+            [
+                {
+                    "APP_ID"   : lock.app_id,
+                    "PAGE_ID"  : lock.page_id,
+                    "PAGE_NAME": lock.page_name,
+                    "LOCKED_BY": lock.locked_by,
+                    "LOCKED_ON": lock.locked_on,
+                }
+                for lock in locks
+            ]
+        )
+
+    def apex_releases(self, drifts: Sequence[ReleaseDrift]) -> None:
+        """Trees exported on an older APEX than this target runs (ADT #1064).
+
+        The `patch -create` block, printed again here before the table: the
+        import succeeds whatever the tree's release, so nothing else would say
+        so. The runner calls it only when there are rows.
+        """
+        print_apex_release_blocks(drifts)
 
     def begin_deploy(self, plan: list[DeploymentPlanItem]) -> None:
         self.streamed = True

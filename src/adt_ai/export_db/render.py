@@ -140,6 +140,9 @@ class ExportDbReporter:
     def job_arguments_not_exported(self, schema: str, names: list[str]) -> None:
         pass
 
+    def cross_table_data_grants_not_exported(self, schema: str, names: list[str]) -> None:
+        pass
+
 #: `#917`, spelled by Jan: *"In a way it is a warning only, we continued."*
 #: The objects the database refused, listed once the schema's export is done.
 OBJECT_EXPORT_FAILED_HEADER = "WARNING - OBJECT EXPORT FAILED:"
@@ -147,6 +150,10 @@ OBJECT_EXPORT_FAILED_HEADER = "WARNING - OBJECT EXPORT FAILED:"
 #: `#861`, spelled by Jan picking it. The jobs whose arguments had no CREATE_JOB
 #: block to be written into, listed once the schema's export is done.
 JOB_ARGUMENTS_NOT_EXPORTED_HEADER = "WARNING - JOB ARGUMENTS NOT EXPORTED:"
+
+#: `#1063`, Jan picking warn-and-skip: a cross-table Data Grant keeps no parent
+#: clause in the dictionary, so it is listed here instead of written.
+CROSS_TABLE_DATA_GRANTS_HEADER = "WARNING - CROSS-TABLE DATA GRANTS NOT EXPORTED:"
 
 # The overview table's two columns, named once so every render of it agrees.
 # It used to exist so a run discovering nothing still printed its column
@@ -467,6 +474,13 @@ class ConsoleExportDbReporter(ExportDbReporter):
             return
         print_adt_header(JOB_ARGUMENTS_NOT_EXPORTED_HEADER)
         print_object_rows(("JOB", name) for name in names)
+
+    def cross_table_data_grants_not_exported(self, schema: str, names: list[str]) -> None:
+        """The job-arguments warning's shape, under `-silent` too (`#1063`)."""
+        if not names:
+            return
+        print_adt_header(CROSS_TABLE_DATA_GRANTS_HEADER)
+        print_object_rows(("DATA GRANT", name) for name in names)
 
     def objects_not_exported(self, schema: str, failures: list[ObjectExportFailure]) -> None:
         """The objects the database refused, as rows like the ones exported.

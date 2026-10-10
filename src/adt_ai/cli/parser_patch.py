@@ -448,9 +448,9 @@ def add_patch_parser(subparsers: SubParsers) -> None:
         type    = app_target,
         default = None,
         metavar = "ID",
-        help    = "deploy the APEX application whole, optional ID lands it on "
-                  "that application id instead of its own, # in ID is each "
-                  "app's own id; with -upload, the one application to upload "
+        help    = "deploy the APEX app whole, optional ID lands it on that id "
+                  "instead of its own, # in ID is each app's own id, 0 on a "
+                  "working copy (APEX 26.2+); with -upload, the app to upload "
                   "into, required",
     )
     # `-rebuild` was declared here until ADT #345 withdrew it. It reached

@@ -267,14 +267,6 @@ def add_export_parsers(subparsers: SubParsers) -> None:
         help   = "component filters as TYPE:NAME_PATTERN, for example LOV:STATUS%%",
     )
     export_apex.add_argument(
-        "--max-app-id",
-        "--max_app_id",
-        "-max_app_id",
-        dest = "max_app_id",
-        type = int,
-        help = "only list apps with application_id below ID (hides temp/backup apps)",
-    )
-    export_apex.add_argument(
         "--recent",
         "-recent",
         nargs = "?",
@@ -348,15 +340,6 @@ def add_export_parsers(subparsers: SubParsers) -> None:
         dest   = "apexlang",
         help   = "export APEXlang (.apx) source, whole app (APEX 26.1+)",
     )
-    # Takes the ref as the user spells it (`db/dev`, or a full `refs/...` path),
-    # because that string is what a deploy refusal prints into its `git rebase`
-    # line. `-apexlang` only: the mirror exists to be merged, and no other format
-    # writes an application as files git can three-way merge (`#725`).
-    export_apex.add_argument(
-        "--mirror",
-        "-mirror",
-        help = "commit each -apexlang export onto REF (for example db/dev) as a shared merge base",
-    )
     export_apex.add_argument("--rest", "-rest", action="store_true", help="export REST services")
     export_apex.add_argument(
         "--files", "-files", action="store_true", help="export application files"
@@ -405,8 +388,9 @@ def add_export_parsers(subparsers: SubParsers) -> None:
         "-input",
         action = "append",
         nargs  = "+",
-        help   = "APEXlang folder(s) or zip(s) to validate, repeatable, comma- or "
-                 "space-separated; default is every exported apexlang/ folder",
+        help   = "APEXlang folder(s) or zip(s) to validate, or under -codescan any "
+                 "folder of code, repeatable, comma- or space-separated; default is "
+                 "every exported apexlang/ folder",
     )
     validate.add_argument(
         "--app",
@@ -425,7 +409,18 @@ def add_export_parsers(subparsers: SubParsers) -> None:
         "-scan",
         action = "store_true",
         help   = "compile every component of the live -app application(s) and "
-                 "report what no longer compiles; writes nothing",
+                 "report what no longer compiles, and on APEX 26.2+ every Static ID "
+                 "holding a Tab; writes nothing",
+    )
+    # `-codescan` (ADT #1026) runs SQLcl's own code scanner over the exported
+    # files, connectionless like a plain run, and fails only on what the tree's
+    # stored baseline does not already hold. Refused beside `-scan`.
+    validate.add_argument(
+        "--codescan",
+        "-codescan",
+        action = "store_true",
+        help   = "run SQLcl codescan over the exported code instead, failing on "
+                 "findings new since the last clean run; -app and -input narrow it",
     )
     validate.add_argument(
         "--page",

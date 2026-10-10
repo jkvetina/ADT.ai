@@ -15,6 +15,7 @@ from adt_ai.export_db.writer import ObjectWritePlan as ObjectWritePlan
 from adt_ai.export_db.writer import ObjectWriteRequest as ObjectWriteRequest
 from adt_ai.shared.config import DEFAULT_PATH_OBJECTS, reject_unresolved_placeholders
 from adt_ai.shared.object_files import object_stem_for_type
+from adt_ai.shared.object_types import DATA_SECURITY_OBJECT_TYPES
 from adt_ai.shared.path_template import (
     object_type_token,
     render_path_template,
@@ -27,6 +28,10 @@ from adt_ai.shared.safe_paths import (
     simple_relative_path,
     under_root,
 )
+
+#: Types that never take a `-groups` subfolder: GRANT's files are keyed on the
+#: schema, and the Deep Data Security files sit inside `grants/` (`#1063`).
+_UNGROUPED_TYPES = frozenset({"GRANT", *DATA_SECURITY_OBJECT_TYPES})
 
 
 class ObjectFileError(Exception):
@@ -57,6 +62,7 @@ class ObjectFileResolver:
         self.path_objects = reject_unresolved_placeholders(str(path_objects))
         self.object_types = {key.upper(): value for key, value in object_types.items()}
         self._existing_case_paths_by_folder: dict[Path, dict[str, Path]] = {}
+        self._nested_dirs_by_folder: dict[Path, frozenset[str]] = {}
         self._duplicate_paths_by_folder: dict[Path, dict[str, list[Path]]] = {}
         # What `missing_objects` found, the files the delete removes (`#923`).
         self._missing_paths: dict[DatabaseObject, list[Path]] = {}
@@ -110,6 +116,7 @@ class ObjectFileResolver:
         filename = f"{object_name}{layout.extension}"
         # Honour an already-exported file wherever it sits (including a group
         # subfolder a user arranged by hand) before routing a brand-new object.
+        self._nested_dirs_by_folder.setdefault(folder, self._nested_type_dirs(layout))
         existing = self._existing_case_path(folder, filename)
         if existing is not None:
             try:
@@ -119,7 +126,7 @@ class ObjectFileResolver:
         try:
             group = (
                 None
-                if object_type == "GRANT"
+                if object_type in _UNGROUPED_TYPES
                 else group_for(object_type, database_object.name, self.group_rules)
             )
             target = (
@@ -272,7 +279,7 @@ class ObjectFileResolver:
         roots: list[tuple[str, Path, str]] = []
         seen: set[tuple[str, Path]] = set()
         for object_type, layout in self.object_types.items():
-            if object_type in {"DATA", "GRANT"}:
+            if object_type in {"DATA", *_UNGROUPED_TYPES}:
                 continue
             for folder in self._search_roots_for(object_type, layout, schemas):
                 key = (object_type, folder)
@@ -412,10 +419,32 @@ class ObjectFileResolver:
             self._duplicate_paths_by_folder[folder] = cache
         return cache
 
+    def _nested_type_dirs(self, layout: ObjectTypeLayout) -> frozenset[str]:
+        """Other types' folders inside this one, relative to it (`#1063`).
+
+        `grants/` holds `grants/data_grants/` and `grants/data_roles/`, and the
+        casing lookup below walks a folder recursively, so without this a GRANT
+        file could resolve onto a Data Grant's file of the same name.
+        """
+        prefix = f"{layout.folder.strip('/')}/"
+        return frozenset(
+            other.folder.strip("/")[len(prefix):]
+            for other in self.object_types.values()
+            if other.folder.strip("/").startswith(prefix)
+        )
+
     def _existing_case_path(self, folder: Path, filename: str) -> Path | None:
         cache = self._existing_case_paths_by_folder.get(folder)
         if cache is None:
-            cache = _existing_case_paths(folder)
+            nested = self._nested_dirs_by_folder.get(folder, frozenset())
+            cache = {
+                name: path
+                for name, path in _existing_case_paths(folder).items()
+                if not any(
+                    path.relative_to(folder).as_posix().startswith(f"{inner}/")
+                    for inner in nested
+                )
+            }
             self._existing_case_paths_by_folder[folder] = cache
         filename_lower = filename.lower()
         path = cache.get(filename_lower)

@@ -51,18 +51,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from adt_ai.patch import settings
+from adt_ai.patch.apex_app_lock import PageLock
 from adt_ai.patch.apex_backup import ApexBackup, backup_line
+from adt_ai.patch.apex_files import files_lines, files_only, tree_files
 from adt_ai.patch.apex_import import (
     ApexTarget,
     AppTarget,
+    alias_task,
     build_import_script,
     derive_sandbox_alias,
-    landing_id,
     one_target_refusal,
-    recover_task_number,
 )
-from adt_ai.patch.apex_lock import BuildStatusLock, build_status_line, lock_target
+from adt_ai.patch.apex_lock import BuildStatusLock, build_status_line, hold_application
 from adt_ai.patch.apex_signature import (
     ApexSignatures,
     collect_signatures,
@@ -77,29 +77,16 @@ from adt_ai.patch.apex_validate import (
     relative_label,
     validate_trees,
 )
+from adt_ai.patch.apex_working_copy import resolve_landing
 from adt_ai.patch.layout import is_apex_full_export
 from adt_ai.patch.models import DeploymentPlanItem, DeploymentResult
-from adt_ai.shared.apex_payloads import IGNORE_NAME, drop_legacy_staging
+from adt_ai.shared.apex_payloads import drop_legacy_staging
 from adt_ai.shared.apex_store import ApexStore
 from adt_ai.shared.apexlang_line_endings import PrecheckIssue
 from adt_ai.validate.files import resolve_targets
 from adt_ai.validate.report import import_error_lines, parse_import_output
 
 EXPORT_COMMAND = "adtai export_apex -apexlang -app"
-
-
-def _tree_files(apexlang_root: Path) -> int:
-    """How many files the import is about to carry, payload links included.
-
-    Counted off the tree rather than summed from a staging result, because the tree
-    IS what the import reads since ADT #765. The ignore file the payload folder
-    carries is ADT.ai's own bookkeeping and is not one of them.
-    """
-    return sum(
-        1
-        for path in apexlang_root.rglob("*")
-        if path.is_file() and path.name != IGNORE_NAME
-    )
 
 # What the deploy table calls the import (ADT #735). It was `apex_import_<id>`,
 # spelled like the install scripts around it, and nothing in the patch folder
@@ -125,6 +112,10 @@ class ApexImportItem:
     files           : int
     signatures      : ApexSignatures
     explicit_target : bool = False
+    # Imported alone, else the whole tree: `apex_files.files_only` (#1068).
+    files_only      : tuple[Path, ...] = ()
+    # A working copy's own alias, which APEX chose with its id (#1069).
+    target_alias    : str = ""
 
     @property
     def file(self) -> str:
@@ -168,7 +159,10 @@ class ApexImportItem:
         """
         if not self.retargeted:
             return self.alias
-        return derive_sandbox_alias(self.alias, _task_number(self.app_id, self.target_id))
+        # A working copy keeps the alias APEX gave it (ADT #1069).
+        if self.target_alias:
+            return self.target_alias
+        return derive_sandbox_alias(self.alias, alias_task(self.app_id, self.target_id))
 
     @property
     def target(self) -> ApexTarget:
@@ -220,6 +214,9 @@ def prepare_apex_imports(
     target_env      : str = "",
     signature_gateway_factory: Any = None,
     validation      : ApexlangValidation | None = None,
+    account         : str = "",
+    patch_name      : str = "",
+    page_locks      : list[PageLock] | None = None,
 ) -> tuple[list[ApexImportItem], list[str | PrecheckIssue]]:
     """Resolve, stage and read every application this deploy imports.
 
@@ -228,14 +225,14 @@ def prepare_apex_imports(
     legitimately carry an application whose APEXlang export nobody has taken, and
     refusing would stop a deploy that was never asking for an import.
 
-    Raises ``PatchError`` for each of the three refusals, all of them before a
-    single byte is written.
+    Raises ``PatchError`` for each refusal, all of them before a single byte
+    is written.
 
-    ``locks`` is where the build-status lock records what it took (ADT #726),
-    filled as each application is locked rather than returned, because this
-    function RAISES on drift and a lock taken before that refusal still has to
-    be released. A caller that passes nothing takes no locks at all, which is
-    what every test of the three refusals wants.
+    ``locks`` is where the lock records what it took (ADT #726), filled rather
+    than returned because this function RAISES on drift and a lock taken before
+    that refusal still has to be released; ``page_locks`` is filled the same
+    way. ``account`` and ``patch_name`` name the 26.2+ application lock (#1056).
+    A caller that passes nothing takes no locks at all.
 
     ``target_env`` and ``signature_gateway_factory`` are the cross-environment
     check's own inputs (ADT #962), forwarded straight to `collect_signatures`.
@@ -276,26 +273,23 @@ def prepare_apex_imports(
         app_id = resolved.app_id
         if app_id is None:  # pragma: no cover - `precheck_trees` already refused it
             raise PatchError(NO_APPLICATION_ID)
-        # A `#` template expands per application (ADT #974).
-        landing = landing_id(target_id, app_id) or app_id
-        # **Before the import, which is the whole of the point** (ADT #726). The
-        # window this closes runs from the signature read to the import, so
-        # `lock_target` reads the signature and locks one statement later; the
-        # read comes first because the lock's own write moves it (ADT #745).
-        # Only an import landing on the application's own id: a retargeted task
-        # sandbox is a throwaway nobody is editing, and locking it would strand
-        # a prototype on RUN_ONLY (Jan, 2026-09-07).
-        # `off` records nothing at all rather than an entry saying it did
-        # nothing: it has to leave the deploy exactly as it was before ADT #726,
-        # and an import log growing a row is not exactly as it was.
-        mode = settings.deploy_build_status(config)
-        if locks is not None and landing == app_id and mode != settings.BUILD_STATUS_OFF:
-            locks[app_id] = lock_target(
-                gateway_factory(owners.get(app_id, "")),
-                app_id,
-                workspace = workspaces.get(app_id, ""),
-                mode      = mode,
-            )
+        # A `#` template expands per application (ADT #974), `0` is a working
+        # copy APEX picks the id of (ADT #1069).
+        lands = resolve_landing(
+            target_id, app_id, gateway_factory, owner=owners.get(app_id, ""),
+            workspace=workspaces.get(app_id, ""), name=patch_name,
+        )
+        landing = lands.app_id
+        # **Before the import, which is the whole of the point** (ADT #726):
+        # the lock reads the signature one statement before it locks, because
+        # its write moves it (#745). Never a retargeted sandbox, nothing under
+        # `off`; on 26.2+ the application lock, refused if another developer
+        # holds it (#1056). Page locks are read for every import.
+        notes.extend(hold_application(
+            gateway_factory(owners.get(app_id, "")), app_id, landing,
+            workspace=workspaces.get(app_id, ""), config=config, locks=locks,
+            account=account, patch_name=patch_name, force=force, page_locks=page_locks,
+        ))
         # ADT #745: a held lock has already read the target, one statement
         # before it wrote the status that moves that reading. `None` where no
         # lock went on OR its read failed (a `""` reading is an empty target,
@@ -307,7 +301,10 @@ def prepare_apex_imports(
             app_id    = app_id,
             target_id = landing,
             tree_root = resolved.path,
-            on_target = (held.signature or None) if held is not None and held.locked else None,
+            # A copy this run made holds nobody's work: a fresh id (ADT #1069).
+            on_target = "" if lands.created else (
+                (held.signature or None) if held is not None and held.locked else None
+            ),
             # ADT #925: the author, read by the same lock before its write
             # stamped the application with this deploy's own user.
             last_change = held.last_change if held is not None and held.locked else None,
@@ -318,6 +315,10 @@ def prepare_apex_imports(
         )
         if signatures.refused and not force:
             raise PatchError(drift_message(signatures))
+        only = files_only(
+            root, resolved.path, patch_files, in_place=landing == app_id,
+            signatures=signatures, gateway=gateway_factory(owners.get(app_id, "")),
+        )
         item = ApexImportItem(
             app_id          = app_id,
             target_id       = landing,
@@ -326,15 +327,17 @@ def prepare_apex_imports(
             source          = resolved.path,
             staged          = resolved.path,
             label           = resolved.label,
-            files           = _tree_files(resolved.path),
+            files           = len(only) or tree_files(resolved.path),
             signatures      = signatures,
             explicit_target = target_id is not None,
+            files_only      = only,
+            target_alias    = lands.alias,
         )
         # Built once here so what the script refuses (no alias to carry beside
         # `-id`, a path SQLcl cannot quote) refuses with the gates above, not
         # after the `init` half ran (ADT #923).
         try:
-            build_import_script(item.staged, item.target, item.alias_for_target)
+            build_import_script(item.staged, item.target, item.alias_for_target, files=only)
         except ValueError as error:
             raise PatchError(str(error)) from None
         items.append(item)
@@ -396,7 +399,7 @@ def run_apex_imports(
             before_import(item)
         script = build_import_script(
             item.staged, item.target, item.alias_for_target, account=account,
-            app_id=item.target_id,
+            app_id=item.target_id, files=item.files_only,
         )
         execution_failed = False
         try:
@@ -413,6 +416,7 @@ def run_apex_imports(
             "\n".join([
                 *signature_lines(item.signatures, forced=force),
                 _source_line(item, root),
+                *files_lines(item.staged, item.files_only),
                 *(
                     [backup_line(backups.get(item.target_id), root)]
                     if backups is not None
@@ -514,20 +518,6 @@ def _application_facts(
             owners[app_id] = str(entry.get("owner") or "")
             workspaces[app_id] = str(entry.get("workspace") or "")
     return aliases, owners, workspaces
-
-
-def _task_number(app_id: int, target_id: int) -> int:
-    """The task half of a derived id, or the whole id when it carries no app half.
-
-    `apex_import.recover_task_number` is the shared prefix strip (`#670`), used
-    the same way by `apex_drop._prefix_sources`; the fallback to the whole
-    value is this call site's own, for a remainder that is not a positive
-    number (an id equal to the application's own, a remainder of nothing but
-    zeros), which `derive_sandbox_alias` then judges on its own terms rather
-    than on a guess made here.
-    """
-    task = recover_task_number(app_id, target_id)
-    return target_id if task is None else task
 
 
 def _excerpt(report: Any) -> tuple[str, ...]:

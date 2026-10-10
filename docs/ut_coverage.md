@@ -57,7 +57,7 @@ That suite's `COVERAGE` reads `?` because `ut_match` derives `ADT_FIXTURE` from 
 
 `?` is the same marker, and the same argument, as the module column's: a column of short values has no room for a word, and it cannot be mistaken for a figure the way `0` or `-` can.
 
-**A figure prints to one decimal place, a half rounded up.** 1 of 16 blocks is 6.25% and prints `6.3`, what a reader dividing by hand gets. Every printed figure takes the one rounding: suite rows, module rows, the `-gate` list, and `WAS` and `NOW` in the change table.
+**A figure prints to one decimal place, a half rounded up.** 1 of 16 blocks is 6.25% and prints `6.3`, what a reader dividing by hand gets. Every printed figure takes the one rounding: suite rows, module rows, the `-gate` list, `WAS` and `NOW` in the change table, and the other units.
 
 **Coverage is run-scoped, and that is a deliberate trade.** The report is built from the pairings of the suites that ran, so a package no suite tests appears nowhere: no row, no contribution to any module figure, no total. `ut` does not answer "what in this schema is untested"; it answers "how much of what these suites test did they reach", which is the question the rest of the table is about.
 
@@ -93,19 +93,42 @@ A figure that honours the pragma reads higher than utPLSQL's, and that is intend
 
 <br>
 
-## Collected but not shown
+## Other units
 
 utPLSQL gathers coverage for **five** source types, not one: package bodies, type bodies, procedures, functions and triggers. One coverage session covers a whole run, so Oracle measures all five whether or not anything asks for them, and the read keeps all five.
 
-**Only package bodies are printed.** The `COVERAGE` column, the module figure, the gate and the change table all describe the packages the run's suites test. A trigger belongs to no suite, so putting one on that path would move a printed percentage with nothing about the measured code having changed.
+The four that are not packages print in a block of their own directly under `SUMMARY PER SUITE:`, whenever the run entered at least one or the schema holds a disabled trigger:
 
-The other four are kept beside them, keyed by object type **and** name, and nothing renders them yet.
+```text
+OTHER UNITS:
+------------
 
-The type is part of that key because triggers have their own Oracle namespace. `AUDIT_ROW` can be a trigger and a procedure in one schema, and a report keyed on the name alone would keep whichever row was read last.
+  OBJECT TYPE   OBJECT NAME           LINES   BLOCKS   COVERAGE
+  -----------   -------------------   -----   ------   --------
+  FUNCTION      ADT_FIXTURE_LABEL         6      1/1      100.0
+  PROCEDURE     ADT_FIXTURE_NOTE          7      1/1      100.0
+  TYPE BODY     ADT_FIXTURE_AMOUNT        8      1/1      100.0
+  TRIGGER       ADT_FIXTURE_LOG_OLD       6                   ?
+  TRIGGER       ADT_FIXTURE_LOG_TRG      12      2/3       66.7
+  TRIGGER       SECURE_EMPLOYEES          5                   ?
+```
+
+**They are informational only.** The `COVERAGE` column, the module figure, the gate and the change table still describe the packages the run's suites test, and nothing else. A trigger belongs to no suite, so folding one in would move a printed percentage with nothing about the measured code having changed.
+
+- **It lists the units the run entered, plus disabled triggers.** A unit Oracle measured nothing for says nothing about this run, so it is left out, and so is a name matching `ut_pattern`, as a test package is.
+- **Callables first, then triggers**: functions, procedures and type bodies, each A to Z, then the triggers, which nothing calls.
+- **`BLOCKS` is covered over total**, so the figure beside it can be checked by hand.
+- **A DISABLED trigger reads `?`, never `0.0`.** It cannot fire, so there was nothing a test could have reached, and a zero would report an untested trigger that is in fact switched off.
+
+`-compact` carries the same units as one line under its `RESULTS:` row, the covered and total blocks of every unit that has a figure, and their pooled percentage: `UNITS: 5/6 blocks 83.3`. A run that reached none of them prints `UNITS: 0/0 blocks` and no figure.
+
+Each run's units, entered or not, are kept in the run history beside its packages, in a table of their own that no comparison reads.
+
+The units are keyed by object type **and** name, because triggers have their own Oracle namespace. `AUDIT_ROW` can be a trigger and a procedure in one schema, and a report keyed on the name alone would keep whichever row was read last.
 
 Two details worth knowing if you go looking at the numbers:
 
-- **A unit no test entered still gets a row, reading 0 blocks.** Oracle writes a coverage row only for a unit something executed, so the dictionary listing leads and coverage joins onto it. Unreached code is the finding, so it may not be the thing that disappears.
+- **A unit no test entered is still collected, reading 0 blocks.** Oracle writes a coverage row only for a unit something executed, so the dictionary listing leads and coverage joins onto it. The run history keeps it; only the block leaves it out.
 - **The type is the coverage spelling, not the dictionary one.** `ALL_OBJECTS` says `PACKAGE` and `TYPE` where `ALL_SOURCE` and `dbmspcc_units` say `PACKAGE BODY` and `TYPE BODY`. The listing maps one onto the other in SQL.
 
 The compile-time prerequisites are the ones package bodies already have: an `INTERPRETED` unit that is not wrapped. A natively compiled trigger produces no block row however often it fires.

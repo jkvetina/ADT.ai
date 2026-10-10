@@ -133,6 +133,31 @@ def coverage_cell(package: PackageCoverage | None, *, paired: bool = True) -> st
     return percent_figure(package.percent)
 
 
+def unit_blocks_cell(unit: PackageCoverage) -> str:
+    """An `OTHER UNITS:` row's `BLOCKS`, covered over total (card `#666`).
+
+    Blank wherever its `COVERAGE` cell has no figure: a unit nothing entered
+    has no blocks to count, and a disabled trigger's count is not a
+    denominator anything could have moved.
+    """
+    if unit.disabled or not unit.measured:
+        return ""
+    return f"{unit.blocks_covered}/{unit.blocks_total}"
+
+
+def unit_coverage_cell(unit: PackageCoverage) -> str:
+    """An `OTHER UNITS:` row's `COVERAGE`, on the suite rows' own rules.
+
+    A unit nothing entered blanks, as an unmeasured package does. A DISABLED
+    trigger reads :data:`UNPAIRED_COVERAGE`, Jan's call: it cannot fire, so
+    there is nothing a test could have reached, which is `?`'s meaning, and
+    `0.0` would report an untested trigger that is in fact switched off.
+    """
+    if unit.disabled:
+        return UNPAIRED_COVERAGE
+    return coverage_cell(unit)
+
+
 def status_cell(passed: bool) -> str:
     """The `RESULTS:` row's verdict under `-compact`: the exit code, in words.
 

@@ -311,6 +311,11 @@ class CommitStore:
         ).fetchone()
         return str(row[0]) if row else None
 
+    def last_change(self, path: str) -> StoredCommit | None:
+        """The newest stored commit carrying ``path``, without its file rows (ADT #1023)."""
+        row = self.connection.execute(queries.COMMIT_LAST_CHANGE_QUERY, (path,)).fetchone()
+        return None if row is None else _commit(row)
+
     def _with_files(self, rows: Sequence[tuple[Any, ...]]) -> list[StoredCommit]:
         if not rows:
             return []

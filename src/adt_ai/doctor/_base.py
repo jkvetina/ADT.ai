@@ -173,6 +173,8 @@ class DoctorHost(Protocol):
     # it, else "". Resolved once per run, before the version rows stream, so the
     # SQLcl row and the `ACTIONS:` section report one verdict rather than two.
     _apexlang_sqlcl_shortfall: str
+    # The same for a project gating on `validate -codescan` (ADT #1026).
+    _codescan_sqlcl_shortfall: str
 
     def _add(self, lines: list[str], line: str) -> None: ...
     def _extend(self, lines: list[str], new_lines: Iterable[str]) -> None: ...

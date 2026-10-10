@@ -44,10 +44,15 @@ The three above can say that the target moved and nothing more, so the only
 recovery a refusal could name was "export again and reconcile by hand". That is
 compare-and-swap; a three-way merge needs base, ours and theirs, and ADT recorded
 the base's IDENTITY (the checksum) without recording the base. `export_apex` now
-writes the commit its tree was exported at, and `-mirror db/<ENV>` puts that
-commit on a ref the whole team shares, which is what turns the refusal's last
-line into `git rebase`. It is not a signature: it moves no verdict, and a tree
-with no recorded commit refuses and passes exactly as it did before.
+writes the commit its tree was exported at, which YOUR BASE and the log's MERGE
+BASE row name. It is not a signature: it moves no verdict, and a tree with no
+recorded commit refuses and passes exactly as it did before.
+
+**The way out names the fetch, never a git command** (ADT #1062). The checksum
+the gate compares lives in `config/internal/apex.db` and only an export moves
+it, so step one is always the export that fetches the live application. How the
+change is then reconciled with it is the developer's: ADT cannot rebase or merge
+somebody's change reliably, so it names the step and not the command.
 
 **And a fifth, also never compared: WHO moved the target, and WHEN** (ADT #925).
 A refusal that ends in a merge sends the developer to somebody else's work, so
@@ -111,6 +116,14 @@ UNKNOWN  = "UNKNOWN"
 
 EXPORT_COMMAND = "adtai export_apex -apexlang -app"
 
+#: The drift way out's first step: the export that fetches the live application
+#: and records its new checksum (ADT #1062). `-files` because a whole-app import
+#: replaces the static files too, so the reconciled tree has to carry them.
+FETCH_COMMAND = "adtai export_apex -app {app_id} -apexlang -files"
+
+#: The drift way out's second step, worded as the user's own action.
+RECONCILE_STEP = "reconcile your change with it"
+
 
 @dataclass(frozen=True)
 class RecordedExport:
@@ -124,7 +137,6 @@ class RecordedExport:
     checksum_at : str = ""
     checksum_env: str = ""
     base_commit : str = ""
-    mirror_ref  : str = ""
 
 
 @dataclass(frozen=True)
@@ -156,12 +168,10 @@ class ApexSignatures:
     on_target : str
     based_on  : str
     deploying : str
-    # Recorded rather than compared: the commit the tree was exported at, and
-    # the ref `-mirror` shares it on. Neither reaches `verdict`; they are what a
-    # refusal names so the way out is a rebase (ADT #725).
+    # Recorded rather than compared: the commit the tree was exported at (ADT
+    # #725). It never reaches `verdict`; YOUR BASE and MERGE BASE name it.
     base_commit : str = ""
-    mirror_ref  : str = ""
-    # Recorded rather than compared, like the two above: who moved the target
+    # Recorded rather than compared, like the one above: who moved the target
     # and when, so the refusal names whose work the merge is with (ADT #925).
     last_change : LastChange = LastChange()
     # When ``based_on`` was taken, so the refusal can say how old the base is.
@@ -175,18 +185,6 @@ class ApexSignatures:
     # calls LATEST ON TARGET, because a promotion overwrites the target by
     # design and its live checksum was never going to match.
     on_source   : str | None = None
-
-    @property
-    def rebase_command(self) -> str:
-        """`git rebase <ref>`, or "" when this export shares no base.
-
-        Both halves are required. A commit with no mirror is a base only this
-        checkout has, and a mirror ref with no commit names a ref carrying
-        nothing this tree descends from; neither is something to rebase onto.
-        """
-        if not self.base_commit or not self.mirror_ref:
-            return ""
-        return f"git rebase {self.mirror_ref}"
 
     @property
     def verdict(self) -> str:
@@ -294,7 +292,6 @@ def recorded_export(root: Path, app_id: int) -> RecordedExport:
         checksum_at  = str(entry.get("checksum_at") or "").strip(),
         checksum_env = str(entry.get("checksum_env") or "").strip(),
         base_commit  = str(entry.get("base_commit") or "").strip(),
-        mirror_ref   = str(entry.get("mirror_ref") or "").strip(),
     )
 
 
@@ -393,7 +390,6 @@ def collect_signatures(
         based_at    = recorded.checksum_at,
         deploying   = tree_signature(tree_root),
         base_commit = recorded.base_commit,
-        mirror_ref  = recorded.mirror_ref,
         on_source   = on_source,
         last_change = (
             last_change if last_change is not None
@@ -419,11 +415,10 @@ def signature_lines(signatures: ApexSignatures, *, forced: bool = False) -> list
         f"--   CHANGE BASED ON  | {signatures.based_on or '(never exported)'}",
     ]
     if signatures.base_commit:
-        # Only when there is one. An export with no recorded commit is still the
-        # ordinary case, and a row reading `(none)` would be noise in every log a
-        # project not using `-mirror` writes.
-        mirror = f" ({signatures.mirror_ref})" if signatures.mirror_ref else ""
-        lines.append(f"--   MERGE BASE       | {signatures.base_commit}{mirror}")
+        # Only when there is one. An export with no recorded commit (a root
+        # outside git) is an ordinary case, and a row reading `(none)` would be
+        # noise in every log such a project writes.
+        lines.append(f"--   MERGE BASE       | {signatures.base_commit}")
     if signatures.last_change.known:
         # Only when APEX recorded one, for the reason MERGE BASE above gives.
         lines.append(f"--   LAST CHANGED     | {signatures.last_change.describe()}")
@@ -450,8 +445,8 @@ def drift_message(signatures: ApexSignatures) -> str:
     Rows a person reads, not values a machine compares (ADT #925, Jan: the
     checksums do not matter on screen). The import log keeps them. YOUR BASE
     carries the export's own date so the gap to CHANGED ON reads at a glance,
-    and the commit with its shared ref when the export recorded one, since that
-    is what the `Run:` rebase lands on (ADT #725). Every line sits two spaces in,
+    and the commit when the export recorded one (ADT #725). The steps are
+    `recovery_steps` (ADT #1062). Every line sits two spaces in,
     so the block reads as one; the error screen dedents it before adding its own
     two, so on screen it sits under `ERROR - PATCH FAILED:` at two (ADT #934).
 
@@ -478,9 +473,7 @@ def drift_message(signatures: ApexSignatures) -> str:
             "",
             *change_rows(signatures),
             "",
-            f"  1) {recovery_command(signatures)}",
-            "  2) deploy again",
-            "  3) or -force to overwrite",
+            *_numbered([*recovery_steps(signatures), "deploy again", "or -force to overwrite"]),
         ]
     )
 
@@ -508,18 +501,33 @@ def unrecorded_rows(signatures: ApexSignatures) -> tuple[str, list[str]]:
     )
 
 
-def recovery_command(signatures: ApexSignatures) -> str:
-    """The rebase when the export shared a base, else the re-export (ADT #725)."""
-    return signatures.rebase_command or f"{export_command(signatures)}, reconcile the tree"
+def recovery_steps(signatures: ApexSignatures) -> list[str]:
+    """The fetch and the reconcile, the two steps both drift screens open with.
+
+    Shared by the `-deploy` refusal and the `-create` warning (ADT #1062), so
+    the two cannot come to name different ways out. Each screen adds its own
+    last steps: deploy again (or `-force`), and create the patch again.
+    """
+    return [fetch_command(signatures), RECONCILE_STEP]
+
+
+def fetch_command(signatures: ApexSignatures) -> str:
+    """`adtai export_apex -app <id> -apexlang -files`, the step that moves the checksum."""
+    return FETCH_COMMAND.format(app_id=signatures.app_id)
 
 
 def export_command(signatures: ApexSignatures) -> str:
-    """`adtai export_apex -apexlang -app <id>`, the re-export on its own.
+    """`adtai export_apex -apexlang -app <id>`, the export an unrecorded tree needs.
 
     The bare command, so the `-create` warning can number it as a step of its
-    own (ADT #961) while the `-deploy` refusal keeps its one `Run:` sentence.
+    own (ADT #961).
     """
     return f"{EXPORT_COMMAND} {signatures.app_id}"
+
+
+def _numbered(steps: list[str]) -> list[str]:
+    """`  1) <step>` and on, two spaces in like every other refusal row."""
+    return [f"  {number}) {step}" for number, step in enumerate(steps, start=1)]
 
 
 #: What a row says when APEX kept no value, which is every row an import wrote.
@@ -527,10 +535,8 @@ _NOT_RECORDED = "(not recorded)"
 
 
 def _base(signatures: ApexSignatures) -> str:
-    """`2026-09-23 16:58 (a5e59eb0 on db/dev)`, each part only when recorded."""
+    """`2026-09-23 16:58 (a5e59eb0)`, each part only when recorded."""
     commit = signatures.base_commit[:8]
-    if commit and signatures.mirror_ref:
-        commit += f" on {signatures.mirror_ref}"
     when = signatures.based_at or "(export time not recorded)"
     return f"{when} ({commit})" if commit else when
 

@@ -40,6 +40,7 @@ from typing import Any
 
 from adt_ai.shared.internal_paths import internal_path
 from adt_ai.shared.queries import apex_store as queries
+from adt_ai.shared.queries.sqlite_store import table_columns_query
 from adt_ai.shared.sqlite_store import Migration, drop_columns, open_store
 from adt_ai.shared.yaml_io import load_yaml_mapping, store_yaml_mapping
 
@@ -57,7 +58,7 @@ LEGACY_APEX_FILES: tuple[str, ...] = (
 #: The `recent.yaml` key whose watermarks belong here.
 RECENT_MODULE = "export_apex"
 
-SCHEMA_VERSION = "6"
+SCHEMA_VERSION = "7"
 
 _RETIRED = ("workspace_id",)
 
@@ -68,12 +69,15 @@ _RETIRED = ("workspace_id",)
 #: Version 4 to 5 (ADT #925): `applications` gains when its checksum was taken.
 #: Version 5 to 6 (ADT #962): `applications` gains the environment it was
 #: taken from.
+#: Version 6 to 7 (ADT #1062): `applications` loses every column it no longer
+#: declares, which is the ref the removed export mirror recorded.
 MIGRATIONS: tuple[Migration, ...] = (
     Migration("1", "2", lambda connection: connection.executescript(queries.APEX_STORE_LIFT_1)),
     Migration("2", "3", lambda connection: connection.executescript(queries.APEX_STORE_LIFT_2)),
     Migration("3", "4", lambda connection: drop_columns(connection, "applications", _RETIRED)),
     Migration("4", "5", lambda connection: connection.executescript(queries.APEX_STORE_LIFT_4)),
     Migration("5", "6", lambda connection: connection.executescript(queries.APEX_STORE_LIFT_5)),
+    Migration("6", "7", lambda connection: _drop_undeclared_columns(connection)),
 )
 
 #: The application columns, in the order a row is written and read back. This
@@ -90,9 +94,21 @@ APPLICATION_FIELDS: tuple[str, ...] = (
     "checksum",
     "checksum_at",
     "base_commit",
-    "mirror_ref",
     "checksum_env",
 )
+
+
+def _drop_undeclared_columns(connection: sqlite3.Connection) -> None:
+    """Drop every `applications` column outside ``APPLICATION_FIELDS`` (ADT #1062).
+
+    By what the store still declares rather than by a list of retired names, so
+    the step reads off the one source of truth the comment on that tuple names.
+    """
+    cursor = connection.cursor()
+    cursor.row_factory = None
+    present = [row[1] for row in cursor.execute(table_columns_query("applications"))]
+    declared = {"app_id", *APPLICATION_FIELDS}
+    drop_columns(connection, "applications", [name for name in present if name not in declared])
 
 
 def apex_store_path(root: Path | str) -> Path:
@@ -217,21 +233,21 @@ class ApexStore:
                 queries.APEX_CHECKSUM_UPSERT, (key, checksum, stamp, str(env or ""))
             )
 
-    def store_merge_base(self, app_id: Any, base_commit: str, mirror_ref: str = "") -> None:
-        """Record what this export was based on: a commit, and the ref sharing it.
+    def store_merge_base(self, app_id: Any, base_commit: str) -> None:
+        """Record what this export was based on: the commit it was taken at.
 
-        Both values are written as given, blanks included, because both describe
-        the export that just ran. The checksum beside them says whether the
-        target moved; these say what to rebase onto when it did, so a stale
-        commit left standing after a re-export outside git would be worse than
-        no commit at all (ADT #725).
+        Written as given, blank included, because it describes the export that
+        just ran. The checksum beside it says whether the target moved; this
+        says which commit the tree on disk descends from, so a stale commit left
+        standing after a re-export outside git would be worse than no commit at
+        all (ADT #725).
         """
         key = _app_key(app_id)
         if key is None:
             return
         with self.connection:
             self.connection.execute(
-                queries.APEX_MERGE_BASE_UPSERT, (key, str(base_commit or ""), str(mirror_ref or ""))
+                queries.APEX_MERGE_BASE_UPSERT, (key, str(base_commit or ""))
             )
 
     # -- developers --------------------------------------------------------

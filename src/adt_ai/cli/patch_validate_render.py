@@ -18,13 +18,40 @@ reported the compiler's errors under `ERROR - DEPLOYMENT FAILED:` as `APP:` and
 the lines under it; the refusal carries the same lines from the same
 `import_error_lines`, two columns in, under a header of the same family, before
 anything connected.
+
+**The codescan gate is `validate -codescan`'s screen, one tree wide** (ADT
+#1025). `patch_codescan` scans the files the patch carries as one staged tree,
+so the screen is that command's own parts with the patch folder as the label:
+the `CODESCAN:` row, `NEW VIOLATIONS IN <folder>:` (or `ERRORS IN <folder>:`
+under `codescan_fail_on: any`), the BOM precheck and the `BASELINE:` line.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
 from adt_ai.cli.commands_validate import ConsoleValidateReporter, print_apexlang_issues
+from adt_ai.cli.validate_codescan import (
+    BASELINE_LABEL,
+    CODESCAN_HEADER,
+    _print_bom_files,
+    _print_findings,
+    _print_summary,
+)
 from adt_ai.patch.apex_validate import ApexlangValidationError
+from adt_ai.patch.codescan_gate import PatchCodescan, PatchScan
+from adt_ai.shared.codescan_settings import (
+    PATCH_CODESCAN_OFF,
+    codescan_fail_on,
+    codescan_ignore,
+    codescan_rules,
+    patch_codescan,
+)
 from adt_ai.shared.progress import print_adt_header
+from adt_ai.validate.codescan_report import EMPTY, UNRECOGNISED
+from adt_ai.validate.files import ValidateTarget
 from adt_ai.validate.report import import_error_lines
 from adt_ai.validate.runner import FolderOutcome
 
@@ -120,9 +147,61 @@ def print_validation_failure(error: ApexlangValidationError) -> None:
     print()
 
 
+def patch_codescan_gate(
+    config        : dict[str, Any],
+    sqlcl_request : Callable[..., str],
+    *,
+    debug         : bool = False,
+) -> PatchCodescan | None:
+    """`-create`'s codescan gate as `patch_codescan` sets it, ``None`` when `off`.
+
+    Raises `CodescanSettingError` on a value neither key knows, which the
+    handler renders as `ERROR - CONFIGURATION INVALID:`.
+    """
+    mode = patch_codescan(config)
+    if mode == PATCH_CODESCAN_OFF:
+        return None
+    return PatchCodescan(
+        mode          = mode,
+        fail_on       = codescan_fail_on(config),
+        sqlcl_request = sqlcl_request,
+        reporter      = PatchValidateReporter(debug=debug, header=CODESCAN_HEADER),
+        render        = print_patch_codescan,
+        ignore        = codescan_ignore(config),
+        rules         = codescan_rules(config),
+    )
+
+
+def print_patch_codescan(result: PatchScan) -> None:
+    """What the scan found, in `validate -codescan`'s sections, then `BASELINE:`."""
+    label = result.label
+    if result.scan.outcome == UNRECOGNISED:
+        # Never swallow what could not be read: show SQLcl's own words.
+        print_adt_header(f"WARNING - UNRECOGNISED OUTPUT {label}:")
+        print(result.scan.raw.rstrip("\n"))
+        print()
+    if result.listed:
+        _print_findings(label, result.listed, every=result.every)
+    _print_bom_files(
+        [ValidateTarget(Path(label), label)], {label: list(result.boms)}
+    )
+    if result.scan.outcome == EMPTY:
+        print_adt_header("NOTES:")
+        print(f"  {label}: codescan read none of the files this patch carries")
+        print()
+    if result.comparison is not None:
+        comparison = result.comparison
+        _print_summary(
+            f"{BASELINE_LABEL} {comparison.known} known, {comparison.new} new, "
+            f"{comparison.fixed} fixed"
+        )
+
+
 __all__ = [
     "PATCH_VALIDATING_HEADER",
     "PATCH_VERIFYING_HEADER",
     "PatchValidateReporter",
+    "patch_codescan_gate",
+    "print_patch_codescan",
     "print_validation_failure",
 ]

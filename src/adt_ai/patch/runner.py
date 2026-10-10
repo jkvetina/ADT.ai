@@ -11,6 +11,7 @@ from adt_ai.patch import queries, settings
 from adt_ai.patch.apex_import import AppTarget
 from adt_ai.patch.apex_validate import ApexlangValidation
 from adt_ai.patch.build import HASH_STAMP_FORMAT, PatchBuildStages, build_database_patch
+from adt_ai.patch.codescan_gate import PatchCodescan
 from adt_ai.patch.content import (
     CONTENT_MODE_COMMITTED,
     CONTENT_MODE_HEAD,
@@ -412,6 +413,7 @@ class PatchWorkspace:
         signature_gateway_factory: Callable[[str, str], Any] | None = None,
         validation: ApexlangValidation | None = None,
         stages: PatchBuildStages | None = None,
+        codescan: PatchCodescan | None = None,
     ) -> DatabasePatchResult:
         """Build the patch folder and report what went into it.
 
@@ -452,6 +454,7 @@ class PatchWorkspace:
                 signature_gateway_factory = signature_gateway_factory,
                 validation    = validation,
                 stages        = stages,
+                codescan      = codescan,
             )
 
 __all__ = [

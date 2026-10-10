@@ -44,7 +44,8 @@ from adt_ai.patch.apex_drop import (
     resolve_sandbox,
     write_drop_log,
 )
-from adt_ai.patch.selection import apex_owner_schemas, apex_patch_schema
+from adt_ai.patch.apex_working_copy import read_deployed_copies
+from adt_ai.patch.selection import apex_owner_for, apex_owner_schemas, apex_patch_schema
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.identity import commit_account, load_identity
 from adt_ai.shared.streamed_table import StreamedTable
@@ -131,7 +132,14 @@ def run_drop_applications(
     # workspace. Same reader the install-script grouping uses, so `-drop`
     # connects as the schema the patch it is cleaning up deployed as.
     owners = apex_owner_schemas(root)
-    schema = apex_patch_schema(config, owners, next(iter(args.drop), None))
+    first = next(iter(args.drop), None)
+    schema = apex_patch_schema(config, owners, first)
+    # A working copy `-deploy -app 0` made sits on an id APEX picked (ADT
+    # #1069), so neither the store nor a prefix names its schema; when the
+    # project records one parsing schema, that is the copy's too.
+    recorded = {owner.upper() for owner in owners.values() if owner}
+    if not apex_owner_for(owners, first) and len(recorded) == 1:
+        schema = recorded.pop()
     gateway_factory, _dev, connection_provider = _patch_deploy_gateway_factories(
         args, root, config, gateway_factory
     )
@@ -151,7 +159,8 @@ def run_drop_applications(
     # A list rather than two `nonlocal` slots so nothing downstream has to be
     # `| None`: the callback either fills it or raises, and a raise never reaches
     # the unpacking below.
-    workspace: list[tuple[ApexRelease, dict[int, ApexApplication]]] = []
+    # The third read is the working copies a `-deploy -app 0` made (ADT #1069).
+    workspace: list[tuple[ApexRelease, dict[int, ApexApplication], dict[int, int]]] = []
     try:
         _print_connection_block(
             gateway,
@@ -160,12 +169,12 @@ def run_drop_applications(
             environment     = args.target,
             debug           = args.debug,
             before_versions = lambda: workspace.append(
-                (read_release(gateway), read_applications(gateway))
+                (read_release(gateway), read_applications(gateway), read_deployed_copies(gateway))
             ),
         )
     except ValueError as error:
         raise PatchError(str(error)) from error
-    release, applications = workspace[0]
+    release, applications, working_copies = workspace[0]
     # `IDENTITY.yaml` first, git as the fallback, through the one reader every
     # `-my` shares (ADT #469): `apex_account` is the login APEX records as a
     # creator, which is why it is the half compared here. The file is loaded
@@ -174,7 +183,9 @@ def run_drop_applications(
     identity = load_identity(_config_search_paths(args.config_dir, root, _repo_root()))
     account = commit_account(identity, root)
     try:
-        sandboxes = [resolve_sandbox(app_id, applications) for app_id in args.drop]
+        sandboxes = [
+            resolve_sandbox(app_id, applications, working_copies) for app_id in args.drop
+        ]
     except ValueError as error:
         raise PatchError(str(error)) from error
     if not args.force:

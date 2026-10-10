@@ -197,6 +197,18 @@ ORDER BY number DESC
 LIMIT 1
 """.strip()
 
+# The newest stored commit carrying a path, what `validate -codescan` names
+# beside a new finding (ADT #1023). Read off `ix_commit_files_path`.
+COMMIT_LAST_CHANGE_QUERY = """
+SELECT c.number, c.id, c.summary, c.author, c.authored_at
+FROM commit_files f
+JOIN commits c
+    ON c.number = f.number
+WHERE f.path = ?
+ORDER BY f.number DESC
+LIMIT 1
+""".strip()
+
 COMMIT_INSERT = """
 INSERT INTO commits (number, id, summary, author, authored_at)
 VALUES (?, ?, ?, ?, ?)

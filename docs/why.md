@@ -93,7 +93,7 @@ Only the refresh touches Oracle. Every question after it answers in milliseconds
 
 ### search: every link into a page, without clicking through the builder
 
-APEX scatters navigation across branches, buttons, lists, the navigation bar and report column links, and no screen says "everything that links into page 50." `rebuild -app` scrapes an application's links once and stores them locally, and `search` answers in either direction. The same refresh writes Mermaid, DOT and JSON diagrams you can drop into documentation.
+APEX scatters navigation across branches, buttons, lists, the navigation bar and report column links, and no screen says "everything that links into page 50." `rebuild -app` scrapes an application's links once and stores them locally, and `search` answers in either direction. The same refresh writes Mermaid, DOT and JSON diagrams for documentation, and a CSV of every link.
 
 ```bash
 adtai rebuild -env DEV -app 100

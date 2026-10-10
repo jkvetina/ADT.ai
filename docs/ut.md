@@ -90,7 +90,7 @@ SUMMARY PER SUITE:
 TIMER: 0s
 ```
 
-Two of those four tests are meant to go wrong, so the run exits non-zero. The summaries are on [ut_coverage.md](ut_coverage.md).
+Two of those four tests are meant to go wrong, so the run exits non-zero. The summaries, and the `OTHER UNITS:` block between them listing the type bodies, procedures, functions and triggers the run entered, are on [ut_coverage.md](ut_coverage.md).
 
 Between the connection block and `SUMMARY PER SUITE:` the output belongs to the mode, and there are three:
 
@@ -173,6 +173,7 @@ RESULTS:
 - **They print with no module convention too.** `ut_module` decides whether a table of *groups* is meaningful; a total over every suite needs no convention to name it, so blanking the expression takes `SUMMARY PER MODULE:` out and leaves this row whole.
 - **`STATUS` is the exit code in words**, `PASS` or `ERROR`, so a green row above a non-zero exit is not a state this command can reach. It reads `ERROR` on a failed or errored test, on a run that executed nothing, and on a package under the `-gate` threshold. Which of the three it was is what the sections around the row say, and one word is deliberately not asked to carry that.
 - **It removes the tally, never the detail that explains one.** `ERRORS & FAILURES:` above the row and `WARNING - COVERAGE BELOW <n>:` below it print exactly as they do without the flag. This is the line `-silent` already draws: a green run gets short, a red one stays readable.
+- **A schema holding type bodies, procedures, functions or triggers gets one more line**, `UNITS: <covered>/<total> blocks <figure>`, under the row in place of the `OTHER UNITS:` block. It is informational only: no cell of the row and no `-gate` verdict reads it. See [Other units](ut_coverage.md#other-units).
 - **`RESULTS:` leads the coverage read** like the heading it replaces, so it is on screen before the profiler round trips rather than after them.
 - **It composes with the modes rather than outranking them**, because they own different halves of the screen: `-silent -compact` is command chrome and one row, `-verbose -compact` keeps the per-test listing above it. The one thing `-compact` does take from `-verbose` is `COVERAGE CHANGED SINCE LAST RUN:`, which is per-package detail inside the region the row replaces.
 

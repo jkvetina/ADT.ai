@@ -195,7 +195,7 @@ The refresh runs the ordinary session setup, `DDL_LOCK_TIMEOUT`, the identifier 
 
 - **What it uses.** The APEX dependency scan fills `APEX_USED_DB_OBJECTS` and `APEX_USED_DB_OBJECT_COMP_PROPS` in the mirror, so `search -impact` can name the page, component and property behind a database object. The tables are on [storage_dependencies_apex.md](storage_dependencies_apex.md).
 - **What its code says.** Component text and static files, for `search TERM`.
-- **How its pages link.** The application, its pages and its links go into `config/internal/flow.db` for `search -to` and `-from` on a page, and Mermaid, Graphviz DOT and JSON diagrams land under `config/flow/`. The tables are on [storage_flow.md](storage_flow.md), and what counts as a link is on [search.md](search.md#what-counts-as-a-link).
+- **How its pages link.** The application, its pages and its links go into `config/internal/flow.db` for `search -to` and `-from` on a page, and Mermaid, Graphviz DOT and JSON diagrams, plus a CSV of every link, land under `config/flow/`. The tables are on [storage_flow.md](storage_flow.md), and what counts as a link is on [search.md](search.md#what-counts-as-a-link).
 
 The application folds into its owner schema's segment when that schema is refreshed too:
 

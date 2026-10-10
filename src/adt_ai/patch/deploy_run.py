@@ -20,10 +20,12 @@ from functools import partial
 from typing import Any
 
 from adt_ai.patch import settings
+from adt_ai.patch.apex_app_lock import PageLock
 from adt_ai.patch.apex_backup import ApexBackup, back_up_targets, revert_failed_scans
 from adt_ai.patch.apex_deploy import ApexImportItem, prepare_apex_imports, run_apex_imports
 from adt_ai.patch.apex_import import ApexTarget
 from adt_ai.patch.apex_lock import build_status_lock, release_targets
+from adt_ai.patch.apex_release import deploy_release_drifts
 from adt_ai.patch.apex_scan import scanned_app_ids
 from adt_ai.patch.apex_validate import ApexlangValidation
 from adt_ai.patch.deploy import (
@@ -91,7 +93,8 @@ def run_deployment(
     down rather than probed again, and it gates the post-deploy scan (ADT #676).
 
     ``apex_account`` travels the same way and stamps a retargeted import as the
-    developer who deployed it (ADT #682); it reaches the run from the CLI edge
+    developer who deployed it (ADT #682), and is who a 26.2+ target's
+    application lock is held as (#1056); it reaches the run from the CLI edge
     because that is where `-config-dir` is known.
 
     ``signature_gateway_factory`` is the cross-environment check's own
@@ -150,6 +153,7 @@ def run_deployment(
         # Before `begin_deploy`, so the streamed table sizes itself on every row it
         # is going to show, and before the first script, so a refused signature check
         # leaves the database untouched (ADT #592).
+        page_locks: list[PageLock] = []
         apex_items, apex_notes = prepare_apex_imports(
             workspace.root,
             config,
@@ -162,6 +166,7 @@ def run_deployment(
             target_env = target,
             signature_gateway_factory = signature_gateway_factory,
             validation = validation,
+            account = apex_account, patch_name = folder.path.name, page_locks = page_locks,
         )
         for imported in apex_items:
             if imported.schema not in gateways:
@@ -175,6 +180,12 @@ def run_deployment(
         results: list[DeploymentResult] = []
         apex_backups: dict[int, ApexBackup] = {}
         if reporter is not None:
+            # What the imports are about to unlock, warned before they run (#1056).
+            if page_locks and (warn := getattr(reporter, "page_locks", None)) is not None:
+                warn(page_locks)
+            # Trees older than this target's APEX (#1064); the import succeeds anyway.
+            if drifts := deploy_release_drifts(reporter, apex_items, apex_version, gateways):
+                reporter.apex_releases(drifts)
             reporter.begin_deploy([step.plan_item for step in sequence])
             # The table's last row stays open over the post-deploy reads (ADT #988).
             reporter = HeldLastRow(reporter)

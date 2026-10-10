@@ -3,8 +3,8 @@ name: adt
 description: "Lean ADT.ai command router for Oracle/APEX work. Invoke only when the user explicitly asks an agent to use the ADT skill by name; never auto-load it for repository work, general discussion, development, review, command lookup, or incidental mentions of ADT."
 metadata:
   created: "2026-06-10"
-  updated: "2026-09-25 00:00"
-  version: "2.5.1"
+  updated: "2026-10-09 22:50"
+  version: "2.5.4"
   tags: [oracle, apex, deployment, cli, database]
 ---
 # ADT.ai
@@ -22,7 +22,7 @@ The executable is `adtai`; `adt` and `python -m adt_ai` are aliases. Run it from
 5. Run one understandable shell command at a time and return its meaningful output. Use `-debug` only when diagnosis needs resolved parameters and SQL.
 6. Read the outcome from the exit code. A refusal prints `ERROR - <CODE>:` and an uppercase headline on stderr, exiting `2` for what was typed, `1` for a runtime failure; `0` is success. A failed `patch` or `diff` prints `ERROR - PATCH FAILED:` or `ERROR - DIFF FAILED:` there too. Shapes: [docs/console.md](../../docs/console.md).
 
-Do not preload every linked page. The repository's [documentation index](../../docs/README.md) owns the detailed behavior, full flag tables, and output descriptions. Install, prerequisites, and machine repair belong to `adt-setup` or [SETUP.md](../../SETUP.md).
+Do not preload every linked page. The repository's [documentation index](../../docs/README.md) owns the detailed behavior and full flag tables. Install, prerequisites, and machine repair belong to `adt-setup` or [SETUP.md](../../SETUP.md).
 
 ## calendar: show Git activity
 
@@ -50,7 +50,7 @@ adtai diff -source DEV -target UAT
 
 ## discovery: run SELECT exploration
 
-Read [docs/discovery.md](../../docs/discovery.md). ADT.ai accepts SELECT statements and starts a read-only transaction, but a SELECT can invoke a stored function and an autonomous function can commit. Treat the SQL and called functions as executable database code, not as side-effect-proof input. `-nolog` suppresses the separate report; it does not suppress `-file` result write-back to the source file.
+Read [docs/discovery.md](../../docs/discovery.md). ADT.ai starts a read-only transaction for SELECT statements, but a SELECT can call a stored function and an autonomous function can commit; treat the SQL and called functions as executable database code. `-nolog` suppresses the separate report; it does not suppress `-file` result write-back to the source file.
 
 ```bash
 adtai discovery -sql "SELECT object_type, COUNT(*) FROM user_objects GROUP BY object_type" -nolog
@@ -58,7 +58,7 @@ adtai discovery -sql "SELECT object_type, COUNT(*) FROM user_objects GROUP BY ob
 
 ## doctor: setup checks, updates, and project bootstrap
 
-Read [docs/doctor.md](../../docs/doctor.md). Bare `doctor` checks the machine. `-init`, `-update`, `-sqlcl`, `-force`, and `-sync` (requires `-init`) change the project or installed tools, so use them only when that change was requested. A project that exports APEXlang fails on a SQLcl older than 26.2.2; that is a prerequisite to repair, not an upgrade offer to decline.
+Read [docs/doctor.md](../../docs/doctor.md). Bare `doctor` checks the machine. `-init`, `-update`, `-sqlcl`, `-force`, and `-sync` (requires `-init`) change the project or installed tools, so use them only when that change was requested. A project that exports APEXlang fails on a SQLcl older than 26.2.2; a prerequisite to repair, not an upgrade offer.
 
 ```bash
 adtai doctor
@@ -66,7 +66,7 @@ adtai doctor
 
 ## export_apex: export APEX applications
 
-Read [docs/export_apex.md](../../docs/export_apex.md) and [docs/export_apex_formats.md](../../docs/export_apex_formats.md). `-reveal` lists applications; an export writes only the formats named. After exporting or editing APEXlang, run `validate`. `-mirror <ref>` requires `-apexlang` and writes Git: it commits each exported tree onto that ref so a later refused deploy can rebase instead of being redone; HEAD, the branch, the working tree and staged work are untouched.
+Read [docs/export_apex.md](../../docs/export_apex.md) and [docs/export_apex_formats.md](../../docs/export_apex_formats.md). `-reveal` lists applications; an export writes only the formats named. After exporting or editing APEXlang, run `validate`.
 
 ```bash
 adtai export_apex -app 100 -full -split -files
@@ -83,7 +83,7 @@ adtai export_data -silent -name APP_LOOKUP%
 
 ## export_db: export database objects
 
-Read [docs/export_db.md](../../docs/export_db.md) and [docs/export_db_layout.md](../../docs/export_db_layout.md). Use `-silent` for agent-driven exports unless per-object progress is useful. Combine `-schema`, `-type`, `-name`, and `-recent` to keep the write set intentional. A `-type` naming something ADT.ai does not export is refused before the run connects and exits `2`, so read the refusal rather than retrying it; the vocabulary now also covers 23ai assertions and the 26ai domains, property graphs, MLE modules and MLE environments. `-delete` removes existing object files before export; `-baseline` measures an environment instead of exporting it.
+Read [docs/export_db.md](../../docs/export_db.md) and [docs/export_db_layout.md](../../docs/export_db_layout.md). Use `-silent` for agent-driven exports unless per-object progress is useful. Combine `-schema`, `-type`, `-name`, and `-recent` to keep the write set intentional. A `-type` naming something ADT.ai does not export is refused before the run connects and exits `2`, so read the refusal rather than retrying it; the vocabulary now also covers 23ai assertions and the 26ai domains, property graphs, MLE modules and environments, Data Grants and Data Roles. `-delete` removes existing object files before export; `-baseline` measures an environment instead of exporting it.
 
 ```bash
 adtai export_db -silent -recent 7
@@ -92,7 +92,7 @@ adtai export_db -silent -type PACKAGE% -name APP_%
 
 ## patch: build and deploy patches from commits
 
-Read [docs/patch.md](../../docs/patch.md), then only the linked patch topic needed for content, install order, deployment, hashes, archiving, or sandbox removal. A bare filtered run previews. `-create` rewrites a patch folder, `-deploy` changes the target database/APEX application, `-archive` moves and removes patch folders, and `-drop` removes sandbox APEX applications whose recorded creator is the `apex_account` in `config/IDENTITY.yaml`, or which record no creator at all (no APEX import writes that column); somebody else's needs `-force`. A successful or failed `-drop` also writes one dictionary-verified receipt per application at `<path_apex>/logs_<ENV>/<timestamp>_apex_drop_<application-id>_<DELETED|FAILED>.log`; the folder comes from `-target` and the filename id comes from `-drop`. An APEXlang patch snapshots the pages its own commits touched, for visibility; the install script links no `.apx` and the deploy still imports the application's live `apexlang/` folder. `-deploy -app <id>` also stamps that application's `last_updated_by`/`last_updated_on` with the same `apex_account` and the current moment, whether `<id>` names a sandbox or the source application; a bare `-app` stamps nothing, and no import can write `created_by` in any format. `-app #<N>` (or `<N>#`) lands each application on its own id, `#` replaced by that application's id; a plain id over several applications is refused. Every `-deploy` runs the whole plan, a target already deployed included; the status is the newest `logs_<ENV>/` log, and no `deployment.json` is written. A post-deploy APEX verification that could not complete fails the deploy instead of passing as skipped, and by default a failed scan reverts the application to a backup taken immediately before the import (`deploy_revert_on_scan_failure`). `-continue` waives that: the scan still runs and still counts every finding, but the status and the exit code report `SUCCESS` and nothing is reverted, so it is a deliberate opt-out of the verification rather than a way to keep going past an unrelated error. By default `-deploy -app` also holds the target at build status `RUN_ONLY` from the signature read until after the scan and then restores it (`deploy_build_status`), so the application is not editable in the Builder while the deploy runs. `-create -files_ws` carries every workspace static file, not only changed ones. `-name <CODE>` hides commits older than the last one committing that code's folder; `-force` keeps them. An application changed since the build refuses a full APEX install. Never guess `-target`, `-name`, commit selectors, content mode, or application id. Preview the exact selection before creation or deployment.
+Read [docs/patch.md](../../docs/patch.md), then only the linked patch topic needed for content, install order, deployment, hashes, archiving, or sandbox removal. A bare filtered run previews. `-create` rewrites a patch folder, `-deploy` changes the target database/APEX application, `-archive` moves and removes patch folders, and `-drop` removes sandbox APEX applications whose recorded creator is the `apex_account`, or which record no creator at all; somebody else's needs `-force`. A `-drop` writes one dictionary-verified receipt per application under `<path_apex>/logs_<ENV>/`. An APEXlang patch snapshots the pages its own commits touched, for visibility, and `-deploy` imports the application's live `apexlang/` folder: on 26.2+ onto its own id only the `.apx` files the patch lists, and the whole tree for a retarget, `-force` over drift or a non-`.apx` change. `-deploy -app 0` (26.2+) imports onto a working copy, reused or created through `APEX_APPLICATION_ADMIN`; `-drop <id>` removes only a copy it made, and `-upload -app 0` is refused. `-create` and `-deploy -app` warn `EXPORTED ON APEX <tree>, TARGET RUNS <target>` when the target is newer than the export; re-export on the target first. `-deploy -app <id>` also stamps that application's `last_updated_by`/`last_updated_on` with the `apex_account` and the current moment, sandbox or source alike; a bare `-app` stamps nothing, and no import can write `created_by`. `-app #<N>` (or `<N>#`) lands each application on its own id; a plain id over several applications is refused. Every `-deploy` runs the whole plan, a target already deployed included; the status is the newest `logs_<ENV>/` log, with no `deployment.json`. A post-deploy verification that could not complete fails the deploy, and by default a failed scan reverts the application to a backup taken before the import (`deploy_revert_on_scan_failure`). `-continue` waives that: the scan still counts every finding, but status and exit code report `SUCCESS` and nothing is reverted, an opt-out of verification, not of unrelated errors. By default `-deploy -app` locks the target from the signature read past the scan (`deploy_build_status`): `RUN_ONLY` or page locks, restored afterwards, or on 26.2+ the application lock as `apex_account`; another developer's lock refuses unless `-force`. `-create -files_ws` carries every workspace static file, not only changed ones. `-name <CODE>` hides commits older than the last one committing that code's folder; `-force` keeps them. An application changed since the build refuses a full APEX install. `patch_codescan` (`warn`/`block`) makes `-create` codescan the files it carries against the `validate -codescan` baseline; `block` refuses and writes nothing. Never guess `-target`, `-name`, commit selectors, content mode, or application id. Preview the exact selection before creation or deployment.
 
 `-upload` is the fifth verb, reads no commit and is refused beside the others ([docs/patch_upload.md](../../docs/patch_upload.md)). It uploads the exported static-files folder into the `-app` application, the workspace with `-files_ws`, or another folder with `-folder`. Bare, it watches until Control+C, so only a person runs it; `-once` uploads everything and exits.
 
@@ -106,7 +106,7 @@ adtai patch -upload -app 100 -files_ws -once
 
 ## rebuild: refresh the local stores
 
-Read [docs/rebuild.md](../../docs/rebuild.md). A normal run updates the branch's local SQLite commit cache, then connects and refreshes the object-dependency mirror for the default schema or the `-schema` list, reloading only what changed; with no connection configured it writes the commit cache, then stops on `ERROR - CONFIGURATION NOT FOUND:` and exits `1`. `-app` also reads each named APEX application's dependencies and page links, and `-force` wipes those database caches in scope before reloading. The refresh recompiles PL/SQL still missing PL/Scope, so it is not read-only. `-reveal` only lists remote branches; `-switch` changes the checked-out Git branch.
+Read [docs/rebuild.md](../../docs/rebuild.md). A normal run updates the branch's local SQLite commit cache, then connects and refreshes the object-dependency mirror for the default schema or the `-schema` list, reloading only what changed; with no connection configured it writes the commit cache, then exits `1` on `ERROR - CONFIGURATION NOT FOUND:`. `-app` also reads each named APEX application's dependencies and page links, and `-force` wipes those database caches in scope before reloading. The refresh recompiles PL/SQL still missing PL/Scope, so it is not read-only. `-reveal` only lists remote branches; `-switch` changes the checked-out Git branch.
 
 ```bash
 adtai rebuild
@@ -141,7 +141,7 @@ adtai ut -name APP_% -gate 90
 
 ## validate: check exported APEXlang source
 
-Read [docs/validate.md](../../docs/validate.md). Checking local APEXlang folders or zips needs no database connection or credentials. `-scan -app <id>` connects instead and reports the live application's components that no longer compile, writing nothing and exiting non-zero on findings; `-page` scans only the named pages, one scan and one verdict row each. A file check writes into the export it checks: the sibling `files/` payloads are hardlinked (copied where a filesystem refuses) into `apexlang/shared-components/static-files/`, ignored through the repository's `.git/info/exclude`, never a nested `.gitignore`. The loop from export to promotion, one command per step, is docs/apex_round_trip.md.
+Read [docs/validate.md](../../docs/validate.md). A file check needs no connection but writes into the export, hardlinking the sibling `files/` payloads into `apexlang/shared-components/static-files/`, ignored via `.git/info/exclude`. `-scan -app <id>` connects and reports live components that no longer compile and, on APEX 26.2+, every Static ID holding a Tab (26.2 will not save one), read-only, non-zero on findings; `-page` narrows the compile. A Tab prints as `\t`. `-codescan` scans the exports offline, records each tree's clean run in `config/internal/codescan.db` and fails only on new findings; `codescan_ignore` becomes a temporary dot-file in each scanned folder. After editing exported code, run `adtai validate -codescan -input <changed tree> -nobeep` and fix every new finding before landing. Round trip: docs/apex_round_trip.md.
 
 ```bash
 adtai validate -app 100

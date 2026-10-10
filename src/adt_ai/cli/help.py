@@ -95,7 +95,6 @@ FILTER_DESTS = {
     "hash",
     "ignore",
     "layer",
-    "max_app_id",
     "month",
     "my",
     # `patch_code` sat beside this until ADT #465 renamed `patch -patch` to
@@ -134,6 +133,7 @@ FILTER_DESTS = {
 MODE_DESTS = {
     "apex",
     "baseline",
+    "codescan",
     "constraint",
     "data",
     "disabled",
@@ -162,7 +162,8 @@ MODE_DESTS = {
 # `recompile`'s six report modes (the name `docs/recompile.md` already used),
 # `-reveal` on `export_apex` and `rebuild` with `rebuild`'s `-switch` and
 # `-verify`, `-groups` on both exports, `export_db -baseline` and `patch`'s hash
-# pair, `doctor`'s three upgrades, `search`'s graph questions, `validate -scan`,
+# pair, `doctor`'s three upgrades, `search`'s graph questions, `validate -scan`
+# and `-codescan` (ADT #1026),
 # `patch -once` (ADT #903, was `live_upload -once`), and `diff`'s `-data` and
 # `-apex`.
 #
@@ -192,7 +193,6 @@ MODIFIER_DESTS = {
     "like",
     "limit",
     "local",
-    "mirror",
     "native",
     "new_key",
     "no_log",

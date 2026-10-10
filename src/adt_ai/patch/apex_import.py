@@ -20,6 +20,10 @@ number carries the task number, so app `1100` on task `123` imports as
 developers, so nobody maintains a range and no two people can collide by
 construction.
 
+**`-app 0` is a working copy instead, on APEX 26.2+** (ADT #1069). APEX picks
+its id, so it is the one value that names no landing: `WorkingCopy` marks it,
+and `apex_working_copy` finds or creates the copy when the deploy reaches it.
+
 **`-alias` travels with `-id`, always**, which is an invariant here rather than a
 caller's habit. An APEX alias is unique within a workspace, so importing app
 1000's tree under a test id while keeping its alias collides with the original,
@@ -29,10 +33,11 @@ it.
 
 The flag surface is measured, not remembered: SQLcl `26.2.1.209.2118` ships
 `apex import` with `-id`, `-alias`, `-name`, `-schema`, `-workspaceid`/
-`-workspace`, `-imageprefix`, `-offset`, `-proxy`, `-deployment` and
-`-buildstatus`, read out of `oracle/dbtools/extension/apex/command/Help.properties`
-inside `lib/ext/dbtools-apex.jar`, where `apex import -input ./projects/x -id
-1001` is Oracle's own documented example. Retargeting is therefore a flag on the
+`-workspace`, `-imageprefix`, `-offset`, `-proxy`, `-deployment`,
+`-buildstatus` and `-files` (APEX 26.2 and later), read out of
+`oracle/dbtools/extension/apex/command/Help.properties` inside
+`lib/ext/dbtools-apex.jar`, where `apex import -input ./projects/x -id 1001` is
+Oracle's own documented example. Retargeting is therefore a flag on the
 command and never an edit to the tree's `deployments/default.json`, which is what
 lets a promote import the byte-identical tree a test import already validated.
 """
@@ -50,6 +55,8 @@ from adt_ai.shared.sqlcl_quoting import reject_unquotable
 # the line itself, so an unquoted staging path carrying a space truncates in
 # silence.
 IMPORT_COMMAND = 'apex import -input "{input}"'
+# SQLcl's own option, APEX 26.2+ (ADT #1068), never `patch`'s withdrawn `-files`.
+IMPORT_FILES_COMMAND = 'apex import -input "{input}" -files {files}'
 
 
 @dataclass(frozen=True)
@@ -78,12 +85,35 @@ class AppIdTemplate:
         return self.pattern
 
 
-# What a target is: an id, a template, or nothing when `-app` came bare.
-AppTarget = int | AppIdTemplate
+@dataclass(frozen=True)
+class WorkingCopy:
+    """`-app 0`: the tree lands on a working copy of each application.
+
+    ADT #1069, Jan 2026-10-09: *"On 26.2+ if -app 0 is passed, lets use working
+    copy, if any number is provided, respect that number"*. A sandbox on a
+    derived id has no relation to the application it came from; a working copy
+    carries `MAIN_APPLICATION_ID`, so the Builder and a front-end test both know
+    what it is a copy of. APEX picks the copy's id, so its landing is known
+    only once `apex_working_copy.land_working_copy` has asked the target.
+
+    A marker rather than the integer ``0``, because ``landing_id(...) or
+    app_id`` reads a falsy landing as the application's own id, and a working
+    copy reaching that line as ``0`` would import in place.
+    """
+
+    def __str__(self) -> str:
+        return "0"
+
+
+WORKING_COPY = WorkingCopy()
+
+# What a target is: an id, a template, a working copy, or nothing when `-app`
+# came bare.
+AppTarget = int | AppIdTemplate | WorkingCopy
 
 
 def parse_app_value(raw: str) -> AppTarget:
-    """One `patch -app` value, an id or a `#` template, refused when neither.
+    """One `patch -app` value: an id, a `#` template, or `0`, refused otherwise.
 
     The parser's ``type``, so a malformed value stops the run at the argparse
     edge the way a non-numeric id always has.
@@ -91,15 +121,24 @@ def parse_app_value(raw: str) -> AppTarget:
     digits = raw.replace("#", "", 1)
     if raw.count("#") > 1 or not digits.isdigit() or not digits.isascii():
         raise ValueError(f"EXPECTS AN ID OR A # TEMPLATE, GOT {raw!r}")
+    if raw == "0":
+        return WORKING_COPY
     if raw.startswith("0"):
         raise ValueError(f"CANNOT START WITH 0, GOT {raw!r}")
     return AppIdTemplate(raw) if "#" in raw else int(raw)
 
 
 def landing_id(target: AppTarget | None, app_id: int) -> int | None:
-    """The id ``app_id`` lands on under ``target``, or ``None`` for its own."""
+    """The id ``app_id`` lands on under ``target``, or ``None`` for its own.
+
+    ``None`` for a working copy too, which has no id until the deploy creates
+    it: `-create` then names the scripts for the application's own id, and
+    `apex_deploy.prepare_apex_imports` resolves the copy before it asks here.
+    """
     if isinstance(target, AppIdTemplate):
         return target.landing(app_id)
+    if isinstance(target, WorkingCopy):
+        return None
     return target
 
 
@@ -169,7 +208,8 @@ def one_target_refusal(target: AppTarget | None, app_ids: list[int]) -> str:
     when it starts or ends with one of the applications (`1236000` over 123 is
     `#6000`), and the general form otherwise.
     """
-    if target is None or isinstance(target, AppIdTemplate) or len(app_ids) < 2:
+    # A working copy is one per application, the way a template's expansion is.
+    if target is None or isinstance(target, AppIdTemplate | WorkingCopy) or len(app_ids) < 2:
         return ""
     ordered = sorted(app_ids)
     named = ", ".join(str(app_id) for app_id in ordered)
@@ -243,7 +283,7 @@ def recover_task_number(app_id: int, target_id: int) -> int | None:
     derivation.
 
     One rule, used by both `apex_drop._prefix_sources` (deciding whether a
-    target id IS a derived sandbox at all) and `apex_deploy._task_number`
+    target id IS a derived sandbox at all) and :func:`alias_task`
     (recovering the alias suffix for one already known to be); before `#670`
     each kept its own copy of the identical prefix strip.
     """
@@ -259,6 +299,21 @@ def recover_task_number(app_id: int, target_id: int) -> int | None:
     # which derives `100123` rather than the `1000123` in hand, so the answer is
     # "not a derived id" without a separate leading-zero test to keep in step.
     return task if derive_sandbox_app_id(app_id, task) == target_id else None
+
+
+def alias_task(app_id: int, target_id: int) -> int:
+    """The task half of a derived id, or the whole id when it carries no app half.
+
+    :func:`recover_task_number` is the shared prefix strip (`#670`), used the
+    same way by `apex_drop._prefix_sources`; the fallback to the whole value is
+    this caller's own, `apex_deploy.ApexImportItem.alias_for_target`, for a
+    remainder that is not a positive number (an id equal to the application's
+    own, a remainder of nothing but zeros), which `derive_sandbox_alias` then
+    judges on its own terms rather than on a guess made here. Moved here from
+    `apex_deploy._task_number` by ADT #1069, beside the strip it falls back from.
+    """
+    task = recover_task_number(app_id, target_id)
+    return target_id if task is None else task
 
 
 def derive_sandbox_alias(alias: str, task: int) -> str:
@@ -281,8 +336,13 @@ def build_import_script(
     alias      : str | None = None,
     account    : str = "",
     app_id     : int | None = None,
+    files      : tuple[Path, ...] = (),
 ) -> str:
     """The SQLcl script that lands ``input_path`` on the target application.
+
+    ``files`` narrows the import to those files of the tree, SQLcl's `-files`
+    (APEX 26.2+, ADT #1068); empty imports the whole tree. Which deploys may
+    narrow is `apex_deploy.files_only`'s question, not this function's.
 
     One call per tree, and `exit;` closes it, the same shape
     `validate.runner._build_script` already uses so the two halves of the round
@@ -332,6 +392,13 @@ def build_import_script(
     # the alias comes from an APEX application and takes the same check.
     reject_unquotable(path, role="staging folder")
     command = IMPORT_COMMAND.format(input=path)
+    if files:
+        named = [file.as_posix() for file in files]
+        for file in named:
+            reject_unquotable(file, role="imported file")
+        command = IMPORT_FILES_COMMAND.format(
+            input=path, files=" ".join(f'"{file}"' for file in named)
+        )
     lines = [command]
     landing = app_id
     if target.target_id is not None and alias:

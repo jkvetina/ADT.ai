@@ -59,6 +59,12 @@ UPLOAD_TEMPLATE_MESSAGE = (
     "-upload TAKES ONE APPLICATION\n\n"
     "Pass -app N, the application to upload into; # is for -create and -deploy."
 )
+# `-app 0` is a working copy the deploy creates (ADT #1069), so there is no
+# application yet for an upload to write into.
+UPLOAD_WORKING_COPY_MESSAGE = (
+    "-upload TAKES ONE APPLICATION\n\n"
+    "Pass -app N, the application to upload into; 0 is for -deploy."
+)
 # The default nap between passes, old ADT's own. A folder a person is editing
 # changes a few times a minute, so anything shorter buys nothing.
 DEFAULT_INTERVAL = 1

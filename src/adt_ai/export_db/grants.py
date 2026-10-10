@@ -23,6 +23,10 @@ from adt_ai.export_db.content import (
     _render_grants_received,
     _render_user_privileges,
 )
+from adt_ai.export_db.data_security import (
+    data_security_contents,
+    exported_data_security_types,
+)
 from adt_ai.export_db.files import ObjectFileWriter, ObjectWriteRequest
 from adt_ai.export_db.inventory import DatabaseObject, ObjectDiscovery
 from adt_ai.shared.config import is_enabled
@@ -54,6 +58,11 @@ def exports_grants(request: ExportDbRequest) -> bool:
     importing it back there would turn the split into a cycle, while this reads
     `config`, which imports nothing from here.
     """
+    return _exports_object_grants(request) or bool(exported_data_security_types(request))
+
+
+def _exports_object_grants(request: ExportDbRequest) -> bool:
+    """The four privilege reports alone, without the Deep Data Security files (`#1063`)."""
     if GRANT_OBJECT_TYPE not in request.config.get("object_types", {}):
         return False
     return bool(_requested_object_type_matches(GRANT_OBJECT_TYPE, request.object_types))
@@ -118,8 +127,19 @@ def grant_contents(
     `exports_grants`, which reads `config` itself so the overview and the compact
     label can ask the same question before these reads run (`#382`).
     """
-    if not exports_grants(request):
-        return
+    if _exports_object_grants(request):
+        yield from _object_grant_contents(request, schema, discovery, split_patterns)
+    # The Deep Data Security files ride this pass for the reason this module
+    # exists: no `user_objects` row and no date, so content is the signal (`#1063`).
+    yield from data_security_contents(request, schema, discovery)
+
+
+def _object_grant_contents(
+    request: ExportDbRequest,
+    schema: str,
+    discovery: ObjectDiscovery,
+    split_patterns: Callable[[Any], list[str] | None],
+) -> Iterable[tuple[DatabaseObject, str]]:
     schema_export = (request.schema_export or {}).get(schema, {})
     prefix = request.prefix or schema_export.get("prefix")
     ignore = request.ignore or split_patterns(schema_export.get("ignore"))

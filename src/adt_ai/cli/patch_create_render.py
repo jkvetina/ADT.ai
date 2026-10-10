@@ -42,6 +42,7 @@ from adt_ai.cli.patch_create_warnings import (
     print_no_database_clock,
     print_outdated,
     print_refused_tables,
+    print_release_drifts,
     print_script_warnings,
     print_uncommitted,
     print_undecodable_files,
@@ -204,6 +205,9 @@ def print_create_warnings(
     claim than an unresolved table version or an unmoved per-patch script.
     """
     print_changed_apps(result)
+    # A tree older than the target's APEX (ADT #1064), beside the other
+    # per-application warning and naming the same kind of way out.
+    print_release_drifts(result)
     # A tree the compile gate converted to LF (ADT #964): `-deploy`'s own
     # warning, since the conversion now happens here when both run.
     print_precheck_issues(result.apex_notes)

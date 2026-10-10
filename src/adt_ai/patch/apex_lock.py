@@ -8,42 +8,31 @@ the check passed, and it passed against a state that no longer existed by the
 time the write happened. That is the whole of the race, and nothing in the
 deploy closed it.
 
-**Build status is the lock, because APEX offers no other.** The Builder's own
-application lock has no public API -- `WWV_FLOW_LOCK.LOCK_APPLICATION` and its
-siblings carry no grant to any user -- and an import DELETES the lock row anyway
-(bug 39557252, reproduced on APEX 26.1.0 as fact 4 of the Brain's APEXlang lock
-facts). A lock the deploy itself drops cannot guard the deploy. Setting the
-application to `RUN_ONLY` is what is left, and it needs no version floor: it goes
-through `APEX_UTIL.SET_APP_BUILD_STATUS`, the same call ADT already emits into a
-generated install script for `patch_apex_build_status`.
+**Below APEX 26.2, build status is the lock.** On 26.1.0 an import DELETES the
+Builder's application lock (bug 39557252), and a lock the deploy itself drops
+cannot guard the deploy. `RUN_ONLY` needs no version floor: it goes through
+`APEX_UTIL.SET_APP_BUILD_STATUS`, the call `patch_apex_build_status` emits.
+**On 26.2 and newer the application lock is** (ADT #1056): the import keeps it
+there, so `apex_app_lock` takes it as the deploying developer and this module
+writes no `RUN_ONLY`, falling back to it only when that lock cannot be taken.
 
-**It closes the door, not the room, and that is measured rather than assumed.**
-Fact 1: a Page Designer session that is ALREADY open saves successfully under
-`RUN_ONLY`, and the save lands. What `RUN_ONLY` refuses is Builder ENTRY -- a
-reload of the same page answers `Application not available for edit`. So the
-lock stops a new editing session starting mid-deploy and does not evict one
-already running. It narrows the window; the signature gate remains the guard.
+**`RUN_ONLY` closes the door, not the room** (measured on 26.1.0): a Page
+Designer session already open still saves; what it refuses is Builder ENTRY. It
+narrows the window; the signature gate remains the guard.
 
-**The import drops the lock on its own, so the deploy re-applies rather than
-carries.** Fact 2: an APEXlang import resets build status to `Run and Develop`
-every time, and `apex_application_install.set_build_status` -- which does pin the
-classic `f<id>.sql` path -- is ignored by SQLcl's APEXlang importer. There is
-nothing to pin with. The deploy therefore reads the signature, then locks, lets
-the import reset it, and sets the final status as the last step, recording all
-four moments so the log shows what happened rather than what was intended.
+**Every import resets build status, on 26.2 too**, and SQLcl's APEXlang
+importer ignores `apex_application_install.set_build_status`. So the deploy
+reads the status and the signature, locks, lets the import reset it, and sets
+the final status as the last step, recording each moment in its timeline.
 
-**A task sandbox is never locked** (Jan, 2026-09-07: *"We need it for the
-shared/main apps (1000), not for the tasks prototypes (1000 + ###). If task
-created its own copy, we dont want locks there."*). A retargeted import lands on
-a throwaway id nobody is editing, so locking it protects nothing and leaves a
-stranded `RUN_ONLY` behind on every prototype. `ApexImportItem.retargeted`
-already names the distinction, so the rule reads off what the deploy knows.
+**A task sandbox is never locked** (Jan, 2026-09-07: *"If task created its own
+copy, we dont want locks there."*): a retargeted import lands on a throwaway id
+nobody is editing, and locking it would strand every prototype.
 
 **Nothing here raises.** A status that could not be read and a lock that could
-not be set are outcomes carrying their reason, the rule `apex_backup` and
-`apex_scan` already follow beside it: a deploy must not die because a courtesy
-lock was refused, and a lock that never went on is exactly the state every
-release before this one deployed in.
+not be set are outcomes carrying their reason, as in `apex_backup` and
+`apex_scan`: a deploy must not die because a courtesy lock was refused. The one
+refusal is somebody else's application lock, raised by `hold_application`.
 """
 
 from __future__ import annotations
@@ -56,6 +45,21 @@ from pathlib import Path
 from typing import Any
 
 from adt_ai.patch import queries, settings
+from adt_ai.patch.apex_app_lock import (
+    LOCK_COMMENT,
+    AppLock,
+    PageLock,
+    read_page_locks,
+    refusal_message,
+    release_app_lock,
+    take_app_lock,
+)
+from adt_ai.patch.apex_lock_report import (
+    RUN_ONLY,
+    build_status_line,
+    build_status_log_text,
+    build_status_timeline,
+)
 from adt_ai.patch.apex_signature import LastChange, read_last_change, read_target_signature
 from adt_ai.patch.sql_literal import escape_literal
 from adt_ai.shared import text_files
@@ -82,18 +86,6 @@ _API_VALUE = {
     "RUN ONLY"       : "RUN_ONLY",
 }
 
-#: The status the lock puts on. Both edges name it, so it is one constant.
-RUN_ONLY = "RUN_ONLY"
-
-#: The column this block's rows line up on, shared with the signature and
-#: `BACKUP` rows so a reader meets one table rather than three that nearly agree.
-_ROW_WIDTH = 16
-
-#: What the import log's `BUILD STATUS` row says when nothing was locked. Never
-#: blank, for the reason `apex_backup._NO_BACKUP` is never blank: an empty value
-#: reads as a row the log failed to write.
-_NO_LOCK = "(not locked)"
-
 
 @dataclass(frozen=True)
 class BuildStatusLock:
@@ -113,10 +105,10 @@ class BuildStatusLock:
     #: `restore`, `run_only` or `off`, recorded so the log says which rule
     #: produced `final` rather than leaving a reader to infer it.
     mode      : str = settings.BUILD_STATUS_OFF
-    #: Whether `RUN_ONLY` actually went on. Its own field rather than a reading
-    #: of ``outcome``, because the release can fail AFTER a lock that was really
-    #: taken, and a timeline saying `LOCKED | (not locked)` about an application
-    #: sitting at `Run Only` is the one thing a reader cannot recover from.
+    #: Whether a lock actually went on: `RUN_ONLY`, or the application lock when
+    #: ``app_lock.held``. Its own field rather than a reading of ``outcome``,
+    #: because the release can fail AFTER a lock that was really taken, and a
+    #: timeline saying `(not locked)` about a held application misleads.
     locked    : bool = False
     #: The target's export checksum as it stood BEFORE the status was written
     #: (ADT #745). Setting build status moves that checksum, so this is the only
@@ -127,6 +119,8 @@ class BuildStatusLock:
     #: Who last moved the target, read beside ``signature`` because the status
     #: write stamps the application with the deploy's own user (ADT #925).
     last_change : LastChange = LastChange()
+    #: The Builder's application lock on APEX 26.2+ (ADT #1056); empty below.
+    app_lock  : AppLock = AppLock()
     reason    : str = ""
     log_path  : str = ""
 
@@ -141,8 +135,16 @@ def lock_target(
     *,
     workspace : str,
     mode      : str,
+    account   : str = "",
+    comment   : str = "",
+    force     : bool = False,
 ) -> BuildStatusLock:
-    """Read ``app_id``'s build status and signature, then set it to `RUN_ONLY`.
+    """Read ``app_id``'s build status and signature, then lock it.
+
+    On APEX 26.2+ the lock is the application lock, taken as ``account`` with
+    ``comment`` (`apex_app_lock.take_app_lock`); below that, or when it cannot
+    be taken, it is `RUN_ONLY`. Somebody else's application lock answers an
+    entry whose ``app_lock.refused`` is set, and no lock at all.
 
     An empty ``workspace`` is an application `export_apex` never recorded, and
     the setter refuses without one, so the lock is skipped rather than attempted
@@ -193,15 +195,24 @@ def lock_target(
     except Exception:  # noqa: BLE001 - the gate re-reads and reports its own failure
         signature = ""
     last_change = read_last_change(gateway, app_id)
+    app_lock = take_app_lock(
+        gateway, app_id, workspace=workspace, account=account, comment=comment, force=force,
+    )
+    if app_lock.refused:
+        return BuildStatusLock(app_id=app_id, before=before, mode=mode, app_lock=app_lock)
     try:
-        _set_status(gateway, app_id, workspace=workspace, status=RUN_ONLY)
+        if not app_lock.held:
+            _set_status(gateway, app_id, workspace=workspace, status=RUN_ONLY)
     except Exception as error:  # noqa: BLE001 - reported as an outcome, never raised
         return BuildStatusLock(
             app_id  = app_id,
             outcome = LOCK_FAILED,
             before  = before,
             mode    = mode,
-            reason  = f"the application could not be set to RUN_ONLY: {error}",
+            app_lock = app_lock,
+            reason  = "; ".join(filter(None, (
+                app_lock.fallback, f"the application could not be set to RUN_ONLY: {error}",
+            ))),
         )
     return BuildStatusLock(
         app_id    = app_id,
@@ -211,7 +222,48 @@ def lock_target(
         locked    = True,
         signature = signature,
         last_change = last_change,
+        app_lock  = app_lock,
+        reason    = app_lock.fallback,
     )
+
+
+def hold_application(
+    gateway    : Any,
+    app_id     : int,
+    landing    : int,
+    *,
+    workspace  : str,
+    config     : dict[str, Any],
+    locks      : dict[int, BuildStatusLock] | None,
+    account    : str = "",
+    patch_name : str = "",
+    force      : bool = False,
+    page_locks : list[PageLock] | None = None,
+) -> list[str]:
+    """Everything `-app` does to the target before an import; the notes it owes.
+
+    Reads the page locks the import is about to delete into ``page_locks`` on
+    every release and in every mode, then locks ``app_id`` into ``locks`` --
+    only where the import lands on its own id and the mode is not `off`, which
+    keeps both rules exactly as ADT #726 drew them. Raises `PatchError` when
+    another developer holds the application lock and ``force`` is not set; a
+    fallback to `RUN_ONLY` on 26.2+ answers the note saying why.
+    """
+    if page_locks is not None:
+        page_locks.extend(read_page_locks(gateway, landing))
+    mode = settings.deploy_build_status(config)
+    if locks is None or landing != app_id or mode == settings.BUILD_STATUS_OFF:
+        return []
+    lock = lock_target(
+        gateway, app_id, workspace=workspace, mode=mode, account=account,
+        comment=LOCK_COMMENT.format(patch=patch_name), force=force,
+    )
+    if lock.app_lock.refused:
+        from adt_ai.patch.runner import PatchError
+
+        raise PatchError(refusal_message(app_id, lock.app_lock))
+    locks[app_id] = lock
+    return [f"APP {app_id}: {lock.app_lock.fallback}"] if lock.app_lock.fallback else []
 
 
 def release_target(
@@ -230,11 +282,27 @@ def release_target(
     The generated install script has already applied it by the time this runs, so
     honouring it means reading the status back and setting nothing.
 
-    A lock that was never held still reads the status back, because a reader of
-    the timeline wants to know where the application ended up either way.
+    The application lock (ADT #1056) is released last, after the final status
+    is set and whether or not setting it worked.
     """
     if not lock.held:
         return lock
+    result = _release_status(gateway, lock, workspace=workspace, terminal=terminal)
+    app_lock, error = release_app_lock(gateway, lock.app_id, lock.app_lock, workspace=workspace)
+    if not error:
+        return _replace(result, app_lock=app_lock)
+    return _replace(result, app_lock=app_lock, outcome=LOCK_FAILED,
+                    reason="; ".join(filter(None, (result.reason, error))))
+
+
+def _release_status(
+    gateway   : Any,
+    lock      : BuildStatusLock,
+    *,
+    workspace : str,
+    terminal  : str,
+) -> BuildStatusLock:
+    """Read what the import left, then set the status this deploy ends on."""
     try:
         after = _live_status(gateway, lock.app_id)
     except Exception as error:  # noqa: BLE001 - reported as an outcome, never raised
@@ -352,76 +420,6 @@ def release_targets(
     return released
 
 
-def build_status_line(lock: BuildStatusLock) -> str:
-    """The import log's `BUILD STATUS` row: the lock standing over this import.
-
-    Written for every application the deploy TRIED to lock, the ones it then
-    skipped included, because a reader asking whether the application was held
-    needs to be told it was not rather than left to notice a missing row. An
-    application the deploy never considered -- a retargeted sandbox, or any
-    application at all under `off` -- has no entry and gets no row, which is what
-    keeps `off` byte for byte the deploy it was before ADT #726.
-    """
-    if not lock.locked:
-        return _row("BUILD STATUS", f"{_NO_LOCK} {lock.reason}".strip())
-    return _row("BUILD STATUS", f"{RUN_ONLY} (was {lock.before})")
-
-
-def build_status_timeline(lock: BuildStatusLock) -> str:
-    """The deploy console's `BUILD STATUS:` value: where the application went.
-
-    Three moments rather than the log's four (ADT #720): what it was, the lock
-    this deploy put on, and what it is left on. `AFTER IMPORT` is APEX resetting
-    the status on its own, a fact about APEX rather than about this deploy, and
-    it is in the timeline file for a reader who wants it.
-
-    An application nothing locked answers "" and prints no row at all. Jan,
-    2026-09-09, on a `(not locked)` row: *"dont show, it is a noise"* -- that
-    row would be a line per unlocked application saying nothing happened.
-
-    The vocabulary is the timeline file's own, display text either side of the
-    API value `RUN_ONLY`, because the row summarises that file and a second
-    spelling of the same three values is how the two start disagreeing.
-    """
-    if not lock.locked:
-        return ""
-    return " -> ".join((
-        lock.before or "(no application)",
-        RUN_ONLY,
-        lock.final or "(not set)",
-    ))
-
-
-def build_status_log_text(lock: BuildStatusLock) -> str:
-    """The lock's own report: the four moments, in the order they happened.
-
-    The timeline is the point. `BEFORE DEPLOY` and `LOCKED` are what the deploy
-    did to hold the application shut, `AFTER IMPORT` is APEX resetting it on its
-    own, and `FINAL` is where the deploy left it -- so a reader can tell a lock
-    that never went on from one that did and was reset from one that was
-    restored, without reading the source to find out which is which.
-    """
-    lines = [
-        f"-- APEX application {lock.app_id} and its build status across this deploy.",
-        "--",
-        "-- The signature is read, then the lock set, so the window between the check",
-        "-- and the import is covered. RUN_ONLY refuses Builder ENTRY, not a save from",
-        "-- a session that is already open, and the APEXlang import resets the status",
-        "-- on its own, which is why FINAL is set as the last step.",
-        "",
-        _row("APPLICATION", str(lock.app_id)),
-        _row("MODE", lock.mode),
-        _row("STATUS", lock.outcome),
-        _row("BEFORE DEPLOY", lock.before or "(no application)"),
-        _row("LOCKED", RUN_ONLY if lock.locked else _NO_LOCK),
-        _row("AFTER IMPORT", lock.after or "(not read)"),
-        _row("FINAL", lock.final or "(not set)"),
-    ]
-    if lock.reason:
-        lines.append(f"{lock.outcome}: {lock.reason}")
-    return "\n".join(lines) + "\n"
-
-
 def _final_status(lock: BuildStatusLock, *, after: str, terminal: str) -> str:
     """The API value this deploy leaves the application on, or "" to leave it.
 
@@ -529,8 +527,6 @@ def _replace(lock: BuildStatusLock, **changes: Any) -> BuildStatusLock:
     return replace(lock, **changes)
 
 
-def _row(name: str, value: str) -> str:
-    return f"--   {name.ljust(_ROW_WIDTH)} | {value}"
 
 
 __all__ = [
@@ -543,6 +539,7 @@ __all__ = [
     "build_status_lock",
     "build_status_log_text",
     "build_status_timeline",
+    "hold_application",
     "lock_target",
     "release_target",
     "release_targets",

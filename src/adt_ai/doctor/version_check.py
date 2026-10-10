@@ -18,6 +18,7 @@ from adt_ai.doctor._base import (
     format_status_line,
 )
 from adt_ai.doctor.apexlang_floor import apexlang_floor_lines
+from adt_ai.doctor.codescan_floor import codescan_floor_lines
 from adt_ai.doctor.version_fetch import DoctorLatestVersionMixin
 from adt_ai.shared.env_check import CheckResult, redact_java_options
 
@@ -148,7 +149,8 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
             "SQLcl",
             online_status=self._online_update_status("sqlcl", value, online=online),
         )
-        return "FAIL" if self._apexlang_sqlcl_shortfall else status
+        floor_breached = self._apexlang_sqlcl_shortfall or self._codescan_sqlcl_shortfall
+        return "FAIL" if floor_breached else status
 
     def _status_action_lines(self) -> list[str]:
         """The upgrade commands worth offering, given what the online checks found.
@@ -180,6 +182,20 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         return [
             line
             for line in apexlang_floor_lines(self._apexlang_sqlcl_shortfall)
+            if line not in offered
+        ]
+
+    def _codescan_floor_action_lines(self, offered: list[str]) -> list[str]:
+        """The codescan floor rows (ADT #1026), deduplicated the same way.
+
+        With both floors breached the `-sqlcl` offer is already on the list from
+        the APEXlang rows, and one upgrade clears both.
+        """
+        if not self._codescan_sqlcl_shortfall:
+            return []
+        return [
+            line
+            for line in codescan_floor_lines(self._codescan_sqlcl_shortfall)
             if line not in offered
         ]
 
