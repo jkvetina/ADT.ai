@@ -241,6 +241,7 @@ Every SQLcl script ADT generates, REST export included, connects through a **nam
 - **Machine moves.** The YAML travels with the project and SQLcl's store does not. Where the store has no such name, on a new machine or a cleared one, the call fails fast and ADT re-registers and retries by itself.
 - **Wallets.** Registration passes an absolute wallet path, so a wallet project needs nothing extra.
 - **Opt-out.** Set `sqlcl_named_connections: false` in project `config.yaml` to restore the older inline connect scripts.
+- **ORDS.** A connection reached over ORDS (`ords:`) registers no name, because SQLcl cannot save a REST connection. connection_ords.md covers that connection shape.
 - **Driver.** SQLcl is always launched on the JDBC thin driver, with `ORACLE_HOME` withheld from its environment, because its launcher otherwise reads that variable as a request for the thick driver and builds a URL the JVM cannot satisfy. It also gets `-Doracle.sqlcl.skipOracleHome=true` in `JAVA_TOOL_OPTIONS`, added to whatever you set there, because on Windows SQLcl finds an installed Oracle client through the registry too, and a client older than 23 then fails with `no ocijdbc23 in java.library.path`. Nothing else changes: `PATH` still finds the launcher, `TNS_ADMIN` still resolves aliases, wallet connects are unaffected, and ADT's own Python connection keeps thick mode, since only the SQLcl child is started without the variable.
 
 <br>

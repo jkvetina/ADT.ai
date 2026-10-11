@@ -73,4 +73,12 @@ class ConnectFailedError(ConnectionError):
     configuration one: by this point ADT.ai has stopped reading configuration and
     started talking to Oracle or to SQLcl, so the wallet and credential advice
     that screen already carries is the remedy that fits.
+
+    ``steps`` replaces that advice where it does not fit. An `ords:` connection
+    (ADT #1071) has no listener and no wallet, and each way ORDS refuses has a
+    step of its own.
     """
+
+    def __init__(self, *args: object, steps: tuple[str, ...] = ()) -> None:
+        super().__init__(*args)
+        self.steps = steps

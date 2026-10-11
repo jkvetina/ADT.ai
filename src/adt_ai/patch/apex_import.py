@@ -407,14 +407,21 @@ def build_import_script(
         if landing is None and isinstance(target.target_id, int):
             landing = target.target_id
     if landing:
-        set_user = (
-            queries.APEX_IMPORT_STAMP_USER.format(account=escape_literal(account.strip()))
-            if account.strip() else ""
-        )
-        lines.append(
-            queries.APEX_IMPORT_STAMP_BLOCK.format(app_id=landing, set_user=set_user)
-        )
+        lines.append(import_stamp(landing, account))
     return "\n".join([*lines, "exit;"])
+
+
+def import_stamp(landing: int, account: str = "") -> str:
+    """The block that stamps ``landing`` as this deploy's, see `build_import_script`.
+
+    Its own function since ADT #1071, so an import over ORDS, which never runs
+    the SQLcl script above, stamps the application the same way.
+    """
+    set_user = (
+        queries.APEX_IMPORT_STAMP_USER.format(account=escape_literal(account.strip()))
+        if account.strip() else ""
+    )
+    return queries.APEX_IMPORT_STAMP_BLOCK.format(app_id=landing, set_user=set_user)
 
 
 __all__ = [name for name in globals() if not name.startswith("_")]

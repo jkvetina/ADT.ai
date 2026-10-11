@@ -69,6 +69,7 @@ from adt_ai.patch.deploy import (
 )
 from adt_ai.patch.files import _install_file_link
 from adt_ai.patch.install_links import _file_link_rows
+from adt_ai.patch.ords_import import run_backup
 from adt_ai.shared import text_files
 from adt_ai.shared.git_exclude import exclude_from_git, git_exclude_file
 
@@ -304,7 +305,7 @@ def restore_application(
         "PROMPT SUCCESS",
     ])
     try:
-        output = gateway.sqlcl_request(script, backup.path.parent)
+        output = run_backup(gateway, script, backup.path)
     except Exception as error:  # noqa: BLE001 - reported as an outcome, like a script
         return ApexRevert(
             app_id  = backup.app_id,

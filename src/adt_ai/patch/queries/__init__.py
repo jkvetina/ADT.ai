@@ -7,5 +7,6 @@ from __future__ import annotations
 
 from adt_ai.patch.queries.hardening import *  # noqa: F401,F403
 from adt_ai.patch.queries.objects import *  # noqa: F401,F403
+from adt_ai.patch.queries.ords_import import *  # noqa: F401,F403
 from adt_ai.patch.queries.page_locks import *  # noqa: F401,F403
 from adt_ai.patch.queries.working_copy import *  # noqa: F401,F403

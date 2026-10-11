@@ -49,10 +49,12 @@ from adt_ai.dependencies.queries import (
     APEX_SCAN_STATEMENT,
     DEPSCAN_CLEANUP_STATEMENT,
     PLSCOPE_SESSION_STATEMENT,
+    SCAN_BATCH_CLOSE_QUERY,
 )
 from adt_ai.dependencies.write import stamped_row
 from adt_ai.export_apex.queries import EXPORT_START_QUERY
 from adt_ai.shared.scan_helpers import drop_scan_helpers
+from adt_ai.shared.session_scope import batches_in_one_request
 
 
 class ScanLifecycleError(RuntimeError):
@@ -99,13 +101,28 @@ def run_component_scan(
     g_security_group_id must be set`, so it is not part of the guarded region:
     a scan that never ran installed no helpers.
     """
-    gateway.execute(EXPORT_START_QUERY, {"app_id": app_id})
-    for statement in session_statements:
-        gateway.execute(statement)
     statement = APEX_SCAN_STATEMENT if page_id is None else APEX_SCAN_PAGE_STATEMENT
     params: dict[str, int] = {"app_id": app_id}
     if page_id is not None:
         params["page_id"] = page_id
+    if batches_in_one_request(gateway):
+        # An `ords:` connection (ADT #1071): the context, the scan and the
+        # cleanup share one request, the only session it has. ORDS runs the
+        # cleanup even after a failed scan, which is the `finally` below; the
+        # results persist, so the reads after this need no session of their own.
+        gateway.fetch_all_after(
+            [
+                (EXPORT_START_QUERY, {"app_id": app_id}),
+                *((session, None) for session in session_statements),
+                (statement, params),
+                (DEPSCAN_CLEANUP_STATEMENT, None),
+            ],
+            SCAN_BATCH_CLOSE_QUERY,
+        )
+        return
+    gateway.execute(EXPORT_START_QUERY, {"app_id": app_id})
+    for session in session_statements:
+        gateway.execute(session)
     scan_error: BaseException | None = None
     cleanup_error: BaseException | None = None
     try:

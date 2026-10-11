@@ -80,6 +80,7 @@ from adt_ai.patch.apex_validate import (
 from adt_ai.patch.apex_working_copy import resolve_landing
 from adt_ai.patch.layout import is_apex_full_export
 from adt_ai.patch.models import DeploymentPlanItem, DeploymentResult
+from adt_ai.patch.ords_import import run_import
 from adt_ai.shared.apex_payloads import drop_legacy_staging
 from adt_ai.shared.apex_store import ApexStore
 from adt_ai.shared.apexlang_line_endings import PrecheckIssue
@@ -403,7 +404,7 @@ def run_apex_imports(
         )
         execution_failed = False
         try:
-            output = gateway_factory(item.schema).sqlcl_request(script, root)
+            output = run_import(gateway_factory(item.schema), script, item, root, account=account)
         except Exception as error:  # noqa: BLE001 - reported as a row, like a script
             execution_failed = True
             output = str(error)

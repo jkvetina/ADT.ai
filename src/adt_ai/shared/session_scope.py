@@ -47,3 +47,16 @@ def require_database_session(gateway: Any, feature: str) -> None:
         "before the next one reads it. Turn `sqlcl_only` off for this command, "
         "or run it from macOS or Linux. Every other command is unaffected."
     )
+
+
+def batches_in_one_request(gateway: Any) -> bool:
+    """True for a gateway with no session that can send several statements as one.
+
+    That is an `ords:` connection (ADT #1071): every REST request is a session
+    of its own, and `fetch_all_after` puts statements that must share one into
+    a single request. A flow that needs one session asks this before it falls
+    back to `require_database_session`.
+    """
+    return not getattr(gateway, "holds_a_session", True) and callable(
+        getattr(gateway, "fetch_all_after", None)
+    )

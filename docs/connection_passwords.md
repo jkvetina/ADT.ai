@@ -253,7 +253,9 @@ Once loaded, schema and wallet passwords use a wrapper that renders as `***`, so
 
 That covers the cases nothing in the code deliberately prints: an interpolated connection inside an exception, a debug dump, a test runner showing local variables on failure.
 
-Exactly four places unwrap a value, and each hands it straight to a consumer that cannot accept a mask: the driver's connect call, the connect line of a generated SQLcl script (which named connections avoid entirely), the credential fingerprint that emits nothing but a digest, and the connection editor's single boundary immediately before encryption, key resolution or owner-only file writing.
+Exactly five places unwrap a value, and each hands it straight to a consumer that cannot accept a mask: the driver's connect call, the connect line of a generated SQLcl script (which named connections avoid entirely), the credential fingerprint that emits nothing but a digest, and the connection editor's single boundary immediately before encryption, key resolution or owner-only file writing.
+
+The fifth is the Basic authorization header of a request to an `ords:` connection (connection_ords.md).
 
 A contract test pins that list, so another unwrap fails the test suite rather than passing review.
 

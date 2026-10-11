@@ -2,6 +2,11 @@
 
 All notable changes to the public ADT.ai release are recorded here, newest first.
 
+## 1.6.1 - 2026-10-11
+
+- **`connection`: an `ords:` key reaches the database over HTTPS when the listener port is blocked**, so `export_apex`, `export_db` and `patch` keep working behind a firewall.
+- **`export_apex` and `patch`: the documentation now points to the ORDS connection page.**
+
 ## 1.6.0 - 2026-10-10
 
 - **`patch`: `-deploy -app` on APEX 26.2+ imports only the changed `.apx` files into the same application**, and `-deploy -app 0` lands the tree on a working copy of the application instead.

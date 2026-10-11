@@ -275,6 +275,10 @@ END;
 # which `export_db` and `recompile` read too; the name stays for this module's callers.
 DEPSCAN_CLEANUP_STATEMENT = DROP_SCAN_HELPERS_STATEMENT
 
+# The read that closes a scan sent as one `ords:` request (ADT #1071): the scan
+# writes and returns nothing, and a batch ends on a query.
+SCAN_BATCH_CLOSE_QUERY = "SELECT 1 AS scanned FROM dual"
+
 # The repair that was measured and REJECTED (ADT #921), kept because
 # `tests/tools/scan_session_reset_probe.py` is what measured it and a candidate
 # with no name is one the next card re-proposes. A page whose data breaks

@@ -149,6 +149,8 @@ When `-app` names an application whose owner is not among the requested schemas,
 
 An owner the connection file does not name gets no segment, because there is no connection for it. The schema that found the owner exports the application into its own folder, and warns about nothing. An id it cannot reach is named under `WARNING - APP NOT FOUND:`.
 
+A connection with an `ords:` key reaches the database over HTTPS instead of the listener port. An export then sends the statements that build its export collection together with the read of it, because every REST request is a session of its own. Details are on connection_ords.md.
+
 <br>
 
 ## Formats are explicit
