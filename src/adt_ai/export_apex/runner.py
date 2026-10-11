@@ -37,6 +37,7 @@ from adt_ai.export_apex.metadata import (
     _store_workspace_developers,
     _workspace_developers_from_rows,
 )
+from adt_ai.export_apex.one_request import collection_gateway
 from adt_ai.export_apex.partial import (
     _component_row,
     _has_explicit,
@@ -280,8 +281,9 @@ class ApexExportRunner(
                 # Everything below reads back the collection the start query
                 # fills, so the two have to reach one database session. A
                 # transport that cannot promise that returns no rows at exit 0,
-                # and the export would write that emptiness to disk (ADT #449).
-                require_database_session(gateway, "export_apex")
+                # and the export would write that emptiness to disk (ADT #449);
+                # an `ords:` one sends them as one request instead (ADT #1071).
+                gateway = collection_gateway(gateway, "export_apex", self.EXPORT_START_QUERY)
                 # Read first: the block detaches the session the start query
                 # opens, and that session moves the checksum (ADT #962).
                 checksum = read_apex_checksum(gateway, application.app_id)

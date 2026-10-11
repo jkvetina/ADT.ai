@@ -141,6 +141,12 @@ def sqlcl_connect(
         _reject_connect_line_breaks(alias, role="TNS alias")
         return _plan(f"connect /@{alias}", startup_sql)
 
+    # SQLcl refuses to store a REST connection ("Connections of type OREST are
+    # not supported for saving", SQLcl 26, ADT #1071), so an `ords:` connection
+    # connects with its credential every time and never registers a name.
+    if connection.ords:
+        return _plan(_connect_line(connection, project_root), startup_sql)
+
     name = connection.sqlcl_name if named_connections else None
 
     if not name:
@@ -231,6 +237,11 @@ def _connect_line(
     # than emitted broken; `&` needs nothing, `SET DEFINE OFF` covers it.
     reject_unquotable(password, role="database password")
     save = "" if save_name is None else f"-save {save_name} -savepwd "
+    # SQLcl picks its REST connector from the URL itself (ADT #1071): the same
+    # `user/pw@` logon, an `http(s)://host/ords/<schema>` where the DSN goes.
+    if connection.ords:
+        _reject_connect_line_breaks(connection.ords, role="ords URL")
+        return f'connect {username}/"{password}"@{connection.ords}'
     if connection.wallet_path:
         wallet_path = _ensure_wallet_folder(
             resolve_wallet_path(connection.wallet_path, project_root)

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from adt_ai.cli.constants import QueryGateway
 from adt_ai.cli.context_errors import _display
@@ -40,6 +40,34 @@ class DebugQueryGateway:
         if not exact_numbers:
             return self.wrapped.fetch_all(sql, params)
         return self.wrapped.fetch_all(sql, params, exact_numbers=True)
+
+    @property
+    def holds_a_session(self) -> bool:
+        # Forwarded, or `-debug` would answer the session question for every
+        # transport with the default `True`, and a flow that needs one session
+        # would run over one that has none and export nothing (ADT #1071).
+        return bool(getattr(self.wrapped, "holds_a_session", True))
+
+    def fetch_all_after(
+        self,
+        setup: Sequence[tuple[str, Mapping[str, object] | None]],
+        sql: str,
+        params: Mapping[str, object] | None = None,
+        *,
+        exact_numbers: bool = False,
+    ) -> list[dict[str, object]]:
+        """Log every statement of a one-request batch, then delegate it."""
+        with announcing():
+            for text, values in [*setup, (sql, params)]:
+                print()
+                print("QUERY:")
+                print(_debug_sql(text, values or {}))
+            print()
+            mark_announced()
+        # Only a batching transport is asked this (`batches_in_one_request`),
+        # and `QueryGateway` does not declare it, so the wrapped one is untyped.
+        wrapped = cast(Any, self.wrapped)
+        return list(wrapped.fetch_all_after(setup, sql, params, exact_numbers=exact_numbers))
 
     def read_only_fetch_all(
         self,

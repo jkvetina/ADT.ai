@@ -2,6 +2,8 @@
 
 `-app` ships an APEX application whole instead of as the components that changed, and it is the flag `patch -deploy` imports an APEXlang tree under. Which of the two whole-application formats that means is read off the repository, never off the flag. The import itself is on [patch_import.md](patch_import.md), the round trip around it on apex_round_trip.md.
 
+Over an `ords:` connection `-deploy -app` compiles the application tree on your machine and sends it to ORDS as one request, and `-revert` posts its backup export whole. See connection_ords.md.
+
 <br>
 
 ## Which mode the flag selects

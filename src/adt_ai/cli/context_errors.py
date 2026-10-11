@@ -32,6 +32,12 @@ _CONNECTION_FILE_REMEDY = (
     _PROJECT_FOLDER_REMEDY + "\n3) or create one with adtai connection -create"
 )
 
+# A refused connect, unless the failure brought steps that fit it better.
+_CONNECTION_STEPS = (
+    "1) check the connection file and wallet under ADT.ai connections/wallets",
+    "2) rerun",
+)
+
 # Code and remedy both branch on the error CLASS, so a raise site says which
 # screen it wants by choosing its exception and nothing here has to recognise a
 # message. Most specific first; a class matching no row is a configuration that
@@ -82,7 +88,10 @@ def _database_error_codes(error: Exception) -> set[str]:
 
 
 def _is_user_database_error(error: Exception) -> bool:
-    if isinstance(error, oracledb.Error):
+    # A connect ADT.ai declared failed is the database's answer whatever its
+    # text carries. An ORDS refusal has no ORA code, and read by codes alone it
+    # ended `connection -test` at the first schema instead of on its row (#1071).
+    if isinstance(error, (oracledb.Error, ConnectFailedError)):
         return True
     return bool(_database_error_codes(error))
 
@@ -166,10 +175,7 @@ def _print_database_error(
         details.append("Query:")
         details.extend(f"  {line}" for line in _display(sql).splitlines())
     if is_connection:
-        details.extend([
-            "1) check the connection file and wallet under ADT.ai connections/wallets",
-            "2) rerun",
-        ])
+        details.extend(getattr(error, "steps", ()) or _CONNECTION_STEPS)
     print_adt_error(
         code,
         _about(subject, _display(error).splitlines()),

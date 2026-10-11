@@ -18,6 +18,7 @@ from adt_ai.shared.connection_errors import (
 )
 from adt_ai.shared.dict_merge import deep_merge
 from adt_ai.shared.file_list import file_rows
+from adt_ai.shared.ords_url import ords_url
 from adt_ai.shared.schema_selection import (
     expand_schema_patterns,
     match_schema,
@@ -88,6 +89,10 @@ class Connection:
     # driver and SQLcl connect to.
     auth            : str | None = None
     tns             : str | None = None
+    # `ords:` (ADT #1071), the REST-enabled schema URL SQLcl connects through
+    # when the listener port is closed. Its presence moves every statement onto
+    # SQLcl over HTTPS; `hostname`, `port` and `service` are then not read.
+    ords            : str | None = None
 
     @property
     def external_auth(self) -> bool:
@@ -269,6 +274,9 @@ class ConnectionResult:
             sqlcl_source    = str(self.files[0]) if self.files else None,
             auth            = db.get("auth"),
             tns             = db.get("tns"),
+            ords            = ords_url(
+                db.get("ords"), f"{environment_name}.{schema_name}", external=external
+            ),
         )
 
     def _sqlcl_name(

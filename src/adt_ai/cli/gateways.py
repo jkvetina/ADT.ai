@@ -39,6 +39,7 @@ from adt_ai.shared.announce import AnnouncedGateway, strict_mode
 from adt_ai.shared.config import is_enabled
 from adt_ai.shared.connections import Connection
 from adt_ai.shared.db import OracleGateway, QueryGateway
+from adt_ai.shared.ords_gateway import OrdsGateway
 from adt_ai.shared.sqlcl_gateway import SqlclGateway
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle guard, typing only
@@ -118,8 +119,18 @@ def build_gateway(
     # methods, the same session setup, the credential left in SQLcl's own store so
     # no database password is ever handled inside this process. It is read here
     # rather than at a call site for the reason the whole module exists.
-    if is_enabled(startup.config.get("sqlcl_only")):
-        gateway: QueryGateway = SqlclGateway(
+    # An `ords:` connection (ADT #1071) has no listener to give the driver, so
+    # REST-enabled SQL over HTTPS is the only transport it has, whatever
+    # `sqlcl_only` says; its SQLcl scripts connect over the same URL.
+    if getattr(connection, "ords", None):
+        gateway: QueryGateway = OrdsGateway(
+            connection,
+            project_root = project_root,
+            startup_sql  = startup.startup_sql,
+            config       = startup.config,
+        )
+    elif is_enabled(startup.config.get("sqlcl_only")):
+        gateway = SqlclGateway(
             connection,
             project_root = project_root,
             startup_sql  = startup.startup_sql,
