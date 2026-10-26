@@ -158,6 +158,14 @@ def _parse_page(value: str) -> tuple[int, int] | None:
 
 def _search_argument_error(args: argparse.Namespace) -> str | None:
     """Refuse a flag the chosen mode would ignore, before the banner prints."""
+    # Both write stdout: `-json` the whole run as one object, `-format` the
+    # answer as a document. One would corrupt the other, so neither is picked
+    # silently, in any mode (ADT #1070).
+    if getattr(args, "json", False) and args.format != "table":
+        return (
+            f"-json AND -format {args.format} BOTH CHOOSE THE OUTPUT\n\n"
+            "Pass one: -json for the whole run as data, -format for the answer alone."
+        )
     graph = _graph_flags(args)
     if getattr(args, "data", False) and getattr(args, "term", None) is None:
         return "-data NEEDS A TERM\n\n-data searches table rows for a TERM, written first."

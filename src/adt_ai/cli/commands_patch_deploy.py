@@ -23,6 +23,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
+from adt_ai.cli import json_findings
 from adt_ai.cli.commands_patch_actions import print_patch_plan
 from adt_ai.cli.constants import (
     GatewayFactory,
@@ -198,6 +199,7 @@ def run_patch_deploy(
     # right under the verification section that names the failure.
     print_apex_reverts(result.apex_scans, result.apex_backups, result.apex_reverts)
     _print_apex_notes(result.apex_notes)
+    json_findings.patch_deployed(result)  # ADT #1070, -json only
     advance_baseline(
         root, config, args, workspace,
         ref     = ref,

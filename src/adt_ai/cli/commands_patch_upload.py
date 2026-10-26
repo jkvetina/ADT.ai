@@ -11,7 +11,9 @@ for the environment and a one-value `-schema` -- instead of declaring its own.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+from typing import Any
 
 from adt_ai.cli.constants import (
     ApexApplication,
@@ -35,6 +37,7 @@ from adt_ai.live_upload.runner import (
     LiveUploadRequest,
     LiveUploadRunner,
 )
+from adt_ai.shared import run_report
 from adt_ai.shared.connections import Connection
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.progress import open_section, print_adt_header
@@ -114,9 +117,10 @@ def run_patch_upload(
     folder = _folder(args, startup, gateway, schema, app_id)
     if folder is None:
         return 1
+    reporter = RecordedUploadReporter(progress, folder, app_id, once=args.once)
     runner = LiveUploadRunner(
         gateway,
-        reporter  = ConsoleLiveUploadReporter(progress),
+        reporter  = reporter,
         minifiers = minifiers,
     )
     if folder.is_dir():
@@ -144,10 +148,71 @@ def run_patch_upload(
     # same way an upload row is (`shared/fixed_width.py`).
     progress.begin(UPLOADED_LABEL)
     progress.finish(UPLOADED_LABEL, result.uploaded)
+    # The reporter's count rather than `result.failed`, which only `-once`
+    # keeps: the watch reports each failure and goes on (ADT #1070).
+    run_report.result(
+        mode     = "upload",
+        folder   = str(folder),
+        app      = app_id,
+        uploaded = result.uploaded,
+        minified = result.minified,
+        failed   = reporter.failed,
+    )
     # A one-shot push that left a file behind is a failed run, the way any
     # other command with a failed row exits 1. The watch keeps its 0: it reports
     # each failure as it happens and goes on watching.
     return 1 if result.failed else 0
+
+
+class RecordedUploadReporter(ConsoleLiveUploadReporter):
+    """The console's rows, and each failed file as a `-json` diagnostic (ADT #1070).
+
+    The runner keeps no list of what failed, only the reporter hears each one,
+    so this is where a file is named. The watch exits 0 over a failure, so
+    there it is a warning; `-once` exits 1 on one, so there it is an error.
+    """
+
+    def __init__(
+        self,
+        progress : Any,
+        folder   : Path,
+        app_id   : int,
+        *,
+        once     : bool,
+    ) -> None:
+        super().__init__(progress)
+        self.folder   = folder
+        self.app_id   = app_id
+        self.severity = "error" if once else "warning"
+        self.failed   = 0
+
+    def upload_failed(self, name: str) -> None:
+        super().upload_failed(name)
+        self.failed += 1
+        run_report.diagnostic(
+            self.severity, "UPLOAD_FAILED", _with_reason("upload failed"),
+            file = self.folder / name, app = self.app_id,
+        )
+
+    def minify_failed(self, name: str) -> None:
+        super().minify_failed(name)
+        # The file itself went up; only its minified sibling was not written.
+        run_report.diagnostic(
+            "warning", "MINIFY_FAILED",
+            _with_reason("not UTF-8, so no minified copy was written"),
+            file = self.folder / name, app = self.app_id,
+        )
+
+
+def _with_reason(message: str) -> str:
+    """``message`` and the exception the runner is handling, when it is handling one.
+
+    The runner catches the failure and calls the reporter from inside its
+    `except` block, so the reason is in hand there and nowhere after; reading it
+    here leaves `live_upload/runner.py` and the console untouched (ADT #1070).
+    """
+    error = sys.exc_info()[1]
+    return f"{message}: {error}" if error is not None and str(error) else message
 
 
 def _app_id(args: argparse.Namespace) -> int:

@@ -29,9 +29,11 @@ under `codescan_fail_on: any`), the BOM precheck and the `BASELINE:` line.
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import Any
 
+from adt_ai.cli import json_findings
 from adt_ai.cli.commands_validate import ConsoleValidateReporter, print_apexlang_issues
 from adt_ai.cli.validate_codescan import (
     BASELINE_LABEL,
@@ -42,7 +44,9 @@ from adt_ai.cli.validate_codescan import (
 )
 from adt_ai.patch.apex_validate import ApexlangValidationError
 from adt_ai.patch.codescan_gate import PatchCodescan, PatchScan
+from adt_ai.shared import run_report
 from adt_ai.shared.codescan_settings import (
+    PATCH_CODESCAN_BLOCK,
     PATCH_CODESCAN_OFF,
     codescan_fail_on,
     codescan_ignore,
@@ -152,11 +156,15 @@ def patch_codescan_gate(
     sqlcl_request : Callable[..., str],
     *,
     debug         : bool = False,
+    root          : Path | None = None,
 ) -> PatchCodescan | None:
     """`-create`'s codescan gate as `patch_codescan` sets it, ``None`` when `off`.
 
     Raises `CodescanSettingError` on a value neither key knows, which the
     handler renders as `ERROR - CONFIGURATION INVALID:`.
+
+    ``root`` is the project the findings' repository paths are read from, so
+    `-json` names each file as `validate -codescan` does (ADT #1070).
     """
     mode = patch_codescan(config)
     if mode == PATCH_CODESCAN_OFF:
@@ -166,14 +174,26 @@ def patch_codescan_gate(
         fail_on       = codescan_fail_on(config),
         sqlcl_request = sqlcl_request,
         reporter      = PatchValidateReporter(debug=debug, header=CODESCAN_HEADER),
-        render        = print_patch_codescan,
+        render        = partial(
+            print_patch_codescan, root=root, blocks=mode == PATCH_CODESCAN_BLOCK
+        ),
         ignore        = codescan_ignore(config),
         rules         = codescan_rules(config),
     )
 
 
-def print_patch_codescan(result: PatchScan) -> None:
-    """What the scan found, in `validate -codescan`'s sections, then `BASELINE:`."""
+def print_patch_codescan(
+    result : PatchScan,
+    *,
+    root   : Path | None = None,
+    blocks : bool = True,
+) -> None:
+    """What the scan found, in `validate -codescan`'s sections, then `BASELINE:`.
+
+    ``blocks`` is `patch_codescan: block`: only then does a violation stop the
+    build, so only then is it a `-json` error rather than a warning (ADT #1070).
+    """
+    _record_patch_codescan(result, root or Path(), blocks=blocks)
     label = result.label
     if result.scan.outcome == UNRECOGNISED:
         # Never swallow what could not be read: show SQLcl's own words.
@@ -194,6 +214,30 @@ def print_patch_codescan(result: PatchScan) -> None:
         _print_summary(
             f"{BASELINE_LABEL} {comparison.known} known, {comparison.new} new, "
             f"{comparison.fixed} fixed"
+        )
+
+
+def _record_patch_codescan(result: PatchScan, root: Path, *, blocks: bool) -> None:
+    """The gate's sections as `-json` data, each file read through ``root``.
+
+    The known findings are not listed: the scan's own list also holds the
+    application files staged as context, which are not this patch's to answer
+    for, so only the counts stand for them.
+    """
+    severity = "error" if blocks and result.violated else "warning"
+    if result.scan.outcome == UNRECOGNISED:
+        json_findings.codescan_unread(root, result.scan.raw, severity)
+    json_findings.codescan_tree(root, result.listed, severity=severity)
+    json_findings.codescan_boms(root, result.boms, severity)
+    if result.scan.outcome == EMPTY:
+        run_report.diagnostic(
+            severity, EMPTY, "codescan read none of the files this patch carries",
+        )
+    if result.comparison is not None:
+        run_report.result(
+            codescan_known = result.comparison.known,
+            codescan_new   = result.comparison.new,
+            codescan_fixed = result.comparison.fixed,
         )
 
 

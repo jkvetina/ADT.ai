@@ -117,6 +117,8 @@ Both are chrome rather than a result, so nothing suppresses them: a refusal that
 
 **Warnings do not fail the run.** The compiler's own verdict is still success, but they are never hidden. This matters most for `FILE_IGNORED`, which means the compiler did not check that file at all, and a bare `OK` there would be a pass over work that never happened.
 
+An agent passes `-json` and reads the same verdict as data: the exit code is unchanged, each compiler record is a diagnostic with its file, line and column, and a refusal arrives under `errors`. The shape is on json.md.
+
 <br>
 
 ## Static files are linked in, not duplicated
@@ -277,4 +279,4 @@ The screen, the baseline, `codescan_fail_on`, suppressing a finding with `codesc
 | `-codescan`, `--codescan` | No | off | Run SQLcl `codescan` over the trees `codescan_paths` names, or the ones `-app` and `-input` name, and fail on findings new since each tree's last clean run (`codescan_fail_on`). Refused beside `-scan`. |
 | `-page`, `--page` | Yes | whole application | Scan only: scan these page ids instead of the whole application, repeated, space-separated, or as a `MIN-MAX` / `MIN+` range. One scan and one row per page. |
 
-Shared options (-root, -env, -config-dir, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).
+Shared options (-root, -env, -config-dir, -debug, -beep, -nobeep, -json) are on [console.md](console.md#shared-arguments).

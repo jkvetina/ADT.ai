@@ -50,6 +50,7 @@ from adt_ai.shared.connections import Connection
 from adt_ai.shared.db import OracleGateway, _attach_sql
 from adt_ai.shared.sqlcl_script_session import open_session
 from adt_ai.shared.sqlcl_session import SqlclSessionError, error_in
+from adt_ai.shared.sqlcl_transcript import _PROMPT
 
 # A statement that opens a PL/SQL block is terminated with `/` on its own line,
 # everything else with `;`. Leading comments and blank lines are skipped, because
@@ -66,6 +67,10 @@ _TIMESTAMP_FORMATS = (
 _JSON_START_MARKER = "<<<ADT-SQLCL-JSON-START>>>"
 _JSON_END_MARKER = "<<<ADT-SQLCL-JSON-END>>>"
 _JSON_PAYLOAD_START = re.compile(r'^\{"results"\s*:', re.MULTILINE)
+# What may follow the payload on its own line: nothing, or SQLcl's next prompt.
+# With feedback silent SQLcl 26.3 ends the JSON with no newline, so the prompt it
+# draws for the end marker's `prompt` command lands right after the closing brace.
+_PAYLOAD_LINE_END = re.compile(rf"(?:{re.escape(_PROMPT)})?[ \t]*(?:\r?\n|$)")
 
 # VARCHAR2 reaches 32767 in PL/SQL, which is what a `VAR` declaration gets.
 _VARCHAR_SIZE = 32767
@@ -336,8 +341,7 @@ def _json_payload(output: str) -> dict[str, Any] | None:
             payload, end = decoder.raw_decode(framed[start:])
         except ValueError:
             continue
-        absolute_end = start + end
-        if absolute_end < len(framed) and framed[absolute_end] not in "\r\n":
+        if not _PAYLOAD_LINE_END.match(framed, start + end):
             continue
         if isinstance(payload, dict) and isinstance(payload.get("results"), list):
             return payload

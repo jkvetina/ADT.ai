@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from adt_ai.cli import json_findings_database
 from adt_ai.cli.export_reporters import ConsoleApexRevealReporter
 from adt_ai.export_apex.inventory import (
     ApexApplication,
@@ -88,14 +89,19 @@ def print_reveal_screen(
         if (is_filtered and active_workspaces) else all_workspaces
     )
     reporter.workspaces(listed, configured_workspace=configured_workspace)
+    # Each table as data beside its render, the rows the screen chose (ADT #1070).
+    json_findings_database.apex_workspaces(listed)
     unmatched = _unmatched_workspace(listed, workspace, configured_workspace)
     if unmatched:
         reporter.workspace_not_found(*unmatched)
+        json_findings_database.apex_workspace_not_found(*unmatched)
     active_owners = {s for s, apps in applications_by_schema.items() if apps}
-    reporter.owner_counts(
+    owner_counts = (
         [oc for oc in all_owner_counts if oc.owner in active_owners]
         if (is_filtered and active_owners) else all_owner_counts
     )
+    reporter.owner_counts(owner_counts)
+    json_findings_database.apex_owner_counts(owner_counts)
     for schema in schemas:
         reporter.applications(schema, applications_by_schema[schema])
 

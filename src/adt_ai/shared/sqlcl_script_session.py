@@ -35,6 +35,7 @@ from typing import Any
 
 from adt_ai.shared.connections import ConnectFailedError, Connection
 from adt_ai.shared.sqlcl_connect import sqlcl_connect
+from adt_ai.shared.sqlcl_errors import SqlclNotConnectedError
 from adt_ai.shared.sqlcl_script import (
     _ran_without_a_session,
     run_sqlcl_script,
@@ -87,11 +88,15 @@ class ScriptSession:
         """Resolve the connect plan. No process is opened until a request needs one."""
         if self._plan is not None:
             return
-        self._plan = sqlcl_connect(
+        self._plan = self._connect_plan(force_register=False)
+
+    def _connect_plan(self, *, force_register: bool) -> Any:
+        return sqlcl_connect(
             self.connection,
             startup_sql       = self.startup_sql,
             project_root      = self.project_root,
             named_connections = self.config.get("sqlcl_named_connections") is not False,
+            force_register    = force_register,
         )
 
     def close(self) -> None:
@@ -114,6 +119,22 @@ class ScriptSession:
     def run(self, body: str, *, timeout_seconds: float | None = None) -> str:
         """Run `body` in its own SQLcl process and return only what it printed."""
         self.start()
+        try:
+            return self._attempt(body, timeout_seconds)
+        except (SqlclNotConnectedError, ConnectFailedError):
+            # The named connect left no session, so the body never ran (#1079).
+            # Re-register from the file once, then go back to connecting by
+            # name, so later requests carry no credential.
+            if not self._plan.by_name or not self.connection.password:
+                raise
+        by_name = self._plan
+        self._plan = self._connect_plan(force_register=True)
+        try:
+            return self._attempt(body, timeout_seconds)
+        finally:
+            self._plan = by_name
+
+    def _attempt(self, body: str, timeout_seconds: float | None) -> str:
         output = self._runner(
             self._script(body),
             self._temp_root(),

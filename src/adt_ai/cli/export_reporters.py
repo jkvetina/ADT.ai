@@ -113,6 +113,11 @@ class ConsoleExportDataReporter:
     def __init__(self, silent: bool = False) -> None:
         self._silent = silent
         self._progress = FixedWidthProgressPrinter()
+        # What `-json` reports for the schema (ADT #1070). Counted here because
+        # the row count reaches the CLI through this hook and nowhere else, and
+        # counted before the `-silent` return so a quiet run still adds up.
+        self.tables = 0
+        self.rows = 0
 
     def start_export(self, total: int) -> None:
         # Parity with export_db's EXPORTING <n> OBJECTS: (ADT #237), the same
@@ -125,6 +130,8 @@ class ConsoleExportDataReporter:
         self._progress.begin(table.name.upper())
 
     def finish_table(self, table: DataTable, row_count: int) -> None:
+        self.tables += 1
+        self.rows += row_count
         if self._silent:
             return
         self._progress.finish(table.name.upper(), row_count)

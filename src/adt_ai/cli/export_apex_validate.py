@@ -43,6 +43,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from adt_ai.cli import json_findings_database
 from adt_ai.cli.commands_validate import (
     _convert_crlf,
     _link_payloads,
@@ -141,6 +142,9 @@ class ExportValidation:
 
     def close(self) -> None:
         """The segment's findings, once every application in it has compiled."""
+        # Every message a warning, as the screen counts them: this compile
+        # never fails the export (ADT #967, #1070).
+        json_findings_database.apex_validation(self.folders, self.notes)
         plain_notes = print_precheck_issues(self.notes)
         print_apexlang_issues(self.folders)
         if plain_notes:

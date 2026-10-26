@@ -268,4 +268,4 @@ A disabled policy protects nothing, so it is left out of the policy tables, and 
 | `-trailing`, `--trailing` | No | off | Strip trailing whitespace from stored source through `CREATE OR REPLACE`, scoped by `-type` and `-name`. |
 | `-silent`, `--silent` | No | off | Suppress object overview details while keeping the banner, connection block and final timer. An object that still fails prints `INVALID OBJECTS:`, `ERROR - RECOMPILATION FAILED:` and `ROOT CAUSES:` as without the flag. |
 
-Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).
+Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep, -json) are on [console.md](console.md#shared-arguments).

@@ -17,6 +17,7 @@ import yaml
 
 from adt_ai.cli.constants import print_adt_header, print_adt_table
 from adt_ai.dependencies.classify import split_object_row
+from adt_ai.shared import run_report
 
 # Annotation only (ADT #895). This module ships in every release and `patch`
 # does not, so the scan report's class is never imported at run time.
@@ -30,6 +31,10 @@ def _print_dependency_list(
     relation: str,
     output_format: str,
 ) -> int:
+    # `-json` answers with the yaml document's own keys, so a reader moving
+    # between the two meets one vocabulary (ADT #1070).
+    run_report.result(object=query)
+    run_report.listing(relation, items)
     if output_format == "yaml":
         print(yaml.safe_dump({"object": query, relation: items}, sort_keys=False).rstrip())
         return 0
@@ -59,22 +64,28 @@ def _print_dependency_impact(
     # data; every format omits the section entirely when there is none.
     columns = columns or []
     apex = apex or []
-    if output_format == "yaml":
-        payload = {
-            "object": query,
-            "impact": [{"object": node, "depth": depth} for node, depth in items],
+    # Built for every format: the yaml document's sections are also what
+    # `-json` lists (ADT #1070).
+    impact = [{"object": node, "depth": depth} for node, depth in items]
+    lineage = [
+        {
+            "view": row["view_name"],
+            "column": row["column_name"],
+            "source": f"{row['src_table']}.{row['src_column']}",
         }
-        if columns:
-            payload["columns"] = [
-                {
-                    "view": row["view_name"],
-                    "column": row["column_name"],
-                    "source": f"{row['src_table']}.{row['src_column']}",
-                }
-                for row in columns
-            ]
-        if apex:
-            payload["apex"] = [_apex_payload(row) for row in apex]
+        for row in columns
+    ]
+    callers = [_apex_payload(row) for row in apex]
+    run_report.result(object=query)
+    run_report.listing("impact", impact)
+    run_report.listing("columns", lineage)
+    run_report.listing("apex", callers)
+    if output_format == "yaml":
+        payload: dict[str, object] = {"object": query, "impact": impact}
+        if lineage:
+            payload["columns"] = lineage
+        if callers:
+            payload["apex"] = callers
         print(yaml.safe_dump(payload, sort_keys=False).rstrip())
         return 0
     if output_format == "md":
@@ -160,6 +171,9 @@ def _print_foreign_key_tree(
 ) -> int:
     references = tree["references"]
     dependencies = tree["dependencies"]
+    run_report.result(constraint=query)
+    run_report.listing("references", references)
+    run_report.listing("dependencies", dependencies)
     if output_format == "yaml":
         print(
             yaml.safe_dump(
@@ -204,16 +218,14 @@ def _print_app_inventories(
     component adds to the second and not the first. Several applications under
     `yaml` are one document each, so a reader parses one app and many alike.
     """
+    documents = [
+        {"app": app_id, "objects": [_inventory_payload(row) for row in rows]}
+        for app_id, rows in answers
+    ]
+    # One `-json` listing of the same documents (ADT #1070).
+    run_report.listing("apps", documents)
     if output_format == "yaml":
-        print(
-            yaml.safe_dump_all(
-                [
-                    {"app": app_id, "objects": [_inventory_payload(row) for row in rows]}
-                    for app_id, rows in answers
-                ],
-                sort_keys=False,
-            ).rstrip()
-        )
+        print(yaml.safe_dump_all(documents, sort_keys=False).rstrip())
         return
     if output_format == "md":
         sections = []

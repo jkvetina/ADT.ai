@@ -33,8 +33,9 @@ from zipfile import ZipFile
 
 from adt_ai.shared.connections import DEFAULT_PORT, Connection
 from adt_ai.shared.oracle_session import DDL_LOCK_TIMEOUT_STATEMENT
-from adt_ai.shared.sqlcl_names import CONNMGR_DELETE_COMMAND, credential_fingerprint
+from adt_ai.shared.sqlcl_names import CONNMGR_DELETE_COMMAND
 from adt_ai.shared.sqlcl_quoting import SqlclQuotingError, quote_sqlcl_argument, reject_unquotable
+from adt_ai.shared.sqlcl_script import SQLCL_IDENTITY_MISMATCH
 from adt_ai.shared.zip_extract import safe_extractall
 
 # SQLcl prints "Session altered." (a FEEDBACK message, which ``sql -S`` does not
@@ -64,11 +65,10 @@ SQLCL_DEFINE_OFF = "SET DEFINE OFF"
 # runs on regardless and its trailing ``exit;`` still returns 0, a dead session
 # is indistinguishable from an empty result. ``export_apex -rest`` read that as
 # "this schema has no REST services": no files, no message. Worse, on the
-# registering path the gateway then recorded the SQLcl name and credential
-# fingerprint back into the connection YAML for a store entry that had never
-# been created, so the phantom survived every later run. That is the customer
-# report this constant exists for, ``sqlcl``/``sqlcl_sync`` deleted by hand,
-# written straight back by the next export, and still no connection.
+# registering path the gateway then recorded the SQLcl name back into the
+# connection YAML for a store entry that had never been created, so the phantom
+# survived every later run. Nothing is recorded any more (#1079), but the guard
+# is still what turns a dead connect into an error rather than an empty answer.
 #
 # The guard is released again after the session setup, so errors from the user's
 # STARTUP.sql and from the request body keep their own semantics.
@@ -82,9 +82,8 @@ class SqlclConnect:
 
     ``name`` is the entry in SQLcl's connection store this block connects
     through or registers; it is ``None`` for a plain credentialed connect that
-    saves nothing. ``registers`` carries the connection whose
-    ``sqlcl``/``sqlcl_sync`` bookkeeping must be written back after the script
-    has actually run.
+    saves nothing. ``registers`` carries the connection this block saves under
+    ``name``; nothing about it is written anywhere else (#1079).
     """
 
     lines     : tuple[str, ...]
@@ -127,10 +126,14 @@ def sqlcl_connect(
     An unnamed connection is opened with a plain credentialed ``connect`` that
     saves nothing.
 
-    ``force_register`` re-saves a named connection whose fingerprint still
-    matches. The SQLcl store does not travel with the project the way the
-    connection YAML does, so a fresh fingerprint can still name an entry the
-    local store has never seen; the caller retries once through this flag.
+    A named connection connects by name first, with no credential in the
+    script, and nothing decides up front whether the stored entry is current
+    (#1079): a store without the name, a password the database refuses, and an
+    entry that reaches a different user or service (the identity check right
+    after the connect) all leave the script without a session, and the caller
+    retries once with ``force_register``, which re-saves the name from the
+    connection file. The identity check runs on that path too, so a file whose
+    own credentials reach the wrong database stops rather than looping.
     """
     # External authentication has no credential to write into a script and no
     # name worth registering: SQLcl connects `/@alias` and the OCI client reads
@@ -161,16 +164,14 @@ def sqlcl_connect(
     # `sqlcl_only` run from a file with no `pwd:` at all (ADT #396), and it is
     # right on the ordinary path too, where the alternative was a connect line
     # with an empty password.
-    if not connection.password:
-        return _plan(f"connect -name {name}", startup_sql, name=name)
-
-    if not force_register and connection.sqlcl_sync == credential_fingerprint(connection):
-        # Connect by name only, no credentials in the script. A store that lost
-        # the entry fails structurally and the caller re-registers.
+    identity = identity_check(connection)
+    if not connection.password or not force_register:
+        # Connect by name only, no credentials in the script.
         return _plan(
             f"connect -name {name}",
             startup_sql,
-            name = name,
+            name     = name,
+            identity = identity,
         )
 
     # ``CONNMGR DELETE`` stays *outside* the guard: dropping a name the store
@@ -182,7 +183,66 @@ def sqlcl_connect(
         pre       = CONNMGR_DELETE_COMMAND.format(name=name),
         name      = name,
         registers = connection,
+        identity  = identity,
     )
+
+
+def identity_check(connection: Connection) -> tuple[str, ...]:
+    """A PL/SQL block that fails unless the session is the one the file names.
+
+    Runs inside the connect guard, so a mismatch exits the script with
+    `SQLCL_IDENTITY_MISMATCH` in the transcript, which every transport reads as
+    "no session" (`sqlcl_script._ran_without_a_session`).
+
+    The user is compared exactly (a proxy `A[B]` logs in as `B`). The service
+    is compared only when the file names a host, because only then is
+    `service:` the database's own service name rather than a TNS alias; it
+    matches when its first label stands as whole words among the session's
+    service, database, instance and container names, which accepts
+    `APP_DEV.EXAMPLE.COM` for `APP_DEV` and a cloud `g1_core_high.adb...` for
+    `core_high`, and refuses `APP_DEV2` for `APP_DEV`.
+    """
+    user = _expected_user(connection.username)
+    service = ""
+    if connection.hostname:
+        service = str(connection.service or connection.sid or "").split(".", 1)[0].strip()
+    _reject_connect_line_breaks(user, role="database username")
+    _reject_connect_line_breaks(service, role="database service")
+    conditions = [f"USER <> {_sql_literal(user)}"]
+    if service:
+        needle = " " + service.lower().replace("_", " ") + " "
+        conditions.append(f"INSTR(v_where, {_sql_literal(needle)}) = 0")
+    return (
+        "SET FEEDBACK OFF",
+        "DECLARE",
+        "  v_where VARCHAR2(4000) := ' ' || TRANSLATE(LOWER("
+        "SYS_CONTEXT('USERENV', 'SERVICE_NAME') || ' ' || "
+        "SYS_CONTEXT('USERENV', 'DB_NAME') || ' ' || "
+        "SYS_CONTEXT('USERENV', 'INSTANCE_NAME') || ' ' || "
+        "SYS_CONTEXT('USERENV', 'CON_NAME')), '._', '  ') || ' ';",
+        "BEGIN",
+        f"  IF {' OR '.join(conditions)} THEN",
+        "    RAISE_APPLICATION_ERROR(-20999, "
+        f"'{SQLCL_IDENTITY_MISMATCH}: connected as ' || USER || ' to ' || "
+        "SYS_CONTEXT('USERENV', 'SERVICE_NAME'));",
+        "  END IF;",
+        "END;",
+        "/",
+    )
+
+
+def _expected_user(username: str) -> str:
+    """The name `USER` returns for this login."""
+    name = (username or "").strip()
+    if name.endswith("]") and "[" in name:
+        name = name[name.rindex("[") + 1 : -1]
+    if len(name) > 1 and name.startswith('"') and name.endswith('"'):
+        return name[1:-1]
+    return name.upper()
+
+
+def _sql_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
 
 
 def _plan(
@@ -192,11 +252,13 @@ def _plan(
     pre: str | None = None,
     name: str | None = None,
     registers: Connection | None = None,
+    identity: tuple[str, ...] = (),
 ) -> SqlclConnect:
     """Assemble one connect block: optional preamble, guarded connect, setup.
 
     The guard is unconditional, see ``SQLCL_CONNECT_GUARD``. ``pre`` is for
-    lines that must run *before* it and are allowed to fail.
+    lines that must run *before* it and are allowed to fail. ``identity`` runs
+    inside the guard, right after the connect.
     """
     # SQLCL_DEFINE_OFF leads on every path, ahead of ``pre``: the CONNMGR DELETE
     # that ``pre`` carries is allowed to fail, but the connect behind it is the
@@ -205,6 +267,7 @@ def _plan(
     lines += [
         SQLCL_CONNECT_GUARD,
         connect,
+        *identity,
         SQLCL_SESSION_SETUP,
         SQLCL_GUARD_RELEASE,
     ]

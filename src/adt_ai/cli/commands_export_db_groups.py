@@ -11,6 +11,7 @@ import argparse
 from collections.abc import Mapping
 from pathlib import Path
 
+from adt_ai.cli import json_findings_database
 from adt_ai.export_db.files import ObjectFileResolver
 from adt_ai.export_db.group_moves import (
     build_prefix_rules,
@@ -62,9 +63,14 @@ def run_groups_move(
                 type_rules[object_type.upper()] = detected
         rules = GroupRules(type_rules=type_rules)
     plan = plan_group_moves(resolver.iter_type_roots(schemas), rules)
-    return execute_group_move(
+    exit_code = execute_group_move(
         plan,
         emit=print,
         show_unmatched=not prefixes,
         force=bool(args.force),
     )
+    # The plan as data, recorded from the plan the screen printed (ADT #1070).
+    json_findings_database.group_moves(
+        plan, force=bool(args.force), show_unmatched=not prefixes
+    )
+    return exit_code

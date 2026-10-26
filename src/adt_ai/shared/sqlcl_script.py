@@ -47,7 +47,11 @@ from adt_ai.shared.sqlcl_errors import (
     SqlclScriptError,
     SqlclTimeoutError,
 )
-from adt_ai.shared.sqlcl_script_file import _connect_secrets, write_sqlcl_script
+from adt_ai.shared.sqlcl_script_file import (
+    _connect_secrets,
+    sqlcl_script_on_disk,
+    write_sqlcl_script,
+)
 from adt_ai.shared.sqlcl_stream import open_stream
 from adt_ai.shared.subprocess_env import safe_subprocess_environment
 
@@ -84,10 +88,17 @@ SQLCL_SKIP_ORACLE_HOME = "-Doracle.sqlcl.skipOracleHome=true"
 # running while the connect diagnostic above it was discarded (ADT #232).
 SQLCL_NOT_CONNECTED_CODE = "SP2-0640"
 
+# Raised by the identity check `sqlcl_connect` runs right after a named connect
+# (#1079): the saved entry reached a different user or service than the
+# connection file names. That session is not the one asked for, so it counts as
+# none, and every caller's existing not-connected retry re-registers the name.
+SQLCL_IDENTITY_MISMATCH = "ADT_SQLCL_IDENTITY_MISMATCH"
+
 
 def _ran_without_a_session(output: str) -> bool:
     return any(
         line.lstrip().startswith(SQLCL_NOT_CONNECTED_CODE)
+        or SQLCL_IDENTITY_MISMATCH in line
         for line in output.splitlines()
     )
 
@@ -270,10 +281,12 @@ def run_sqlcl_script(
     guard("SQLcl script")
     root.mkdir(parents=True, exist_ok=True)
     secrets = _connect_secrets(script)
-    script_path = write_sqlcl_script(script, project_root)
-    command = _sqlcl_command(script_path, oci)
-    environment = _sqlcl_environment(oci, client_lib_dir, tns_admin)
-    try:
+    # Everything from the write on runs inside the scope that removes the
+    # script, building the command included: the file may hold the connect
+    # password, and a failure before SQLcl starts must not leave it (ADT #1087).
+    with sqlcl_script_on_disk(script, project_root) as script_path:
+        command = _sqlcl_command(script_path, oci)
+        environment = _sqlcl_environment(oci, client_lib_dir, tns_admin)
         if on_line is not None:
             # A live reader, so the child goes on this platform's streaming
             # transport. Every line is scrubbed on the way out rather than at
@@ -350,8 +363,6 @@ def run_sqlcl_script(
                 ) from expired
             raw_output = (completed.stdout or "") + (completed.stderr or "")
             returncode = completed.returncode
-    finally:
-        script_path.unlink(missing_ok=True)
     output = _scrub_secrets(raw_output, secrets)
     if _died_before_the_script_ran(output):
         # Exit code 0 with a JVM stack trace and nothing else: SQLcl never

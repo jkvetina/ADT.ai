@@ -6,6 +6,7 @@ import sys
 import warnings
 from pathlib import Path
 
+from adt_ai.cli import json_findings_history
 from adt_ai.cli.constants import (
     ConfigLoader,
     ConnectionLoader,
@@ -331,6 +332,7 @@ def _test_one_schema(
         debug           = args.debug,
         before_versions = read_counts,
     )
+    json_findings_history.schema_objects(environment, schema, counts)
     if counts:
         print_adt_header("OBJECTS OVERVIEW:")
         print_adt_table(
@@ -365,6 +367,8 @@ def _test_environment(
     connections = startup.connections
     schemas = connections.schema_names(environment)
     if not schemas:
+        # Nothing to test still answers, so `-json` carries data, not a screen.
+        json_findings_history.connection_tested(environment, schemas, [], _database_error_code)
         return 0
     # Resolved up front, so a connection file problem stops the run before a
     # row is left half printed.
@@ -395,6 +399,9 @@ def _test_environment(
             status = "ERROR"
         print(layout.cells_segment([schema, status], 1, 2).rstrip(), flush=True)
     close_adt_table()
+    # Each refusal by its own database code, which the screen code below folds
+    # into one of two words (ADT #1070).
+    json_findings_history.connection_tested(environment, schemas, failures, _database_error_code)
 
     # One screen per refused schema, named, in table order. The `-debug` hint
     # closes the last one only: one flag answers all of them.
@@ -488,6 +495,7 @@ def _run_connection(
     print(f"  Action            {plan.summary}")
 
     if not args.go:
+        json_findings_history.connection_edited(action, path, plan, applied=False)
         print("  Mode              preview (re-run with -go to apply)")
         _print_notes(plan.notes)
         if plan.preview:
@@ -529,6 +537,7 @@ def _run_connection(
         # actually used, so this is the first point a wrong -old-key can surface.
         print_adt_error("ARGUMENT INVALID", str(error))
         return exit_code_for("ARGUMENT INVALID")
+    json_findings_history.connection_edited(action, path, result, applied=True)
     print()
     print(f"  {result.summary}")
     _print_notes(result.notes)

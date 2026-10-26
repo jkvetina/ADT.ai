@@ -29,6 +29,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from adt_ai.cli import json_findings
 from adt_ai.cli.commands_validate import (
     INPUT_NOT_FOUND_LEAD,
     NOTHING_TO_VALIDATE_LEAD,
@@ -39,6 +40,7 @@ from adt_ai.cli.commands_validate import (
 )
 from adt_ai.cli.constants import print_adt_header
 from adt_ai.cli.context_apex import _flatten_arg_groups
+from adt_ai.shared import run_report
 from adt_ai.shared.codescan_settings import (
     FAIL_ON_ANY,
     CodescanSettingError,
@@ -125,6 +127,7 @@ def run_codescan(
             print_adt_header(f"WARNING - UNRECOGNISED OUTPUT {label}:")
             print(scan.raw.rstrip("\n"))
             print()
+            json_findings.codescan_unread(outcome.target.path, scan.raw)
             failed = True
             continue
         if scan.outcome == EMPTY:
@@ -137,22 +140,38 @@ def run_codescan(
             known += result.comparison.known
             new += result.comparison.new
             fixed += result.comparison.fixed
+        blame: dict[str, str] = {}
         if result.listed:
             every = fail_on == FAIL_ON_ANY
             blame = {} if every else _blame(root, config, outcome.target.path, result.listed)
             _print_findings(label, result.listed, every=every, blame=blame)
+        if result.comparison is not None:
+            # The listed findings fail the run only when `violated` says so,
+            # and the known ones, which the screen only counts, ride along as
+            # warnings (ADT #1070).
+            json_findings.codescan_tree(
+                outcome.target.path,
+                result.listed,
+                severity = "error" if result.violated else "warning",
+                known    = json_findings.known_findings(scan.findings, result.listed, rules),
+                blame    = blame,
+            )
         failed = failed or result.violated
         if result.records:
             # Every finding, the profile's or not (ADT #1023): `verdict` docstring.
             record(root, label, scan.findings)
 
     _print_bom_files(targets, boms)
+    for target in targets:
+        json_findings.codescan_boms(target.path, boms[target.label])
     if notes:
         print_adt_header("NOTES:")
         for note in notes:
             print(f"  {note}")
         print()
+    json_findings.notes(notes)
     _print_summary(f"{BASELINE_LABEL} {known} known, {new} new, {fixed} fixed")
+    run_report.result(mode="codescan", trees=len(targets), known=known, new=new, fixed=fixed)
     return 1 if failed or notes or any(boms.values()) else 0
 
 

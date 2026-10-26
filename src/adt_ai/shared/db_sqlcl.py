@@ -20,7 +20,6 @@ included, and only the terminator differs -- see :func:`_run`.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -32,11 +31,6 @@ from adt_ai.shared.sqlcl_connect import (
     sqlcl_connect,
 )
 from adt_ai.shared.sqlcl_errors import SqlclNotConnectedError
-from adt_ai.shared.sqlcl_names import (
-    credential_fingerprint,
-    read_sqlcl_registration,
-    record_sqlcl_registration,
-)
 from adt_ai.shared.sqlcl_request_session import (
     REQUEST_EPILOGUE,
     SESSION_REUSE_SUPPORTED,
@@ -76,9 +70,10 @@ class SqlclRequestMixin:
             try:
                 return self._run(plan, body, root, timeout_seconds, on_line)
             except SqlclNotConnectedError:
-                # Fresh fingerprint, but the local SQLcl store has never seen
-                # the name (the YAML travels with the project, the store does
-                # not). Re-register and retry once.
+                # The named connect left no session: the local store never held
+                # the name, the database refused the stored password, or the
+                # identity check found a different user or service (#1079).
+                # Re-register from the connection file and retry once.
                 #
                 # `SqlclNotConnectedError` is the ONLY failure this retry
                 # answers, and it has to be caught by name: a lost store entry
@@ -96,16 +91,7 @@ class SqlclRequestMixin:
                 # The reused transport raises the same class off the same
                 # transcript, so this retry is unchanged by ADT #760.
                 plan = self._sqlcl_plan(force_register=True)
-        output = self._run(plan, body, root, timeout_seconds, on_line)
-        if plan.registers is not None and plan.registers.sqlcl_source and plan.name:
-            record_sqlcl_registration(
-                plan.registers.sqlcl_source,
-                plan.registers.environment,
-                plan.registers.schema,
-                plan.name,
-                credential_fingerprint(plan.registers),
-            )
-        return output
+        return self._run(plan, body, root, timeout_seconds, on_line)
 
     def _run(
         self,
@@ -196,35 +182,16 @@ class SqlclRequestMixin:
         return str(_ensure_wallet_folder(anchored.expanduser()))
 
     def _sqlcl_plan(self, *, force_register: bool = False) -> SqlclConnect:
+        # Every request connects by name first, so once one request has
+        # re-registered, the rest find the entry in the store; nothing has to
+        # be read back from the file between them (#1079, which retired #924
+        # F59's re-read along with the write it answered).
         return sqlcl_connect(
-            self._registered_connection(),
+            self.connection,
             startup_sql       = self.startup_sql,
             project_root      = self.project_root,
             named_connections = self.sqlcl_named_enabled,
             force_register    = force_register,
-        )
-
-    def _registered_connection(self) -> Connection:
-        """`self.connection` with the SQLcl registration its file records now.
-
-        `self.connection` is loaded once per command, so a registration recorded
-        after that, by this gateway's own first request or by another gateway on
-        the same file, was never seen and each later request registered again
-        (#924 F59). The file's current `sqlcl` / `sqlcl_sync` win; a key it
-        does not hold, or a file that cannot be read, keeps the loaded value.
-        """
-        connection = self.connection
-        if not connection.sqlcl_source or connection.external_auth:
-            return connection
-        recorded = read_sqlcl_registration(
-            connection.sqlcl_source, connection.environment, connection.schema
-        )
-        if not recorded:
-            return connection
-        return replace(
-            connection,
-            sqlcl_name = recorded.get("sqlcl", connection.sqlcl_name),
-            sqlcl_sync = recorded.get("sqlcl_sync", connection.sqlcl_sync),
         )
 
 

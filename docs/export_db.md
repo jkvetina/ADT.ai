@@ -351,4 +351,4 @@ A typo takes the same path, on purpose. `-type NOSUCHTYPE` used to export nothin
 | `-silent`, `--silent` | No | off | Suppress per-object names and progress callbacks, keeping the banner, connection block, overview, export header and timer. |
 | `-compact`, `--compact` | No | off | Replace the per-object rows with one dotted progress bar per schema, labelled with the type being pulled. `-silent` outranks it. |
 
-Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).
+Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep, -json) are on [console.md](console.md#shared-arguments).

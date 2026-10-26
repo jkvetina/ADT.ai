@@ -59,9 +59,14 @@ _UNIT_RE = re.compile(
     re.IGNORECASE,
 )
 
-# `<verb> <OBJECT TYPE> [schema.]name`, quoted or not. Old ADT patch.py:2319-2322.
-_QUALIFIED_RE = r'(CREATE|DROP|ALTER)\s+({})\s+"?[A-Z0-9_$-]+"?\."?([A-Z0-9_$-]+)"?'
-_PLAIN_RE = r'(CREATE|DROP|ALTER)\s+({})\s+"?([A-Z0-9_$-]+)"?'
+# `<verb> <OBJECT TYPE> [IF [NOT] EXISTS] [schema.]name`, quoted or not. Old ADT
+# patch.py:2319-2322. Old ADT predates the 23ai clause, and without it the guard
+# was written for an object called `IF`: none exists, so `DROP INDEX IF EXISTS x`
+# never ran its DROP and the deploy still reported success (ADT #1084).
+_IF_EXISTS = r"(?:IF\s+(?:NOT\s+)?EXISTS\s+)?"
+_HEAD_RE = r"(CREATE|DROP|ALTER)\s+({})\s+" + _IF_EXISTS
+_QUALIFIED_RE = _HEAD_RE + r'"?[A-Z0-9_$-]+"?\."?([A-Z0-9_$-]+)"?'
+_PLAIN_RE = _HEAD_RE + r'"?([A-Z0-9_$-]+)"?'
 
 _OVERVIEW_COLUMNS = (
     "line",

@@ -37,6 +37,7 @@ from adt_ai.doctor.init import DoctorInitMixin
 from adt_ai.doctor.layout_check import schema_case_action_lines
 from adt_ai.doctor.upgrade import DoctorUpgradeMixin
 from adt_ai.doctor.version_check import DoctorVersionMixin
+from adt_ai.shared import run_report
 from adt_ai.shared.subprocess_env import safe_subprocess_environment
 
 __all__ = [
@@ -186,6 +187,29 @@ def _download_file(url: str, target: Path) -> None:
         raise
 
 
+#: A check's verdict as a `-json` severity (ADT #1070). FAIL is what sets the
+#: exit code, WARN never does, and OK and INFO are not findings at all.
+_CHECK_SEVERITY = {"FAIL": "error", "WARN": "warning"}
+
+
+def _record(result: DoctorResult) -> None:
+    """The judged checks and the actions taken, where the runner evaluated them.
+
+    Recorded here rather than by the command, so every caller of `run` reports
+    the same verdicts, and a no-op outside a `-json` run.
+    """
+    for check in result.checks:
+        severity = _CHECK_SEVERITY.get(check.status)
+        if severity is not None:
+            run_report.diagnostic(severity, check.status, f"{check.name}: {check.detail}")
+    run_report.result(
+        checks            = len(result.checks),
+        failed            = sum(check.status == "FAIL" for check in result.checks),
+        warnings          = sum(check.status == "WARN" for check in result.checks),
+        performed_actions = list(result.performed_actions),
+    )
+
+
 class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
     def __init__(
         self,
@@ -243,11 +267,17 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
         self._codescan_sqlcl_shortfall = ""
 
     def run(self, request: DoctorRequest) -> DoctorResult:
+        result = self._run(request)
+        _record(result)
+        return result
+
+    def _run(self, request: DoctorRequest) -> DoctorResult:
         if request.init:
             return self._init_project(request)
 
         lines: list[str] = []
         check_results = self._check_results()
+        checks = tuple(check_results)
         # Resolved before the rows stream, because the SQLcl row's status word
         # and the `ACTIONS:` section both read it and must agree (ADT #723).
         installed_sqlcl = self._check_value(self._checks_by_name(check_results), "SQLcl")
@@ -279,7 +309,7 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
             sqlcl_result = self._upgrade_sqlcl(lines)
             performed_actions.extend(sqlcl_result.performed_actions)
             exit_code = max(exit_code, sqlcl_result.exit_code)
-            return DoctorResult(lines, performed_actions, exit_code)
+            return DoctorResult(lines, performed_actions, exit_code, checks)
 
         if not request.update:
             # Read-only run: the section exists to offer upgrades, so with
@@ -299,7 +329,7 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
             if action_lines:
                 self._begin_actions_section(lines)
                 self._extend(lines, action_lines)
-            return DoctorResult(lines, performed_actions, exit_code)
+            return DoctorResult(lines, performed_actions, exit_code, checks)
 
         self._begin_actions_section(lines)
         for action in (
@@ -311,7 +341,7 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
             performed_actions.extend(action_result.performed_actions)
             exit_code = max(exit_code, action_result.exit_code)
 
-        return DoctorResult(lines, performed_actions, exit_code)
+        return DoctorResult(lines, performed_actions, exit_code, checks)
 
     def _layout_action_lines(self, request: DoctorRequest) -> list[str]:
         """Rows offering the rename when the repo tree disagrees with the template.

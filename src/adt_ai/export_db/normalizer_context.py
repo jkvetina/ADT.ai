@@ -47,6 +47,10 @@ class NormalizationContext:
     #: reasons about the numbers -- the normalizer only places the clause.
     #: Empty for every other table, which is all of them before 21c (`#736`).
     table_retention: str = ""
+    #: A LOCAL index on an interval-partitioned table, which the dictionary
+    #: says and the DDL cannot: its partition list folds to bare `LOCAL`
+    #: (`#1091`). False for every other object.
+    interval_local_index: bool = False
 
     @property
     def display_name(self) -> str:

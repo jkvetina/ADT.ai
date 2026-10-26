@@ -1,4 +1,4 @@
-"""Named SQLcl connections (ADT #148).
+"""Named SQLcl connections (ADT #148, reshaped by #1079).
 
 SQLcl keeps its own connection storage (``connect -save`` / ``connect -name``,
 password in the OS secure store). ADT registers one named connection per
@@ -7,32 +7,24 @@ by name instead of embedding cleartext credentials on every call.
 
 The name is ``ADT_`` + the connection-file basename (its parent folder for the
 generic ``connections.yaml``), then ``_<ENV>`` only when the file defines more
-than one environment, ``_<SCHEMA>`` only when that environment defines more than
-one schema, and always six hex characters of the file's resolved path
-(``path_discriminator``, ADT #660). So every tuple gets a unique deterministic
-name, and a single-purpose file gets ``ADT_<BASENAME>_<hex>``, never the bare
-basename. A name already recorded as ``sqlcl:`` wins over this derivation.
-The assigned name and a credential fingerprint are recorded back into the
-connection YAML (round-trip, comments preserved) so the user can see, and
-override, the SQLcl name in use, and so a credential change is detected and
-re-registered on the next SQLcl call.
+than one environment, and ``_<SCHEMA>`` only when that environment defines more
+than one schema. It is worked out on every run and never written anywhere: the
+connection file is the user's, and ADT records nothing in it (ADT #1079). A
+``sqlcl:`` the user wrote himself still wins over the derivation; one ADT wrote
+in an earlier version is recognised by :func:`is_generated_sqlcl_name` and
+ignored, and `connection_tidy` removes it from the file.
+
+Nothing is fingerprinted either. The connect plan tries the stored name first;
+a store that lost the entry, a password the database no longer accepts, or a
+saved entry that reaches a different database than the file names all fail that
+first connect, and only then is the name re-registered (`sqlcl_connect`).
 """
 
 from __future__ import annotations
 
-import hashlib
-import io
 import re
+from itertools import product
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-import yaml as pyyaml
-from ruamel.yaml import YAML
-
-from adt_ai.shared import text_files
-
-if TYPE_CHECKING:
-    from adt_ai.shared.connections import Connection
 
 SQLCL_NAME_PREFIX = "ADT_"
 
@@ -52,6 +44,10 @@ _GENERIC_FILE_STEMS = {"connections"}
 # preamble in ``sqlcl_connect`` is the one that builds it today.
 CONNMGR_DELETE_COMMAND = "CONNMGR DELETE -conn {name}"
 
+# The six hex characters ADT #660 appended to every name. #1079 dropped them;
+# a recorded name that still carries them is one ADT wrote, never the user.
+_RETIRED_PATH_HASH = re.compile(r"_[0-9a-f]{6}$")
+
 
 def derive_sqlcl_name(
     source_file: Path,
@@ -61,172 +57,53 @@ def derive_sqlcl_name(
     multi_environment: bool,
     multi_schema: bool,
 ) -> str:
-    base = source_file.stem
-    if base.lower() in _GENERIC_FILE_STEMS:
-        base = source_file.parent.name
-    parts = [base]
+    parts = [_file_base(source_file)]
     if multi_environment:
         parts.append(environment)
     if multi_schema:
         parts.append(schema)
-    parts.append(path_discriminator(source_file))
-    return SQLCL_NAME_PREFIX + "_".join(_sanitize(part) for part in parts)
+    return _join(parts)
 
 
-def path_discriminator(source_file: Path) -> str:
-    """Six hex characters of the connection file's own resolved path.
+def is_generated_sqlcl_name(
+    value: object,
+    source_file: Path | str,
+    environment: str,
+    schema: str,
+) -> bool:
+    """True when ``value`` is a name ADT derived, in any version, for this tuple.
 
-    Everything else in the name comes from the file's stem, or from its parent
-    folder for the generic `connections.yaml`, and the SQLcl store is PER USER,
-    not per project. So two projects whose folders share a name (or two
-    `connections.path` overrides each pointing at a `connections.yaml`) took the
-    same `ADT_<name>` in that one store. The fingerprint check
-    (`sqlcl_connect.py`) compares only against the project's own YAML, so once
-    project B registered, project A connected `-name` and ran, silently, against
-    B's database (ADT #660).
-
-    A name already recorded as `sqlcl:` in a connection file wins over this
-    derivation (`connections._sqlcl_name`), so an existing registration keeps the
-    name it has and a user's own override is untouched; only a project that has
-    never registered takes the new shape.
+    Every shape a past derivation could have produced is accepted: with or
+    without the environment, with or without the schema (both depended on how
+    many the file held at the time), and with or without #660's path hash. A
+    name matching none of them is the user's own and is kept.
     """
-    resolved = str(Path(source_file).expanduser().resolve())
-    return hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:6]
+    text = str(value or "").strip()
+    if not text:
+        return False
+    text = _RETIRED_PATH_HASH.sub("", text)
+    base = _file_base(Path(source_file))
+    for with_env, with_schema in product((False, True), repeat=2):
+        parts = [base]
+        if with_env:
+            parts.append(environment)
+        if with_schema:
+            parts.append(schema)
+        if text.casefold() == _join(parts).casefold():
+            return True
+    return False
+
+
+def _file_base(source_file: Path) -> str:
+    base = source_file.stem
+    if base.lower() in _GENERIC_FILE_STEMS:
+        base = source_file.parent.name
+    return base
+
+
+def _join(parts: list[str]) -> str:
+    return SQLCL_NAME_PREFIX + "_".join(_sanitize(part) for part in parts)
 
 
 def _sanitize(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "_", value).strip("_")
-
-
-def credential_fingerprint(connection: Connection) -> str:
-    """Short digest over everything a saved SQLcl connection depends on.
-
-    A mismatch against the recorded ``sqlcl_sync`` value means the credentials
-    changed since registration and the named connection must be re-saved.
-    """
-    # This is the third and last approved `Secret.reveal()` site (ADT #400), and
-    # it reveals rather than asking `Secret` for a digest of its own so the
-    # material stays byte-identical to what earlier versions hashed. A different
-    # derivation would mismatch every `sqlcl_sync` value already recorded in a
-    # user's connection file, re-registering every named connection and
-    # rewriting every file on the first run after an upgrade. Nothing leaves
-    # here but the 12 character digest below.
-    #
-    # One project shape does change, and it changes because it was wrong: an
-    # UNENCRYPTED `pwd: !!binary` value used to arrive here as `bytes`, so
-    # `str(part or "")` hashed Python's `b'secret'` repr rather than the
-    # password. `Secret` decodes at construction, so the material is now the
-    # text. Such a project re-registers once, which is the intended behaviour
-    # for a fingerprint that was never hashing the credential it named.
-    # Encrypted values are unaffected: they are decrypted to `str` before they
-    # ever reach a Connection.
-    material = "\x00".join(
-        str(part or "")
-        for part in (
-            connection.username,
-            connection.password.reveal(),
-            connection.hostname,
-            connection.port,
-            connection.service,
-            connection.sid,
-            connection.wallet_path,
-            connection.wallet_password.reveal(),
-        )
-    )
-    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:12]
-
-
-def record_sqlcl_registration(
-    source_file: Path | str,
-    environment: str,
-    schema: str,
-    name: str,
-    fingerprint: str,
-) -> None:
-    """Write ``sqlcl`` / ``sqlcl_sync`` onto the schema's ``db:`` block.
-
-    Round-trip edit (comments and key order preserved). Best-effort by design:
-    bookkeeping must never break the export that triggered it, on any failure
-    the fingerprint simply stays stale and the next run re-registers.
-    """
-    try:
-        path = Path(source_file)
-        text = path.read_text(encoding="utf-8")
-        # Safe-load pre-check before the round-tripper touches an externally
-        # authored file, same defense-in-depth as connection/runner.py; any
-        # unsupported tag raises and lands in the best-effort except below.
-        pyyaml.safe_load(text)
-        yaml = YAML()
-        yaml.preserve_quotes = True
-        yaml.indent(mapping=2, sequence=4, offset=2)
-        # Same width as the connection editor. This writer rewrites the whole
-        # document to record two short keys, so at the default width of 80 it
-        # would reflow any encrypted `pwd:` in the file onto a continuation
-        # line, and the two writers would flip the layout back and forth.
-        yaml.width = SECRET_SAFE_YAML_WIDTH
-        data = yaml.load(text)
-        schema_node = _schema_node(data, environment, schema)
-        if schema_node is None:
-            return
-        db_node = schema_node.get("db")
-        if db_node is None:
-            db_node = {}
-            schema_node["db"] = db_node
-        db_node["sqlcl"] = name
-        db_node["sqlcl_sync"] = fingerprint
-        # Rendered into a buffer, never streamed at the file. `open_text` writes
-        # unconditionally, since it cannot compare bytes it does not yet hold,
-        # and a re-registration usually records the name and fingerprint the
-        # document already carries, so streaming gave this file a fresh mtime
-        # for no change at all: one re-upload per run under a synced folder
-        # (ADT #798).
-        # `write_private_text` is what `connection/runner.py` uses on this same
-        # file: it skips a byte-identical rewrite and keeps a `pwd:`-bearing
-        # document owner-only from its first inode.
-        buffer = io.StringIO()
-        yaml.dump(data, buffer)
-        text_files.write_private_text(path, buffer.getvalue())
-    except Exception:
-        return
-
-
-def read_sqlcl_registration(
-    source_file: Path | str,
-    environment: str,
-    schema: str,
-) -> dict[str, str]:
-    """The ``sqlcl`` / ``sqlcl_sync`` the schema's ``db:`` block holds NOW.
-
-    A gateway is built once per command from a `Connection` loaded at start, and
-    the registration it records mid-run (or one a second gateway on the same file
-    records) never reached that frozen copy, so every later request registered
-    again with the password in its script (#924 F59). Only the keys present are
-    returned; best-effort like the writer, so an unreadable file answers ``{}``
-    and the caller keeps the values it loaded.
-    """
-    try:
-        data = pyyaml.safe_load(Path(source_file).read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    schema_node = _schema_node(data, environment, schema)
-    db_node = schema_node.get("db") if schema_node is not None else None
-    if not isinstance(db_node, dict):
-        return {}
-    return {
-        key: str(db_node[key])
-        for key in ("sqlcl", "sqlcl_sync")
-        if db_node.get(key)
-    }
-
-
-def _schema_node(data: Any, environment: str, schema: str) -> Any:
-    if not isinstance(data, dict):
-        return None
-    environment_node = data.get(environment)
-    if not isinstance(environment_node, dict):
-        return None
-    schemas = environment_node.get("schemas")
-    if not isinstance(schemas, dict):
-        return None
-    node = schemas.get(schema)
-    return node if isinstance(node, dict) else None

@@ -3,8 +3,8 @@ name: adt
 description: "Lean ADT.ai command router for Oracle/APEX work. Invoke only when the user explicitly asks an agent to use the ADT skill by name; never auto-load it for repository work, general discussion, development, review, command lookup, or incidental mentions of ADT."
 metadata:
   created: "2026-06-10"
-  updated: "2026-10-09 22:50"
-  version: "2.5.4"
+  updated: "2026-10-13 09:39"
+  version: "2.6.0"
   tags: [oracle, apex, deployment, cli, database]
 ---
 # ADT.ai
@@ -20,7 +20,7 @@ The executable is `adtai`; `adt` and `python -m adt_ai` are aliases. Run it from
 3. Preserve the user's environment, schema, application, branch, patch, and output scope. Never invent a deployment target or broaden a selector.
 4. Distinguish a preview/read from a write. If the requested action writes files, changes Git state, modifies connection data, or changes a database/APEX application, make that effect clear before running it.
 5. Run one understandable shell command at a time and return its meaningful output. Use `-debug` only when diagnosis needs resolved parameters and SQL.
-6. Read the outcome from the exit code. A refusal prints `ERROR - <CODE>:` and an uppercase headline on stderr, exiting `2` for what was typed, `1` for a runtime failure; `0` is success. A failed `patch` or `diff` prints `ERROR - PATCH FAILED:` or `ERROR - DIFF FAILED:` there too. Shapes: [docs/console.md](../../docs/console.md).
+6. Add `-json` and read the one JSON object on stdout, never the screen: `exit_code` (`2` for what was typed, `1` for a runtime failure), `errors` (each refusal's code and headline), `diagnostics` (each finding with its file, line, object), `artifacts` (files written) and `result` (counts). Shape: docs/json.md.
 
 Do not preload every linked page. The repository's [documentation index](../../docs/README.md) owns the detailed behavior and full flag tables. Install, prerequisites, and machine repair belong to `adt-setup` or [SETUP.md](../../SETUP.md).
 

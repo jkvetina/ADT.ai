@@ -47,6 +47,7 @@ from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
 
+from adt_ai.cli import json_findings_database
 from adt_ai.cli.constants import PatchRequest, print_adt_header
 from adt_ai.cli.context import _flatten_arg_groups, _project_relative
 from adt_ai.cli.patch_hash_mode import BASELINE_STAMP_FORMAT, print_baseline_stats
@@ -176,6 +177,9 @@ def write_measured_baseline(
     # One row, and flat: a baseline file is named rather than listed (ADT #504).
     print_file_rows([_project_relative(written, root)], nested=False)
     print_baseline_stats(counts, total=counts["TOTAL"])
+    # The same counts the table above prints; the file is already an artifact
+    # through the writer (ADT #1070).
+    json_findings_database.export_baseline(counts)
 
 
 def commits_at_hashes(

@@ -16,6 +16,7 @@ from adt_ai.connection.stored_secrets import (
 )
 from adt_ai.connection.wallet_commands import drop_wallet_commands, replaced_command_notes
 from adt_ai.shared import crypto, text_files
+from adt_ai.shared.connection_tidy import tidy_text
 from adt_ai.shared.connections import DEFAULT_PORT
 from adt_ai.shared.secret import Secret
 from adt_ai.shared.secret_command import COMMAND_KEYS, SECRET_SOURCES
@@ -277,7 +278,11 @@ class ConnectionEditor:
             request.path.parent.mkdir(parents=True, exist_ok=True)
             buffer = io.StringIO()
             yaml.dump(data, buffer)
-            text_files.write_private_text(request.path, buffer.getvalue())
+            # The written file never carries SQLcl bookkeeping or an empty
+            # export block past the first schema (#1079).
+            text_files.write_private_text(
+                request.path, tidy_text(buffer.getvalue(), request.path)
+            )
 
         return ConnectionEditResult(
             action      = request.action,

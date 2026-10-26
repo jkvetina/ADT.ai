@@ -30,6 +30,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from adt_ai.cli import json_findings
 from adt_ai.cli.commands_patch_actions import run_archive_patches, run_install_script
 from adt_ai.cli.commands_patch_drop import run_drop_applications
 from adt_ai.cli.commands_patch_upload import (
@@ -470,6 +471,8 @@ def build_database_patch(
     debug = bool(getattr(args, "debug", False))
     print_create_warnings(result, config, debug=debug)
     print_create_patch_files(result, config, root)
+    # The same result as `-json` data (ADT #1070); a no-op on a human run.
+    json_findings.patch_created(result, root)
 
 
 __all__ = [

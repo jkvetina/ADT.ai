@@ -12,6 +12,7 @@ from typing import Any
 # The month-grid renderer lives in the calendar package; aliased here so the
 # `_print_calendar_grid` call site and its tests keep their existing name.
 from adt_ai.calendar.render import render_calendar_grid as _print_calendar_grid
+from adt_ai.cli import json_findings_history
 
 # `diff` moved to its own module at the 24 KB context cap (`#780`); re-exported
 # so `runtime.py` and the announce tests keep the import they have always had.
@@ -138,10 +139,13 @@ def _run_rebuild(
             since_date         = since_date,
             history_bottom_days= history_floor,
         )
-        RebuildRunner().run(
+        walked = RebuildRunner().run(
             request,
             reporter=ConsoleRebuildReporter(branch_label, since_label=since_date),
         )
+        # Recorded before the database half, which may still end the run on
+        # the configuration screen: the commit stores were rebuilt either way.
+        json_findings_history.rebuild_walk(walked)
     # What this block can legitimately fail with, and nothing else (`#670`):
     # the runner's own refusal (a `-branch` that is not in the repo), a config
     # value that is not a number (`resolve_history_floor`), a config file that
@@ -180,6 +184,7 @@ def _run_rebuild_verify(args: argparse.Namespace, root: Path) -> int:
     branches = _flatten_arg_groups(args.branch) or [_current_branch(root)]
     template = _commits_template(args, root)
     problems: list[str] = []
+    stores = []
     print_adt_header("COMMIT STORES:")
     print()
     for branch in branches:
@@ -187,6 +192,7 @@ def _run_rebuild_verify(args: argparse.Namespace, root: Path) -> int:
         with open_store(root, branch, template) as store:
             floor, ceiling, count = span = store.span()
         found = problems_in(span, branch)
+        stores.append((branch, span, found))
         label = f"{branch[:VERIFY_BRANCH_WIDTH]:<{VERIFY_BRANCH_WIDTH}}"
         if count == 0:
             print(f"  {label} EMPTY"[:VERIFY_LINE_WIDTH])
@@ -196,6 +202,7 @@ def _run_rebuild_verify(args: argparse.Namespace, root: Path) -> int:
         print(row[:VERIFY_LINE_WIDTH])
         problems.extend(found)
     print()
+    json_findings_history.verified_stores(stores)
     if problems:
         print_adt_header("PROBLEMS:")
         print()
@@ -270,6 +277,11 @@ def _run_search(
         return exit_code_for("GIT COMMIT FAILED")
     except (SearchError, ValueError) as exc:
         return _report_history_failure(exc)
+    # Read off the result the stanzas below print, so `-json` and the screen
+    # answer with the same commits (ADT #1070).
+    json_findings_history.search_history(
+        result, root, file_limit=file_limit, restore=bool(args.restore)
+    )
     nested = nested_files(config)
     folder_of = object_folder_resolver(config)
     if result.records:
@@ -337,6 +349,7 @@ def _run_calendar(args: argparse.Namespace) -> int:
     except (CalendarError, ValueError) as exc:
         return _report_history_failure(exc)
 
+    json_findings_history.calendar(result)
     overview = f"MONTHLY OVERVIEW {result.month}"
     if jira_prefix:
         overview += f" ({jira_prefix})"

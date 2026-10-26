@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import time
 
+from adt_ai.cli import json_findings_database
 from adt_ai.cli.commands_export_data_groups import run_data_groups_move
 from adt_ai.cli.constants import (
     ExportDataRequest,
@@ -89,7 +90,8 @@ def _run_export_data(
         _print_connection_block(
             export_data_gateway_factory(schema), schema_connections[schema], debug=args.debug
         )
-        runner.run(
+        reporter = ConsoleExportDataReporter(silent=args.silent)
+        written = runner.run(
             ExportDataRequest(
                 root          = root,
                 schemas       = [schema],
@@ -97,8 +99,14 @@ def _run_export_data(
                 schema_export = {schema: schema_export[schema]},
                 names         = _flatten_arg_groups(args.name),
                 group_rules   = group_rules,
-                reporter      = ConsoleExportDataReporter(silent=args.silent),
+                reporter      = reporter,
             )
+        )
+        # Summed across schemas: each one is its own pass (ADT #1070).
+        json_findings_database.add_counts(
+            tables = reporter.tables,
+            rows   = reporter.rows,
+            files  = len(written),
         )
         return 0
 

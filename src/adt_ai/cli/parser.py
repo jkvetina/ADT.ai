@@ -36,8 +36,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     for command, _description, _aliases in PUBLIC_MODULES:
         _add_completion_args(_command_parser(parser, command))
+        _add_json_arg(_command_parser(parser, command))
     _apply_generated_command_usages(parser)
     return parser
+
+
+def _add_json_arg(parser: argparse.ArgumentParser) -> None:
+    # Every module, one shape, declared in one place (ADT #1070). Jan: *"It
+    # should be simple and the same across all modules, -json looks fine"*.
+    # The run itself is wrapped in `runtime.main`, which reads the raw argv so
+    # a refusal argparse raises is reported as JSON too.
+    parser.add_argument(
+        "--json",
+        "-json",
+        action = "store_true",
+        help   = "print one JSON object with the run's errors, findings, written files "
+                 "and counts instead of the screen, for an agent or a script to read",
+    )
 
 
 def _add_completion_args(parser: argparse.ArgumentParser) -> None:

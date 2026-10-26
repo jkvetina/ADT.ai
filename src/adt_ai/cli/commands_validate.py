@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from adt_ai.cli import json_findings
 from adt_ai.cli.constants import (
     ConfigError,
     ConfigLoader,
@@ -302,6 +303,9 @@ def _run_validate(
             # The row carries the clock since ADT #966, so the verdict it used
             # to spell is said here: a broken export, never a quiet pass.
             notes.append(f"{folder.target.label}: no APEXlang files, export it again")
+
+    json_findings.validate_folders(result.folders)
+    json_findings.notes(notes)
 
     # A precheck issue is a warning and still fails the run: the committed tree
     # is the broken one until the conversion is committed (ADT #928, #934).

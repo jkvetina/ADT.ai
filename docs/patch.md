@@ -279,4 +279,4 @@ adtai patch -upload -app 100
 | `-files_ws`, `--files_ws`, `--files-ws` | No | off | With `-create`, carry every workspace static file, not only the ones the selected commits changed, in the version the content mode selects. Application static files are not widened. Exits `2` on a run that builds nothing. With `-upload` it names where the uploads land instead, the workspace files rather than the application ones. On [patch_content.md](patch_content.md#workspace-static-files). |
 | `-branch`, `--branch` | No | current branch | Scan the named branch's history instead of the checked-out one. Read-only. A name resolving to no ref fails the run. Refused beside `-install`. |
 
-Shared options (-root, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).
+Shared options (-root, -schema, -config-dir, -key, -debug, -beep, -nobeep, -json) are on [console.md](console.md#shared-arguments).

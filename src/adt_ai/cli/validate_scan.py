@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from adt_ai.cli import json_findings
 from adt_ai.cli.constants import (
     ConnectionConfigError,
     ConnectionResult,
@@ -153,6 +154,9 @@ def _scan_applications(
         # Read while `SCANNING APPLICATIONS:` still announces the reads under it,
         # printed in a section of its own once the scan rows are out.
         tabs = _static_id_tabs(gateway, apps, apex_version)
+        # The same reports and rows the sections below print, as `-json` data
+        # (ADT #1070); a no-op on a human run.
+        json_findings.validate_scan(reports, tabs)
         scanned = _print_component_scans(reports)
         return _print_static_id_tabs(tabs) or scanned
 

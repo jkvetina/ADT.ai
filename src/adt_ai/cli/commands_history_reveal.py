@@ -12,6 +12,7 @@ import argparse
 import subprocess
 from pathlib import Path
 
+from adt_ai.cli import json_findings_history
 from adt_ai.cli.constants import (
     REVEAL_DEFAULT_LIMIT,
     BranchInfo,
@@ -84,6 +85,8 @@ def _run_rebuild_reveal(
     else:
         mine_prefix = "MY " if result.mine else ""
         title = f"{mine_prefix}RECENT BRANCHES{since_part}"
+    # The rows and the header's total, as `-json` data (ADT #1070).
+    json_findings_history.revealed(result)
     _print_reveal_list(title, result.branches, result.total)
     return 0
 
@@ -132,6 +135,7 @@ def _run_rebuild_switch(
         count = REVEAL_DEFAULT_LIMIT
     commit_limit = count if count and count > 0 else None
     commits = branch_commits(root, target.name, limit=commit_limit, mine=mine)
+    json_findings_history.switched(target.name, commits)
     print()  # second blank line above the header, print_adt_header adds one, we want two
     print_adt_header("COMMITS:")
     print()
