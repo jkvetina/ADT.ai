@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from adt_ai.cli.constants import PUBLIC_MODULES
 from adt_ai.cli.help_summaries import COMMAND_SUMMARIES
 
-COMMON_DEST_ORDER = ("debug", "beep", "nobeep", "env", "root", "config_dir", "key")
+COMMON_DEST_ORDER = ("debug", "beep", "nobeep", "json", "env", "root", "config_dir", "key")
 OPTION_HELP_WIDTH = 80
 
 # Every flag a command declares lands in exactly one section, and which one is

@@ -64,10 +64,12 @@ class ObjectDiscovery:
     DATA_ROLES_QUERY       = queries.DATA_ROLES_QUERY
     COMMENTS_QUERY         = queries.COMMENTS_QUERY
     TABLE_RETENTION_QUERY  = queries.TABLE_RETENTION_QUERY
+    INTERVAL_LOCAL_INDEXES_QUERY = queries.INTERVAL_LOCAL_INDEXES_QUERY
 
     def __init__(self, gateway: QueryGateway) -> None:
         self.gateway = gateway
         self._retention_by_schema: dict[str, dict[str, str]] = {}
+        self._interval_local_indexes_by_schema: dict[str, set[str]] = {}
         self._comments_by_schema: dict[str, dict[tuple[str, str], list[dict[str, Any]]]] = {}
         self._comment_cache_keys: dict[str, tuple[str, str, str, str]] = {}
         # Per-schema {job name: fresh signature} for the jobs this run selected,
@@ -433,6 +435,26 @@ class ObjectDiscovery:
                 if (clause := _render_retention(row))
             }
         return self._retention_by_schema[schema].get(database_object.name.upper(), "")
+
+    def interval_local_index(self, database_object: DatabaseObject) -> bool:
+        """Whether this is a LOCAL index on an interval-partitioned table (`#1091`).
+
+        One query per schema, the first time an index asks; every other object
+        type answers False without one.
+        """
+        if database_object.object_type.upper() != "INDEX":
+            return False
+        schema = database_object.schema
+        if schema not in self._interval_local_indexes_by_schema:
+            rows = self.gateway.fetch_all(
+                self.INTERVAL_LOCAL_INDEXES_QUERY,
+                {"schema": schema},
+            )
+            self._interval_local_indexes_by_schema[schema] = {
+                str(row.get("INDEX_NAME") or row.get("index_name") or "").upper()
+                for row in rows
+            }
+        return database_object.name.upper() in self._interval_local_indexes_by_schema[schema]
 
     def ddl(self, database_object: DatabaseObject) -> str:
         """The object's DDL; `ObjectDroppedError` once it is gone (`#923`)."""

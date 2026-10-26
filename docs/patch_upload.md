@@ -165,4 +165,4 @@ ADT.ai shipped it as a command of its own, `adtai live_upload`, until it folded 
 | `-once`, `--once` | No | off | Upload every file in the folder once and exit instead of watching. Refused together with `-interval`. |
 | `-target`, `--target` | No | connection file default environment | Environment to upload into. |
 
-`-schema` and the other shared options (-root, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments). Every other `patch` argument is on [patch.md](patch.md), and refused beside `-upload` where it names a patch the verb has none of.
+`-schema` and the other shared options (-root, -config-dir, -key, -debug, -beep, -nobeep, -json) are on [console.md](console.md#shared-arguments). Every other `patch` argument is on [patch.md](patch.md), and refused beside `-upload` where it names a patch the verb has none of.

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import io
 import sys
 import time
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import TextIO
 
@@ -45,6 +46,7 @@ from adt_ai.cli.context_errors import _print_export_failures
 from adt_ai.cli.gateways import gateway_scope
 from adt_ai.cli.help import format_command_help
 from adt_ai.cli.parser import (
+    _canonical_command_name,
     _command_parser,
     _command_title,
     _has_help_flag,
@@ -55,6 +57,7 @@ from adt_ai.cli.raw_completion_args import _completion_args_from_raw
 from adt_ai.cli.rebuild_refresh import _rebuild_argument_error
 from adt_ai.cli.validate_scan import _scan_argument_error
 from adt_ai.export_db.failures import ExportObjectsFailedError
+from adt_ai.shared import run_report
 from adt_ai.shared.announce import announced_factory, strict_mode
 from adt_ai.shared.env_bootstrap import hydrate_environment
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
@@ -217,11 +220,66 @@ def main(
     argv: Sequence[str] | None = None,
     gateway_factory: GatewayFactory | None = None,
 ) -> int:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if not _json_requested(raw_argv):
+        return _main(raw_argv, gateway_factory)
+    return _run_json(raw_argv, gateway_factory)
+
+
+def _json_requested(raw_argv: Sequence[str]) -> bool:
+    """`-json` on a run, never on a help or version screen, which stay reference text.
+
+    Read from the raw argv rather than the parsed namespace, so a refusal
+    argparse raises before any namespace exists still reaches the reader as
+    JSON (ADT #1070).
+    """
+    if not any(arg in {"-json", "--json"} for arg in raw_argv):
+        return False
+    return not (_has_help_flag(raw_argv) or "--version" in raw_argv)
+
+
+def _run_json(raw_argv: list[str], gateway_factory: GatewayFactory | None) -> int:
+    """Run with the screen captured, then print the one JSON object (ADT #1070).
+
+    The whole screen, stdout and stderr alike, goes into a buffer rather than
+    to stderr: an agent's shell hands it both streams in one transcript, and the
+    object is what it pays to read. Every renderer still runs unchanged, so a
+    `-json` run is the same run as the one a person watches.
+    """
+    real_stdout = sys.stdout
+    screen = io.StringIO()
+    started_at = time.monotonic()
+    with (
+        run_report.collecting(_json_command(raw_argv)) as report,
+        redirect_stdout(screen),
+        redirect_stderr(screen),
+    ):
+        exit_code = _main(raw_argv, gateway_factory)
+    real_stdout.write(
+        report.render(
+            exit_code = exit_code,
+            elapsed   = time.monotonic() - started_at,
+            screen    = screen.getvalue(),
+        )
+    )
+    real_stdout.flush()
+    return exit_code
+
+
+def _json_command(raw_argv: Sequence[str]) -> str | None:
+    if not raw_argv or raw_argv[0] not in PUBLIC_COMMANDS:
+        return None
+    return _canonical_command_name(raw_argv[0])
+
+
+def _main(
+    raw_argv: list[str],
+    gateway_factory: GatewayFactory | None = None,
+) -> int:
     # One hook for every module: an AI tool's shell never ran ~/.zshrc, so the
     # ADT/Oracle variables are missing until we read them ourselves.
     hydrate_environment()
 
-    raw_argv = list(sys.argv[1:] if argv is None else argv)
     debug_requested = "-debug" in raw_argv or "--debug" in raw_argv
     if not raw_argv:
         return _run_module_overview()

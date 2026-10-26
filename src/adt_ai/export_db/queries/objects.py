@@ -459,3 +459,15 @@ FROM   user_blockchain_tables
 WHERE  (:schema IS NOT NULL)
 ORDER  BY table_name
 """.strip()
+
+# The LOCAL indexes on interval-partitioned tables (`#1091`). Their DDL lists
+# only the partitions the table had before the interval took over, so the index
+# normalizer folds that list to bare `LOCAL`, and the DDL alone cannot say which
+# tables are interval ones: a plain RANGE index reads exactly the same.
+INTERVAL_LOCAL_INDEXES_QUERY = """
+SELECT index_name
+FROM   user_part_indexes
+WHERE  locality = 'LOCAL'
+  AND  interval IS NOT NULL
+  AND  (:schema IS NOT NULL)
+""".strip()

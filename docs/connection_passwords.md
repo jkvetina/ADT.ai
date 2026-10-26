@@ -50,6 +50,28 @@ It also means two secrets encrypted with one key have different fingerprints, wh
 
 <br>
 
+## One pattern for every schema
+
+Where every schema's password is shaped like its own name, state the shape once with `pwd_pattern:` instead of listing thirty schemas:
+
+```yaml
+DEV:
+  db:
+    pwd_pattern: "<Schema>."
+  schemas:
+    CORE: {db: {user: CORE, pwd: core-secret}}
+```
+
+`<schema>`, `<Schema>` and `<SCHEMA>` become the schema's login `user` in lower case, Oracle INITCAP and upper case. Every other character stays as written, and so does a placeholder in any other casing.
+
+- **A schema you name need not be listed.** `-schema HR` above connects as `HR` with `Hr.`, though the file never names it. Without a pattern an unlisted schema stays `SCHEMA NOT CONFIGURED`, and `%` wildcards and `connection -test` see only the listed schemas.
+- **A listed schema can still set its own.** List one only where it differs: its own `user`, `export:` filters, or a password off the pattern.
+- **A stated password wins.** A schema with `pwd` or `pwd_cmd`, its own or its environment's, ignores the pattern, so `CORE` connects with `core-secret`. A schema-level `pwd_pattern` overrides the environment's.
+- **It is cleartext.** The pattern is the password recipe, so `pwd!` does not apply to it; keep the file out of Git as you would a plain `pwd`.
+- **It falls back like a password.** `TEST` with no password of its own uses the first environment's pattern; a `TEST` that states `pwd_pattern` takes none of the first environment's `pwd` keys ([connection.md](connection.md)).
+
+<br>
+
 ## The secret can come from your own vault
 
 A connection file does not have to hold the password at all. Point `pwd_cmd:` at a command and ADT.ai runs it, taking its output as the password:
@@ -253,9 +275,12 @@ Once loaded, schema and wallet passwords use a wrapper that renders as `***`, so
 
 That covers the cases nothing in the code deliberately prints: an interpolated connection inside an exception, a debug dump, a test runner showing local variables on failure.
 
-Exactly five places unwrap a value, and each hands it straight to a consumer that cannot accept a mask: the driver's connect call, the connect line of a generated SQLcl script (which named connections avoid entirely), the credential fingerprint that emits nothing but a digest, and the connection editor's single boundary immediately before encryption, key resolution or owner-only file writing.
+Exactly four places unwrap a value, and each hands it straight to a consumer that cannot accept a mask:
 
-The fifth is the Basic authorization header of a request to an `ords:` connection (connection_ords.md).
+- the driver's connect call;
+- the connect line of a generated SQLcl script, which named connections avoid entirely;
+- the Basic authorization header of a request to an `ords:` connection (connection_ords.md);
+- the connection editor's single boundary immediately before encryption, key resolution or owner-only file writing.
 
 A contract test pins that list, so another unwrap fails the test suite rather than passing review.
 

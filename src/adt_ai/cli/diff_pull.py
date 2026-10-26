@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
+from adt_ai.cli import json_findings_history
 from adt_ai.cli.constants import print_adt_header
 from adt_ai.cli.diff_reporters import print_listing
 from adt_ai.diff.pull import PullSides
@@ -70,6 +71,7 @@ class PullScreen:
             if self.debug:
                 raise
             self.failed = True
+            json_findings_history.restore_failed("GIT COMMIT FAILED", error.description)
             print_adt_error("GIT COMMIT FAILED", error.description, details=error.reason)
             return
         print_adt_header(PULLED_HEADER)
@@ -81,9 +83,14 @@ class PullScreen:
             if self.debug:
                 raise
             self.failed = True
+            # A finding as well as a refusal: it fails the run, and the
+            # database code it carries is what a `-json` reader branches on
+            # (ADT #1070).
+            json_findings_history.restore_failed("DIFF FAILED", error)
             print_adt_error("DIFF FAILED", str(error))
             return
         files = pulled_files(self.root)
+        json_findings_history.restored(branch, files)
         if files:
             print_listing(
                 [{"file": name, "status": status} for name, status in files],

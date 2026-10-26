@@ -20,6 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from adt_ai.cli import json_findings
 from adt_ai.cli.constants import PatchError, print_adt_header, print_adt_table
 from adt_ai.cli.context import _project_relative
 from adt_ai.cli.patch_preview_render import _hash_changed_rows
@@ -133,7 +134,10 @@ def run_baseline(
     print_adt_header("WRITING BASELINE:")
     # One row, and flat: a baseline file is named rather than listed (ADT #504).
     print_file_rows([_project_relative(path, root)], nested=False)
-    print_baseline_stats(baseline_change_counts(previous, current), total=len(current))
+    counts = baseline_change_counts(previous, current)
+    print_baseline_stats(counts, total=len(current))
+    # The same answer as `-json` data (ADT #1070); a no-op on a human run.
+    json_findings.patch_baseline(path, len(current), counts)
     return 0
 
 
@@ -195,7 +199,10 @@ def apply_hash_mode(
     diff = without_page_comments(
         diff_against_baseline(baseline, hash_working_tree(root, config)), config
     )
+    # `create` once a build is asked for, so its own keys join these (ADT #1070).
+    mode = "create" if create_requested else "hash"
     if diff.is_empty:
+        json_findings.patch_hashed(mode, baseline.path, len(baseline), [])
         if create_requested:
             raise PatchError(
                 "NO HASH-CHANGED FILES TO PATCH\n\n"
@@ -203,8 +210,10 @@ def apply_hash_mode(
             )
         return HashSelection(records=[], keep_going=False, diff=diff, commits={})
     commits = _diff_commits(diff, records)
+    rows = _hash_changed_rows(diff, commits)
     print_adt_header("CHANGED FILES:", str(len(diff.files)))
-    print_adt_table(_hash_changed_rows(diff, commits))
+    print_adt_table(rows)
+    json_findings.patch_hashed(mode, baseline.path, len(baseline), rows)
     return HashSelection(
         records    = restrict_records_to_diff(records, diff),
         keep_going = True,

@@ -292,4 +292,4 @@ The `export:` block in the connection file applies here too, so a pattern in `ig
 | `-groups`, `--groups` | No | off | Move action: reorganize already-exported table files into `data/<group>/` subfolders. Never connects or exports, and moves nothing until `-force`. See [Groups](#groups) above. |
 | `-force [GROUP]`, `--force [GROUP]` | No | off | With `-groups`, apply the listed moves. `-force GROUP` lands every prefix named in one uppercased folder instead of one per prefix, so it needs named prefixes. Without `-groups` it is an error, exit `2`. |
 
-Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).
+Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep, -json) are on [console.md](console.md#shared-arguments).

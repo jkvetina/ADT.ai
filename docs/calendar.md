@@ -105,4 +105,4 @@ The mapped address is what the report shows and what the default author and `-by
 | `-calendar [OFFSET]`, `--calendar [OFFSET]` | No | `0` | Month selector by offset. Bare `-calendar` is the current month; an integer is that many months back. |
 | `-by`, `--by` | Yes | your `git config user.email` | Author email substring, repeatable. Replaces the default "my commits" author. |
 
-Shared options (-root, -beep, -nobeep) are on [console.md](console.md#shared-arguments).
+Shared options (-root, -beep, -nobeep, -json) are on [console.md](console.md#shared-arguments).

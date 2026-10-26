@@ -283,4 +283,4 @@ With no window either reaches over all time and the export lists what it wrote, 
 | `-files_ws`, `--files_ws`, `--files-ws` | No | off | Export the static workspace files. **Schema-level**, exactly like `-rest`. |
 | `-compact`, `--compact` | No | off | Replace the per-application blocks and their action rows with one time-weighted progress row per unit of work: one per application, one per schema-level slice. The `APEX APPLICATIONS:` overview stays above them, and a closed row names the unit without the slice it ran last. |
 
-Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).
+Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep, -json) are on [console.md](console.md#shared-arguments).

@@ -42,6 +42,7 @@ import textwrap
 from collections.abc import Sequence
 from typing import TextIO
 
+from adt_ai.shared import run_report
 from adt_ai.shared.announce import settle_screen_before_error
 from adt_ai.shared.progress import SECTION_GAP, print_adt_header
 
@@ -219,6 +220,9 @@ def print_adt_error(
     not already say.
     """
     _check(code)
+    # Every refusal passes here, so a `-json` run reports each one as data
+    # without a module enrolling (ADT #1070).
+    run_report.refusal(code, description, details)
     stream = file if file is not None else sys.stderr
     # Settle stdout only when a run actually wrote there. `#465` added this for
     # a failure raised mid-row, where the crawling progress line carries no

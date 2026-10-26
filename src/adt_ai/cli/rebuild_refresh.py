@@ -35,6 +35,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from adt_ai.cli import json_findings_history
 from adt_ai.cli.constants import (
     ConnectionConfigError,
     DependencyIndexRequest,
@@ -337,6 +338,7 @@ def run_database_refresh(
             scan_failures = runner.refresh(
                 replace(request, on_app_opened=flow.read, on_app_refreshed=flow.app)
             )
+            json_findings_history.scan_failures(schema, scan_failures)
             # An application the scan skipped (APEX before 24.2) opened no
             # header, so its page links open the one it would have printed.
             for app in plan.apps:
@@ -344,6 +346,9 @@ def run_database_refresh(
                     flow.app(app, header=f"APP {segment_app_labels[app]}, REFRESHING:")
         return flow.exit_code or (1 if scan_failures else 0)
 
+    # What the plan refreshes, as `-json` data, before any segment can end the
+    # run (ADT #1070).
+    json_findings_history.refresh_planned(plan.schemas, plan.apps)
     return run_schema_sections(plan.segments, refresh_segment, first_started_at=first_started_at)
 
 

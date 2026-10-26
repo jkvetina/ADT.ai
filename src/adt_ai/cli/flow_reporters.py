@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 import yaml
 
 from adt_ai.cli.constants import print_adt_header, print_adt_table
+from adt_ai.shared import run_report
 
 # Annotation only (ADT #895). This module ships in every release and the page
 # store ships only with `rebuild` and `search`, so its edge class is never
@@ -37,7 +38,12 @@ def _print_not_loaded(rows: Iterable[str]) -> None:
     missing from APEX itself: an app named here is in APEX and simply was never
     refreshed into the local store.
     """
-    _print_warning(APP_NOT_LOADED_HEADER, list(rows))
+    entries = list(rows)
+    # An error to `-json` although the screen heads it WARNING: the loaded
+    # applications are still answered, but the run exits 1 on these (ADT #1070).
+    for entry in entries:
+        run_report.diagnostic("error", "APP NOT LOADED", entry)
+    _print_warning(APP_NOT_LOADED_HEADER, entries)
 
 
 def _print_warning(header: str, rows: list[str]) -> None:
@@ -65,6 +71,9 @@ def _print_page_links(
     forms name it that way too.
     """
     rows = [_incoming_row(edge) if direction == "into" else _outgoing_row(edge) for edge in edges]
+    # The yaml document's keys, as `-json` data (ADT #1070).
+    run_report.result(page=f"{app_id}.{page}")
+    run_report.listing(f"links_{direction}", rows)
     if output_format == "yaml":
         print(
             yaml.safe_dump(

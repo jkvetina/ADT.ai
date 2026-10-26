@@ -21,6 +21,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from adt_ai.cli import json_findings_history
 from adt_ai.cli.constants import (
     ConfigError,
     ConfigLoader,
@@ -154,6 +155,8 @@ def _run_search_term(
             config              = config,
         )
     )
+    # The result the report below renders, as `-json` data (ADT #1070).
+    json_findings_history.search_term(result, _link_rows(result.links))
     _print_term_result(result, args.term)
     return 0 if result.searched else 1
 

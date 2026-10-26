@@ -18,6 +18,7 @@ from collections.abc import Sequence
 from itertools import groupby
 from pathlib import Path
 
+from adt_ai.cli import json_findings_history
 from adt_ai.cli.commands_search_term import _window
 from adt_ai.cli.constants import (
     GatewayFactory,
@@ -122,6 +123,9 @@ def _run_search_data(
                 failures    = failures,
                 fatal_error = _is_database_connection_error,
             )
+    # The hits and refusals the two sections below print, as `-json` data
+    # (ADT #1070).
+    json_findings_history.search_data(schemas, hits, failures)
     _print_data_hits(hits, args.term)
     _print_not_searched(failures)
     # `0` only once every object was read: a partial answer says so.

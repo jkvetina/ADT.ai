@@ -443,4 +443,4 @@ When a restore matches more than one version of one file, the newest match wins,
 | `-until`, `--until` | No | none | Newest commit date, `YYYY-MM-DD`, or a number of days back. Else exit `2`. |
 | `-restore`, `--restore` | No | off | Write each matching historical version over its original path, the newest match per file, over a `WIP` commit of any uncommitted work. |
 
-Shared options (-root, -schema, -beep, -nobeep) are on [console.md](console.md#shared-arguments).
+Shared options (-root, -schema, -beep, -nobeep, -json) are on [console.md](console.md#shared-arguments).

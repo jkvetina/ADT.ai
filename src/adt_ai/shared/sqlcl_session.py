@@ -132,6 +132,15 @@ class SqlclSessionError(RuntimeError):
     """Raised when the driven SQLcl session cannot serve a statement."""
 
 
+class SqlclSessionEndedError(SqlclSessionError):
+    """The SQLcl process exited while a statement was in flight.
+
+    Its own class because at connect time it is a connect failure: the identity
+    check after a named connect ends the process under the connect guard when
+    the stored name reaches another database (#1079).
+    """
+
+
 class DrivenSqlcl:
     """A SQLcl process on a terminal, and the reader that talks to it.
 
@@ -366,12 +375,28 @@ class SqlclSession(DrivenSqlcl):
     def start(self) -> None:
         if self._console is not None:
             return
-        plan = sqlcl_connect(
+        plan = self._connect_plan(force_register=False)
+        try:
+            self._open(plan)
+        except ConnectFailedError:
+            # A named connect that left no session: the store lacks the name,
+            # the database refused the stored password, or the identity check
+            # found another database (#1079). Re-register from the file once;
+            # a file with no password has nothing to register with.
+            if not plan.by_name or not self.connection.password:
+                raise
+            self._open(self._connect_plan(force_register=True))
+
+    def _connect_plan(self, *, force_register: bool) -> Any:
+        return sqlcl_connect(
             self.connection,
             startup_sql       = self.startup_sql,
             project_root      = self.project_root,
             named_connections = self.config.get("sqlcl_named_connections") is not False,
+            force_register    = force_register,
         )
+
+    def _open(self, plan: Any) -> None:
         self._secrets = _connect_secrets(plan.script)
         # A retry after failed startup must not consume the EOF marker or prompt
         # fragments left by the previous pump thread.
@@ -383,9 +408,16 @@ class SqlclSession(DrivenSqlcl):
             # so it is the one whose reply is scrubbed. Scrubbing every reply
             # looks safer and is worse: the password can equal a schema or
             # workspace value a query legitimately returns (ADT #397).
-            connected = self._exchange(
-                plan.script, timeout_seconds=START_TIMEOUT_SECONDS, scrub=True
-            )
+            try:
+                connected = self._exchange(
+                    plan.script, timeout_seconds=START_TIMEOUT_SECONDS, scrub=True
+                )
+            except SqlclSessionEndedError as error:
+                raise ConnectFailedError(
+                    "SQLCL DID NOT CONNECT\n\nSQLcl ended the session at connect, "
+                    "which is what a saved\nconnection reaching another user or "
+                    "service does."
+                ) from error
             if _ran_without_a_session(connected):
                 # A failure to connect is a CONNECTION failure, not a
                 # configuration one; the class selects the shared database
@@ -429,5 +461,5 @@ class SqlclSession(DrivenSqlcl):
             )
         if ending == "eof":
             self._abort()
-            raise SqlclSessionError("SQLcl exited mid-statement")
+            raise SqlclSessionEndedError("SQLcl exited mid-statement")
         return _scrub_secrets(text, self._secrets) if scrub else text

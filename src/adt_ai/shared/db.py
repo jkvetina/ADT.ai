@@ -17,7 +17,6 @@ from adt_ai.shared.sqlcl_connect import (
     sqlcl_connect,
 )
 from adt_ai.shared.sqlcl_errors import SqlclNotConnectedError
-from adt_ai.shared.sqlcl_names import credential_fingerprint, record_sqlcl_registration
 from adt_ai.shared.sqlcl_request_session import SqlclRequestSession
 from adt_ai.shared.sqlcl_script import run_sqlcl_script
 from adt_ai.shared.startup import apply_startup
@@ -525,8 +524,6 @@ __all__ = [
     "annotations",
     "apply_startup",
     "contextlib",
-    "credential_fingerprint",
-    "record_sqlcl_registration",
     "run_sqlcl_script",
     "sqlcl_connect",
 ]

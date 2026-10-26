@@ -11,9 +11,7 @@ from adt_ai.diff import export_filters, inventory, project_pipeline
 from adt_ai.shared import text_files
 from adt_ai.shared.connections import Connection
 from adt_ai.shared.db import run_sqlcl_script
-from adt_ai.shared.sqlcl_connect import SqlclConnect
 from adt_ai.shared.sqlcl_errors import SqlclNotConnectedError, SqlclScriptError
-from adt_ai.shared.sqlcl_names import credential_fingerprint, record_sqlcl_registration
 
 SqlclRequest = Callable[..., str]
 
@@ -101,12 +99,11 @@ class DiffRunner:
         try:
             attempt = self._compare(plan, request, dirs)
         except (SqlclScriptError, SqlclNotConnectedError):
-            # A side that connected by name has one failure mode of its own: the
-            # SQLcl store never held the entry. The connection YAML travels with
-            # the project and the store does not, so a fresh fingerprint on a new
-            # machine names nothing locally and the guarded connect exits failure.
-            # Re-register both sides and retry once; a second failure is real and
-            # propagates to the CLI, which prints it under `ERROR - DIFF FAILED:`.
+            # A side that connected by name fails when the store never held the
+            # entry, the database refused its stored password, or the identity
+            # check found another user or service (#1079). Re-register both
+            # sides and retry once; a second failure is real and propagates to
+            # the CLI, which prints it under `ERROR - DIFF FAILED:`.
             if not plan.by_name:
                 raise
             attempt = self._compare(
@@ -201,10 +198,6 @@ class DiffRunner:
             # Every exit path, which is the contract `DIFF` keeps through
             # `DIFF_INFO_CLEANUP` and what Jan asked for on `#780`.
             project_pipeline.remove_projects(dirs)
-        # Only on the path that raised nothing. A fingerprint written for a store
-        # entry whose registering script failed is the phantom of ADT #188: it
-        # survives every later run and the connection is still not there.
-        _record_registrations((plan.source, plan.target))
         return _Attempt(
             artifact  = artifact,
             output    = "\n".join(transcript),
@@ -251,26 +244,6 @@ class DiffRunner:
         """
         return self.sqlcl_request(
             phase.script, project_dir, project_root=request.project_root
-        )
-
-
-def _record_registrations(plans: tuple[SqlclConnect, ...]) -> None:
-    """Write a fresh `sqlcl`/`sqlcl_sync` pair back into the connection YAML.
-
-    Unchanged from the `DIFF` path: `registers` is set only where the connect
-    block actually saved the name with `-savepwd`, so that name is the store
-    entry being recorded.
-    """
-    for plan in plans:
-        connection = plan.registers
-        if connection is None or not connection.sqlcl_source or plan.name is None:
-            continue
-        record_sqlcl_registration(
-            connection.sqlcl_source,
-            connection.environment,
-            connection.schema,
-            plan.name,
-            credential_fingerprint(connection),
         )
 
 

@@ -116,6 +116,7 @@ def normalize_ddl(
     keep_view_column_names: bool = False,
     object_display_name: str | None = None,
     table_retention: str = "",
+    interval_local_index: bool = False,
 ) -> str:
     registry = registry or NormalizerRegistry.builtin()
     normalized_payload = payload.replace("\t", "    ").strip()
@@ -129,6 +130,7 @@ def normalize_ddl(
         keep_view_column_names = keep_view_column_names,
         object_display_name = object_display_name,
         table_retention     = table_retention,
+        interval_local_index = interval_local_index,
     )
     normalizer = registry.get(object_type)
     if normalizer is not None and context.object_type in RAW_NORMALIZER_OBJECT_TYPES:

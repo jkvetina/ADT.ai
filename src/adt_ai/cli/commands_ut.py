@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import time
 
+from adt_ai.cli import json_findings_database
 from adt_ai.cli.constants import (
     GatewayFactory,
     print_module_banner,
@@ -17,6 +18,7 @@ from adt_ai.cli.context import (
 from adt_ai.cli.gateways import build_gateway, debug_wrapped
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.ut.grouping import gated_packages
+from adt_ai.ut.inventory import coverage_percent
 from adt_ai.ut.limits import error_limit, packages_below, resolve_gate
 from adt_ai.ut.naming import UtNaming
 from adt_ai.ut.render import (
@@ -176,6 +178,15 @@ def _run_ut_for_schema(
     )
     # One expression, read twice: the row and the exit code cannot disagree.
     passed = result.success and not below
+    # The figure is the one `-compact`'s row and the module total print, taken
+    # over the same deduplicated packages the gate judges (ADT #1070).
+    json_findings_database.ut_result(
+        schema,
+        result,
+        coverage  = coverage_percent(gated_packages(result)),
+        threshold = threshold,
+        below     = below,
+    )
 
     # The rows under the heading the reporter laid down before the coverage
     # read, which is the one part of the report that had to wait for it. Then

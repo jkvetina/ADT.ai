@@ -10,6 +10,7 @@ import argparse
 from collections.abc import Mapping
 from pathlib import Path
 
+from adt_ai.cli import json_findings_database
 from adt_ai.export_data.groups import (
     GroupRules,
     build_prefix_rules,
@@ -68,6 +69,10 @@ def run_data_groups_move(
             emit=print,
             show_unmatched=not prefixes,
             force=bool(args.force),
+        )
+        # Per schema, summed across them (ADT #1070).
+        json_findings_database.group_moves(
+            plan, force=bool(args.force), show_unmatched=not prefixes
         )
         exit_code = exit_code or code
     return exit_code

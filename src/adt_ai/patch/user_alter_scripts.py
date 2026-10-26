@@ -37,15 +37,18 @@ from pathlib import Path
 
 _LINE_COMMENT_RE = re.compile(r"--[^\n]*")
 
-#: `ALTER TABLE`, an optional schema qualifier, then the table name, quoted or
-#: not. Case-insensitive throughout, matching Jan's own spelling of the rule.
+#: `ALTER TABLE`, an optional 23ai `IF EXISTS`, an optional schema qualifier,
+#: then the table name, quoted or not. Case-insensitive throughout, matching
+#: Jan's own spelling of the rule. Without the clause an `ALTER TABLE IF EXISTS`
+#: script claimed nothing and the diff was generated over it (ADT #1084).
+_IF_EXISTS = r"(?:IF\s+EXISTS\s+)?"
 _SCHEMA_PREFIX = r'(?:"?[A-Za-z0-9_$#]+"?\s*\.\s*)?'
 
 
 def _alter_table_pattern(table_name: str) -> re.Pattern[str]:
     name = re.escape(table_name)
     return re.compile(
-        rf'\bALTER\s+TABLE\s+{_SCHEMA_PREFIX}"?{name}"?(?=[\s(;]|$)',
+        rf'\bALTER\s+TABLE\s+{_IF_EXISTS}{_SCHEMA_PREFIX}"?{name}"?(?=[\s(;]|$)',
         re.IGNORECASE,
     )
 

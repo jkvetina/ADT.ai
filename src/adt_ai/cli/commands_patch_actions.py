@@ -23,6 +23,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 
+from adt_ai.cli import json_findings
 from adt_ai.cli.constants import (
     PatchWorkspace,
     print_adt_header,
@@ -35,6 +36,7 @@ from adt_ai.patch.preview import (
     folders_for_authors,
     folders_within_window,
 )
+from adt_ai.shared import run_report
 from adt_ai.shared.commit_discovery import CommitRecord
 from adt_ai.shared.file_list import nested_files, print_file_rows
 from adt_ai.shared.patch_folders import PatchFolder, named_patch_refs
@@ -78,6 +80,17 @@ def run_install_script(
     # for this action, because nothing below reads a commit (ADT #806).
     # `schemas` is `-schema` as typed (ADT #804).
     results = workspace.create_install_script(config, schemas=schemas)
+    # Each script with what went into it, as `-json` data (ADT #1070). A layout
+    # naming no schema has `""`, which the screen calls DATABASE; null here.
+    run_report.result(mode="install")
+    run_report.listing("install_scripts", [
+        {
+            "schema"  : result.schema or None,
+            "path"    : str(result.path),
+            "objects" : dict(result.overview),
+        }
+        for result in results
+    ])
     if not results:
         # Nothing found: name the layout that was searched so the reader can
         # act on it, instead of a section header standing over an empty table.
@@ -244,8 +257,12 @@ def print_patch_folders(
     two screens that are ALSO narrowed by author and window, and the `-archive`
     listing is capped by nothing at all.
     """
+    rows = folder_preview_rows(folders, limit)
     print_adt_header(header)
-    print_adt_table(folder_preview_rows(folders, limit))
+    print_adt_table(rows)
+    # The last table a run prints is its answer, so a later call wins: `-archive`
+    # ends on what is left (ADT #1070).
+    json_findings.patch_folders(rows)
 
 
 def run_archive_patches(
@@ -263,8 +280,10 @@ def run_archive_patches(
     # to decide what leaves the disk, so this screen cannot say one thing while
     # the disk did another. A plain `if args.archive:` here would be that drift:
     # `-archive ""` is a non-empty list holding no ref.
+    archived: list[str] = []
     if named_patch_refs(args.archive):
         result = workspace.archive_patches(config, refs=args.archive)
+        archived = [folder.folder for folder in result.folders]
         # The listing's own `FOLDER | STATUS`, through the one renderer all three
         # tables now use. Jan, 2026-08-24: *"you show the same columns as in
         # RECENT PATCH FOLDERS section (the current columns in ARCHIVING PATCHES
@@ -296,6 +315,8 @@ def run_archive_patches(
     # run rather than a choice: `-archive` returns before the commit scan, so
     # there are no records for `folders_for_authors` to join a folder against.
     print_patch_folders(workspace.discover(), ALL_PATCH_FOLDERS_HEADER)
+    run_report.result(mode="archive")
+    run_report.listing("archived", archived)
     return 0
 
 

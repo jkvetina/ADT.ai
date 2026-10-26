@@ -308,4 +308,4 @@ An export never stages the result (that is `-sync`'s job alone) and never report
 | `-sync` | No | off | With `-init`, sync the ADT-owned block in an existing `.gitattributes`/`.gitignore` instead of leaving it alone, renormalize tracked files under it, and report attribute overrides. Requires `-init`. |
 | `-force`, `--force` | No | off | With `-init`, overwrite generated template files that already exist. |
 
-Shared options (-root, -beep, -nobeep) are on [console.md](console.md#shared-arguments).
+Shared options (-root, -beep, -nobeep, -json) are on [console.md](console.md#shared-arguments).

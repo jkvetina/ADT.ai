@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 
+from adt_ai.cli import json_findings_history
 from adt_ai.cli.commands_diff_modes import (
     ApexSelection,
     _comparison_row,
@@ -257,6 +258,9 @@ def _run_diff(args: argparse.Namespace, *, gateway_factory: GatewayFactory | Non
             # the name of the object it hangs off, so a row whose own name does
             # not match the pattern can still come back.
             summary = summary.select(types=object_types, names=object_names)
+        # The summary the screen below prints, each difference a `-json`
+        # finding (ADT #1070).
+        json_findings_history.diff_summary(summary)
         tail = None
         if pull is not None and summary is not None:
             shown = summary

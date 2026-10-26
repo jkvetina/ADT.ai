@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import time
 
+from adt_ai.cli import json_findings_database
 from adt_ai.cli.commands_export_apex import ApexRun, run_apex_export, run_apex_reveal
 from adt_ai.cli.commands_export_db_groups import run_groups_move
 from adt_ai.cli.constants import (
@@ -179,6 +180,9 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
             # next schema still runs.
             failed = error
             plans = error.plans
+        # Beside the warning the runner already printed, never instead of it;
+        # a measured run's plans are all `hashed` (ADT #1070).
+        json_findings_database.export_db_plans(schema, plans, failed)
         if measuring:
             measured.update(measured_hashes(plans, root))
             measured_bodies.update(measured_tables(plans, root, config))

@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from adt_ai.cli import json_findings
 from adt_ai.cli.commands_patch_deploy import (
     patch_build_gateway_factory,
     patch_env_gateway_factory,
@@ -70,6 +71,7 @@ def _run_patch(
         # ADT #964: the compiler's own lines, `-debug` or not; a traceback
         # would say nothing about a tree the compiler already explained.
         print_validation_failure(error)
+        json_findings.refused_trees(error.failed, "create" if args.create else "deploy")
         return exit_code_for("PATCH FAILED")
     except CodescanGateError as error:
         # ADT #1025: the findings already printed; `-debug` or not, a traceback
@@ -352,6 +354,9 @@ def _run_patch_command(
         # The unfiltered `window` rides along since ADT #752: a build refusal has
         # to know whether the scan reached nothing or the filters emptied it, and
         # the selection alone (empty by definition here) cannot tell it apart.
+        json_findings.patch_preview(
+            "create" if selection.create_requested else "preview", records, patch_ref
+        )
         return answer_without_commits(
             workspace,
             patch_config(),
@@ -429,7 +434,7 @@ def _run_patch_command(
             # `patch_codescan` (ADT #1025), read only by a build: a key it cannot
             # read refuses `-create` and never a deploy or a listing.
             codescan        = patch_codescan_gate(
-                patch_config(), run_sqlcl_script, debug=args.debug
+                patch_config(), run_sqlcl_script, debug=args.debug, root=root
             ),
         )
         # `-create -deploy` on a name with no folder behind it: the build just
@@ -437,6 +442,12 @@ def _run_patch_command(
         if args.deploy:
             return run_deploy()
         return 0
+    # The commits the table below is cut from, as `-json` data (ADT #1070).
+    # `-hash` prints no commit table, its files are already recorded.
+    hashing = args.hash is not None
+    json_findings.patch_preview(
+        "hash" if hashing else "preview", None if hashing else records, patch_ref
+    )
     return print_patch_preview(
         workspace,
         patch_config(),

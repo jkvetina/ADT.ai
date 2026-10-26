@@ -22,6 +22,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from adt_ai.cli import json_findings_database
 from adt_ai.cli.constants import (
     ApexApplication,
     ApexDiscovery,
@@ -162,6 +163,15 @@ def run_apex_reveal(run: ApexRun) -> int:
     )
     print_apex_owner_not_configured(located.not_configured)
     print_apex_app_not_found(located.not_found, reveal=True)
+    # The screen's answer as data: every application the tables listed, then
+    # the two warnings under them (ADT #1070).
+    json_findings_database.apex_applications([
+        application
+        for schema in [*run.schemas, *located.owners]
+        for application in run.applications_by_schema.get(schema, [])
+    ])
+    json_findings_database.apex_owners_not_configured(located.not_configured)
+    json_findings_database.apex_apps_not_found(located.not_found)
     return 0
 
 
@@ -218,6 +228,11 @@ def run_apex_export(run: ApexRun) -> int:
                 print_adt_error("ARGUMENT INVALID", str(exc))
                 return exit_code_for("ARGUMENT INVALID")
             validation.close()
+            # What this segment covered; a schema-level-only run exports no
+            # application, which is what the empty list says (ADT #1070).
+            json_findings_database.apex_applications(
+                [] if schema_level_only(run.actions) else run.applications_by_schema[schema]
+            )
         return 0
 
     return run_schema_sections(run.schemas, run_one, first_started_at=run.started_at)
@@ -283,9 +298,11 @@ def _route_missing_apps(run: ApexRun, schema: str) -> None:
     exported = _add_reached_apps(
         run, owner_discovery, schema, [app_id for app_id, _owner in not_configured]
     )
-    print_apex_app_not_found(
-        [*not_found, *(app_id for app_id, _owner in not_configured if app_id not in exported)]
-    )
+    unreached = [
+        *not_found, *(app_id for app_id, _owner in not_configured if app_id not in exported)
+    ]
+    print_apex_app_not_found(unreached)
+    json_findings_database.apex_apps_not_found(unreached)
 
 
 def _add_reached_apps(

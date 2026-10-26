@@ -68,6 +68,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import IO, Any
 
+from adt_ai.shared import run_report
 from adt_ai.shared.config import is_enabled
 
 _newline = "\n"
@@ -162,7 +163,9 @@ def open_text(path: Path, mode: str = "w") -> _NormalizingWriter:
     and passes the result on, which is what ``connection/runner.py`` and
     ``shared/sqlcl_names.py`` both do with ``yaml.dump`` (card #798).
     """
+    existed = path.exists()
     handle = path.open(mode, encoding="utf-8", newline="")
+    run_report.artifact(path, created=not existed)
     return _NormalizingWriter(handle, _newline)
 
 
@@ -249,6 +252,7 @@ def _write_bytes(path: Path, payload: bytes, *, private: bool) -> bool:
         if private:
             os.chmod(path, 0o600)
         return False
+    existed = path.exists()
     temporary, descriptor = _open_atomic_temporary(path, mode=0o600 if private else 0o666)
     try:
         with os.fdopen(descriptor, "wb") as handle:
@@ -264,6 +268,9 @@ def _write_bytes(path: Path, payload: bytes, *, private: bool) -> bool:
         if descriptor >= 0:
             os.close(descriptor)
         temporary.unlink(missing_ok=True)
+    # The one place every artifact passes through, so a `-json` run lists what
+    # it wrote without any module enrolling (ADT #1070).
+    run_report.artifact(path, created=not existed)
     return True
 
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from adt_ai.cli import json_findings
 from adt_ai.cli.commands_patch_deploy import _patch_deploy_gateway_factories
 from adt_ai.cli.constants import (
     GatewayFactory,
@@ -246,6 +247,8 @@ def run_drop_applications(
             break
     reporter.end_drop()
     _print_drop_receipts(rows, root)
+    # Before the raise, so a run that stopped still says what it dropped (ADT #1070).
+    json_findings.patch_dropped(rows, DROPPED_STATUS, failure)
     if failure is not None:
         raise failure
     return 1 if any(str(row["STATUS"]) != DROPPED_STATUS for row in rows) else 0

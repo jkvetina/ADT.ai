@@ -145,6 +145,10 @@ class DoctorResult:
     lines            : list[str]
     performed_actions: list[str]
     exit_code        : int = 0
+    # The checks the run judged, as data: the lines above are their rendering,
+    # and `-json` reads the verdicts rather than parsing a row back (ADT #1070).
+    # Empty for `-init` and for the per-action results, which judge none.
+    checks           : tuple[CheckResult, ...] = ()
 
 
 class DoctorHost(Protocol):

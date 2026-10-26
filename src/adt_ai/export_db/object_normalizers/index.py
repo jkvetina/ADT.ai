@@ -13,6 +13,7 @@ from adt_ai.export_db.normalizers import (
     _split_top_level_commas,
     _trim_trailing_blank_lines,
     qualified,
+    sql_spans,
 )
 
 #: The kinds that may sit between CREATE and INDEX. Matching `[UNIQUE]` alone sent
@@ -26,6 +27,10 @@ _INDEX_KINDS = r"UNIQUE|BITMAP|MULTIVALUE|SEARCH|VECTOR"
 #: INDEX` show no such clause, so those two go unguarded until a live database
 #: has accepted it: a guard it refuses breaks the first deploy, not the second.
 _IF_NOT_EXISTS_KINDS = {"", "UNIQUE", "BITMAP", "MULTIVALUE"}
+
+#: `LOCAL` with a partition list after it, on an index whose table is interval
+#: partitioned (`#1091`).
+_LOCAL_PARTITIONS = re.compile(r"\bLOCAL\s*\(", flags=re.IGNORECASE)
 
 
 def normalize_index(
@@ -71,6 +76,9 @@ def normalize_index(
     expression = body[1:close_index]
     suffix = body[close_index + 1:].strip().rstrip(";")
     option_lines = [line.rstrip() for line in lines[option_start:]]
+    if context.interval_local_index:
+        suffix = _bare_local(suffix)
+        option_lines = _bare_local("\n".join(option_lines)).splitlines()
     index_kind = (match.group("kind") or "").upper()
     kind = f"CREATE {index_kind} INDEX" if index_kind else "CREATE INDEX"
     guarded = context.add_if_not_exists and index_kind in _IF_NOT_EXISTS_KINDS
@@ -117,6 +125,24 @@ def normalize_index(
     if option_lines:
         result.extend(_ensure_statement_semicolon(option_lines))
     return result + [""]
+
+
+def _bare_local(text: str) -> str:
+    """`LOCAL (PARTITION ...)` folded to `LOCAL`, for an index on an interval table.
+
+    The list names the partitions the table had before the interval took over,
+    and the table goes on adding its own, so the file stops running the day the
+    two counts differ: ORA-14024, `IF NOT EXISTS` or not. Bare `LOCAL` follows
+    the table. A list that never closes is left as written, not guessed shut.
+    """
+    for kind, start, end in sql_spans(text, identifiers=True):
+        match = _LOCAL_PARTITIONS.search(text, start, end) if kind == "code" else None
+        if match:
+            close = _matching_parenthesis_index(text, match.end() - 1)
+            if close is None:
+                return text
+            return f"{text[:match.start()]}LOCAL{text[close + 1:]}"
+    return text
 
 
 def _simple_index_columns(expression: str) -> list[str] | None:

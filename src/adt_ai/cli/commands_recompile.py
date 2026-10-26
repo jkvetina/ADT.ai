@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from adt_ai import __version__
+from adt_ai.cli import json_findings_database
 from adt_ai.cli.constants import (
     ActionReporter,
     DiscoveryRequest,
@@ -257,6 +258,10 @@ def _run_recompile_for_schema(
     if opening:
         print_adt_header(opening)
     result = runner.run(request)
+    # Recorded from the result, never from what printed: the streamed reporters
+    # and `-silent` decide what reaches the screen, and an agent reading `-json`
+    # gets the whole pass either way (ADT #1070).
+    json_findings_database.recompile_result(schema, request, result)
 
     if request.trailing:
         # -trailing renders itself: the header must survive -silent (the console
@@ -378,6 +383,9 @@ def _run_discovery(
 
     if has_file:
         write_file_results(Path(args.statements_file).expanduser(), result.results)
+    # The rows are the answer an agent asked for, so `-json` ships them as
+    # data rather than the Markdown tables below (ADT #1070).
+    json_findings_database.discovery_result(result)
 
     print_adt_header("RESULT:")
     if has_sql:

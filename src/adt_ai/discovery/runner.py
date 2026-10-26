@@ -17,6 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from adt_ai.discovery.render import DEFAULT_ROW_LIMIT, query_label, render_result, render_section
 from adt_ai.discovery.report import (
@@ -67,6 +68,10 @@ class QueryOutcome:
     label: str = ""
     row_count: int = 0
     error: str | None = None
+    # The rows as the report shows them, cut to `limit`, for `-json` to ship
+    # as data (ADT #1070). `row_count` stays what the query returned.
+    columns: tuple[str, ...] = ()
+    rows: tuple[tuple[Any, ...], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -246,4 +251,13 @@ class DiscoveryRunner:
 
         result = render_result(rows=rows, limit=limit)
         section = render_section(index=index, sql=validated, rows=rows, limit=limit)
-        return section, result, QueryOutcome(index=index, ok=True, label=label, row_count=len(rows))
+        shown = rows[:limit]
+        columns = tuple(rows[0]) if rows else ()
+        return section, result, QueryOutcome(
+            index     = index,
+            ok        = True,
+            label     = label,
+            row_count = len(rows),
+            columns   = columns,
+            rows      = tuple(tuple(row.get(column) for column in columns) for row in shown),
+        )

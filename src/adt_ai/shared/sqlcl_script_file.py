@@ -147,6 +147,26 @@ def write_sqlcl_script(script: str, project_root: Path | None) -> Path:
 
 
 @contextlib.contextmanager
+def sqlcl_script_on_disk(script: str, project_root: Path | None) -> Iterator[Path]:
+    """``script`` written as ``write_sqlcl_script`` writes it, and gone when the scope ends.
+
+    The only way a script reaches the disk (ADT #1087). Each caller used to write
+    the file and remove it in its own ``finally``, and two things got past that.
+    The file was written before the ``try``, so an error or a Ctrl-C while the
+    command was still being built left it behind, password and all. And the
+    removal could raise: Windows may refuse to delete a file SQLcl still holds
+    open, which is the state a timed-out run is in, and that ``PermissionError``
+    replaced the timeout the user needed to see. Here the write and the removal
+    are one scope, and a refused delete is left to the sweep the next script runs.
+    """
+    path = write_sqlcl_script(script, project_root)
+    try:
+        yield path
+    finally:
+        _remove(path)
+
+
+@contextlib.contextmanager
 def console_body(body: str, project_root: Path | None) -> Iterator[str]:
     """``body`` as it can cross a terminal intact: itself, or ``@"<file>"`` holding it.
 
@@ -160,11 +180,8 @@ def console_body(body: str, project_root: Path | None) -> Iterator[str]:
     if all(len(line.encode("utf-8")) <= CONSOLE_LINE_BYTES for line in lines):
         yield body
         return
-    path = write_sqlcl_script(body.rstrip() + "\n", project_root)
-    try:
+    with sqlcl_script_on_disk(body.rstrip() + "\n", project_root) as path:
         yield "@" + quote_sqlcl_argument(path, role="SQLcl script path")
-    finally:
-        path.unlink(missing_ok=True)
 
 
 def _sweep_stale_password_scripts(project_root: Path | None) -> None:
@@ -240,5 +257,6 @@ __all__ = [
     "CREDENTIAL_SCRIPT_PREFIX",
     "STALE_CREDENTIAL_SCRIPT_SECONDS",
     "console_body",
+    "sqlcl_script_on_disk",
     "write_sqlcl_script",
 ]

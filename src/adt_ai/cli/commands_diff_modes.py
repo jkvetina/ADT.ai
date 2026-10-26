@@ -15,6 +15,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from adt_ai.cli import json_findings_history
 from adt_ai.cli.constants import QueryGateway, print_adt_header
 from adt_ai.cli.context_apex import (
     ApexAppSelection,
@@ -115,6 +116,9 @@ def _run_rest_diff(
     if summary is None:
         return 1
     shown = summary.select(names=names)
+    # Every mode records the value it is about to render, so `-json` and the
+    # screen answer with the same rows (ADT #1070).
+    json_findings_history.diff_summary(shown)
     report_summary(
         shown,
         verbose      = verbose,
@@ -190,6 +194,7 @@ def _run_apex_diff(
     if selection.pages is not None:
         result = result.select_pages(selection.pages.matches)
     shown = result.select(names)
+    json_findings_history.apex_diff(shown)
     report_summary(
         shown.summary,
         verbose      = verbose,
@@ -271,6 +276,7 @@ def _run_data_diff(
     if log is not None:
         write_data_log(result, log, _comparison_row(source, target))
     compared = result
+    json_findings_history.data_diff(result)
     report_data_diff(
         result,
         verbose = verbose,

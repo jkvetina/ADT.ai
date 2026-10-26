@@ -96,7 +96,7 @@ from adt_ai.shared.sqlcl_script import (
     _scrub_secrets,
     _sqlcl_environment,
 )
-from adt_ai.shared.sqlcl_script_file import _connect_secrets, write_sqlcl_script
+from adt_ai.shared.sqlcl_script_file import _connect_secrets, sqlcl_script_on_disk
 from adt_ai.shared.sqlcl_session import DrivenSqlcl
 
 # Nothing drives a SQLcl console on Windows, so the reuse is keyed on the
@@ -194,18 +194,17 @@ class SqlclRequestSession(DrivenSqlcl):
         root.mkdir(parents=True, exist_ok=True)
         self._ensure(root)
         secrets = self._secrets = _connect_secrets(script)
-        script_path = write_sqlcl_script(self._request_script(script), self.project_root)
         budget = timeout_seconds if timeout_seconds is not None else DEFAULT_TIMEOUT_SECONDS
         # Scrubbed line by line, as `run_sqlcl_script` does for its live reader:
         # the callback prints to the user's terminal, and a connect line SQLcl
         # echoed would be on screen before the transcript below is scrubbed.
         live = None if on_line is None else (lambda line: on_line(_scrub_secrets(line, secrets)))
-        try:
+        # A delete the operating system refuses must not replace the timeout
+        # below or skip its kill (ADT #1087).
+        with sqlcl_script_on_disk(self._request_script(script), self.project_root) as script_path:
             text, ending = self._collect(
                 f'@"{script_path}"', timeout_seconds=budget, on_line=live
             )
-        finally:
-            script_path.unlink(missing_ok=True)
         output = _scrub_secrets(text, self._secrets)
         if ending == "timeout":
             self._abort()

@@ -224,7 +224,7 @@ A linked git worktree marks its root with a `.git` *file*, so any command launch
 
 ## Shared arguments
 
-Eight flags mean the same thing wherever they are accepted, so they are documented here once instead of in every command's own table. A command page lists only the flags that are its own and points back to this section. Not every command takes all eight: the second table below says which takes which.
+Nine flags mean the same thing wherever they are accepted, so they are documented here once instead of in every command's own table. A command page lists only the flags that are its own and points back to this section. Not every command takes all nine: the second table below says which takes which.
 
 | Argument | Repeatable | Default | Description |
 | -------- | ---------- | ------- | ----------- |
@@ -236,6 +236,7 @@ Eight flags mean the same thing wherever they are accepted, so they are document
 | `-debug`, `--debug` | No | off | Show the input parameters and the SQL behind the run, and keep Python tracebacks for troubleshooting. |
 | `-beep [THEME]`, `--beep [THEME]` | No | off | Force the completion chime on for this run, optionally using a theme override such as `-beep zelda`. |
 | `-nobeep`, `--nobeep` | No | off | Suppress completion sounds for this run; this wins over `chime_theme` and `-beep`. |
+| `-json`, `--json` | No | off | Print one JSON object with the run's errors, findings, written files and counts instead of the screen, for an agent or a script. The shape is on json.md. |
 
 <br>
 
@@ -253,6 +254,7 @@ A flag a command does not take is a parser error, not a flag it ignores.
 | `-debug` | `connection`, `diff`, `discovery`, `export_apex`, `export_data`, `export_db`, `patch`, `recompile`, `ut`, `validate` |
 | `-beep` | every command |
 | `-nobeep` | every command |
+| `-json` | every command |
 
 <br>
 

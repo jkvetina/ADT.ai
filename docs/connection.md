@@ -182,6 +182,14 @@ It also removes `wallet_pwd_cmd` and `wallet_password_cmd` from the environment'
 
 <br>
 
+### One password pattern for every schema
+
+Where every password is shaped like its schema, write `pwd_pattern: "<Schema>."` on the environment's `db:` block and stop listing schemas. `<schema>`, `<Schema>` and `<SCHEMA>` become each schema's user in lower case, Oracle INITCAP and upper case; every other character stays.
+
+`-schema HR` then connects as `HR` even though the file never names it. A listed schema's own `pwd` or `pwd_cmd` wins, and `-test` tries the listed ones. Details on [connection_passwords.md](connection_passwords.md#one-pattern-for-every-schema).
+
+<br>
+
 ## Creating a file or an entry
 
 `-create` is the bootstrap path. It creates the resolved connection YAML when no candidate exists yet, and otherwise fills in the fields the existing file is missing. Existing values are preserved, so it only ever adds.
@@ -225,7 +233,38 @@ CORE:
 
 For `-add-env` the environment must not already exist. From scratch it builds a `db` block from `-host`, `-port` (default `1521`) and `-service`, plus empty defaults and schemas blocks ready for `-add-schema`.
 
-With `-like`, the new environment clones the source environment's `db` and `wallet` blocks, with any passwords stripped, then applies whatever `-host`, `-port` or `-service` overrides you passed. A cloned environment starts with no schemas.
+With `-like`, the new environment clones the source environment's `db` and `wallet` blocks, with any passwords stripped, then applies whatever `-host`, `-port` or `-service` overrides you passed. A cloned environment starts with no schemas of its own.
+
+It still reaches every schema the file's first environment defines, as the next section shows, so `-add-schema` on `DEV` alone reaches a new schema in every environment that shares its passwords.
+
+<br>
+
+## Other environments fall back to the first one
+
+The first environment in the file, `DEV` on most projects, is the full one. Every environment after it states only what differs, usually where its database is, and takes the rest from the first one: schemas, users, passwords, `defaults:`, `export:` and `apex:`.
+
+```yaml
+DEV:
+  db: {hostname: dev-db, service: DEVPDB}
+  defaults: {schema_db: APP}
+  schemas:
+    APP: {db: {user: APP, pwd: app-secret}}
+    CORE: {db: {user: CORE, pwd: core-secret}}
+TEST:
+  db: {hostname: test-db, service: TESTPDB}
+STAGE:
+  db: {hostname: stage-db, service: STGPDB}
+  schemas:
+    CORE: {db: {pwd: stage-only-secret}}
+```
+
+`-env TEST -schema CORE` connects to `test-db` as `CORE` with `core-secret`, and `STAGE` keeps its own `CORE` password. `-test -env TEST` tries every `DEV` schema, after any `TEST` states itself.
+
+- **Whatever an environment states wins**, key by key. A blank key, such as an empty `pwd:`, counts as not stated.
+- **The server moves whole.** An environment naming its own `hostname`, `service`, `sid`, `tns`, `ords` or wallet takes none of the first one's, so a `DEV` wallet never sits beside a `TEST` hostname. `port` falls back on its own.
+- **So does the password.** Stating `pwd`, `pwd_cmd`, `pwd_pattern` or `auth` takes none of the first environment's `pwd`, `pwd!`, `pwd_key`, `pwd_cmd`, `pwd_pattern` or `auth`, so a plain `TEST` password is never decrypted under a `DEV` marker.
+- **A `sqlcl:` name never falls back**, since one written under `DEV` names the `DEV` database. A schema `TEST` takes from `DEV` connects under the name generated for `TEST`.
+- The first environment resolves exactly as before.
 
 <br>
 
@@ -233,12 +272,12 @@ With `-like`, the new environment clones the source environment's `db` and `wall
 
 Every SQLcl script ADT generates, REST export included, connects through a **named SQLcl connection** rather than embedding a username, password and wallet path in the script. The password lives in SQLcl's own store, in the operating system's secure storage, so a per-call script carries `connect -name ADT_…` and nothing else.
 
-- **Naming.** `ADT_` plus the connection file's basename. Where the file defines more than one environment the name gains the environment, and where that environment defines more than one schema it gains the schema, so every environment and schema pair maps to its own name. A project using the generic filename is named after its project folder instead.
-- **Transparency.** The first SQLcl call registers the connection and records the assigned name on that schema's `db:` block as `sqlcl:`, with a credential fingerprint beside it as `sqlcl_sync:`. Edit `sqlcl:` by hand to pin a different name; a recorded name always wins over a generated one. Every SQLcl call reads both keys from the file again, so a registration recorded earlier in the same run, by this command or another one, is used rather than repeated.
+- **Naming.** `ADT_` plus the connection file's basename. Where the file defines more than one environment the name gains the environment, and where that environment reaches more than one schema, the first environment's it takes included, it gains the schema, so every environment and schema pair maps to its own name: `ADT_<FILE>_<ENV>_<SCHEMA>`. A project using the generic filename is named after its project folder instead.
+- **The name is not stored in the connection file.** It is worked out on every run. Write `sqlcl:` on a schema's `db:` block to pin a different name; a name you wrote always wins over the generated one. A file holding the `sqlcl:` and `sqlcl_sync:` lines earlier versions recorded is rewritten once, by the next command that reads it, to delete them, together with every `export:` block whose filters are all empty on every schema but the first, which keeps its block to show where the filters go. A file with none of those lines is never rewritten.
+- **A name an earlier version recorded changes once.** The first connect under the new name finds nothing in SQLcl's store and re-registers it; the old hashed entry stays in the store unused. A file with no password connects only through the store, so it cannot re-register: save its connection once by hand under the new name.
+- **Connect first, re-register only on failure.** Every named SQLcl connect goes by name, with no credential in the script. When that fails, because the store has no such name (a new machine, a cleared store), the database refuses the stored password, or the check below finds the wrong database, ADT re-saves the name from the connection file and retries once by itself. A changed password therefore costs nothing until the stored one stops working.
+- **The session is checked before anything runs.** Right after the connect, the same script compares the logged-in user, and the service where the file names a `hostname`, with the connection file. A stored name that reaches a different user or service is re-registered; if the file's own credentials still reach a different one, the command stops and prints both.
 - **A failed connect is an error, not an empty result.** Every generated `connect` runs under `WHENEVER SQLERROR EXIT FAILURE`, so a connection that could not be opened fails the command with the SQLcl message rather than running on to its `exit;` and returning `0`.
-- That guard is also what makes the two recorded keys trustworthy: they are written **only after the run that carried the registration actually succeeded**. If an export fails and the keys stay absent, that is the intended behaviour. Deleting them by hand and re-running fixes no credential or network problem, it only re-attempts the registration.
-- **Credential changes.** Every SQLcl call recomputes the fingerprint over the username, password, host and service, wallet path and wallet password. Any change re-registers the named connection on the next call.
-- **Machine moves.** The YAML travels with the project and SQLcl's store does not. Where the store has no such name, on a new machine or a cleared one, the call fails fast and ADT re-registers and retries by itself.
 - **Wallets.** Registration passes an absolute wallet path, so a wallet project needs nothing extra.
 - **Opt-out.** Set `sqlcl_named_connections: false` in project `config.yaml` to restore the older inline connect scripts.
 - **ORDS.** A connection reached over ORDS (`ords:`) registers no name, because SQLcl cannot save a REST connection. connection_ords.md covers that connection shape.
@@ -277,4 +316,4 @@ Exactly one action flag is required, and each names the further arguments it nee
 | `-encrypt`, `--encrypt` | No | off | With a password-writing action, encrypt the stored value using `-key` or `ADT_KEY`. |
 | `-go`, `--go` | No | off | Apply the change. Without it the command previews and writes nothing. |
 
-Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep) are on [console.md](console.md#shared-arguments).
+Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep, -json) are on [console.md](console.md#shared-arguments).
