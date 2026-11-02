@@ -104,9 +104,23 @@ class RunReport:
         return payload
 
     def render(self, *, exit_code: int, elapsed: float, screen: str | None = None) -> str:
-        """One compact line: an agent pays for every space it reads."""
+        """One compact line: an agent pays for every space it reads.
+
+        UTF-8 as it stands. A value no UTF-8 can carry, a path git handed back
+        with `surrogateescape` say, is written with JSON escapes instead: the
+        write after the run would otherwise raise and lose the object (ADT #1094).
+        """
         payload = self.payload(exit_code=exit_code, elapsed=elapsed, screen=screen)
-        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str) + "\n"
+        line = _dumps(payload, ensure_ascii=False)
+        try:
+            line.encode("utf-8")
+        except UnicodeEncodeError:
+            line = _dumps(payload, ensure_ascii=True)
+        return line + "\n"
+
+
+def _dumps(payload: dict[str, Any], *, ensure_ascii: bool) -> str:
+    return json.dumps(payload, ensure_ascii=ensure_ascii, separators=(",", ":"), default=str)
 
 
 _ACTIVE: RunReport | None = None

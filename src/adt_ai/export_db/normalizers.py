@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import re
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
@@ -41,6 +42,8 @@ BODY_PRESERVING_OBJECT_TYPES = {
 
 RAW_NORMALIZER_OBJECT_TYPES = {
     "INDEX",
+    # Rendered whole from the dictionary by `program_ddl.py` (`#1100`).
+    "PROGRAM",
     "TABLE",
 }
 
@@ -60,6 +63,7 @@ class NormalizerRegistry:
             normalize_materialized_view,
             normalize_mview_log,
         )
+        from adt_ai.export_db.object_normalizers.program import normalize_program
         from adt_ai.export_db.object_normalizers.sequence import normalize_sequence
         from adt_ai.export_db.object_normalizers.synonym import normalize_synonym
         from adt_ai.export_db.object_normalizers.table import normalize_table
@@ -83,6 +87,7 @@ class NormalizerRegistry:
                 "MLE ENVIRONMENT": normalize_mle_environment,
                 "MLE MODULE": normalize_mle_module,
                 "MVIEW LOG": normalize_mview_log,
+                "PROGRAM": normalize_program,
                 "PROPERTY GRAPH": normalize_property_graph,
                 "SEQUENCE": normalize_sequence,
                 "SYNONYM": normalize_synonym,
@@ -117,10 +122,11 @@ def normalize_ddl(
     object_display_name: str | None = None,
     table_retention: str = "",
     interval_local_index: bool = False,
+    keep_start_with: bool = False,
 ) -> str:
     registry = registry or NormalizerRegistry.builtin()
-    normalized_payload = payload.replace("\t", "    ").strip()
-    lines = normalized_payload.splitlines()
+    normalized_payload = _expand_tabs_outside_strings(payload).strip()
+    lines = _split_lines(normalized_payload)
     context = NormalizationContext(
         object_type         = object_type.upper(),
         object_name         = object_name,
@@ -131,12 +137,13 @@ def normalize_ddl(
         object_display_name = object_display_name,
         table_retention     = table_retention,
         interval_local_index = interval_local_index,
+        keep_start_with     = keep_start_with,
     )
     normalizer = registry.get(object_type)
     if normalizer is not None and context.object_type in RAW_NORMALIZER_OBJECT_TYPES:
-        lines = [line.rstrip() for line in lines]
+        lines = _rstrip_outside_strings(lines)
         lines = normalizer(lines, context)
-        return "\n".join(line.rstrip() for line in lines) + "\n"
+        return "\n".join(_rstrip_outside_strings(lines)) + "\n"
 
     lines = _normalize_common(lines, context, terminate=False)
     if normalizer is not None:
@@ -147,7 +154,7 @@ def normalize_ddl(
             context,
             terminate=_uses_slash_terminator(context.object_type),
         )
-    return "\n".join(line.rstrip() for line in lines) + "\n"
+    return "\n".join(_rstrip_outside_strings(lines)) + "\n"
 
 def _normalize_common(
     lines: list[str],
@@ -185,7 +192,7 @@ def _normalize_common(
     # REPLACE FORCE VIEW` header for the pattern to match. Removing it leaves
     # `object_normalizers/view_columns.py` as the one reader, which is what lets
     # `keep_view_column_names` be honoured in one place rather than three.
-    lines = [line.rstrip() for line in payload.rstrip().splitlines()]
+    lines = _rstrip_outside_strings(_split_lines(payload.rstrip()))
     if lines:
         lines[0] = _strip_definition_noise(lines[0])
     lines = _split_spec_from_body(lines, context)
@@ -213,7 +220,7 @@ def _normalize_definition_line_only(
     if not lines:
         return lines
 
-    normalized = [line.rstrip() for line in lines]
+    normalized = _rstrip_outside_strings(lines)
     normalized[0] = _normalize_definition_line(normalized[0], context)
     return normalized
 
@@ -372,6 +379,50 @@ def _replace_outside_sql_strings(
         replace_chunk(payload[start:end]) if kind == "code" else payload[start:end]
         for kind, start, end in sql_spans(payload)
     )
+
+# A literal's bytes are the user's data, and the three readers below are what
+# keep them. `normalize_ddl` used to widen every TAB, split on every character
+# `str.splitlines` treats as a break and `rstrip` every line, bodies included, so
+# a TAB inside a literal became four spaces, a form feed inside one became a line
+# break and the trailing blanks of a multi-line literal went: the deployed source
+# no longer matched the database's (ADT #1094).
+
+def _expand_tabs_outside_strings(payload: str) -> str:
+    """Every TAB in code or a comment widened to four spaces; a literal keeps its own."""
+    return "".join(
+        payload[start:end] if kind == "string" else payload[start:end].replace("\t", "    ")
+        for kind, start, end in sql_spans(payload)
+    )
+
+def _split_lines(payload: str) -> list[str]:
+    """``payload`` split on `\\n` alone, a trailing `\\r` dropped from each line.
+
+    A final empty line goes, as `str.splitlines` drops it: an empty payload is
+    no lines, not one blank one, which is what every normalizer's guard tests.
+    """
+    lines = [line[:-1] if line.endswith("\r") else line for line in payload.split("\n")]
+    if lines[-1] == "":
+        lines.pop()
+    return lines
+
+def _rstrip_outside_strings(lines: list[str]) -> list[str]:
+    """Trailing blanks off every line, except one that ends inside a string literal.
+
+    A line that itself holds a break is split first, so the line count and the
+    break count agree: a table column whose DEFAULT literal spans two lines is
+    one element on the way in and two lines on the way out. No lines stay no
+    lines, which is what every normalizer's empty-payload guard tests.
+    """
+    if not lines:
+        return []
+    text = "\n".join(lines)
+    lines = text.split("\n")
+    breaks = [index for index, char in enumerate(text) if char == "\n"]
+    inside: set[int] = set()
+    for kind, start, end in sql_spans(text):
+        if kind == "string":
+            inside.update(range(bisect.bisect_left(breaks, start), bisect.bisect_left(breaks, end)))
+    return [line if index in inside else line.rstrip() for index, line in enumerate(lines)]
 
 def _drop_create_wrap(lines: list[str], drop_statement: str, slash: bool = True) -> list[str]:
     """Prefix a CREATE block with the old-ADT EXEC_DDL drop-before-create guard.

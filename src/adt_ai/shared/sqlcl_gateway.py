@@ -43,6 +43,7 @@ import json
 import re
 from collections.abc import Mapping
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -147,14 +148,17 @@ class SqlclGateway(OracleGateway):
         params: Mapping[str, Any] | None = None,
         exact_numbers: bool = False,
     ) -> list[dict[str, Any]]:
-        """`exact_numbers` is accepted and has nothing to do here (`#670`).
+        """`exact_numbers` decodes every JSON number as a `Decimal` (`#670`, `#1094`).
 
-        The driver's float rounding it exists to avoid never happens on this
-        transport: SQLcl returns every column as JSON text, so the digits arrive
-        as they were stored. Declaring the keyword keeps `sqlcl_only` a transport
-        swap, which is the one thing this class promises.
+        `set sqlformat json` renders a NUMBER as a bare JSON number, not as text,
+        so the float rounding the flag exists to avoid came back in through the
+        decoder: `0.1234567890123456789` lost its tail exactly as it did on the
+        driver, while the keyword was accepted and ignored. Under the flag the
+        payload is parsed with `Decimal`, the answer `shared/ords_gateway` gives
+        for the same flag, which keeps `sqlcl_only` the transport swap this class
+        promises.
         """
-        return self._select(sql, params, prologue="", epilogue="")
+        return self._select(sql, params, prologue="", epilogue="", exact_numbers=exact_numbers)
 
     def read_only_fetch_all(
         self,
@@ -205,6 +209,7 @@ class SqlclGateway(OracleGateway):
         *,
         prologue: str,
         epilogue: str,
+        exact_numbers: bool = False,
     ) -> list[dict[str, Any]]:
         body = "\n".join(
             part
@@ -222,7 +227,7 @@ class SqlclGateway(OracleGateway):
         )
         output = self._run_session(body, sql)
         _raise_on_error(output, sql)
-        return _rows(output, sql)
+        return _rows(output, sql, exact_numbers)
 
     def _run_session(self, body: str, sql: str) -> str:
         # Named apart from `OracleGateway._run`, which it does NOT override:
@@ -302,8 +307,8 @@ def _raise_on_error(output: str, sql: str) -> None:
     raise error
 
 
-def _rows(output: str, sql: str) -> list[dict[str, Any]]:
-    payload = _json_payload(output)
+def _rows(output: str, sql: str, exact_numbers: bool = False) -> list[dict[str, Any]]:
+    payload = _json_payload(output, exact_numbers)
     if payload is None:
         error = SqlclSessionError(
             "SQLcl returned no result set for a query. Output was:\n"
@@ -330,11 +335,13 @@ def _rows(output: str, sql: str) -> list[dict[str, Any]]:
     return rows
 
 
-def _json_payload(output: str) -> dict[str, Any] | None:
+def _json_payload(output: str, exact_numbers: bool = False) -> dict[str, Any] | None:
     framed = _between_markers(output, _JSON_START_MARKER, _JSON_END_MARKER)
     if framed is None:
         return None
-    decoder = json.JSONDecoder()
+    # The one place a NUMBER's digits can be lost on this transport (#1094):
+    # SQLcl emits it as a bare JSON number, and `float` is where the tail goes.
+    decoder = json.JSONDecoder(parse_float=Decimal if exact_numbers else float)
     for match in _JSON_PAYLOAD_START.finditer(framed):
         start = match.start()
         try:

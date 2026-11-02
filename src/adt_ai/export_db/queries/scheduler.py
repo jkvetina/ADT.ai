@@ -124,15 +124,57 @@ FROM user_scheduler_schedules
 WHERE schedule_name = :object_name
 """.strip()
 
-# A PROGRAM is the third procedural object a job can lean on, read through the
-# same 'PROCOBJ' token. A job naming one fails to create without it, so every
-# exported job brings the program and schedule it names (ADT #993); the four
-# name columns JOBS_QUERY selects outside the signature are what it follows.
-PROGRAM_DDL_QUERY = """
-SELECT DBMS_METADATA.GET_DDL('PROCOBJ', program_name) AS ddl
+# A PROGRAM is the third procedural object a job can lean on. A job naming one
+# fails to create without it, so every exported job brings the program and
+# schedule it names (ADT #993); the four name columns JOBS_QUERY selects outside
+# the signature are what it follows. It is NOT read through 'PROCOBJ' like the
+# two above: GET_DDL leaves out the arguments and the enabled state (ADT #1100),
+# so `program_ddl.py` renders the file from these two views.
+PROGRAM_QUERY = """
+SELECT program_name, program_type, program_action, number_of_arguments, enabled, comments
 FROM user_scheduler_programs
 WHERE program_name = :object_name
 """.strip()
+
+PROGRAM_ARGUMENTS_QUERY = """
+SELECT argument_name, argument_position, argument_type, metadata_attribute,
+       default_value, out_argument
+FROM user_scheduler_program_args
+WHERE program_name = :object_name
+ORDER BY argument_position
+""".strip()
+
+PROGRAM_FILE = """DECLARE
+    in_program_name         CONSTANT VARCHAR2(128)  := '{name}';
+    in_program_key          CONSTANT VARCHAR2(128)  := {key};
+    v_exists                PLS_INTEGER;
+BEGIN
+    DBMS_OUTPUT.PUT_LINE('--');
+    DBMS_OUTPUT.PUT_LINE('-- REPLACE PROGRAM ' || UPPER(in_program_name));
+    DBMS_OUTPUT.PUT_LINE('--');
+    --
+    SELECT COUNT(*)
+    INTO v_exists
+    FROM user_scheduler_programs
+    WHERE program_name = in_program_key;
+    IF v_exists = 0 THEN
+{create}    ELSE
+        DBMS_SCHEDULER.DISABLE(in_program_name, TRUE);
+        FOR c IN (
+            SELECT argument_position
+            FROM user_scheduler_program_args
+            WHERE program_name = in_program_key
+        ) LOOP
+            DBMS_SCHEDULER.DROP_PROGRAM_ARGUMENT(in_program_name, c.argument_position);
+        END LOOP;
+        DBMS_SCHEDULER.SET_ATTRIBUTE(in_program_name, 'number_of_arguments', '0');
+{attributes}    END IF;
+    --
+{blocks}    --
+{enable}    COMMIT;
+END;
+/
+"""
 
 JOB_ARGUMENTS_QUERY = """
 SELECT argument_name, argument_position, argument_type, value

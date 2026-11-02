@@ -8,20 +8,22 @@ What a build prints, what a deploy prints, where the logs land, and how to read 
 
 ## Deploy never builds
 
-`-deploy` ships the patch exactly as it stands on disk. It never creates a folder, never rewrites the selected one and never re-orders its files, so what gets deployed is what was reviewed:
+`-deploy` ships the patch exactly as it stands on disk. It never rewrites the selected folder and never re-orders its files, so what gets deployed is what was reviewed:
 
 ```bash
 adtai patch -target DEV -name 12 -create
 adtai patch -target DEV -name 12 -deploy
 ```
 
-The patch-building arguments (`-create`, `-hash`, `-baseline`, `-local`, `-head`, `-nosnap`) are accepted alongside `-deploy` and ignored, reported under an `IGNORING WITH -deploy:` header naming them, so a run never silently deploys something other than what the flags asked for.
+The patch-building arguments (`-hash`, `-baseline`, `-local`, `-head`, `-nosnap`) are accepted alongside `-deploy` and ignored, reported under an `IGNORING WITH -deploy:` header naming them, so a run never silently deploys something other than what the flags asked for.
+
+`-create <name> -deploy` is not among them: a name no folder holds yet is built first and then shipped, and a name that already has a folder is deployed as it stands.
 
 `-deploy` adds two things to the script. Before its first line it sends the session defaults, `SET DEFINE OFF`, `SET TIMING OFF` and `SET SQLBLANKLINES ON`, and the script's own copy runs after and still wins. A folder built by an older tool, or by hand, carries none, and `-deploy` replays whatever is on disk.
 
 It also resolves the script for its `-target`. The script names no target, so one patch deploys anywhere, and `-deploy` switches on that target's `--[ENV] ` lines and points the `SPOOL` at its log folder ([patch_templates.md](patch_templates.md#one-script-for-every-target)).
 
-What a deploy does write, besides its logs, is the baseline, and only for a patch built with `-hash`. Full rules on [patch_hash.md](patch_hash.md).
+Besides its logs, a deploy writes the baseline for a patch built with `-hash` ([patch_hash.md](patch_hash.md)), and on a `-deploy -app` run the `backup_<ENV>/f<id>.sql` export, with a `.git/info/exclude` line keeping it out of git, and the scan, revert and build-status reports beside the logs ([patch_verify.md](patch_verify.md)).
 
 <br>
 
@@ -70,7 +72,7 @@ Their SPOOL and their deploy logs carry `100926` too, and each script's header a
 
 **Reorder the lines to change the order.** `-deploy` runs the `@` lines as they stand, and the APEX import still follows its application's `init` half wherever you moved it. `@./APP.sql` without quotes and a trailing `;` are read the same; blank lines and `--` comments are ignored.
 
-**A re-create keeps your order.** Scripts no longer generated lose their line, new ones are added at the end in the default order, and `-create -force` writes the default order again. A driver an earlier release wrote opens on `-- DEPLOY ORDER` and five lines of rules instead; it deploys the same, and a re-create writes the new header.
+**A re-create keeps your order.** Scripts no longer generated lose their line, new ones land at their default rank among the kept ones, and `-create -force` writes the default order again. A driver an earlier release wrote opens on `-- DEPLOY ORDER` and five lines of rules instead; it deploys the same, and a re-create writes the new header.
 
 **A driver that disagrees with the folder refuses the deploy before any script runs**: a script in the folder it does not list, a line naming a script that is not there, a script listed twice, or a line that is not a script link. The refusal names each one:
 
@@ -275,7 +277,7 @@ Each installer stamps its transcript with its outcome. The name is `patch_deploy
 
 ## View column mismatches
 
-After a deploy, when DEV access is configured, each deployed view's columns are compared against DEV. A mismatch prints the warning, one line of advice, and a row per mismatched **column** rather than a prose line per view:
+After a deploy onto an environment other than DEV, each deployed view's columns are compared against DEV; a deploy onto DEV itself skips the check. A mismatch prints the warning, one line of advice, and a row per mismatched **column** rather than a prose line per view:
 
 ```text
 WARNING - VIEW COLUMNS MISMATCHED:

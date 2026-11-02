@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from adt_ai.export_data import queries
+from adt_ai.export_db.inventory import missing_dictionary_object
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.row_values import row_value
 
@@ -34,9 +35,36 @@ class DataTable:
 class DataDiscovery:
     TABLES_QUERY = queries.TABLES_QUERY
     COLUMNS_QUERY = queries.COLUMNS_QUERY
+    POLICY_TABLES_QUERY = queries.POLICY_TABLES_QUERY
+    EXEMPT_QUERY = queries.EXEMPT_QUERY
 
     def __init__(self, gateway: QueryGateway) -> None:
         self.gateway = gateway
+
+    def policy_tables(self) -> set[str]:
+        """The schema's tables under an enabled SELECT policy (`#1098`).
+
+        Empty where `user_policies` cannot be read: the answer feeds a warning
+        and nothing is deleted on it, so an unreadable view only costs the
+        warning.
+        """
+        try:
+            rows = self.gateway.fetch_all(self.POLICY_TABLES_QUERY)
+        except Exception as error:
+            if not missing_dictionary_object(error):
+                raise
+            return set()
+        return {_row_value(row, "OBJECT_NAME") for row in rows}
+
+    def exempt(self) -> bool:
+        """Whether this session holds `EXEMPT ACCESS POLICY` (`#1098`)."""
+        try:
+            rows = self.gateway.fetch_all(self.EXEMPT_QUERY)
+        except Exception as error:
+            if not missing_dictionary_object(error):
+                raise
+            return False
+        return bool(rows) and int(row_value(rows[0], "EXEMPT") or 0) > 0
 
     def tables(
         self,
@@ -111,6 +139,11 @@ class DataDiscovery:
             exact_numbers = True,
         )
 
+    def count(self, table_name: str) -> int:
+        """Every row the table holds, whatever a `where` filter would keep (`#1099`)."""
+        rows = self.gateway.fetch_all(queries.count_query(table_name))
+        return int(row_value(rows[0], "ROW_COUNT") or 0) if rows else 0
+
     @staticmethod
     def data_query(
         table_name: str,
@@ -120,6 +153,15 @@ class DataDiscovery:
         column_types: Mapping[str, str] | None = None,
     ) -> str:
         return queries.data_query(table_name, columns, where_filter, order_by, column_types)
+
+    @staticmethod
+    def data_select(
+        table_name: str,
+        columns: list[str],
+        where_filter: str,
+        column_types: Mapping[str, str] | None = None,
+    ) -> str:
+        return queries.data_select(table_name, columns, where_filter, column_types)
 
 
 def _row_value(row: dict[str, Any], key: str) -> str:

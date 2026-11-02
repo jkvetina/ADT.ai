@@ -155,7 +155,7 @@ The refusal says who changed the application, when, and how old your base is:
 
 `CHANGED BY` and `CHANGED ON` are APEX's own `LAST_UPDATED_BY` and `LAST_UPDATED_ON`, the newer of the application and its pages. A Builder save names the developer. A deploy names the developer identity it ran under ([`IDENTITY.yaml`](config.md), and the stamp above), or the database user when there is none.
 
-They are read before the deploy locks the application, because the lock's build-status write stamps the application with this deploy's own user. An application nobody has touched since its import carries no author, and both rows then read `(not recorded)`.
+They are read before the deploy locks the application, because the lock's build-status write stamps the application with this deploy's own user. An application imported outside ADT and untouched since carries no author, and both rows then read `(not recorded)`; an ADT import is stamped (above), so its rows name the deployer.
 
 `YOUR BASE` is when `export_apex` took the checksum the change was made against, so the gap to `CHANGED ON` is how far behind you are, with the commit the tree was exported at. A tree exported before ADT recorded that time reads `(export time not recorded)`.
 
@@ -169,15 +169,15 @@ The checksums stay in the import log, which also records the author as a `LAST C
 
 **A target id refuses a patch that also installs a full export.** `-app <id>` moves where the TREE lands and can do nothing about an `f<source>.sql` install script, so the two together would write the source application in place while the tree went to the sandbox. Several applications on one target id are refused for the same class of reason: one would land and the other would be dropped behind a correct-looking screen.
 
-**On APEX 26.2 and newer, an application another developer has locked in the App Builder is refused** before any import, naming who holds the lock and since when. `-force` deploys anyway and leaves their lock in place ([patch_verify.md](patch_verify.md#holding-the-application-shut-deploy_build_status)). While the deploy holds the lock, every other developer opening the application in the App Builder gets its `Application Locked` page, naming you and `ADT deploy <patch folder>`. A workspace administrator still sees `Unlock Application` there and can break the lock mid-deploy, so the drift check stays the guard.
+**On APEX 26.2 and newer, an application another developer has locked in the App Builder is refused** before any import, naming who holds the lock and since when. `-force` deploys anyway and leaves their lock in place ([patch_verify.md](patch_verify.md#holding-the-application-shut-deploy_build_status)). The check runs only where the deploy locks the application, into its own id: never for a retargeted import or `-app 0`, and never under `deploy_build_status: off`. While the deploy holds the lock, every other developer opening the application in the App Builder gets its `Application Locked` page, naming you and `ADT deploy <patch folder>`. A workspace administrator still sees `Unlock Application` there and can break the lock mid-deploy, so the drift check stays the guard.
 
-**`-force` overrides every refusal here** in the sense it already carries on `patch`, and the log records that it was set whether or not it changed the outcome:
+**`-force` overrides three refusals here**, in the sense it already carries on `patch`: the drift refusal above, the full-export refusal, and another developer's application lock. It never overrides the one-target refusal or the compile gate. The log records that it was set whether or not it changed the outcome:
 
 ```log
 --   OVERRIDDEN       | -force was set; the signature check passed on its own
 ```
 
-A completed deployment of the same payload to the same target is skipped without `-force` ([patch_deploy.md](patch_deploy.md)). Changing the application target or source invalidates that completion. Retargeted imports verify the application they landed on; a failed verification leaves the deployment incomplete.
+Every `-deploy` runs the plan again, a payload already deployed there included ([patch_deploy.md](patch_deploy.md#where-the-logs-go)). Retargeted imports verify the application they landed on; a failed verification leaves the deployment incomplete.
 
 <br>
 
@@ -254,7 +254,9 @@ PROMPT -- imported from that folder as application 100926 by patch -deploy -app 
 
 One target id over a patch carrying two APEXlang applications is refused at `-create` as it is at `-deploy`.
 
-The order is the point. A tree imports onto the objects its pages query, so the schema scripts and the `init` half run first; a failed script leaves the import and the `end` half `NOT RUN` rather than importing over a half-deployed schema, and a refused import leaves the `end` half `NOT RUN`.
+The order is the point. A tree imports onto the objects its pages query, so the schema scripts and the `init` half run first.
+
+A failed script leaves the import `NOT RUN` rather than importing over a half-deployed schema, under `-continue` too. Without `-continue` the `end` half is `NOT RUN` with it; with it, `end` still runs. A refused import leaves the `end` half `NOT RUN`.
 
 The compiler's warnings are repeated in the log, which keeps the application id in its name, `<timestamp>_apex_import_<id>_<STATUS>.log` under the patch's `logs_<ENV>/` folder, and a compile error marks the row `ERROR` with the compiler's own rows under it. A folder built before the split holds one script per application and still deploys, the import following that script.
 

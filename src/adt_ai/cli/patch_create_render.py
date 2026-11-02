@@ -261,22 +261,6 @@ def print_create_patch_files(
     print()
 
 
-def print_create_report(
-    result: DatabasePatchResult,
-    config: dict[str, object],
-    *,
-    debug: bool = False,
-) -> None:
-    """The per-schema blocks and the run-scoped warnings, both at once (ADT #443).
-
-    Split into `print_create_schema_blocks`/`print_create_warnings` by ADT
-    #988 so `-create` can stream them apart; this stays combined for every
-    existing caller that already has a `DatabasePatchResult` in hand.
-    """
-    print_create_schema_blocks(result.reports, result.uncommitted, config)
-    print_create_warnings(result, config, debug=debug)
-
-
 def _print_object_changes(
     report    : SchemaReport,
     nested    : bool,

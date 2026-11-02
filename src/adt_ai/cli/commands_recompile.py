@@ -243,6 +243,11 @@ def _run_recompile_for_schema(
     runner.vpd_sources = vpd_source_provider(
         startup, environment, gateway_factory, debug=args.debug
     )
+    # A lost session ends the pass rather than parking every object after it as
+    # a troublemaker (#1094): the test `export_db` and `discovery` already pass
+    # as `fatal_error`, set here like the hooks above so the CLI test fakes
+    # (single-arg __init__) stay untouched.
+    runner.fatal_error = _is_database_connection_error
     # **The overview header goes up before the run, not after it** (`#372`).
     # Everything a default recompile does is silent, the object survey, the
     # to-do selection, the compiles themselves and the re-read, so the run used

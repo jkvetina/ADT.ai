@@ -124,8 +124,14 @@ ORDER  BY l.element_name, l.label_name
 # `PROPERTY_ORDER` is the label's own property order, which is the order the
 # PROPERTIES list was written in; the definition view says which column each one
 # reads, and carries the expression instead when the property is computed.
+#
+# The join on the element's labels hands a property back once per label, with
+# the order set only on the label it belongs to and NULL on the others, so the
+# label comes along: `dictionary_ddl` renders each label's own rows rather than
+# the element's whole list under every label (`#1094`).
 PROPERTY_GRAPH_PROPERTIES_QUERY = """
-SELECT d.element_name, d.property_name, d.column_name, d.column_expr, p.property_order
+SELECT d.element_name, d.property_name, d.column_name, d.column_expr, p.property_order,
+       l.label_name
 FROM   user_pg_prop_definitions d
 LEFT   JOIN user_pg_element_labels l
     ON l.graph_name = d.graph_name

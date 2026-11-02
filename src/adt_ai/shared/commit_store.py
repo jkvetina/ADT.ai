@@ -189,16 +189,35 @@ class CommitStore:
 
     @classmethod
     def open(cls, db_path: str | Path) -> CommitStore:
+        """Open the store, recreating a file this ADT.ai cannot read (#1094).
+
+        The store is a rebuildable cache, so a file that is not a database, a
+        malformed one, or one a newer ADT.ai left at a version no step here
+        starts from is removed and opened afresh, empty, for the next `rebuild`
+        to fill: the fallback `rebuild/cache.py` always promised. The driver
+        reports all three as the bare `DatabaseError` (the opener's own
+        subclass included); a lock or an I/O failure is an `OperationalError`
+        and still raises, since neither says the file is broken (ADT #670).
+        """
+        try:
+            return cls(cls._connect(db_path))
+        except sqlite3.OperationalError:
+            raise
+        except sqlite3.DatabaseError:
+            Path(db_path).unlink(missing_ok=True)
+            return cls(cls._connect(db_path))
+
+    @staticmethod
+    def _connect(db_path: str | Path) -> sqlite3.Connection:
         # Close-on-failure (ADT #510) is the opener's. Plain tuples rather than
         # `sqlite3.Row`: every read here indexes by position.
-        connection = open_store(
+        return open_store(
             db_path,
             schema      = queries.COMMIT_STORE_SCHEMA,
             version     = SCHEMA_VERSION,
             migrations  = MIGRATIONS,
             row_factory = None,
         )
-        return cls(connection)
 
     def close(self) -> None:
         self.connection.close()

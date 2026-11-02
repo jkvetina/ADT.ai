@@ -11,6 +11,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from adt_ai.export_db.normalizer_identifiers import normalize_identifier_part
+
 # The one type whose DDL keyword is not what `user_objects` calls it: the row says
 # `MLE ENVIRONMENT` and the statement says `MLE ENV` (`#738`). Both of the regexes
 # that find an object's name in its own definition line anchor on the keyword, so
@@ -51,6 +53,9 @@ class NormalizationContext:
     #: says and the DDL cannot: its partition list folds to bare `LOCAL`
     #: (`#1091`). False for every other object.
     interval_local_index: bool = False
+    #: `-backup` (`#1099`): a SEQUENCE keeps DBMS_METADATA's `START WITH`, which
+    #: is its `LAST_NUMBER`, so a restore does not restart it at `MINVALUE`.
+    keep_start_with: bool = False
 
     @property
     def display_name(self) -> str:
@@ -63,11 +68,23 @@ class NormalizationContext:
         (an unquoted Oracle identifier is case-insensitive), so this is
         spelling, never behaviour.
 
+        The dictionary stores the name unquoted in the case Oracle keeps it, so
+        it is quoted back and handed to the one reader every other name goes
+        through: `ORDERS` comes back `orders`, while a table created as
+        `"Orders"`, a reserved `"USER"` and a spaced `"Order Id"` keep their
+        quotes. Lowercased bare, each replayed as a different object or a parse
+        error (`#1094`). Only an ordinary name follows the file: the quotes are
+        what make the name resolve, and the file of a new object is always
+        named lowercase, so the file can never be where that spelling comes from.
+
         Deliberately NOT applied to the uppercase `DROP` preambles: those were
         never the lowercase default, they are old-ADT parity pins, and following
         the file there would rewrite DDL nobody asked about.
         """
-        return self.object_display_name or self.object_name.lower()
+        quoted = normalize_identifier_part(f'"{self.object_name}"')
+        if quoted.startswith('"'):
+            return quoted
+        return self.object_display_name or quoted
 
 
 Normalizer = Callable[[list[str], NormalizationContext], list[str]]

@@ -38,6 +38,7 @@ from adt_ai.cli.context import (
     _print_connection_block,
 )
 from adt_ai.cli.context_apex import ApexScope
+from adt_ai.cli.context_errors import _is_database_connection_error
 from adt_ai.cli.export_apex_locate import locate_revealed_apps
 from adt_ai.cli.export_apex_messages import (
     print_apex_app_not_found,
@@ -49,6 +50,7 @@ from adt_ai.cli.export_apex_validate import ExportValidation
 from adt_ai.cli.export_reporters import ConsoleApexRevealReporter
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.export_apex.deep import ApexDeepFilterError
+from adt_ai.export_apex.failures import ApexExportFailedError, print_app_export_failures
 from adt_ai.export_apex.filters import ApexComponentFilter, ApexPageSelection
 from adt_ai.export_apex.schema_level import schema_level_only
 from adt_ai.shared.connections import Connection, ConnectionResult
@@ -219,23 +221,44 @@ def run_apex_export(run: ApexRun) -> int:
             # work. Never turns a successful export into a failing command. Each
             # application compiles as the last step of its own block (#971).
             validation = ExportValidation(run, versions, sqlcl_request=run_sqlcl_script)
+            failed: ApexExportFailedError | None = None
             try:
                 _export_one_schema(
                     run, schema, versions,
                     validate_apexlang=validation if validation.enabled else None,
                 )
             except ApexDeepFilterError as exc:
-                print_adt_error("ARGUMENT INVALID", str(exc))
-                return exit_code_for("ARGUMENT INVALID")
+                return _refuse_argument(exc)
+            except ApexExportFailedError as error:
+                # Every slice that could write did (ADT #1092); the list goes
+                # under the segment's last block, above its TIMER, and the next
+                # schema still runs.
+                failed = error
             validation.close()
             # What this segment covered; a schema-level-only run exports no
             # application, which is what the empty list says (ADT #1070).
             json_findings_database.apex_applications(
                 [] if schema_level_only(run.actions) else run.applications_by_schema[schema]
             )
+            if failed is not None:
+                print_app_export_failures(failed.failures)
+                json_findings_database.apex_export_failures(schema, failed.failures)
+                # A run that ended early lists what it had, then ends the way
+                # it would have alone: the terminal error keeps its screen,
+                # exit code and traceback (ADT #1114).
+                if isinstance(failed.abort, ApexDeepFilterError):
+                    return _refuse_argument(failed.abort)
+                if failed.abort is not None:
+                    raise failed.abort
+                return 1
         return 0
 
     return run_schema_sections(run.schemas, run_one, first_started_at=run.started_at)
+
+
+def _refuse_argument(error: ApexDeepFilterError) -> int:
+    print_adt_error("ARGUMENT INVALID", str(error))
+    return exit_code_for("ARGUMENT INVALID")
 
 
 def _route_missing_apps(run: ApexRun, schema: str) -> None:
@@ -331,7 +354,7 @@ def _export_one_schema(
     validate_apexlang: ExportValidation | None = None,
 ) -> None:
     args = run.args
-    ApexExportRunner(run.gateway_factory).run(
+    ApexExportRunner(run.gateway_factory, fatal_error=_is_database_connection_error).run(
         ApexExportRequest(
             root         = run.root,
             schemas      = [schema],
@@ -355,6 +378,8 @@ def _export_one_schema(
             apex_version=versions.get("APEX"),
             compact=args.compact,
             validate_apexlang=validate_apexlang,
+            # `-debug` keeps the first failure ending the run, with its traceback.
+            keep_going=not args.debug,
         )
     )
 

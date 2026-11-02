@@ -36,8 +36,6 @@ SQLCL_DOWNLOAD_PAGE = "https://www.oracle.com/database/sqldeveloper/technologies
 # tampered page could point the download at an attacker-controlled host. Only
 # Oracle's official download host is trusted for the binary itself.
 SQLCL_DOWNLOAD_HOST = "download.oracle.com"
-JAVA_DOWNLOAD_PAGE = "https://www.oracle.com/java/technologies/downloads/"
-INSTANT_CLIENT_PAGE = "https://www.oracle.com/database/technologies/instant-client.html"
 PYPI_PACKAGE_URL = "https://pypi.org/pypi/{package}/json"
 ADT_AI_GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/jkvetina/ADT.ai/releases/latest"
 # Where a pinned `-update <version>` looks for the release when the install is a
@@ -279,8 +277,6 @@ __all__ = [
     "STATUS_LABEL_WIDTH",
     "SQLCL_DOWNLOAD_PAGE",
     "SQLCL_DOWNLOAD_HOST",
-    "JAVA_DOWNLOAD_PAGE",
-    "INSTANT_CLIENT_PAGE",
     "PYPI_PACKAGE_URL",
     "PROJECT_CONFIG_TEMPLATE",
     "SQLCL_UPGRADE_ACTION",

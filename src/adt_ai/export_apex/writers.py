@@ -40,7 +40,7 @@ from adt_ai.export_apex.recent import WHOLE_APP_ACTIONS, RecentComponentFilter
 from adt_ai.export_apex.rest import export_rest
 from adt_ai.shared import text_files
 from adt_ai.shared.apex_paths import REST_SCHEMA_DEFINITION
-from adt_ai.shared.apex_payloads import link_payloads
+from adt_ai.shared.apex_payloads import link_payloads, payload_root
 from adt_ai.shared.apexlang_line_endings import lf_bytes
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.row_values import row_value
@@ -155,9 +155,15 @@ class ApexCollectionWriterMixin:
         )
         prune_target = _prune_root(resolver, application, action) if unfiltered else None
         if prune_target is not None:
-            prune_folder(prune_target[0], written, prune_target[1])
+            root, suffixes = prune_target
             if action == "apexlang":
-                prune_plugin_payloads(prune_target[0], written)
+                # The application's own payloads under the tree are the hardlinks
+                # `link_payloads` reconciles against `-files`, in any extension,
+                # so the sweep stays out of their folder (ADT #1094).
+                prune_folder(root, written, suffixes, skip=payload_root(root))
+                prune_plugin_payloads(root, written)
+            else:
+                prune_folder(root, written, suffixes)
         return CollectionWriteResult(rows)
 
     def _write_static_files(

@@ -96,7 +96,7 @@ TIMER: 1s
 - **The `GRANT` row prints only when a grant actually moved.** None of the four has a `LAST_DDL_TIME`, so every run re-reads all four and the comparison against what is on disk decides what the screen says. The files are rewritten either way.
 - **The whole table waits on those reads.** The header goes up first and the reads run under it. A run where neither an object nor a privilege changed prints its header and stops: no column headings over an empty table, and no `EXPORTING 0 OBJECTS:` under it.
 - A multi-schema run executes schema by schema, with its own connection block and its own `TIMER`, and prints the banner once.
-- Each schema ends with `UPDATING DEPENDENCIES:`, the [mirror](rebuild.md) refreshed for what it wrote.
+- Each schema ends with `UPDATING DEPENDENCIES:`, the [mirror](rebuild.md) refreshed for what it wrote. The header prints whenever the mirror has to be built or refreshed, `-silent` included. It stays off when a mirror already exists and the run wrote no object that can have dependencies (a run that wrote only grants or data), and off a `-baseline` run, which writes nothing. With no mirror yet, the first export builds the whole schema rather than just the objects it wrote.
 - **Exported DDL names no schema.** The `CREATE` line and the object a `GRANT` names both drop the owner, so a file installs into whichever schema the deploying session connects as. Set `keep_owner` to write `owner.object` in both instead; [config.md](config.md#naming-the-owning-schema) covers when that is the right trade. A directory never carries an owner either way: it belongs to no schema, and Oracle refuses `CREATE DIRECTORY hr.data_dir`.
 - **Each grantee gets its own `GRANT` line.** Two grantees of one object are never folded into one statement, because replaying `GRANT DELETE, SELECT ON orders TO app_user, reporting;` would hand `reporting` a `DELETE` it never held.
 - **A materialized view brings its own indexes and none of Oracle's.** An index you created on a materialized view is an ordinary object: it is exported into `indexes/`, and a patch installs it after the view, because `mviews` comes before `indexes` in `patch_map`. What never reaches the repository is what Oracle built to make the view work, the container table under the view's own name, the `MLOG$_<master>` log table, and the `I_SNAP$` / `I_MLOG$` indexes behind them, since a file recreating any of those either duplicates the view definition or conflicts with it. Nothing but the name separates a snapshot index from yours in the dictionary, so the exclusion is by name and never by what the index sits on.
@@ -122,6 +122,10 @@ Every type a window narrows is narrowed by a column that dates a **change**, whi
 The signature narrows a window, never an explicit request. `-type JOB` with no `-recent` exports every matching job with no comparison, which is how to re-pull a whole job tree on demand.
 
 **An exported job brings the program and schedule it names**, into `job_programs/` and `job_schedules/`, whatever narrowed the run to it: a job file cannot be created without them. Only the schema's own are followed, so a job running in a `SYS` window brings none.
+
+A program's file updates an existing program in place, preserving dependent jobs' enabled states and the program's grants, including dependents in other schemas. A missing program is created.
+
+The program is disabled while its attributes and arguments are replaced, then restored to its exported state. Jobs scheduled during that interval may fail, but their enabled flags are untouched. Unexpected errors stop replay; no job inventory or DBA privilege is required.
 
 <br>
 
@@ -194,13 +198,15 @@ The patterns are matched by the discovery query, so ignored objects are never li
 
 That is what makes this the right tool for runtime-generated objects: an application creating one scheduler job per request otherwise adds one file to the repository forever. `export_data` reads the same block.
 
-One kind of generated object needs no pattern: the `DEPSCAN$<n>#<n>` procedures APEX's dependency scan leaves on a schema. They are scratch, never part of the application, so the discovery query skips them and no file is written for one. `recompile` removes any it finds.
+Oracle's own generated names need no pattern either: an object or index whose name begins with `SYS_` is never listed, whatever its type, and the same filter drops `ISEQ$$_`, `BIN$` and SQLcl `DIFF` leftover names.
+
+Neither does the last kind of generated object here: the `DEPSCAN$<n>#<n>` procedures APEX's dependency scan leaves on a schema. They are scratch, never part of the application, so the discovery query skips them and no file is written for one. `recompile` removes any it finds.
 
 <br>
 
 ## What the privileges file records
 
-`<SCHEMA>_schema.sql` is what the exported user was granted, in three blocks separated by `--`: roles, system privileges, and, on 23ai and above, schema privileges.
+`<SCHEMA>_schema.sql` is what the exported user was granted, in blocks separated by `--`: roles, system privileges, on 23ai and above schema privileges, and tablespace quotas.
 
 ```text
 GRANT CONNECT               TO sandbox;
@@ -209,11 +215,25 @@ GRANT CREATE TABLE                      TO sandbox;
 --
 GRANT EXECUTE ANY PROCEDURE             ON SCHEMA system TO sandbox WITH ADMIN OPTION;
 GRANT SELECT ANY TABLE                  ON SCHEMA core_locks TO sandbox;
+--
+ALTER USER sandbox QUOTA UNLIMITED ON users;
 ```
+
+The user's network ACEs go to `<SCHEMA>_acl.sql`, one `DBMS_NETWORK_ACL_ADMIN.APPEND_HOST_ACE` per host, port range and privilege, written only when the user holds one. Grants received from SYS, APEX and every other owner stay in `received/<OWNER>.sql`. All three files are replayed by a DBA, never by the user they describe.
+
+A full run with `auto_delete` on deletes `<SCHEMA>_acl.sql`, and lists it under `DELETED OBJECTS:`, once the database answers that the user holds no ACE, so a revoked ACE is not replayed from an old file.
+
+A run with type, name, recent, author, prefix or ignore filters, `-baseline`, or `auto_delete` off keeps it, as does an unreadable dictionary. Other grant files are untouched by this cleanup.
 
 A schema privilege covers every object of one schema, present and future, so it is the only line here naming a second schema. `WITH ADMIN OPTION` is carried on all three kinds, because a user who can pass a grant on is not the same user as one who cannot.
 
 The schema block needs `user_schema_privs`, which is 23ai. On an older database the read finds no such view and the file simply ends after the system privileges, exactly as it always did.
+
+<br>
+
+## VPD policies and application contexts
+
+A row-level security policy is written to `vpd_policies/<table>.sql` and an application context the schema's package owns to `contexts/<context>.sql`, both read on every run beside the grants. What each file holds and how it replays is on export_db_security.md.
 
 <br>
 
@@ -289,49 +309,9 @@ EXPORTING 3 OBJECTS:
 
 <br>
 
-## When the database refuses an object
+## When export_db refuses
 
-One object Oracle will not describe does not end the export. It is recorded, every other object is still written, the bar keeps its countdown, and the refused objects are listed under a warning straight after the export:
-
-```text
-WARNING - OBJECT EXPORT FAILED:
--------------------------------
-
-                 JOB | ADT917_LIGHT_JOB                                      
-                     |
-
-
-UPDATING DEPENDENCIES:
-----------------------
-```
-
-`ADT917_LIGHT_JOB` is a lightweight scheduler job: `USER_SCHEDULER_JOBS` lists it, and `DBMS_METADATA` has no DDL for it.
-
-- **The rows are the exported listing's rows**, grouped and sorted by type, so a run that loses a view and a job names both.
-- `-debug` adds each object's error under its row, indented past the `|`. Without it the warning names the objects and nothing else.
-- A failure after the DDL came back, such as a normalizer tripping, is listed the same way, and that object is still the only one lost.
-- **An object dropped while the export runs is listed the same way**, since there is no DDL left to read between the listing and its turn. Nothing is written for it.
-- The run exits `1`, and a multi-schema run still exports the schemas after it.
-- **A lost connection still stops the run where it stands**, since every remaining object would fail the same way.
-- **A refused object does not cost you the run.** The `-recent` watermark and a `-baseline` still record everything that was written, so the next `-recent` run starts from here. Only a schema where every object was refused is left unstamped.
-- **A refused job is offered again.** Its stored signature stays at what the last export that wrote it recorded, so every `-recent` run retries it until its file matches the job.
-- **So is every other refused object.** Its `LAST_DDL_TIME` sits behind the watermark the run still moved, so the window alone would never list it again. It is remembered per schema in `config/internal/refused_objects.yaml`, and each `-recent` run looks it up by name and exports it with the rest, `-recent 0` included, until one run writes it. An object dropped since is forgotten, and a run narrowed by `-type` or `-name` to something else leaves it waiting.
-
-<br>
-
-## Asking for a type ADT.ai does not export
-
-`object_types` in `config.yaml` is the list of types `export_db` writes files for, and `-type` selects from it. A pattern that names something outside that list is refused rather than exported, exit `2`:
-
-```text
-export_db: -type selected object types export_db does not export: LOB. Its exported types are the 'object_types' keys in config.yaml.
-```
-
-The refusal comes before the connection when the config alone settles it, so a type outside the map costs no round trip.
-
-A wildcard is different. `-type %` covers every configured type, so it is a request `export_db` can only judge once the schema has answered, and there the refusal lands under the overview table, naming every type it found no home for.
-
-A typo takes the same path, on purpose. `-type NOSUCHTYPE` used to export nothing and exit `0`, which reads as *this schema has none of those* rather than *that is not a type I export*.
+An object the database will not describe is listed under `WARNING - OBJECT EXPORT FAILED:` and the rest of the export is still written; a `-type` that names something `export_db` does not export is refused with exit `2`. Both screens, and what the next `-recent` run does about them, are on export_db_refusals.md.
 
 <br>
 
@@ -350,5 +330,6 @@ A typo takes the same path, on purpose. `-type NOSUCHTYPE` used to export nothin
 | `-baseline [FILE]`, `--baseline [FILE]` | No | off | Record what this environment holds as a patch baseline: every object is rendered as an export renders it, then hashed at the path it would have been written to, and each table is stored beside the baseline as that rendered file. No object file is written or deleted. Refused beside a narrowing flag. See [export_db_layout.md](export_db_layout.md). |
 | `-silent`, `--silent` | No | off | Suppress per-object names and progress callbacks, keeping the banner, connection block, overview, export header and timer. |
 | `-compact`, `--compact` | No | off | Replace the per-object rows with one dotted progress bar per schema, labelled with the type being pulled. `-silent` outranks it. |
+| `-backup`, `--backup` | No | off | Each sequence keeps its `START WITH`. See backup.md. |
 
 Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep, -json) are on [console.md](console.md#shared-arguments).

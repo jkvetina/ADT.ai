@@ -34,10 +34,11 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from decimal import Decimal
+from http.client import HTTPException
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, OpenerDirector, Request, build_opener
 
 from adt_ai.shared.connection_errors import ConnectFailedError
 from adt_ai.shared.connections import Connection
@@ -53,6 +54,28 @@ _BINARY_TYPES = frozenset({"RAW", "LONG RAW", "BLOB"})
 
 class OrdsRequestError(RuntimeError):
     """A statement sent through ORDS failed, or could not be sent as asked."""
+
+
+class _RefuseRedirects(HTTPRedirectHandler):
+    """Never follow a redirect (#1094).
+
+    `urllib` copies every header but the content ones onto a redirected request,
+    so a 301 to another host would replay the `Authorization` header, the
+    database password, to that host. `None` here makes urllib raise the 3xx as
+    an `HTTPError`, which `_post` reports on the `ORDS ANSWERED HTTP <status>`
+    screen like any other refusal; `doctor/runner.py` restricts its own
+    downloads the same way.
+    """
+
+    def redirect_request(
+        self, req: Request, fp: Any, code: int, msg: str, headers: Any, newurl: str,
+    ) -> Request | None:
+        return None
+
+
+def _opener() -> OpenerDirector:
+    """The opener every ORDS request goes through: `urlopen` minus redirects."""
+    return build_opener(_RefuseRedirects())
 
 
 class OrdsGateway(OracleGateway):
@@ -83,7 +106,7 @@ class OrdsGateway(OracleGateway):
             startup_sql  = startup_sql,
             config       = config,
         )
-        self._opener = opener or urlopen
+        self._opener = opener or _opener().open
 
     def connect(self) -> Any:
         raise OrdsRequestError(
@@ -228,9 +251,14 @@ class OrdsGateway(OracleGateway):
             with self._opener(request, timeout=self.query_timeout_seconds) as response:
                 raw = response.read()
         except HTTPError as error:
+            # The error carries the open answer; nothing reads it (#1094).
+            error.close()
             message, steps = _http_failure(url, error.code)
             raise ConnectFailedError(message, steps=steps) from None
-        except (URLError, OSError) as error:
+        except (URLError, OSError, HTTPException) as error:
+            # `http.client`'s own refusals (`InvalidURL`, a broken status line)
+            # are neither URLError nor OSError and escaped to UNEXPECTED ERROR
+            # (#1094); they are the same "nothing answered" to the reader.
             reason = getattr(error, "reason", error)
             raise ConnectFailedError(
                 f"ORDS DID NOT ANSWER\n\n{url}\n{reason}",

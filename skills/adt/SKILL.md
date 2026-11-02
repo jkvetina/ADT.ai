@@ -3,7 +3,7 @@ name: adt
 description: "Lean ADT.ai command router for Oracle/APEX work. Invoke only when the user explicitly asks an agent to use the ADT skill by name; never auto-load it for repository work, general discussion, development, review, command lookup, or incidental mentions of ADT."
 metadata:
   created: "2026-06-10"
-  updated: "2026-10-13 09:39"
+  updated: "2026-10-30 12:00"
   version: "2.6.0"
   tags: [oracle, apex, deployment, cli, database]
 ---
@@ -75,7 +75,7 @@ adtai export_apex -app 100 -apexlang
 
 ## export_data: export table data
 
-Read [docs/export_data.md](../../docs/export_data.md). It writes CSV and generated MERGE SQL. Narrow shared schemas with `-schema` and tables with `-name`; use `-silent` for agent-driven exports unless per-table progress is useful.
+Read [docs/export_data.md](../../docs/export_data.md). It writes CSV and generated MERGE SQL. Narrow with `-schema` and `-name`; use `-silent` unless per-table progress is useful. Backups add `-backup` to all three exports.
 
 ```bash
 adtai export_data -silent -name APP_LOOKUP%
@@ -94,7 +94,7 @@ adtai export_db -silent -type PACKAGE% -name APP_%
 
 Read [docs/patch.md](../../docs/patch.md), then only the linked patch topic needed for content, install order, deployment, hashes, archiving, or sandbox removal. A bare filtered run previews. `-create` rewrites a patch folder, `-deploy` changes the target database/APEX application, `-archive` moves and removes patch folders, and `-drop` removes sandbox APEX applications whose recorded creator is the `apex_account`, or which record no creator at all; somebody else's needs `-force`. A `-drop` writes one dictionary-verified receipt per application under `<path_apex>/logs_<ENV>/`. An APEXlang patch snapshots the pages its own commits touched, for visibility, and `-deploy` imports the application's live `apexlang/` folder: on 26.2+ onto its own id only the `.apx` files the patch lists, and the whole tree for a retarget, `-force` over drift or a non-`.apx` change. `-deploy -app 0` (26.2+) imports onto a working copy, reused or created through `APEX_APPLICATION_ADMIN`; `-drop <id>` removes only a copy it made, and `-upload -app 0` is refused. `-create` and `-deploy -app` warn `EXPORTED ON APEX <tree>, TARGET RUNS <target>` when the target is newer than the export; re-export on the target first. `-deploy -app <id>` also stamps that application's `last_updated_by`/`last_updated_on` with the `apex_account` and the current moment, sandbox or source alike; a bare `-app` stamps nothing, and no import can write `created_by`. `-app #<N>` (or `<N>#`) lands each application on its own id; a plain id over several applications is refused. Every `-deploy` runs the whole plan, a target already deployed included; the status is the newest `logs_<ENV>/` log, with no `deployment.json`. A post-deploy verification that could not complete fails the deploy, and by default a failed scan reverts the application to a backup taken before the import (`deploy_revert_on_scan_failure`). `-continue` waives that: the scan still counts every finding, but status and exit code report `SUCCESS` and nothing is reverted, an opt-out of verification, not of unrelated errors. By default `-deploy -app` locks the target from the signature read past the scan (`deploy_build_status`): `RUN_ONLY` or page locks, restored afterwards, or on 26.2+ the application lock as `apex_account`; another developer's lock refuses unless `-force`. `-create -files_ws` carries every workspace static file, not only changed ones. `-name <CODE>` hides commits older than the last one committing that code's folder; `-force` keeps them. An application changed since the build refuses a full APEX install. `patch_codescan` (`warn`/`block`) makes `-create` codescan the files it carries against the `validate -codescan` baseline; `block` refuses and writes nothing. Never guess `-target`, `-name`, commit selectors, content mode, or application id. Preview the exact selection before creation or deployment.
 
-`-upload` is the fifth verb, reads no commit and is refused beside the others ([docs/patch_upload.md](../../docs/patch_upload.md)). It uploads the exported static-files folder into the `-app` application, the workspace with `-files_ws`, or another folder with `-folder`. Bare, it watches until Control+C, so only a person runs it; `-once` uploads everything and exits.
+`-upload` is the one `patch` verb that reads no commit, and it is refused beside every other verb ([docs/patch_upload.md](../../docs/patch_upload.md)). It uploads the exported static-files folder into the `-app` application, the workspace with `-files_ws`, or another folder with `-folder`. Bare, it watches until Control+C, so only a person runs it; `-once` uploads everything and exits.
 
 ```bash
 adtai patch -target UAT -name TASK-123

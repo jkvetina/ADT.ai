@@ -143,9 +143,9 @@ What you do not get is secrecy from the tool. The value still reaches the Oracle
 
 <br>
 
-### The rules, all four of them
+### The rules, all five of them
 
-**No shell.** The command runs as an argument list. A string is split the way a shell would split it, quotes respected, but nothing is ever handed to `sh`, so an `&` or a `;` inside a vault path is passed through as text rather than run. Quote a path that has spaces in it, or write the command as a YAML list when quoting gets awkward:
+**No shell.** The command runs as an argument list. A string is split the way a POSIX shell would split it, quotes respected, but nothing is ever handed to `sh`, so an `&` or a `;` inside a vault path is passed through as text rather than run. Quote a path that has spaces in it, or write the command as a YAML list when quoting gets awkward; on Windows the list form is the spelling to use, since the string split reads a backslash as an escape:
 
 ```yaml
 pwd_cmd: ["op", "read", "op://My Vault/DEV APP/password"]

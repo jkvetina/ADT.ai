@@ -295,11 +295,6 @@ def recorded_export(root: Path, app_id: int) -> RecordedExport:
     )
 
 
-def recorded_signature(root: Path, app_id: int) -> str:
-    """The checksum `export_apex` stored for ``app_id`` when it wrote the tree."""
-    return recorded_export(root, app_id).checksum
-
-
 def tree_signature(tree_root: Path) -> str:
     """A content hash of every file under ``tree_root``, path included.
 

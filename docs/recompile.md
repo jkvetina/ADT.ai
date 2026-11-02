@@ -4,7 +4,7 @@
 
 `recompile` gets a schema back to a working state after something has broken it. It recompiles invalid PL/SQL, views, synonyms and materialized views in dependency-safe passes, then reports what stayed broken, why, and which failures are the real cause rather than a consequence.
 
-It also carries a set of read-only health reports (materialized views, synonyms, disabled objects, scheduler jobs, VPD policies) and one repair action that is not a recompile at all (`-trailing`). Each of those replaces the ordinary pass rather than adding to it.
+It also carries read-only health reports (synonyms, disabled objects, scheduler jobs, VPD policies), `-mviews`, which lists the materialized views and also compiles and refreshes them, and one repair action that is not a recompile at all (`-trailing`). Each of those replaces the ordinary pass rather than adding to it.
 
 <br>
 
@@ -60,9 +60,11 @@ A run reads the overview, recompiles, retries whatever failed on a fresh connect
 
 First it drops any stray `DEPSCAN$<n>#<n>` procedures older than 30 minutes, silently; a younger one may belong to a scan still running in another session.
 
-APEX's dependency scan generates these helpers, and `rebuild -app`, `validate -scan` and `patch` already remove them after their own scan. They are never compiled, counted or rewritten, here or under `-trailing`, and `export_db` never writes one. The report-only modes leave them alone.
+APEX's dependency scan generates these helpers, and `rebuild -app`, `validate -scan` and `patch` already remove them after their own scan. They are never compiled, counted or rewritten, here or under `-trailing`, and `export_db` never writes one. The report modes, `-mviews` included, leave them alone.
 
 Recycle-bin objects (`BIN$...`) are left out the same way: Oracle takes no DDL on one, so they are not counted, compiled or listed with their errors. An object whose name no plain identifier spells fails on its own and the run carries on, as a failed compile does.
+
+A lost connection is not a failed compile: `ORA-01017` or a dropped session ends the run on the error screen instead of failing every object after it.
 
 The retry runs in reverse order, and repeats for as long as each pass compiles something new. Reversing alone is enough when the dependencies run with the alphabet, and not enough when they criss-cross.
 
@@ -117,7 +119,7 @@ The section order is fixed, and the verdict reads last because it belongs under 
 Four rules shape the list:
 
 - **The heading is `<OBJECT TYPE>.<OBJECT NAME>`, never the bare name.** A schema can carry one name as both a `PACKAGE` and a `PACKAGE BODY`, two objects with different errors, which a name-keyed stanza would merge.
-- **Cascade rows never print.** Oracle files a `PL/SQL: Statement ignored` or `Compilation unit analysis terminated` beside every statement the real error killed, so one missing grant can contribute ten. All three are restatements of a failure reported next to them.
+- **Cascade rows never print.** Oracle files a `PL/SQL: Statement ignored`, a `PL/SQL: SQL Statement ignored` or a `Compilation unit analysis terminated` beside every statement the real error killed, so one missing grant can contribute ten. All three are restatements of a failure reported next to them.
 - **A repeated message prints once, at its lowest `line.pos`.** A missing grant referenced eight times is one thing to fix. Deduping compares the full message, never the rendered one.
 - **Dedupe is per object.** Two objects failing on the same grant both say so.
 

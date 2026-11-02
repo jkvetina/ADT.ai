@@ -9,6 +9,7 @@ from pathlib import Path
 
 from adt_ai.doctor._base import (
     SQLCL_UPGRADE_ACTION,
+    CommandRunner,
     _first_line,
     _instant_client_version,
     _is_newer_version,
@@ -28,6 +29,12 @@ _FULL_UPDATE_COMPONENTS = frozenset({"adt-ai", "oracledb", "sqlcl"})
 
 
 class DoctorVersionMixin(DoctorLatestVersionMixin):
+    # The runner every version probe goes through (`git --version`, `java
+    # --version`, `sql -V`): bounded by `env_check.COMMAND_TIMEOUT_SECONDS`
+    # when it is the real one (#1094). `command_runner`, which `-update`'s
+    # installers run through, stays unbounded; an injected fake serves both.
+    probe_runner: CommandRunner
+
     def _version_lines(
         self,
         check_results: list[CheckResult],
@@ -239,7 +246,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
     def _check_results(self) -> list[CheckResult]:
         from adt_ai.shared.env_check import EnvironmentChecker
         checker = EnvironmentChecker(
-            command_runner      = lambda command: self.command_runner(
+            command_runner      = lambda command: self.probe_runner(
                 command,
                 None,
                 self._command_env(),
@@ -339,7 +346,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         if not self.executable_resolver(command):
             return "not found"
         try:
-            return _first_line(self.command_runner(args, None, self._command_env()))
+            return _first_line(self.probe_runner(args, None, self._command_env()))
         except Exception:
             return "unknown"
 
@@ -348,7 +355,7 @@ class DoctorVersionMixin(DoctorLatestVersionMixin):
         if not sqlcl_executable:
             return ""
         try:
-            output = self.command_runner([sqlcl_executable, "-V"], None, self._command_env())
+            output = self.probe_runner([sqlcl_executable, "-V"], None, self._command_env())
         except Exception:
             return ""
         match = re.search(r"SQLcl:\s+Release\s+([^\s]+)", output)

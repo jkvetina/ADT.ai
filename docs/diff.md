@@ -184,7 +184,7 @@ What a run can actually save is export time, which is what `-name` and `-type` n
 | `-name`, `--name` | Yes | all | Object name pattern(s) to compare; narrows the export and the screen. Comma- or space-separated, `%` wildcards. |
 | `-verbose`, `--verbose` | No | off | List every changed object under `CHANGED OBJECTS:` and `CHANGED GRANTS:`, uncapped unless `-limit` caps it. With `-data`, one block per table of its differing rows and values; with `-apex`, one section per changed page under the summaries. |
 | `-rest`, `--rest` | No | off | Compare the REST modules, privileges and roles both schemas publish instead of the schema objects. See diff_rest.md. |
-| `-data`, `--data` | No | off | Compare the rows of the tables `export_data` exports instead of the schema objects. See diff_data.md. |
+| `-data`, `--data` | No | off | Compare the rows of the tables `export_data` exports instead of the schema objects, each table and column under its exact name. See diff_data.md. |
 | `-apex`, `--apex` | No | off | Compare the APEX applications and static files both schemas own instead of the schema objects. See [diff_apex.md](diff_apex.md). |
 | `-app`, `--app` | Yes | connection `apex.app` | With `-apex`, application id(s) or `MIN-MAX` / `MIN+` ranges to compare, on both sides. |
 | `-target-app`, `--target-app` | No | the `-app` id | With `-apex` and one `-app` id, the target's application to compare it with, such as a working copy. See [diff_apex.md](diff_apex.md#a-working-copy-with--target-app). |

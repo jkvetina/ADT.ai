@@ -55,11 +55,12 @@ COMMAND_SUMMARIES = {
         "checkout, so you review the change line by line where you review any other.",
     ),
     "discovery": (
-        "Answers questions about a database, writes down what it found, and only "
-        "ever reads.",
+        "Answers questions about a database, writes down what it found, and runs "
+        "every question read-only.",
         "Use it as the safe way to let an AI agent explore your schema: the agent "
-        "gathers the facts it needs on its own, and there is no way for a question "
-        "to change anything, so it can work unsupervised.",
+        "gathers the facts it needs on its own, and the only things a run writes are "
+        "its own record of the answers and, for questions kept in a file, the answers "
+        "back into that file, so it can work unsupervised.",
         "The questions live with the project rather than in someone's scratch file, so "
         "the same one asked next month gives an answer you can compare with this one.",
     ),
@@ -135,8 +136,9 @@ COMMAND_SUMMARIES = {
         "uses, what would break if you changed it, and what an APEX application "
         "uses and how its pages lead to one another.",
         "Answers come from a local picture, refreshed first when missing or stale, so "
-        "asking is fast and cheap in an AI agent's tokens. It can also bring an older "
-        "version of a file back without disturbing the one you are working on.",
+        "asking is fast and cheap in an AI agent's tokens. It can also put an older "
+        "version of a file back in its place, after saving any uncommitted work as a "
+        "commit.",
     ),
     "ut": (
         "Runs the unit tests installed in a database schema and reports how they went.",

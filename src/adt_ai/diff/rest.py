@@ -63,14 +63,6 @@ def _compare(
     return changes
 
 
-def compare_rest_modules(
-    source: Mapping[str, str],
-    target: Mapping[str, str],
-) -> DiffSummary:
-    """One `DiffChange` per module the two sides disagree about, sorted by name."""
-    return DiffSummary(changes=tuple(_compare(REST_MODULE_TYPE, source, target)))
-
-
 def compare_rest_exports(source: RestExport, target: RestExport) -> DiffSummary:
     """Modules, then privileges, then roles, each sorted by name."""
     return DiffSummary(

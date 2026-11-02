@@ -28,6 +28,7 @@ from adt_ai.shared import run_report
 
 if TYPE_CHECKING:  # pragma: no cover - type names only, no import-time cost
     from adt_ai.discovery.runner import DiscoveryResult
+    from adt_ai.export_apex.failures import ApexSliceFailure
     from adt_ai.export_apex.inventory import ApexApplication, ApexOwnerCount, ApexWorkspace
     from adt_ai.export_db.failures import ExportObjectsFailedError
     from adt_ai.export_db.group_moves import GroupMovePlan
@@ -415,6 +416,23 @@ def _application(application: ApexApplication) -> dict[str, Any]:
 def apex_applications(applications: Sequence[ApexApplication]) -> None:
     """The count is `applications_total`, so a schema with none still records."""
     extend_listing("applications", [_application(item) for item in applications])
+
+
+def apex_export_failures(schema: str, failures: Sequence[ApexSliceFailure]) -> None:
+    """The slices one segment could not write (ADT #1092), in APEX's own words."""
+    from adt_ai.export_apex.failures import failure_reason
+
+    for failure in failures:
+        fields: dict[str, Any] = {"schema": schema}
+        if failure.application is not None:
+            fields["app"] = failure.application.app_id
+        run_report.diagnostic(
+            "error",
+            oracle_code(str(failure.error), type(failure.error).__name__),
+            f"{failure.label}: {' '.join(failure_reason(failure.error))}",
+            **fields,
+        )
+    add_counts(failed=len(failures))
 
 
 def apex_workspaces(workspaces: Sequence[ApexWorkspace]) -> None:

@@ -56,6 +56,7 @@ from adt_ai.export_db.failures import ExportObjectsFailedError
 from adt_ai.export_db.files import ObjectWritePlan
 from adt_ai.export_db.groups import resolve_group_inputs
 from adt_ai.shared import identity
+from adt_ai.shared.backup import apex_backup_config
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
 from adt_ai.shared.object_types import normalize_object_type_patterns
 
@@ -217,6 +218,7 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
                 my_changes    = my_changes,
                 authors       = authors,
                 baseline      = measuring,
+                backup        = args.backup,
             )
         )
 
@@ -246,7 +248,7 @@ def _run_export_apex(
     print_module_banner("EXPORT_APEX")
     startup = _load_startup_context(args)
     root = startup.root
-    config = startup.config
+    config = apex_backup_config(startup.config) if args.backup else startup.config
     connections = startup.connections
     environment = args.env or connections.default_environment
     # `-reveal 430 431` names applications exactly as `-app 430 431 -reveal`

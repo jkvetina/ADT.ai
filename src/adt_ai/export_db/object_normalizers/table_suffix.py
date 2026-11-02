@@ -146,6 +146,12 @@ def _format_interval_suffix(suffix: str) -> list[str]:
     bound to keep, and none is invented; the clause goes out as it came, the way
     every other scheme does. Oracle refuses such a CREATE (`ORA-00906`, measured
     on SANDBOX), so DBMS_METADATA can never hand one over.
+
+    Whatever stands between the interval and the seed is the composite scheme --
+    `SUBPARTITION BY HASH ("ID") SUBPARTITIONS 4`, or a `SUBPARTITION TEMPLATE
+    (...)` -- and DBMS_METADATA puts it exactly there. The seed search used to
+    skip it, so a composite interval table exported as a plain one with exit 0
+    (`#1094`); it is kept as written, whitespace collapsed like the interval.
     """
     head = _INTERVAL_HEAD.search(suffix)
     if not head:
@@ -158,9 +164,11 @@ def _format_interval_suffix(suffix: str) -> list[str]:
     if bound_close is None:
         return []
     interval = re.sub(r"\s+", " ", suffix[head.end() : interval_close]).strip()
+    scheme = re.sub(r"\s+", " ", suffix[interval_close + 1 : seed.start()]).strip()
     bound = suffix[seed.end() - 1 : bound_close + 1]
     return [
-        f"PARTITION BY RANGE ({head.group('columns')}) INTERVAL({interval}) (",
+        f"PARTITION BY RANGE ({head.group('columns')}) INTERVAL({interval})"
+        f"{f' {scheme}' if scheme else ''} (",
         f"    PARTITION {_partition_name(seed.group('name'))} VALUES LESS THAN {bound}",
         ");",
     ]

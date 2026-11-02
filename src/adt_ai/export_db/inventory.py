@@ -4,6 +4,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from oracledb import Error as OracleError
+
 from adt_ai.export_db import queries
 
 # Reading an object's DDL moved to `ddl_reads.py` with `#923`; the retention
@@ -31,6 +33,27 @@ from adt_ai.export_db.timeless_types import (
 )
 from adt_ai.shared.db import QueryGateway
 
+#: The codes that say a dictionary view is absent or closed to this session:
+#: `ORA-00942` (table or view does not exist), `ORA-00904` (a column this release
+#: does not have) and `ORA-01031` (insufficient privileges). Every gateway puts
+#: the code in the message text.
+_MISSING_DICTIONARY_OBJECT_CODES = ("ORA-00942", "ORA-00904", "ORA-01031")
+
+
+def missing_dictionary_object(error: BaseException) -> bool:
+    """Whether `error` says the view is missing or closed, rather than that the read failed.
+
+    The four readers of a release-dependent view -- assertions, schema
+    privileges, table retention and the Data Security views -- swallow this
+    answer and nothing else. They used to catch every exception, so a lost
+    connection (`ORA-03113`), a cancelled call (`ORA-01013`) or an internal
+    error read as "none exist": the runner built `missing_objects` from the
+    truncated list and `auto_delete` removed the committed files of every
+    object the read never saw (`#1094`).
+    """
+    message = str(error)
+    return any(code in message for code in _MISSING_DICTIONARY_OBJECT_CODES)
+
 
 @dataclass(frozen=True)
 class DatabaseObject:
@@ -50,7 +73,6 @@ class ObjectDiscovery:
     MVIEW_LOG_DDL_QUERY    = queries.MVIEW_LOG_DDL_QUERY
     JOB_DDL_QUERY          = queries.JOB_DDL_QUERY
     SCHEDULE_DDL_QUERY     = queries.SCHEDULE_DDL_QUERY
-    PROGRAM_DDL_QUERY      = queries.PROGRAM_DDL_QUERY
     DBMS_METADATA_SETUP_QUERY = queries.DBMS_METADATA_SETUP_QUERY
     GRANTS_MADE_QUERY      = queries.GRANTS_MADE_QUERY
     GRANTS_RECEIVED_QUERY  = queries.GRANTS_RECEIVED_QUERY
@@ -62,6 +84,10 @@ class ObjectDiscovery:
     DIRECTORIES_QUERY      = queries.DIRECTORIES_QUERY
     DATA_GRANTS_QUERY      = queries.DATA_GRANTS_QUERY
     DATA_ROLES_QUERY       = queries.DATA_ROLES_QUERY
+    VPD_POLICIES_QUERY     = queries.VPD_POLICIES_QUERY
+    CONTEXTS_BLOCK         = queries.CONTEXTS_BLOCK
+    QUOTAS_QUERY           = queries.QUOTAS_QUERY
+    HOST_ACES_QUERY        = queries.HOST_ACES_QUERY
     COMMENTS_QUERY         = queries.COMMENTS_QUERY
     TABLE_RETENTION_QUERY  = queries.TABLE_RETENTION_QUERY
     INTERVAL_LOCAL_INDEXES_QUERY = queries.INTERVAL_LOCAL_INDEXES_QUERY
@@ -78,6 +104,8 @@ class ObjectDiscovery:
         # Per-schema cross-table Data Grant names the dictionary cannot rebuild,
         # for the warning printed once the schema's export is done (`#1063`).
         self.skipped_data_grants: dict[str, list[str]] = {}
+        # Schemas whose ACE read returned no rows, never a closed view (`#1113`).
+        self.no_host_aces: set[str] = set()
 
     def discover(
         self,
@@ -246,12 +274,12 @@ class ObjectDiscovery:
     ) -> list[DatabaseObject]:
         """The schema's 23ai assertions, or none on a dictionary without the view.
 
-        Swallowed exactly as `schema_privileges` and `table_retention` swallow:
-        `user_assertions` arrived in 23ai, ADT exports from older databases, and a
-        type that cannot exist on that release is an answer rather than an error.
-        Swallowing here rather than at the caller keeps a plain `export_db` over an
-        11g schema working, since the shipped config now asks for this type on
-        every run.
+        Swallowed exactly as `schema_privileges` and `table_retention` swallow,
+        and only that (`missing_dictionary_object`): `user_assertions` arrived
+        in 23ai, ADT exports from older databases, and a type that cannot exist
+        on that release is an answer rather than an error. Swallowing here
+        rather than at the caller keeps a plain `export_db` over an 11g schema
+        working, since the shipped config asks for this type on every run.
         """
         try:
             rows = self.gateway.fetch_all(
@@ -262,7 +290,9 @@ class ObjectDiscovery:
                     "changed_since": changed_since,
                 },
             )
-        except Exception:
+        except Exception as error:
+            if not missing_dictionary_object(error):
+                raise
             return []
         return [
             DatabaseObject(schema, "ASSERTION", name)
@@ -322,11 +352,42 @@ class ObjectDiscovery:
         Empty on any database whose dictionary has no `user_schema_privs`: the
         view is 23ai, ADT supports older ones, and a privilege that cannot exist
         needs no row. Swallowed for the same reason `table_retention` swallows,
-        it is an answer rather than an error.
+        it is an answer rather than an error; any other failure is the error
+        it looks like (`missing_dictionary_object`).
         """
         try:
             return self.gateway.fetch_all(self.SCHEMA_PRIVILEGES_QUERY)
-        except Exception:
+        except Exception as error:
+            if not missing_dictionary_object(error):
+                raise
+            return []
+
+    def quotas(self, schema: str) -> list[dict[str, Any]]:
+        """This user's tablespace quotas (`#1098`), empty where the view is closed."""
+        return self._optional_view(self.QUOTAS_QUERY)
+
+    def host_aces(self, schema: str) -> list[dict[str, Any]]:
+        """This user's network ACEs (`#1098`).
+
+        Only a successful empty read records `no_host_aces` (`#1113`).
+        """
+        self.no_host_aces.discard(schema.upper())
+        try:
+            rows = self.gateway.fetch_all(self.HOST_ACES_QUERY)
+        except (OracleError, RuntimeError) as error:
+            if not missing_dictionary_object(error):
+                raise
+            return []
+        if not rows:
+            self.no_host_aces.add(schema.upper())
+        return rows
+
+    def _optional_view(self, query: str) -> list[dict[str, Any]]:
+        try:
+            return self.gateway.fetch_all(query)
+        except Exception as error:
+            if not missing_dictionary_object(error):
+                raise
             return []
 
     def directories(self, schema: str) -> list[dict[str, Any]]:
@@ -415,8 +476,10 @@ class ObjectDiscovery:
 
         Empty for every other object, and empty on any database whose dictionary
         has no such views -- they are 21c, ADT supports older ones, and a table
-        that cannot exist needs no clause. That is why the failure is swallowed
-        rather than reported: it is an answer, not an error.
+        that cannot exist needs no clause. That is why a missing view is
+        swallowed rather than reported: it is an answer, not an error. A read
+        that failed for any other reason is raised, since an empty answer here
+        exports an immutable table as a mutable one (`#1094`).
         """
         if database_object.object_type.upper() != "TABLE":
             return ""
@@ -427,7 +490,9 @@ class ObjectDiscovery:
                     self.TABLE_RETENTION_QUERY,
                     {"schema": schema},
                 )
-            except Exception:
+            except Exception as error:
+                if not missing_dictionary_object(error):
+                    raise
                 rows = []
             self._retention_by_schema[schema] = {
                 str(row.get("TABLE_NAME") or row.get("table_name") or "").upper(): clause

@@ -89,6 +89,11 @@ class EarlyRelease:
     ``release`` is `apex_lock.release_targets` bound to the deploy's connections.
     A released lock leaves ``locks`` -- the dict `build_status_lock` releases in
     its `finally` -- so nothing is released twice; `ledger` is both halves.
+
+    It leaves AFTER the release has answered, and only if the answer names it
+    (ADT #1094): popped first, a release that raised (a lost connection, a
+    KeyboardInterrupt) took the lock out of both dicts and the `finally` never
+    saw it, so the application stayed on `RUN_ONLY`.
     """
 
     def __init__(
@@ -102,7 +107,10 @@ class EarlyRelease:
 
     def __call__(self, app_ids: Iterable[int]) -> None:
         for app_id in sorted(set(app_ids) & set(self.locks)):
-            self.released.update(self._release({app_id: self.locks.pop(app_id)}))
+            released = self._release({app_id: self.locks[app_id]})
+            for done in released:
+                self.locks.pop(done, None)
+            self.released.update(released)
 
     def ledger(self) -> dict[int, BuildStatusLock]:
         return {**self.locks, **self.released}

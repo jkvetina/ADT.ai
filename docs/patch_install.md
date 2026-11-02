@@ -214,7 +214,7 @@ Each finding is held to the baseline `adtai validate -codescan` keeps for the tr
 
 **A file no baseline covers has every finding counted as new**, so a tree `validate -codescan` never scanned fails the gate rather than passing it. Run that first to accept what a tree already holds.
 
-`codescan_fail_on` decides what counts, as it does for `validate`: `new` lists the new findings, `any` lists every finding under `ERRORS IN <folder>:`, and `none` lists the new ones and never stops the build. Under `block` a refusal reads:
+`codescan_fail_on` decides what counts, as it does for `validate`: `new` lists the new findings, `any` lists every finding under `ERRORS IN <folder>:`, and `none` lists the new ones and never stops the build on findings; an unreadable scan or a BOM file under `block` still does. Under `block` a refusal reads:
 
 ```text
 ERROR - PATCH FAILED:

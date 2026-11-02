@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import replace
 
 from adt_ai.shared.db import QueryGateway
@@ -63,9 +64,14 @@ class Ut3Runner:
         self,
         gateway: QueryGateway,
         reporter: Ut3Reporter | None = None,
+        fatal_error: Callable[[Exception], bool] | None = None,
     ) -> None:
         self.gateway = gateway
         self.reporter = reporter or Ut3Reporter()
+        # Which suite failures end the run instead of reading as one red suite
+        # (#1094): the CLI passes its connection-error test, so a dropped session
+        # does not run every remaining suite against nothing. Default: none.
+        self.fatal_error: Callable[[Exception], bool] = fatal_error or (lambda error: False)
 
     def run(self, request: Ut3Request) -> Ut3Result:
         owner = request.owner.upper()
@@ -148,14 +154,20 @@ class Ut3Runner:
                     # **A suite that raises is one red suite, not a lost run.**
                     # utPLSQL does not raise for a failing test, so anything
                     # arriving here is the suite failing to run at all: an ORA on
-                    # the producer side, a dropped connection, a `%beforeall`
-                    # that blew up. That is the "reported nothing parsable" state
-                    # the module docstring already counts as a failure, and
-                    # `unreported` is its established shape, one ERROR outcome
-                    # per discovered test carrying the cause. Letting it
-                    # propagate reported nothing about ANY suite, this one
-                    # included, and threw away results the reader had already
-                    # sat through.
+                    # the producer side, a `%beforeall` that blew up. That is the
+                    # "reported nothing parsable" state the module docstring
+                    # already counts as a failure, and `unreported` is its
+                    # established shape, one ERROR outcome per discovered test
+                    # carrying the cause. Letting it propagate reported nothing
+                    # about ANY suite, this one included, and threw away results
+                    # the reader had already sat through.
+                    #
+                    # A lost session is the one exception (#1094): every later
+                    # suite would fail the same way, so an error `fatal_error`
+                    # names ends the run through the `finally` below, which
+                    # still stops the profiler.
+                    if self.fatal_error(exc):
+                        raise
                     suite_outcomes = unreported(package, f"the suite did not run: {exc}")
                 timings.append(
                     SuiteTiming(package=package.name, seconds=time.monotonic() - started_at)
@@ -335,6 +347,7 @@ def _skip_reason(status: str, tests: tuple[SuiteTest, ...]) -> str:
 
 
 __all__ = [
+    "Callable",
     "QueryGateway",
     "SKIP_INVALID",
     "SKIP_NOT_A_SUITE",

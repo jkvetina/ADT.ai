@@ -47,7 +47,7 @@ from adt_ai.patch.immutables import never_recreated
 from adt_ai.patch.layout import apex_app_id, ensure_deploy_log_folder, is_apexlang_path
 from adt_ai.patch.models import DatabasePatchResult, PartialPatchReport, PatchError
 from adt_ai.patch.report import build_reports
-from adt_ai.patch.scripts import collect_patch_scripts, reset_patch_scripts
+from adt_ai.patch.scripts import clear_patch_scripts, collect_patch_scripts, reset_patch_scripts
 from adt_ai.patch.snapshots import _write_snapshots
 from adt_ai.patch.staleness import export_freshness, require_forced_refresh
 from adt_ai.patch.uncommitted import repo_uncommitted
@@ -135,7 +135,8 @@ def build_database_patch(
     REFRESH: the install scripts are rebuilt and the deploy logs the folder
     already carries are kept exactly as they are. Its `patch_scripts/` is NOT,
     since ADT #508, because that folder is an input to the build rather than a
-    record of one; `reset_patch_scripts` empties it below.
+    record of one; `reset_patch_scripts` hands its hand-authored scripts back
+    and `clear_patch_scripts` empties it below, both past the gates (ADT #1094).
 
     ``target_env`` no longer shapes anything written here (#924 F33): the
     install scripts are the same for every target and `-deploy -target`
@@ -171,9 +172,6 @@ def build_database_patch(
     # full export older than the components it claims to carry is Jan's stop
     # rather than a warning.
     require_fresh_full_app_exports(records, config, full_app_ids)
-    if force:
-        # A refresh rebuilds the scripts too since ADT #508; see that function.
-        reset_patch_scripts(root, folder, config, patch_code=patch_code)
     selection = _patch_files(
         root, records, config,
         full_app_ids = full_app_ids,
@@ -262,12 +260,19 @@ def build_database_patch(
         # SQLcl finds it on disk (ADT #270). The environment-free one, because
         # the script names no target (#924 F33); `-deploy` seeds its own.
         ensure_deploy_log_folder(folder, config, None)
+    if force:
+        # A refresh rebuilds the scripts too since ADT #508; see that function.
+        # Past every gate (ADT #1094), so a refused `-force` hands nothing back,
+        # and ahead of the generated scripts, whose claim scan reads the source.
+        reset_patch_scripts(root, folder, config, patch_code=patch_code)
     generated = _write_generated_patch_scripts(
         root,
         files,
         records,
         config,
         patch_code    = patch_code,
+        # The patch folder's own scripts join the claim scan (ADT #1094).
+        folder        = folder,
         # Hash mode's ALTER base is the version the baseline recorded, not a walk
         # over selected commits it has none of (ADT #447). The window is handed
         # over with it because that is where the recorded version is looked up,
@@ -286,6 +291,10 @@ def build_database_patch(
     # re-create whose ALTER could not reach the database had already deleted
     # the previous build's install scripts and snapshots, and stopped there.
     _reset_generated_artifacts(folder, config)
+    if force:
+        # The other half of the refresh, here for the same reason (ADT #1094):
+        # ahead of the gates it left a refused build with its scripts gone.
+        clear_patch_scripts(folder, config)
     # The scripts move INTO the patch before the install script is written,
     # because that is where `_script_payload` now reads them from (ADT #309).
     # Recovery runs inside this call, so a re-create that finds the source folder

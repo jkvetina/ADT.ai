@@ -57,6 +57,11 @@ class ApexExportRequest:
     # importing. Set only when the compile will run, so `planned_actions`
     # budgets its `validate` pair.
     validate_apexlang: Callable[[ApexApplication, ApexProgressReporter], None] | None = None
+    # Carry on past a failed slice and raise `ApexExportFailedError` once the run
+    # is done (ADT #1092). `export_apex` sets it unless `-debug` asked for the
+    # first traceback; every other caller (`diff -apex` pulls through this
+    # runner) keeps the first error ending the run.
+    keep_going  : bool = False
 
     @property
     def recent_days(self) -> int | float | None:

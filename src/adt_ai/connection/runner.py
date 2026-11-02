@@ -15,33 +15,24 @@ from adt_ai.connection.stored_secrets import (
     write_fingerprint,
 )
 from adt_ai.connection.wallet_commands import drop_wallet_commands, replaced_command_notes
+from adt_ai.connection.yaml_read import load_last_wins, safe_text
 from adt_ai.shared import crypto, text_files
+from adt_ai.shared.connection_fallback import PASSWORD_KEYS
 from adt_ai.shared.connection_tidy import tidy_text
 from adt_ai.shared.connections import DEFAULT_PORT
 from adt_ai.shared.secret import Secret
 from adt_ai.shared.secret_command import COMMAND_KEYS, SECRET_SOURCES
-from adt_ai.shared.yaml_io import credential_safe_yaml_reason
 
-# Keys that belong to a stored secret: the value, its encryption marker, and the
-# key fingerprint recorded beside it (ADT #399). They are stripped together when
-# cloning an environment with -like, so a copied skeleton never inherits another
-# environment's password, nor a fingerprint describing a password it no longer
-# has.
-#
-# The `_cmd` keys (ADT #397) are stripped for the same reason and it is the more
-# dangerous case of the two: a vault path names the environment it belongs to
-# (`op://vault/DEV_APP/password`), so a UAT skeleton cloned from DEV would carry
-# a working pointer at the DEV credential and connect with it.
-_SECRET_KEYS = (
-    "pwd",
-    "pwd!",
-    "pwd_key",
-    "wallet_pwd",
-    "wallet_pwd!",
-    "wallet_pwd_key",
-    "wallet_password",
-    "wallet_password_key",
-    *COMMAND_KEYS,
+# Keys that belong to a stored secret, derived from the sets the loader reads
+# (#1094: `pwd_pattern`, #1081, never joined the hand-kept list, so a `-create`
+# preview printed the password recipe and a `-like` clone copied it). A cloned
+# skeleton never inherits another environment's password, its fingerprint, or
+# its `_cmd` (ADT #397): a vault path names its environment, so UAT cloned from
+# DEV would point at the DEV credential. `auth` stays: a mode, not a secret.
+_SECRET_KEYS = frozenset(
+    (PASSWORD_KEYS - {"auth"})
+    | set(COMMAND_KEYS)
+    | {key for _, stored in SECRET_SOURCES.values() for key in stored}
 )
 
 # The pre-`wallet_pwd` spelling of the wallet password, with its encryption
@@ -51,6 +42,9 @@ _LEGACY_WALLET_KEYS = (
     "wallet_password!",
     "wallet_password_key",
 )
+
+# The `db` keys that name the same database address as `hostname`/`port`/`service`.
+_ADDRESS_ALIAS_KEYS = ("ords", "tns", "sid")
 
 ConnectionEditSecretField = Literal[
     "password", "wallet_password", "key", "old_key", "new_key"
@@ -147,28 +141,6 @@ def _yaml() -> YAML:
     return yaml
 
 
-def _reject_unsafe_yaml(text: str) -> None:
-    """Reject anything a safe loader would refuse before round-tripping.
-
-    The editor loads with ruamel's RoundTrip loader to preserve comments and key
-    order on write, but RoundTrip is *not* a safe loader. A connection file
-    authored elsewhere could carry a ``!!python/...`` (or other custom) tag. A
-    safe-load pass first ensures the document is plain YAML; only then do we hand
-    it to the round-tripper. (In practice ruamel's RoundTrip loader degrades such
-    tags to plain data rather than executing them, so this is defense-in-depth,
-    not an RCE patch, but it keeps unsupported documents out entirely.)
-    """
-    try:
-        YAML(typ="safe").load(text)
-    except Exception as error:
-        # Position only, and nothing chained: ruamel's refusal of a repeated
-        # key quotes both values, and a repeated `pwd:` is two passwords (#958).
-        raise ConnectionEditError(
-            "UNSUPPORTED OR UNSAFE YAML IN CONNECTION FILE\n\n"
-            f"{credential_safe_yaml_reason(error)}"
-        ) from None
-
-
 def _plain(node: Any) -> Any:
     """Rebuild a ruamel node as plain dict/list, dropping comments and anchors.
 
@@ -240,7 +212,7 @@ class ConnectionEditor:
 
     def run(self, request: ConnectionEditRequest) -> ConnectionEditResult:
         if request.path.exists():
-            text = request.path.read_text(encoding="utf-8")
+            text = safe_text(request.path)
         elif request.action == "create":
             text = ""
         else:
@@ -248,9 +220,8 @@ class ConnectionEditor:
             # edits an existing file, so surface the miss as an edit error (exit 2)
             # instead of a raw FileNotFoundError traceback.
             raise ConnectionEditError(f"CONNECTION FILE NOT FOUND: {request.path}")
-        _reject_unsafe_yaml(text)
         yaml = _yaml()
-        data = yaml.load(text)
+        data = load_last_wins(yaml, text)
         if data is None:
             data = {}
 
@@ -445,6 +416,12 @@ class ConnectionEditor:
         new_env: dict[str, Any] = {"db": db}
         if "wallet" in source:
             new_env["wallet"] = _strip_secrets(_plain(source.get("wallet", {})) or {})
+        # `ords`, `tns` and `sid` are the same address as hostname, port and
+        # service: a clone told where its own database is must not keep the
+        # source's other way of reaching the old one (ADT #1095).
+        if request.hostname or request.port is not None or request.service:
+            for key in _ADDRESS_ALIAS_KEYS:
+                db.pop(key, None)
         if request.hostname:
             db["hostname"] = request.hostname
         if request.port is not None:

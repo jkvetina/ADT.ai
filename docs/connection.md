@@ -4,7 +4,7 @@
 
 `connection` manages a project's connection file from the command line instead of by hand-editing YAML. Reach for it to bootstrap a project's first connection, to add an environment or a schema, to set or rotate a password without ever typing one into a shell, and to check that a connection actually opens.
 
-It resolves the same connection file every other command uses, through `-root` and `-config-dir`, and applies one structural change to it, except `-test`, which only reads it. `-create` can create that file when it is missing; the other actions edit an existing one.
+It resolves the same connection file every other command uses, through `-root` and `-config-dir`, and applies one structural change to it, except `-test`, which only reads it. A key written twice keeps its last value, as in every other command, and is written back once. `-create` can create a missing file; the other actions edit an existing one.
 
 <br>
 
@@ -144,7 +144,7 @@ TIMER: 0s
 
 - **The count is the whole schema**, read from `USER_OBJECTS`. The connection's `prefix` and `ignore` filters decide what an export writes, not what the schema holds, so they do not narrow it.
 - Oracle's own objects stay out: system-generated names, the recycle bin, and partition and LOB segments, which are part of their table. An empty schema prints no `OBJECTS OVERVIEW:`.
-- `-test` only reads, so it takes neither `-go` nor `-encrypt`.
+- `-test` only reads, so it takes neither `-go` nor `-encrypt`; like every command that loads the file, it tidies an older one once (see [the SQLcl connection name](#the-sqlcl-connection-name) below).
 
 <br>
 
@@ -202,7 +202,9 @@ Both filters take several patterns, and the two spellings mean the same thing: `
 
 Each pattern is SQL LIKE, so a literal `_` or `%` in a name is escaped with `\`. `ignore: 'LEGACY\_%'` skips only names starting `LEGACY_`; unescaped, `LEGACY_%` would skip every name `LEGACY` plus one character plus anything.
 
-There is no shipped connection template, and there never will be: `connections/*` is gitignored because a connection file holds credentials, and `doctor -init` writes only the folder placeholders. Bootstrap your first file with `-create`, which writes the whole structure for you.
+There is no shipped connection template, and there never will be: a connection file holds credentials. The scaffolded `.gitignore` covers both places it is read from, `connections.yaml` at the project root and `connections/*`, and `doctor -init` writes only the folder placeholders.
+
+Bootstrap your first file with `-create`, which writes the whole structure for you, to `<project>/connections.yaml` unless the config names another path. A file it brings into being inside a git repository is also added to that repository's private `.git/info/exclude`, so a project scaffolded before the template covered the root file keeps it out of commits too.
 
 For a wallet or APEX project the same action carries the rest:
 
@@ -233,7 +235,7 @@ CORE:
 
 For `-add-env` the environment must not already exist. From scratch it builds a `db` block from `-host`, `-port` (default `1521`) and `-service`, plus empty defaults and schemas blocks ready for `-add-schema`.
 
-With `-like`, the new environment clones the source environment's `db` and `wallet` blocks, with any passwords stripped, then applies whatever `-host`, `-port` or `-service` overrides you passed. A cloned environment starts with no schemas of its own.
+With `-like`, the new environment clones the source's `db` and `wallet` blocks minus every password, pattern and vault command, then applies your `-host`, `-port` or `-service`. Any of those three also drops the source's `ords`, `tns` and `sid`, the same address; with none, they copy. A clone starts with no schemas.
 
 It still reaches every schema the file's first environment defines, as the next section shows, so `-add-schema` on `DEV` alone reaches a new schema in every environment that shares its passwords.
 
@@ -272,16 +274,16 @@ STAGE:
 
 Every SQLcl script ADT generates, REST export included, connects through a **named SQLcl connection** rather than embedding a username, password and wallet path in the script. The password lives in SQLcl's own store, in the operating system's secure storage, so a per-call script carries `connect -name ADT_…` and nothing else.
 
-- **Naming.** `ADT_` plus the connection file's basename. Where the file defines more than one environment the name gains the environment, and where that environment reaches more than one schema, the first environment's it takes included, it gains the schema, so every environment and schema pair maps to its own name: `ADT_<FILE>_<ENV>_<SCHEMA>`. A project using the generic filename is named after its project folder instead.
-- **The name is not stored in the connection file.** It is worked out on every run. Write `sqlcl:` on a schema's `db:` block to pin a different name; a name you wrote always wins over the generated one. A file holding the `sqlcl:` and `sqlcl_sync:` lines earlier versions recorded is rewritten once, by the next command that reads it, to delete them, together with every `export:` block whose filters are all empty on every schema but the first, which keeps its block to show where the filters go. A file with none of those lines is never rewritten.
-- **A name an earlier version recorded changes once.** The first connect under the new name finds nothing in SQLcl's store and re-registers it; the old hashed entry stays in the store unused. A file with no password connects only through the store, so it cannot re-register: save its connection once by hand under the new name.
+- **Naming.** `ADT_` plus the connection file's basename, then the environment where the file defines more than one, then always the schema, so every environment and schema pair maps to its own name and adding a schema renames none: `ADT_<FILE>_<SCHEMA>`, or `ADT_<FILE>_<ENV>_<SCHEMA>`. A project using the generic filename is named after its project folder instead.
+- **The name is not stored in the connection file.** It is worked out on every run. Write `sqlcl:` on a schema's `db:` block to pin a different name; a name you wrote always wins over the generated one. A file holding the `sqlcl:` and `sqlcl_sync:` lines earlier versions recorded is rewritten once, by the next command that loads it and only when the file is writable, to delete them, together with every `export:` block whose filters are all empty on every schema but the first, which keeps its block to show where the filters go. A schema left holding nothing stays listed, as `APP: {}`. A file with none of those lines, or one made read-only, is never rewritten; the `connection` editor itself reads without tidying and tidies only what it writes with `-go`.
+- **A name an earlier version recorded or derived changes once.** A single-schema environment's name used to end at the file or environment. The first connect under the new name finds nothing in SQLcl's store and re-registers it; the old hashed entry stays in the store unused. A file with no password connects only through the store, so it cannot re-register: save its connection once by hand under the new name.
 - **Connect first, re-register only on failure.** Every named SQLcl connect goes by name, with no credential in the script. When that fails, because the store has no such name (a new machine, a cleared store), the database refuses the stored password, or the check below finds the wrong database, ADT re-saves the name from the connection file and retries once by itself. A changed password therefore costs nothing until the stored one stops working.
-- **The session is checked before anything runs.** Right after the connect, the same script compares the logged-in user, and the service where the file names a `hostname`, with the connection file. A stored name that reaches a different user or service is re-registered; if the file's own credentials still reach a different one, the command stops and prints both.
+- **The session is checked before anything runs.** Right after the connect, the same script compares the logged-in user with the connection file, and the service wherever the file names one: `service:` or `sid:` beside a `hostname`, or the `SERVICE_NAME=` / `SID=` of a full descriptor, or the `/service` of an EZConnect string. A bare TNS alias, a wallet's included, names no service, so only the user is compared; the port is never compared. A stored name that reaches a different user or service is re-registered; if the file's own credentials still reach a different one, the command stops and prints both.
 - **A failed connect is an error, not an empty result.** Every generated `connect` runs under `WHENEVER SQLERROR EXIT FAILURE`, so a connection that could not be opened fails the command with the SQLcl message rather than running on to its `exit;` and returning `0`.
 - **Wallets.** Registration passes an absolute wallet path, so a wallet project needs nothing extra.
 - **Opt-out.** Set `sqlcl_named_connections: false` in project `config.yaml` to restore the older inline connect scripts.
 - **ORDS.** A connection reached over ORDS (`ords:`) registers no name, because SQLcl cannot save a REST connection. connection_ords.md covers that connection shape.
-- **Driver.** SQLcl is always launched on the JDBC thin driver, with `ORACLE_HOME` withheld from its environment, because its launcher otherwise reads that variable as a request for the thick driver and builds a URL the JVM cannot satisfy. It also gets `-Doracle.sqlcl.skipOracleHome=true` in `JAVA_TOOL_OPTIONS`, added to whatever you set there, because on Windows SQLcl finds an installed Oracle client through the registry too, and a client older than 23 then fails with `no ocijdbc23 in java.library.path`. Nothing else changes: `PATH` still finds the launcher, `TNS_ADMIN` still resolves aliases, wallet connects are unaffected, and ADT's own Python connection keeps thick mode, since only the SQLcl child is started without the variable.
+- **Driver.** SQLcl is launched on the JDBC thin driver, with `ORACLE_HOME` withheld from its environment, because its launcher otherwise reads that variable as a request for the thick driver and builds a URL the JVM cannot satisfy. The one exception is `auth: external`: its credential lives in a wallet only the OCI client can read, so that connection's SQLcl runs thick (`oci=external`, the `client_lib_dir` folder) and keeps `ORACLE_HOME`, decided per connection rather than for the run. It also gets `-Doracle.sqlcl.skipOracleHome=true` in `JAVA_TOOL_OPTIONS`, added to whatever you set there, because on Windows SQLcl finds an installed Oracle client through the registry too, and a client older than 23 then fails with `no ocijdbc23 in java.library.path`. Nothing else changes: `PATH` still finds the launcher, `TNS_ADMIN` still resolves aliases, wallet connects are unaffected, and ADT's own Python connection keeps thick mode, since only the SQLcl child is started without the variable.
 
 <br>
 
@@ -297,11 +299,11 @@ Exactly one action flag is required, and each names the further arguments it nee
 | `-set-pwd` | No | off | Action. Set a schema password. Requires `-env` and `-schema`, and prompts interactively with `-go`. |
 | `-set-wallet-pwd` | No | off | Action. Set an environment's wallet password. Requires `-env`, and prompts interactively with `-go`. |
 | `-rekey` | No | off | Action. Re-encrypt every encrypted secret in the file under a new key. Requires `-old-key` and `-new-key`, takes no `-env` or `-schema`, and rejects `-encrypt`. |
-| `-test` | No | off | Action. Try every schema of `-env` and print `OK` or `ERROR` for each; with `-schema`, test that one and print its versions and object counts. Writes nothing. |
+| `-test` | No | off | Action. Try every schema of `-env` and print `OK` or `ERROR` for each; with `-schema`, test that one and print its versions and object counts. Writes nothing of its own; loading an older file tidies it once, as every command does. |
 | `-old-key`, `--old-key` | No | none | With `-rekey`, the key the file's secrets are encrypted with today. A value or a path to a key file. |
 | `-new-key`, `--new-key` | No | none | With `-rekey`, the key to re-encrypt them with. A value or a path to a key file. |
 | `-user`, `--user` | No | schema name | Database user for `-create` and `-add-schema`. |
-| `-like`, `--like` | No | none | With `-add-env`, clone this environment's `db` and `wallet` blocks, secrets stripped. |
+| `-like`, `--like` | No | none | With `-add-env`, clone this environment's `db` and `wallet` blocks, secrets stripped; with `-host`, `-port` or `-service`, its `ords`, `tns` and `sid` are dropped. |
 | `-host`, `--host` | No | none | With `-create` or `-add-env`, set the hostname. |
 | `-port`, `--port` | No | `1521` | With `-create` or `-add-env`, set the port. |
 | `-service`, `--service` | No | none | With `-create` or `-add-env`, set the service. |

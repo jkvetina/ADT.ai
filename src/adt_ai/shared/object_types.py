@@ -37,9 +37,14 @@ PLSQL_OBJECT_TYPES = ("PACKAGE", "PACKAGE BODY", "PROCEDURE", "FUNCTION", "TRIGG
 #
 # DATA GRANT and DATA ROLE are 26ai Deep Data Security (`#1063`). Neither has a
 # ``user_objects`` row, so both are read from their own views beside GRANT.
+#
+# VPD POLICY and CONTEXT are row-level security (`#1098`). A policy hangs off its
+# table and a context is a SYS-owned object, so neither is a ``user_objects`` row
+# of the schema and both are read beside GRANT as well.
 ORACLE_OBJECT_TYPES = frozenset(
     {
         "ASSERTION",
+        "CONTEXT",
         "DATA",
         "DATA GRANT",
         "DATA ROLE",
@@ -65,6 +70,7 @@ ORACLE_OBJECT_TYPES = frozenset(
         "TYPE",
         "TYPE BODY",
         "VIEW",
+        "VPD POLICY",
     }
 )
 
@@ -72,6 +78,13 @@ ORACLE_OBJECT_TYPES = frozenset(
 # Written beside GRANT rather than discovered, so every place that sets the two
 # pseudo-types apart from `user_objects` sets these apart as well.
 DATA_SECURITY_OBJECT_TYPES = ("DATA ROLE", "DATA GRANT")
+
+# The two row-level security types (`#1098`), context first because a policy
+# function usually reads one. Written beside GRANT for the same reason as above.
+ROW_SECURITY_OBJECT_TYPES = ("CONTEXT", "VPD POLICY")
+
+# Every type the GRANT pass writes besides GRANT itself.
+ARTIFACT_OBJECT_TYPES = (*DATA_SECURITY_OBJECT_TYPES, *ROW_SECURITY_OBJECT_TYPES)
 
 # Spellings that name a canonical type without being one. Keys are matched against
 # the whole token (never word-by-word), so MVIEW -> MATERIALIZED VIEW cannot corrupt

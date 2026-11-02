@@ -29,6 +29,7 @@ in `src/adt_ai`, this module and beyond.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import subprocess
 from collections.abc import Mapping
@@ -37,7 +38,14 @@ from pathlib import Path
 
 from adt_ai.shared import text_files
 from adt_ai.shared.git_batch import batched_blob
+from adt_ai.shared.git_blobs import blob_contents
 from adt_ai.shared.subprocess_env import safe_subprocess_environment
+
+#: How long the best-effort remote refresh may wait on the network (ADT #1094).
+#: Unbounded, a remote that never answered held `calendar`, `rebuild` and
+#: `patch -pull` for the operating system's TCP timeout, under a banner that had
+#: already printed.
+GIT_NETWORK_TIMEOUT_SECONDS = 20
 
 
 @dataclass(frozen=True)
@@ -119,50 +127,11 @@ def changed_files(root: Path, commit_hash: str) -> list[ChangedFile]:
 
 
 def _blob_contents(root: Path, commit_hash: str, paths: list[str]) -> dict[str, bytes]:
-    # Resolve `<commit>:<path>` specs to raw blob bytes in one batched git call.
-    # `git cat-file --batch` echoes one record per input line, in order: a present
-    # object is `<oid> <type> <size>\n<size bytes>\n`; an unresolvable spec (e.g. a
-    # gitlink whose commit lives in the submodule, not this repo) is `<spec> missing\n`.
-    # Bodies are read by byte size, so binary / NUL-containing blobs are safe.
-    if not paths:
-        return {}
-    specs = "".join(f"{commit_hash}:{path}\n" for path in paths)
-    completed = subprocess.run(
-        ["git", "cat-file", "--batch"],
-        cwd=root,
-        input=specs.encode("utf-8", errors="surrogateescape"),
-        capture_output=True,
-        check=True,
-        env=safe_subprocess_environment(),
-    )
-    output = completed.stdout
-
-    contents: dict[str, bytes] = {}
-    pos = 0
-    for record_index, path in enumerate(paths):
-        newline = output.find(b"\n", pos)
-        if newline == -1:
-            raise RuntimeError(
-                f"git cat-file returned {record_index} complete record(s) "
-                f"for {len(paths)} path(s)"
-            )
-        header = output[pos:newline].decode(errors="replace")
-        pos = newline + 1
-        if header.endswith(" missing"):
-            continue
-        try:
-            _oid, obj_type, size_text = header.split(" ", 2)
-            size = int(size_text)
-        except (TypeError, ValueError) as error:
-            raise RuntimeError(f"Malformed git cat-file response: {header!r}") from error
-        if pos + size >= len(output):
-            raise RuntimeError(f"Truncated git cat-file body for {path!r}")
-        if output[pos + size : pos + size + 1] != b"\n":
-            raise RuntimeError(f"Malformed git cat-file body terminator for {path!r}")
-        if obj_type == "blob":
-            contents[path] = output[pos : pos + size]
-        pos += size + 1  # skip the body and its trailing newline
-    return contents
+    # The batched read lives in `shared/git_blobs` since ADT #1094, which also
+    # keeps a path holding a newline out of the batch, where it was two requests
+    # and shifted every record after it. The name stays: `changed_files` and the
+    # tests reach the read through it.
+    return blob_contents(root, commit_hash, paths)
 
 
 def file_payload_hash(payload: bytes | str, encoding: str = "utf-8") -> str:
@@ -321,16 +290,23 @@ def git_config_value(key: str, root: Path | None = None) -> str:
 def fetch_origin(root: Path) -> None:
     # Best-effort refresh of remote-tracking refs; `--prune` drops branches
     # deleted on the server. Offline/no-remote failures are non-fatal, fall
-    # back to whatever refs are already present locally.
-    subprocess.run(
-        ["git", "fetch", "--quiet", "--prune", "origin"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=safe_subprocess_environment(),
-    )
+    # back to whatever refs are already present locally. Bounded, and with git's
+    # own credential prompt off for this one call (ADT #1094): the output is
+    # captured, so a remote asking for a password asked on /dev/tty, mid-banner,
+    # and a remote that never answered blocked for the OS TCP timeout.
+    environment = safe_subprocess_environment()
+    environment["GIT_TERMINAL_PROMPT"] = "0"
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        subprocess.run(
+            ["git", "fetch", "--quiet", "--prune", "origin"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=environment,
+            timeout=GIT_NETWORK_TIMEOUT_SECONDS,
+        )
 
 
 def git_ref_exists(root: Path, ref: str) -> bool:

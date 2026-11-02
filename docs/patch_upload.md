@@ -73,7 +73,7 @@ TIMER: 12s
 - The watch uploads nothing already in the folder when it starts. It ships what you save while it runs, so a first pass over the whole folder would overwrite APEX with whatever the repository happened to hold. When that is what you want, run `-once` instead.
 - A file counts as changed when its timestamp moves forward. Restoring an older copy therefore does not push the stale file over the newer one already in APEX.
 - `UPLOADED` counts the files this session sent, and prints once you stop the watch.
-- A file that fails to upload, or fails to minify, ends its row `UPLOAD FAILED` or `MINIFY FAILED` instead of `OK`. The watch keeps going and picks up the next saved file.
+- A file that fails to upload ends its row `UPLOAD FAILED` instead of `OK`. A `.css` or `.js` that is not UTF-8 goes up as it is, its row reads `OK`, and a second row under the same name reads `MINIFY FAILED`, since minifying it would mean guessing its encoding. The watch keeps going and picks up the next saved file.
 
 With `-once`, every file in the folder gets a row in path order, subfolders included, and the count closes the run. Here the folder held a script, a stylesheet in `css/` and that stylesheet's minified copy:
 
@@ -108,7 +108,7 @@ TIMER: 0s
 
 Without `-folder`, the folder is the one `export_apex -files` and `-files_ws` write into, resolved from the project's own `path_apex`, `apex_path_app` and `apex_path_files` settings. The two cannot disagree about where static files live, so what you edit is what the next export reads back.
 
-`-files_ws` moves the watch up one level, to the workspace files folder, and changes nothing else. It is the same flag `-create` uses to widen what a build carries, which is deliberate: one command says "workspace static files" one way. Outside upload mode it still applies only to `-create`.
+`-files_ws` moves the watch sideways, to the workspace files folder (`workspace/files` under `path_apex` by default), and changes nothing else. It is the same flag `-create` uses to widen what a build carries, which is deliberate: one command says "workspace static files" one way. Outside upload mode it still applies only to `-create`.
 
 `-folder` overrides both and takes any path, which is what makes the verb usable on a tree ADT.ai did not export. A folder that is not there is named and the run stops rather than watching nothing.
 
@@ -165,4 +165,4 @@ ADT.ai shipped it as a command of its own, `adtai live_upload`, until it folded 
 | `-once`, `--once` | No | off | Upload every file in the folder once and exit instead of watching. Refused together with `-interval`. |
 | `-target`, `--target` | No | connection file default environment | Environment to upload into. |
 
-`-schema` and the other shared options (-root, -config-dir, -key, -debug, -beep, -nobeep, -json) are on [console.md](console.md#shared-arguments). Every other `patch` argument is on [patch.md](patch.md), and refused beside `-upload` where it names a patch the verb has none of.
+`-schema` and the other shared options (-root, -config-dir, -key, -debug, -beep, -nobeep, -json) are on [console.md](console.md#shared-arguments). Every other `patch` argument is on [patch.md](patch.md); the eight named at the top of this page are refused beside `-upload`, and any other is parsed and never read, since the run returns before it is.

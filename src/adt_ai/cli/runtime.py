@@ -5,7 +5,7 @@ import io
 import sys
 import time
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
+from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout, suppress
 from pathlib import Path
 from typing import TextIO
 
@@ -119,11 +119,18 @@ def _tracked_screen() -> Iterator[_TrackedScreen]:
     try:
         yield _TrackedScreen(tracked_stdout, tracked_stderr)
     finally:
-        tracked_stdout.finalize()
-        if tracked_stderr is not tracked_stdout:
-            tracked_stderr.finalize()
+        # The real streams come back FIRST (ADT #1094). `finalize()` writes the
+        # held-back newlines to them, and on a closed pipe (`adtai ... | head`)
+        # that write raised `BrokenPipeError` out of this block before the
+        # restore ran, so the process went on printing through a tracker nobody
+        # would finalize. Each finalize is best effort for the same reason.
         sys.stdout = original_stdout
         sys.stderr = original_stderr
+        with suppress(OSError):
+            tracked_stdout.finalize()
+        if tracked_stderr is not tracked_stdout:
+            with suppress(OSError):
+                tracked_stderr.finalize()
 
 
 def _run_static_screen(

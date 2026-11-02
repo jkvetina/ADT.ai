@@ -107,6 +107,7 @@ SELECT
         SELECT COUNT(DISTINCT a.owner)
         FROM apex_applications a
         WHERE a.workspace = t.workspace
+            AND a.is_working_copy = 'No'
             AND a.application_id BETWEEN NVL(:min_app_id, a.application_id)
                 AND NVL(:max_app_id, a.application_id)
     )                   AS owners,
@@ -114,6 +115,7 @@ SELECT
         SELECT COUNT(*)
         FROM apex_applications a
         WHERE a.workspace = t.workspace
+            AND a.is_working_copy = 'No'
             AND a.application_id BETWEEN NVL(:min_app_id, a.application_id)
                 AND NVL(:max_app_id, a.application_id)
     )                   AS applications,
@@ -157,6 +159,7 @@ FROM apex_applications a
 WHERE 1 = 1
     AND a.workspace     NOT IN ('INTERNAL')
     AND a.workspace     NOT LIKE 'COM.ORACLE.%'
+    AND a.is_working_copy = 'No'
     AND (UPPER('|' || :schemas || '|') LIKE '%|' || UPPER(a.owner) || '|%' OR :schemas IS NULL)
     AND a.application_id BETWEEN NVL(:min_app_id, a.application_id)
         AND NVL(:max_app_id, a.application_id)

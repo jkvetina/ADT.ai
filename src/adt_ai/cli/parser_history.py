@@ -75,8 +75,9 @@ def add_history_parsers(subparsers: SubParsers) -> None:
         action = "append",
         nargs  = "+",
         # Three spellings, all resolved by the shared `commit_ref_matches`
-        # (`shared/commit_discovery.py:310`) that `patch -commit` also uses, so
-        # both rows describe the same range syntax the same way (ADT #326).
+        # (`shared/commit_selection.py:245`, re-exported by `commit_discovery`)
+        # that `patch -commit` also uses, so both rows describe the same range
+        # syntax the same way (ADT #326).
         help   = "commit number(s), hash prefix(es), or ranges MIN-MAX / MIN+, "
                  "repeatable, comma- or space-separated",
     )

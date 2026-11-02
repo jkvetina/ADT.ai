@@ -481,6 +481,10 @@ def _write_hash_lines(
     return path
 
 
+#: The two headers this module writes (`write_baseline`, `write_patch_hashes`).
+_HEADER_PREFIXES = ("# baseline ", "# patch ")
+
+
 def _parse_hash_lines(
     path: Path,
 ) -> tuple[dict[str, str], dict[str, int], str, str]:
@@ -489,11 +493,15 @@ def _parse_hash_lines(
     stamp = ""
     source = ""
     for line in path.read_text(encoding="utf-8").splitlines():
-        if line.startswith("#"):
+        # The header's own shape, never any `#`-leading line, and the row read
+        # from its right end (ADT #1094): a path holding `|` or opening on `#`
+        # otherwise fell out of the parse, and `merge_into_baseline` rewrites
+        # the file from what it parsed, so the path silently left the baseline.
+        if line.startswith(_HEADER_PREFIXES):
             stamp = _header_stamp(line)
             source = _header_source(line)
             continue
-        parts = [part.strip() for part in line.split("|")]
+        parts = [part.strip() for part in line.rsplit("|", 2)]
         if len(parts) != 3 or not parts[0]:
             continue
         hashes[parts[0]] = parts[2]

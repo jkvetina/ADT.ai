@@ -22,10 +22,12 @@ leaves its copies standing, so the round trip owes the step; the description
 every copy is created with, `FINGERPRINT`, is what proves ADT made it, the way
 the derived alias does for a derived id.
 
-**One copy per application per patch.** The copy is named for the patch folder,
-so a redeploy of the same patch finds the copy its first run made and imports
-over it, the way a redeploy onto a derived id lands on the same sandbox; a
-different patch makes its own.
+**One copy per application per patch.** The copy is named for the patch folder
+and described with `FINGERPRINT`, and it is found by both (ADT #1094): a
+redeploy of the same patch finds the copy its first run made and imports over
+it, the way a redeploy onto a derived id lands on the same sandbox; a different
+patch makes its own, and a copy a developer made in the Builder under the
+patch's name is not the deploy's and is never imported over.
 """
 
 from __future__ import annotations
@@ -143,8 +145,11 @@ def read_deployed_copies(gateway: Any) -> dict[int, int]:
 
 
 def _find(gateway: Any, app_id: int, name: str) -> tuple[int, str] | None:
+    # The fingerprint is bound beside the name (ADT #1094): a developer's own
+    # copy named like the patch is not the deploy's to import over.
     for row in gateway.fetch_all(
-        queries.APEX_WORKING_COPY_QUERY, {"app_id": int(app_id), "name": name}
+        queries.APEX_WORKING_COPY_QUERY,
+        {"app_id": int(app_id), "name": name, "description": FINGERPRINT},
     ) or []:
         return int(row_value(row, "APP_ID")), str(row_value(row, "APP_ALIAS") or "")
     return None

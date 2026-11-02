@@ -320,6 +320,24 @@ FROM   user_schema_privs
 ORDER  BY schema, privilege
 """.strip()
 
+# A schema's tablespace quotas (`#1098`). `MAX_BYTES = -1` is UNLIMITED, measured
+# on the live 26ai fixture 2026-10-30; a dropped tablespace keeps its row and has
+# nothing to replay onto.
+QUOTAS_QUERY = """
+SELECT tablespace_name, max_bytes
+FROM   user_ts_quotas
+WHERE  dropped = 'NO'
+ORDER  BY tablespace_name
+""".strip()
+
+# A schema's network ACEs (`#1098`), one row per host, port range and privilege.
+# A `RESOLVE` ACE carries no ports, measured on the live 26ai fixture 2026-10-30.
+HOST_ACES_QUERY = """
+SELECT host, lower_port, upper_port, privilege, status
+FROM   user_host_aces
+ORDER  BY host, lower_port, upper_port, privilege
+""".strip()
+
 # A 23ai assertion, whose `user_objects` row is typed `UNDEFINED` rather than
 # `ASSERTION` (measured on the live 26ai fixture 2026-09-08), so `OBJECTS_QUERY`
 # can never name it and `UNDEFINED` is too shared a bucket to export wholesale.

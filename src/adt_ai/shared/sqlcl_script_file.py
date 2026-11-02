@@ -39,7 +39,7 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 
-from adt_ai.shared import text_files
+from adt_ai.shared.internal_paths import ensure_gitignored
 from adt_ai.shared.sqlcl_quoting import quote_sqlcl_argument
 
 _TEMP_GITIGNORE_ENTRY = "config/temp/"
@@ -82,18 +82,11 @@ def _connect_secrets(script: str) -> set[str]:
 def _ensure_temp_ignored(root: Path) -> None:
     """Idempotently ensure ``config/temp/`` is git-ignored in ``root``.
 
-    Mirrors ``ensure_discovery_ignored`` for ``config/discovery/``, appends the
-    entry to an existing ``.gitignore`` (fixing a missing trailing newline) or
-    creates the file when absent.
+    Through the one shared read-modify-write (ADT #1094): this copy read the
+    file unguarded, so a cp1250 comment in ``.gitignore`` failed every
+    passwordless SQLcl script before SQLcl had started.
     """
-    gitignore = root / ".gitignore"
-    existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
-    if _TEMP_GITIGNORE_ENTRY in {line.strip() for line in existing.splitlines()}:
-        return
-    prefix = existing
-    if prefix and not prefix.endswith("\n"):
-        prefix += "\n"
-    text_files.write_text(gitignore, prefix + _TEMP_GITIGNORE_ENTRY + "\n")
+    ensure_gitignored(root, _TEMP_GITIGNORE_ENTRY)
 
 
 def _sqlcl_temp_dir(project_root: Path | None) -> Path | None:

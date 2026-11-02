@@ -61,6 +61,7 @@ def object_content(
         object_display_name = display_name,
         table_retention     = discovery.table_retention(database_object),
         interval_local_index = discovery.interval_local_index(database_object),
+        keep_start_with     = request.backup,
     )
     fix_content = (
         build_table_fix_sql(raw_ddl, database_object.name, display_name)

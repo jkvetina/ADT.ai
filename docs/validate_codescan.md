@@ -1,6 +1,6 @@
 # Code Scan (adtai validate -codescan)
 
-`adtai validate -codescan` runs SQLcl's own `codescan` over the exported database and APEXlang code and fails only on findings that are new since each tree's last clean run. Like a plain `validate` it never connects, so it runs in CI and from any checkout. The command itself is on [validate.md](validate.md).
+`adtai validate -codescan` runs SQLcl's own `codescan` over the exported database and APEXlang code and fails on findings that are new since each tree's last clean run, or on every finding under `codescan_fail_on: any`. Like a plain `validate` it never connects, so it runs in CI and from any checkout. The command itself is on [validate.md](validate.md).
 
 <br>
 
@@ -53,7 +53,7 @@ The author reads through `repo_authors`, and a subject too long for the line is 
 
 **Each tree is held to its own baseline**, its last clean run, kept in `config/internal/codescan.db` with twenty runs per tree. A finding is its file, rule, message and target, never its line, so a finding that moved is still the same one. Positions print 1-based; a finding about a whole component prints its file alone.
 
-**A run records only when nothing in it is new**, so a failing run never becomes the baseline and a fixed finding drops out of it: the bar only tightens. A tree's first run has nothing to compare with, so everything it holds is known, and it records and passes.
+**A run records only when nothing in it is new**, so a failing run never becomes the baseline and a fixed finding drops out of it: the bar only tightens. A tree's first run has nothing to compare with, so everything it holds is known; under `new` or `none` it records and passes, under `any` it passes and records only when it holds no finding at all. A tree carrying a BOM file never records (below). A store on disk that cannot be read, locked or corrupt, is not a first run: every finding is listed as new, the run fails and nothing is recorded, so the bar never resets by accident.
 
 `codescan_fail_on` decides what fails:
 

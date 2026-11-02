@@ -36,7 +36,10 @@ def exclude_from_git(start: Path, pattern: str) -> None:
         prefix = existing + ("\n" if existing and not existing.endswith("\n") else "")
         exclude.parent.mkdir(parents=True, exist_ok=True)
         text_files.write_text(exclude, prefix + pattern + "\n")
-    except OSError:
+    except (OSError, ValueError):
+        # `ValueError` too (ADT #1094): a `UnicodeDecodeError` on a cp1250
+        # comment is one, not an `OSError`, and it escaped this best-effort write
+        # as a traceback. The file is left as found rather than rewritten blind.
         return
 
 

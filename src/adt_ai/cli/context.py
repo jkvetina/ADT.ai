@@ -54,6 +54,7 @@ from adt_ai.cli.context_errors import (
     _project_relative,
 )
 from adt_ai.shared import text_files
+from adt_ai.shared.config import InvalidConfigValueError
 
 FORCED_CHIME_DEFAULT_THEME = "chime"
 DISABLED_CHIME_THEME_VALUES = {"", "0", "false", "no", "off"}
@@ -320,7 +321,16 @@ def _load_startup_file(
         candidate = directory / "STARTUP.sql"
         if not candidate.is_file():
             continue
-        text = candidate.read_text(encoding="utf-8")
+        try:
+            text = candidate.read_text(encoding="utf-8")
+        except (OSError, ValueError) as error:
+            # A cp1250 comment, or a file the process cannot open, ended the run
+            # on UNEXPECTED ERROR naming no file (ADT #1094). It is a config file
+            # that was found and cannot be read, which is the loader's own case,
+            # so it takes the loader's own error and headline.
+            raise InvalidConfigValueError(
+                f"COULD NOT READ CONFIG FILE: {candidate}\n\n{error}"
+            ) from error
         if split_statements(text):
             return text
     return None

@@ -99,7 +99,9 @@ def _build_records_with_stores(
     #
     # In --update mode each branch resumes from its stored tip: existing records
     # are reused as-is (never re-hashed) and only commits after the last stored
-    # id are fetched. A branch with no usable store falls back to a full window.
+    # id are fetched. A branch with no usable store falls back to a full window:
+    # none yet, or a file `CommitStore.open` could not read and recreated empty
+    # (not a database, malformed, or a newer ADT.ai's version, #1094).
     branch_lines: dict[str, list[CommitLine]] = {}
     store_paths: dict[str, Path] = {}
     positions: dict[str, dict[str, int]] = {}

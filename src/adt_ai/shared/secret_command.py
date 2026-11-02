@@ -155,7 +155,18 @@ def _argv(command: Any, *, context: str) -> list[str]:
     if isinstance(command, (list, tuple)):
         argv = [str(part) for part in command]
     else:
-        argv = shlex.split(str(command))
+        try:
+            argv = shlex.split(str(command))
+        except ValueError:
+            # An open quote or a trailing backslash: `shlex` raises a bare
+            # ValueError, which reached the VALUE ERROR screen with no key named
+            # and the module contract above says the arguments never print, so
+            # nothing of the command is quoted here either (#1094).
+            raise SecretCommandError(
+                f"{context}: THE CONFIGURED COMMAND HAS AN OPEN QUOTE\n\n"
+                "A quote or a trailing backslash is left open. Close it, or write "
+                "the command as a YAML list."
+            ) from None
     if not argv:
         raise SecretCommandError(f"{context}: THE CONFIGURED COMMAND IS EMPTY")
     return argv
@@ -190,10 +201,12 @@ def _capture(command: Any, *, context: str, timeout_seconds: float) -> str:
         raise SecretCommandError(
             f"{context}: COMMAND IS NOT EXECUTABLE: {program}"
         ) from error
-    except subprocess.TimeoutExpired as error:
+    except subprocess.TimeoutExpired:
+        # Nothing chained: `TimeoutExpired.cmd` is the whole argv, token
+        # included, and a `-debug` traceback prints a chained cause (#1094).
         raise SecretCommandError(
             f"{context}: COMMAND TIMED OUT AFTER {timeout_seconds:g} SECONDS: {program}"
-        ) from error
+        ) from None
 
     if completed.returncode != 0:
         raise SecretCommandError(

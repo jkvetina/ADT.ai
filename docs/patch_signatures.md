@@ -1,6 +1,6 @@
 # Patch Signatures and Locks
 
-What a patch asks the target about before it overwrites anything, and how to turn each half of it off. Deploying the patch is on [patch_deploy.md](patch_deploy.md); the application-level check a `-deploy -app` runs is on [patch_verify.md](patch_verify.md).
+What a patch asks the target about before it overwrites anything, and how to turn each half of it off. Deploying the patch is on [patch_deploy.md](patch_deploy.md); the application checksum check a `-deploy -app` runs is on [patch_import.md](patch_import.md#three-signatures-read-before-anything-is-written).
 
 <br>
 
@@ -132,7 +132,7 @@ Reading the exact offset for an older instant needs the server's zone *region*, 
 
 ### REST modules and workspace files
 
-An ORDS module and a workspace static file belong to a schema rather than to an application, so neither is a row of `user_objects` and neither is covered by the application signature check ([patch_verify.md](patch_verify.md)). A patch carrying one gets its own block, on the same rule and the same clock:
+An ORDS module and a workspace static file belong to a schema rather than to an application, so neither is a row of `user_objects` and neither is covered by the application checksum check ([patch_import.md](patch_import.md#three-signatures-read-before-anything-is-written)). A patch carrying one gets its own block, on the same rule and the same clock:
 
 ```text
 PROMPT -- REST MODULE LOCKS
@@ -173,7 +173,7 @@ An import of a full or split export leaves those audit columns empty, so a colle
 
 An APEXlang import through `-deploy -app` is stamped the same way, naming you when `config/IDENTITY.yaml` does. The next patch's guard reads that stamp.
 
-Like `last_ddl_time`, the check is approximate on purpose: a second run of a patch that already deployed refuses too. An application the target does not hold yet passes. An APEXlang import is not guarded here; its own checksum check is on [patch_verify.md](patch_verify.md).
+Like `last_ddl_time`, the check is approximate on purpose: a second run of a patch that already deployed refuses too. An application the target does not hold yet passes. An APEXlang import is not guarded here; its own checksum check is on [patch_import.md](patch_import.md#three-signatures-read-before-anything-is-written).
 
 <br>
 

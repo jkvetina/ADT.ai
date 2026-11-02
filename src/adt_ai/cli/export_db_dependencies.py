@@ -28,6 +28,7 @@ from adt_ai.cli.constants import (
 )
 from adt_ai.export_db.files import ObjectWritePlan
 from adt_ai.shared.internal_paths import internal_path
+from adt_ai.shared.object_types import ARTIFACT_OBJECT_TYPES
 from adt_ai.shared.progress import FixedWidthProgressPrinter, print_adt_header
 
 #: The longest name list the scoped refresh is handed, in characters. The names
@@ -41,9 +42,11 @@ SCOPED_FILTER_LIMIT = 4000
 
 #: Files `export_db` writes that are not dictionary objects: a grants file is
 #: named after its schema (`APP_schema`, `received/HR`) and a data file after the
-#: table it holds rows of. The same pair `export_db/files.py` sets apart. Their
-#: names would spend the bind above and could match an unrelated object.
-NOT_DICTIONARY_OBJECTS = frozenset({"DATA", "GRANT"})
+#: table it holds rows of. The same pair `export_db/files.py` sets apart, plus
+#: the types the GRANT pass writes beside them (`#1063`, `#1098`): a policy file
+#: is named after its table and a context is SYS's. Their names would spend the
+#: bind above and could match an unrelated object.
+NOT_DICTIONARY_OBJECTS = frozenset({"DATA", "GRANT", *ARTIFACT_OBJECT_TYPES})
 
 
 def refresh_exported_dependencies(

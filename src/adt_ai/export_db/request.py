@@ -41,6 +41,8 @@ class ExportDbRequest:
     #: written to instead of writing it. Why, and the promises that go with it:
     #: `cli/export_db_baseline.py`.
     baseline     : bool = False
+    #: `-backup` (`#1099`): each sequence keeps its `START WITH`.
+    backup       : bool = False
 
     @property
     def recent_days(self) -> int | float | None:

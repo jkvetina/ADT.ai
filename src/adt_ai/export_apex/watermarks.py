@@ -76,10 +76,14 @@ class ApexWatermarkMixin:
             if action not in _WATERMARKED_FORMATS:
                 continue
             if not may_advance(
-                recent   = request.recent,
-                stored   = store.watermark(request.environment, application.app_id, action),
-                db_now   = candidate,
-                narrowed = request.narrowed,
+                recent      = request.recent,
+                stored      = store.watermark(request.environment, application.app_id, action),
+                db_now      = candidate,
+                narrowed    = request.narrowed,
+                # The listing's whole-day window opens at midnight
+                # (`queries/objects.py`), so the gate measures that window and
+                # not a rolling one (#1094).
+                day_aligned = True,
             ):
                 continue
             # No `save()` and no dirty flag: each stamp is its own committed

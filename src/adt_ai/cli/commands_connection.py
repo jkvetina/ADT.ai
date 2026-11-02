@@ -42,6 +42,7 @@ from adt_ai.shared import crypto
 from adt_ai.shared.connections import Connection, ConnectionNotFoundError
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
+from adt_ai.shared.git_exclude import exclude_from_git, git_exclude_file
 from adt_ai.shared.secret import Secret
 from adt_ai.shared.tables import close_adt_table, open_adt_table, print_adt_table
 
@@ -278,6 +279,23 @@ def _connection_edit_path(
         return None, connections.files[0]
     except ConnectionNotFoundError:
         return None, candidates[0]
+
+
+def _exclude_connection_file(path: Path) -> None:
+    """A connection file `-create` has just brought into being, out of the user's
+    commits (#1094).
+
+    `-create` resolves `<project>/connections.yaml` first, and the `.gitignore`
+    scaffolded before this ignored only `connections/*`, so a fresh project's
+    first credential file was committable. The private `.git/info/exclude` takes
+    the file by its repo-relative path, the route `patch`'s backups already go;
+    a project outside git, or an exclude nobody can write, loses nothing but
+    the hygiene. A file that already existed is the user's decision.
+    """
+    found = git_exclude_file(path)
+    if found is None:
+        return
+    exclude_from_git(path, f"/{path.relative_to(found[0]).as_posix()}")
 
 
 def _schema_gateway(
@@ -525,6 +543,7 @@ def _run_connection(
             print_adt_error("ARGUMENT INVALID", error_message)
             return exit_code_for("ARGUMENT INVALID")
 
+    created = not path.exists()
     try:
         result = editor.run(
             _connection_request(
@@ -537,6 +556,8 @@ def _run_connection(
         # actually used, so this is the first point a wrong -old-key can surface.
         print_adt_error("ARGUMENT INVALID", str(error))
         return exit_code_for("ARGUMENT INVALID")
+    if created:
+        _exclude_connection_file(path)
     json_findings_history.connection_edited(action, path, result, applied=True)
     print()
     print(f"  {result.summary}")

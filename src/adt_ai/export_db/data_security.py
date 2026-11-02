@@ -28,7 +28,12 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 from adt_ai.export_db.config import _requested_object_type_matches
-from adt_ai.export_db.inventory import DatabaseObject, ObjectDiscovery
+from adt_ai.export_db.inventory import (
+    DatabaseObject,
+    ObjectDiscovery,
+    missing_dictionary_object,
+)
+from adt_ai.patch.sql_literal import escape_literal
 from adt_ai.shared.config import is_enabled
 from adt_ai.shared.object_types import DATA_SECURITY_OBJECT_TYPES
 
@@ -136,7 +141,11 @@ def render_data_role(name: str, row: dict[str, Any] | None) -> str:
         return f"{STUB_COMMENT}\nCREATE DATA ROLE IF NOT EXISTS {role};\n"
     mapped_to = _value(row, "mapped_to")
     if mapped_to:
-        return f"CREATE OR REPLACE DATA ROLE {role} MAPPED TO '{mapped_to}';\n"
+        # A mapped role returns before `enabled` is read. Whether Oracle's grammar
+        # takes `MAPPED TO '...' DISABLED` in one statement was not measured on a
+        # live 26ai (`#1094`), so a mapped-and-disabled role exports as mapped
+        # only until it is. The mapping is a literal, so its apostrophes double.
+        return f"CREATE OR REPLACE DATA ROLE {role} MAPPED TO '{escape_literal(str(mapped_to))}';\n"
     disabled = str(_value(row, "enabled") or "Y").upper() == "N"
     return f"CREATE OR REPLACE DATA ROLE {role}{' DISABLED' if disabled else ''};\n"
 
@@ -195,13 +204,18 @@ def _grouped(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
 def _read(discovery: ObjectDiscovery, query: str) -> list[dict[str, Any]] | None:
     """The view's rows, or None where the database has no such view or denies it.
 
-    Swallowed as `schema_privileges` swallows: the grant view is 26ai, ADT exports
-    from older releases, and `dba_data_roles` is closed to most schemas. Each is an
-    answer about this database rather than an error in the export.
+    Swallowed as `schema_privileges` swallows, and only that
+    (`missing_dictionary_object`): the grant view is 26ai, ADT exports from older
+    releases, and `dba_data_roles` is closed to most schemas. Each is an answer
+    about this database rather than an error in the export; a lost connection is
+    the error it looks like, and answering None for it would have `auto_delete`
+    remove every committed Data Grant and Data Role file (`#1094`).
     """
     try:
         return discovery.gateway.fetch_all(query)
-    except Exception:
+    except Exception as error:
+        if not missing_dictionary_object(error):
+            raise
         return None
 
 
