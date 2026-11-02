@@ -8,9 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from adt_ai.diff import export_filters, inventory, project_pipeline
-from adt_ai.shared import text_files
 from adt_ai.shared.connections import Connection
 from adt_ai.shared.db import run_sqlcl_script
+from adt_ai.shared.internal_paths import ensure_gitignored
 from adt_ai.shared.sqlcl_errors import SqlclNotConnectedError, SqlclScriptError
 
 SqlclRequest = Callable[..., str]
@@ -353,25 +353,14 @@ def _move_artifact(artifact: Path, request: DiffRequest) -> Path:
 def _ensure_diff_ignored(request: DiffRequest) -> None:
     """Idempotently ensure `config/diff/` is git-ignored in the project root.
 
-    Mirrors `shared/internal_paths.ensure_internal_ignored` and
-    `discovery/report.ensure_discovery_ignored`. Scoped to the DEFAULT `-out`:
-    the entry names `config/diff/` literally, so it says nothing true about a
-    folder the user pointed `-out` somewhere else, and writing it there would
-    ignore a path this run never touches.
+    Through `shared/internal_paths.ensure_gitignored`, the one read-modify-write
+    (ADT #1094): this copy read the file unguarded, so a cp1250 comment in
+    `.gitignore` crashed `diff` after the comparison had finished. Scoped to the
+    DEFAULT `-out`: the entry names `config/diff/` literally, so it says nothing
+    true about a folder the user pointed `-out` somewhere else, and writing it
+    there would ignore a path this run never touches.
     """
     root = request.project_root
     if root is None or request.artifact_out != root / "config" / "diff":
         return
-    gitignore = root / ".gitignore"
-    existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
-    if GITIGNORE_ENTRY in {line.strip() for line in existing.splitlines()}:
-        return
-    prefix = existing
-    if prefix and not prefix.endswith("\n"):
-        prefix += "\n"
-    try:
-        text_files.write_text(gitignore, prefix + GITIGNORE_ENTRY + "\n")
-    except OSError:
-        # Housekeeping never fails a command, the same posture the two sibling
-        # helpers take.
-        return
+    ensure_gitignored(root, GITIGNORE_ENTRY)

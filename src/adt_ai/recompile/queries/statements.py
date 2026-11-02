@@ -11,7 +11,7 @@ importing everything from ``adt_ai.recompile.queries``.
 from __future__ import annotations
 
 from adt_ai.shared.object_types import PLSQL_OBJECT_TYPES
-from adt_ai.shared.sql_identifiers import safe_identifier, safe_object_type
+from adt_ai.shared.sql_identifiers import safe_object_type, sql_name
 
 
 def _scope_flags(scope: list[str] | None) -> tuple[bool, bool]:
@@ -76,9 +76,14 @@ def build_compile_statement(
     code type: emitting it unconditionally silently flipped natively-compiled
     objects to INTERPRETED on every recompile, because a named setting overrides
     ``REUSE SETTINGS`` (#146). ``-native`` wins if both flags are passed.
+
+    The name is quoted in its dictionary case when Oracle would not read it back
+    bare (ADT #1100): a trigger created as ``"a_d_ORDER_ACTION"`` compiled
+    unquoted named no trigger at all, ``ORA-04080``, and the dependency step of a
+    multi-schema ``export_db`` raised it out of the whole run.
     """
     safe_object_type(object_type, role="object type")
-    safe_identifier(object_name, role="object name")
+    name        = sql_name(object_name, role="object name")
     type_body   = " BODY" if "BODY" in object_type else ""
     type_family = object_type.replace(" BODY", "")
     extras      = ""
@@ -115,7 +120,7 @@ def build_compile_statement(
 
         extras += " REUSE SETTINGS"
 
-    return f"ALTER {type_family} {object_name} COMPILE{type_body} {extras}"
+    return f"ALTER {type_family} {name} COMPILE{type_body} {extras}"
 
 
 def compile_drift_binds(
@@ -218,7 +223,9 @@ def build_refresh_statement(object_name: str, refresh_method: str | None = None)
     Staleness is fixed by refreshing (not compiling), using the method the MV is
     configured with (``refresh_method``) so the tool never changes a view's
     refresh type. Unknown/missing methods fall back to '?' (Oracle decides).
+    The name inside the list is quoted the way the compile statement's is
+    (ADT #1100), since the list upper-cases a bare one just the same.
     """
-    safe_identifier(object_name, role="object name")
+    name = sql_name(object_name, role="object name")
     method = _refresh_method_code(refresh_method)
-    return f"BEGIN DBMS_MVIEW.REFRESH('{object_name}', '{method}'); END;"
+    return f"BEGIN DBMS_MVIEW.REFRESH('{name}', '{method}'); END;"

@@ -51,8 +51,6 @@ LINK_SOURCE_TYPES: tuple[str, ...] = (
     "PAGE_DUP_GOTO",
 )
 
-RESOLVABLE_FLAGS = ("PAGE", "CROSS_APP")
-
 
 def _seed_link_sources(connection: sqlite3.Connection) -> None:
     connection.executemany(queries.STORE_SEED_LINK_SOURCE, [(src,) for src in LINK_SOURCE_TYPES])

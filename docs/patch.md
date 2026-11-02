@@ -97,7 +97,9 @@ TIMER: 0s
 - A value naming an existing folder rewrites that folder rather than growing a second one.
 - A well-formed folder name that exists nowhere is refused: that is a typo, not a new code.
 
-Selection for an action is **whole-value**: the folder name, the patch code, or the id. A value that only occurs inside a folder name selects nothing and the run stops, naming what it saw, and a value matching two folders stops the same way rather than choosing. A code matching no folder prints the folder listing and exits `2`.
+Selection for an action is **whole-value**: the folder name, the patch code, or the id. A value that only occurs inside a folder name selects nothing and the run stops, naming what it saw, and a value matching two folders stops the same way rather than choosing.
+
+On a preview, a code matching neither folder nor commit lists the folders and exits `2`; `-deploy` refuses it, `PATCH FAILED`, exit `1`.
 
 <br>
 
@@ -175,11 +177,11 @@ A `#` in the value stands for each application's own id, so one `-app` lands sev
 
 Bash and PowerShell read a word starting with `#` as a comment and pass a bare `-app`, so quote it there: `-app '#6000'`.
 
-`-app <id>` stamps that target with the deployer and time after import, whether the id names a sandbox or the source application itself. Bare `-app` leaves the Builder audit author unchanged.
+Every import stamps its landing with the deployer and time: `-app <id>` stamps `<id>`, a bare `-app` each application's own id.
 
-Both modes, the stale export refusal and the retarget rules are on [patch_app.md](patch_app.md). The import's staging, signatures and refusals are on [patch_import.md](patch_import.md), and the loop around it on apex_round_trip.md.
+Both modes, the stale export refusal and the retarget rules are on [patch_app.md](patch_app.md). The import's staging, stamp, signatures and refusals are on [patch_import.md](patch_import.md), and the loop around it on apex_round_trip.md.
 
-`-deploy -app`'s drift check is measured against the target as it stood immediately before the lock, not after: setting build status moves the application's own export checksum, so a deploy-in-place no longer refuses on drift that reading it post-lock would have invented. See [patch_verify.md](patch_verify.md#deploy_build_status) for the measurement.
+`-deploy -app`'s drift check is measured against the target as it stood just before the lock, not after: setting build status moves the application's own export checksum, so a deploy-in-place no longer refuses on drift a post-lock reading would have invented. See [patch_verify.md](patch_verify.md#holding-the-application-shut-deploy_build_status) for the measurement.
 
 Below APEX 26.2 that lock is `RUN_ONLY`, or page locks where granted. On 26.2 and newer it is the App Builder's application lock, held as your `apex_account`; an application another developer has locked refuses the deploy unless `-force` is set.
 
@@ -204,7 +206,9 @@ PROMPT -- SCRIPT: patch_scripts/PATCH830/objects_after/drop.table.app_orders.sql
 
 Nor is either created a second time. A table carrying an ALTER, Oracle's own diff or one you wrote yourself, is always linked commented out this way, marked `REPLACED BY ITS ALTER` and naming the script, whether or not the file says `IF NOT EXISTS`.
 
-A table or sequence with no ALTER at all is still commented out when the target already holds it and the file says no `IF NOT EXISTS`, marked `NEVER RE-CREATED BY A PATCH`; a changed sequence otherwise ships an `ALTER SEQUENCE` under `tables_before/` instead, both described on [patch_templates.md](patch_templates.md). `immutables: []` turns all of this off.
+A table or sequence with no ALTER at all is still commented out when the target already holds it and the file says no `IF NOT EXISTS`, marked `NEVER RE-CREATED BY A PATCH`; a changed sequence otherwise ships an `ALTER SEQUENCE` under `tables_before/` instead, both described on [patch_templates.md](patch_templates.md).
+
+`immutables: []` turns all of this off but the `REPLACED BY ITS ALTER` link.
 
 Three deletions earn nothing, and each is a different question:
 
@@ -232,17 +236,13 @@ Each application gets a receipt at `<path_apex>/logs_<ENV>/<timestamp>_apex_drop
 
 ## Uploading static files as you save them
 
-`-upload` uploads every static file you save straight into APEX, and `-once` uploads the whole folder and exits. It is the smallest thing `patch` ships, one saved stylesheet rather than a release, so it reads no commit and is refused beside every other verb. Everything about it is on [patch_upload.md](patch_upload.md).
-
-```bash
-adtai patch -upload -app 100
-```
+`-upload -app <id>` uploads each static file you save straight into APEX, and `-once` uploads the whole folder and exits: [patch_upload.md](patch_upload.md).
 
 <br>
 
 ## Building from hashes instead of commits
 
-`-hash` builds the patch from what the working tree no longer agrees with the target about, which reaches work no commit window covers. `-baseline` records the state you believe the environment is at. Both are on [patch_hash.md](patch_hash.md).
+`-hash` builds the patch from what the working tree no longer agrees with the target about, and `-baseline` records the state to compare against: [patch_hash.md](patch_hash.md).
 
 <br>
 
@@ -250,7 +250,7 @@ adtai patch -upload -app 100
 
 | Argument       | Repeatable | Default | Description |
 | -------------- | ---------- | ------- | ----------- |
-| `-name`, `--name` | No | none | The patch this run acts on, in every mode: an id, a patch code, or a full folder name. With no `-search` beside it, it is also the commit filter, matched against commit subjects. On its own it inspects and builds nothing. A value matching no patch lists the available patches and exits `2`. |
+| `-name`, `--name` | No | none | The patch this run acts on, in every mode: an id, a patch code, or a full folder name; how a value is read is on [Naming a patch](#naming-a-patch). With no `-search` beside it, it is also the commit filter, matched against commit subjects. On its own it inspects and builds nothing. |
 | `-target`, `--target` | No | none | The environment the patch is for. `-deploy`, `-drop` and a bare `-hash` or `-baseline` refuse without it. The install scripts `-create` writes are the same for every target: `-deploy` runs the `.[ENV].` templates and scripts and the `patch_apex_build_status` of its own `-target`. Without it `-create`'s table ALTERs connect to the connection file's default environment; `-upload` uses that default too. |
 | `-create`, `--create` | No | off | Build the patch named by `-name`, which is mandatory beside it. An existing folder is rewritten; a well-formed folder name that exists nowhere is refused. |
 | `-deploy`, `--deploy` | No | off | Deploy the patch named by `-name`, mandatory beside it, exactly as it stands on disk. Beside `-create`, only a name with no folder is built first. |

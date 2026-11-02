@@ -10,16 +10,15 @@ one exactly as it survives the other (ADT #923).
 
 from __future__ import annotations
 
-import contextlib
-import os
-import unicodedata
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from pathlib import Path
 
+# `WrittenFiles` and the disk question it asks moved to `shared/written_files.py`
+# (ADT #1094) so `export_data`'s sidecar sweep could read them too; the names stay
+# importable from here.
 from adt_ai.shared.apex_paths import APEXLANG_DIR
-
-#: Do two names reach one file on this disk?
-SameFile = Callable[[Path, Path], bool]
+from adt_ai.shared.apex_payloads import payload_root
+from adt_ai.shared.written_files import SameFile, WrittenFiles, same_file
 
 # Every extension `-apexlang` can put under `apexlang/`, and therefore every one
 # it may delete from there. The export block drops the application's own
@@ -70,67 +69,12 @@ OWNED_SUFFIXES: dict[str, frozenset[str]] = {
 }
 
 
-def same_file(left: Path, right: Path) -> bool:
-    """Do both names reach one file? A name that reaches nothing reaches no file."""
-    try:
-        return os.path.samefile(left, right)
-    except OSError:
-        return False
-
-
-def _folded(path: Path) -> str:
-    """`path` the way a disk that ignores case and Unicode normal form reads it."""
-    return unicodedata.normalize("NFC", str(path)).casefold()
-
-
-class WrittenFiles:
-    """The files one run wrote, recognised under any spelling the disk folds together.
-
-    macOS's default disk ignores case, so a component whose static ID or name
-    changes only in case (`minicalendar` to `MiniCalendar`) is written onto the
-    old entry, which keeps its old spelling. A sweep comparing names exactly took
-    that entry for a stale one and deleted the file the run had just written, at
-    exit 0 (ADT #923). An entry is this run's own when its name folds to a written
-    one AND the disk says the two names reach one file, so a disk that keeps both
-    spellings apart still sweeps the old one. The survivor takes the spelling the
-    run wrote, so the repository records the rename.
-    """
-
-    def __init__(self, paths: Iterable[Path], same: SameFile | None = None) -> None:
-        self.paths = set(paths)
-        self._folded = {_folded(path): path for path in self.paths}
-        self._same = same or same_file
-
-    def claims(self, path: Path) -> bool:
-        """Did this run write `path`? One under an old spelling takes the new one."""
-        if path in self.paths:
-            return True
-        written = self._folded.get(_folded(path))
-        if written is None or not self._same(path, written):
-            return False
-        _respell(path, written)
-        return True
-
-
-def _respell(path: Path, written: Path) -> None:
-    """Rename each entry on `path` whose name differs from `written`'s, top down.
-
-    A folder is renamed before the entries under it. A rename the disk refuses
-    leaves the old spelling, which is where the entry stood before, rather than
-    failing an export that wrote everything it was asked to.
-    """
-    for depth, (have, want) in enumerate(zip(path.parts, written.parts, strict=False)):
-        if have != want:
-            parent = Path(*written.parts[:depth])
-            with contextlib.suppress(OSError):
-                (parent / have).rename(parent / want)
-
-
 def prune_folder(
     root: Path,
     written: Iterable[Path],
     suffixes: frozenset[str] | None = None,
     same: SameFile | None = None,
+    skip: Path | None = None,
 ) -> None:
     """Delete everything under ``root`` this export did not write.
 
@@ -144,11 +88,20 @@ def prune_folder(
     `application/` tree the split export fills with `.sql`, so a split prune that
     took every file would delete the readable export beside it. It limits what is
     deleted only; a file this run wrote is kept whatever its extension.
+
+    ``skip`` is one folder under ``root`` the walk never enters, files and empty
+    subfolders alike. The application's own `shared-components/static-files/`
+    under an APEXlang tree holds the hardlinks `link_payloads` reconciles against
+    `-files`, and a payload there carries any extension, so the `-apexlang` sweep
+    deleted its `.json`, `.sql` and `.rtf` members and left `static-files.apx`
+    naming files the tree lacked (ADT #1094).
     """
     if not root.is_dir():
         return
     keep = WrittenFiles(written, same)
     for path in sorted(root.rglob("*"), reverse=True):
+        if skip is not None and (path == skip or skip in path.parents):
+            continue
         if path.is_file():
             if not keep.claims(path) and (suffixes is None or path.suffix in suffixes):
                 path.unlink()
@@ -162,10 +115,11 @@ def prune_plugin_payloads(apexlang_root: Path, written: Iterable[Path]) -> None:
     Those payloads are the export's own since ADT #930, whatever their extension,
     so the `APEXLANG_SUFFIXES` narrowing does not reach them: a file deleted from
     a plugin in APEX would otherwise survive every re-export. The application's
-    own `shared-components/static-files/` is left alone, being the links
+    own `shared-components/static-files/` is left alone, here and by the
+    `prune_folder` sweep above (its ``skip``, ADT #1094), being the links
     `link_payloads` reconciles against `-files`.
     """
-    own = apexlang_root / "shared-components" / "static-files"
+    own = payload_root(apexlang_root)
     written = list(written)
     for folder in sorted(apexlang_root.rglob("static-files")):
         if folder.is_dir() and folder != own and own not in folder.parents:

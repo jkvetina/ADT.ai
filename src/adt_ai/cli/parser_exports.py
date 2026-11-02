@@ -152,6 +152,12 @@ def add_export_parsers(subparsers: SubParsers) -> None:
         help    = "record what this environment holds as a patch baseline, "
                   "hashing every object and storing each table; optional FILE",
     )
+    export_db.add_argument(
+        "--backup",
+        "-backup",
+        action = "store_true",
+        help   = "backup mode: each sequence keeps its START WITH",
+    )
     add_connection_key_argument(export_db)
 
     export_data = subparsers.add_parser(
@@ -213,6 +219,13 @@ def add_export_parsers(subparsers: SubParsers) -> None:
         metavar = "GROUP",
         help    = "with -groups, apply the listed moves; -force GROUP lands every "
                   "prefix -groups named in one data/GROUP/ folder",
+    )
+    export_data.add_argument(
+        "--backup",
+        "-backup",
+        action = "store_true",
+        help   = "backup mode: every row and column, ignoring where filters and "
+                 "ignored_columns",
     )
     add_connection_key_argument(export_data)
 
@@ -368,6 +381,13 @@ def add_export_parsers(subparsers: SubParsers) -> None:
         "-debug",
         action = "store_true",
         help   = "show input parameters and SQL queries with bind values",
+    )
+    export_apex.add_argument(
+        "--backup",
+        "-backup",
+        action = "store_true",
+        help   = "backup mode: include saved public and private interactive reports "
+                 "and their notifications",
     )
     add_connection_key_argument(export_apex)
 

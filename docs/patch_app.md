@@ -2,7 +2,7 @@
 
 `-app` ships an APEX application whole instead of as the components that changed, and it is the flag `patch -deploy` imports an APEXlang tree under. Which of the two whole-application formats that means is read off the repository, never off the flag. The import itself is on [patch_import.md](patch_import.md), the round trip around it on apex_round_trip.md.
 
-Over an `ords:` connection `-deploy -app` compiles the application tree on your machine and sends it to ORDS as one request, and `-revert` posts its backup export whole. See connection_ords.md.
+Over an `ords:` connection `-deploy -app` compiles the application tree on your machine and sends it to ORDS as one request, and the automatic revert after a failed scan (`deploy_revert_on_scan_failure`) posts its backup export whole. See connection_ords.md.
 
 <br>
 
@@ -12,7 +12,7 @@ There are two whole-application formats and only one of them is a file a patch c
 
 | Its export in the selected commits | What `-app` ships | What refuses the build |
 | --- | --- | --- |
-| An `apexlang/` tree ([export_apex_formats.md](export_apex_formats.md)) | The tree, plus that application's other changed files and minus its static-file payloads. `patch -deploy -app` imports the folder in place, so the patch links no APEXlang file, snapshots only the ones it changed, and leaves the payloads to the staging that puts them back in the tree | A tree the APEXlang compiler refuses, under `ERROR - VALIDATION FAILED:` ([patch_import.md](patch_import.md#the-tree-is-compiled-before-anything-runs)). It needs no `f<id>.sql`, so there is none to be stale against |
+| An `apexlang/` tree ([export_apex_formats.md](export_apex_formats.md)) | The tree, plus that application's other changed files and minus its static-file payloads. `patch -deploy -app` imports the folder in place, whole or narrowed to the listed `.apx` files, so the patch links no APEXlang file, snapshots only the ones it changed, and leaves the payloads to the staging that puts them back in the tree | A tree the APEXlang compiler refuses, under `ERROR - VALIDATION FAILED:` ([patch_import.md](patch_import.md#the-tree-is-compiled-before-anything-runs)). It needs no `f<id>.sql`, so there is none to be stale against |
 | An `f<id>.sql` full export | The `f<id>.sql` alone, that application's component files dropped, the export already containing them | An export older than a component committed after it, or missing from the window |
 
 An APEXlang application is therefore built and deployed with no `f<id>.sql` anywhere in the commits and no `-force`. Until the mode was read off the format, `-create -app` demanded a fresh export for every application in the patch.
@@ -24,6 +24,8 @@ The page comments under `comments/` and the code `-embedded` writes under `embed
 The page comments are no part of a patch at all, whatever git says about them: not in the install script's file lists, not snapshotted, not on any screen, and not in hash mode's `CHANGED FILES:`.
 
 The tree is listed as its one `apexlang/` folder, however many of its files changed: under `PROCESSED FILES: <OWNER>.<id>`, under `-deploy`'s `PATCH CONTENTS: <OWNER>.<id>` and under `WARNING - UNCOMMITTED FILES:`. The import reads the folder, so the folder is what the patch ships.
+
+It is imported whole, except on APEX 26.2 and newer into the application's own id, where only the `.apx` files the patch lists are written; the cases that keep the whole tree are on [patch_import.md](patch_import.md#into-the-same-application-only-what-the-patch-changed).
 
 `PATCH CONTENTS:` reads the folder off the `init` half's header, since the application's scripts link none of the tree. That header still names every file.
 
@@ -58,12 +60,12 @@ adtai patch -name 1069-sandbox -target DEV -deploy -app 0
 ```
 
 - **APEX picks the id.** `APEX_APPLICATION_ADMIN.CREATE_WORKING_COPY` takes no id, so app `100`'s first copy lands where APEX puts it, `101` with alias `ORDERS101`, and the deploy table and logs name that id. An id of your choosing is `-app <id>`, which stays a plain application with no `MAIN_APPLICATION_ID`.
-- **One copy per patch.** The copy is named for the patch folder, so deploying the same patch again imports over the copy its first run made, and another patch makes its own.
+- **One copy per patch.** The copy is named for the patch folder, and found by the description the deploy wrote, so deploying the same patch again imports over the copy its first run made, never over one made in the App Builder under the same name, and another patch makes its own.
 - **A new copy passes the drift check, a reused one is checked like any target.** A copy this run created holds nobody's work, the same as a fresh derived id; a copy an earlier deploy made is read, and refuses if it moved since your export.
 - **Below 26.2 it refuses before anything is written**, under `-app 0 NEEDS APEX 26.2`. Nothing else about `-app` changes on any release.
 - **Each application gets its own copy**, so `-app 0` over a patch shipping two applications is not refused the way one plain id is.
 - **`-create -app 0` names the scripts for the application's own id**, since the copy has no id until the deploy makes it. `-upload -app 0` is refused.
-- **`-drop <id>` removes a copy `-app 0` made**, and no other: the copy carries the description the deploy wrote, `adtai patch -deploy -app 0`, which is what proves ADT made it, and its main application must sit in the same workspace. Dropping the main application leaves its copies standing, so this is the step that does. A copy made in the App Builder is refused.
+- **`-drop <id>` removes a copy `-app 0` made**, and no other: the copy carries the description the deploy wrote, `adtai patch -deploy -app 0`, which is what proves ADT made it, and its main application, while it exists, must sit in the same workspace; once the main is gone the copy clears on its fingerprint alone. Dropping the main application leaves its copies standing, so this is the step that does. A copy made in the App Builder is refused.
 
 Measured on APEX 26.2.0: the API's arguments, the id and alias it picks, and that an APEXlang import over the copy keeps `IS_WORKING_COPY = Yes` and `MAIN_APPLICATION_ID`.
 

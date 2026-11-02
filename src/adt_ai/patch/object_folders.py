@@ -30,15 +30,6 @@ from adt_ai.shared.file_list import parent_folder
 from adt_ai.shared.object_files import type_folder_of
 
 
-def object_type_folder(path: str, config: dict[str, Any]) -> str | None:
-    """``<schema>/database/<object_type>/`` for ``path``, or None when it is not one.
-
-    The trailing slash is kept: a folder line and a file row open on the same
-    dash, and the slash is what tells a reader which is which.
-    """
-    return _type_folder(path, config, object_layouts(config.get("object_types", {})))
-
-
 def object_folder_resolver(config: dict[str, Any]) -> Callable[[str], str | None]:
     """The one folder rule a `patch` console list groups by.
 
@@ -88,6 +79,11 @@ def _type_folder(
     config: dict[str, Any],
     layouts: dict[str, tuple[str, str]],
 ) -> str | None:
+    """``<schema>/database/<object_type>/`` for ``path``, or None when it is not one.
+
+    The trailing slash is kept: a folder line and a file row open on the same
+    dash, and the slash is what tells a reader which is which.
+    """
     head = effective_object_head(path, config, layouts)
     if head is None:
         return None

@@ -128,10 +128,6 @@ class ApexBackup:
     #: Why there is nothing to put back, for every case where `path` is None.
     reason   : str = ""
 
-    @property
-    def restorable(self) -> bool:
-        return self.path is not None
-
 
 @dataclass(frozen=True)
 class ApexRevert:

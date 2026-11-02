@@ -12,6 +12,7 @@ apex/workspace/credentials
 **/data/*/*.sql
 
 # Connection files and wallets hold credentials
+connections.yaml
 connections/*
 !connections/.gitkeep
 !connections/wallets/

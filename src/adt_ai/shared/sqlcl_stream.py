@@ -36,6 +36,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
+from adt_ai.shared.process_kill import kill_process_group, own_process_group
 from adt_ai.shared.sqlcl_errors import SqlclTimeoutError
 
 
@@ -133,13 +134,16 @@ def stream_on_pty(
         attributes = termios.tcgetattr(slave)
         attributes[3] &= ~termios.ECHO
         termios.tcsetattr(slave, termios.TCSANOW, attributes)
+        # A session of its own, so the launcher's pid names a group and the
+        # deadline below ends the JVM `sql` started along with it (ADT #1094).
         process = subprocess.Popen(
             list(command),
-            cwd    = root,
-            stdin  = subprocess.DEVNULL,
-            stdout = slave,
-            stderr = slave,
-            env    = environment,
+            cwd               = root,
+            stdin             = subprocess.DEVNULL,
+            stdout            = slave,
+            stderr            = slave,
+            env               = environment,
+            start_new_session = own_process_group(),
         )
         # The parent keeps its own slave descriptor open until the child has
         # exited and the pty is drained (`finally` closes it). macOS discards
@@ -224,11 +228,12 @@ def stream_on_pipe(
     """
     process = subprocess.Popen(
         list(command),
-        cwd    = root,
-        stdin  = subprocess.PIPE,
-        stdout = subprocess.PIPE,
-        stderr = subprocess.STDOUT,
-        env    = dict(environment),
+        cwd               = root,
+        stdin             = subprocess.PIPE,
+        stdout            = subprocess.PIPE,
+        stderr            = subprocess.STDOUT,
+        env               = dict(environment),
+        start_new_session = own_process_group(),
     )
     collected: list[str] = []
     callback_errors: list[BaseException] = []
@@ -246,8 +251,7 @@ def stream_on_pipe(
                 on_line(line)
         except BaseException as error:
             callback_errors.append(error)
-            with contextlib.suppress(Exception):
-                process.kill()
+            kill_process_group(process)
         finally:
             with contextlib.suppress(Exception):
                 process.stdout.close()
@@ -280,11 +284,13 @@ def stream_on_pipe(
 
 
 def _kill_and_reap(process: subprocess.Popen[bytes]) -> None:
-    """Best-effort teardown used by every exceptional streaming path."""
-    with contextlib.suppress(Exception):
-        process.kill()
-    with contextlib.suppress(Exception):
-        process.wait()
+    """Best-effort teardown used by every exceptional streaming path.
+
+    The whole group, never the launcher alone (ADT #1094): `sql` is a bash
+    script with `java` as its child, and killing the script by its pid left the
+    JVM running the deployment against the database after the timeout printed.
+    """
+    kill_process_group(process)
 
 
 def open_stream(

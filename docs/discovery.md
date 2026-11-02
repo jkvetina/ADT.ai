@@ -67,7 +67,7 @@ RESULT:
 TIMER: 0s
 ```
 
-- A `-file` run prints a per-query row count rather than the tables, since a file can hold many statements: `Query 2: 9 rows`. The tables themselves land in the report and in the file.
+- A `-file` run prints a per-query row count rather than the tables, since a file can hold many statements, each labelled with the statement's leading `-- comment`, else `Query N`: `Query 2: 9 rows`. The tables themselves land in the report and in the file.
 - A refused statement prints its reason where the table would be, `> DML statement 'DELETE' is not allowed; discovery permits SELECT only`.
 - A statement Oracle rejects prints the error the same way, with the documentation link Oracle supplies, and the run still exits `0`. Only a connection or setup failure exits non-zero, through the shared `DATABASE CONNECTION FAILED` screen.
 - Rows are capped at `-limit` (default `200`) per query.

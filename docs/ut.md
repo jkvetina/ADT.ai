@@ -219,7 +219,7 @@ Entity expansion, external-entity retrieval and the quadratic blowup all begin i
 - Test packages compiled into the schema being tested, or into the `ut_owner` schema. `ut` runs suites; it does not install them, and deploying one is the project's own deployment path.
 - The ordinary query path, never the read-only one: running a test writes to utPLSQL's own output buffer, and a read-only session makes the reporter's data producer fail to start rather than report anything.
 - One `ut.run` call per suite rather than one per test, so the fixtures run once each. A **skipped** test (`%disabled`) neither passes nor fails: its row reads `SKIP` and it lands in no verdict column, so a suite quietly disabled wholesale shows up as a package with test rows and no counts rather than as green.
-- **A suite that cannot run at all is one red suite, not a lost run.** A dropped connection, an ORA on the reporter's side or a `%beforeall` that blows up produces an `ERROR` row per test in that suite, carrying the cause, and the run carries on to the next one. Every suite that had already finished keeps its results and its timing, and the exit code is non-zero.
+- **A suite that cannot run at all is one red suite, not a lost run.** An ORA on the reporter's side or a `%beforeall` that blows up produces an `ERROR` row per test in that suite, carrying the cause, and the run carries on to the next one. Every suite that had already finished keeps its results and its timing, and the exit code is non-zero. A dropped connection is the exception: every later suite would fail the same way, so it ends the run on the error screen.
 
 <br>
 

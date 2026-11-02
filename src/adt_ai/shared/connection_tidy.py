@@ -7,8 +7,10 @@ Two kinds of line accumulate in a connection file without anyone choosing them:
   name is now derived on every run and nothing is fingerprinted, so
   ``sqlcl_sync`` is removed wherever it stands, and ``sqlcl`` wherever it is
   empty or is a name ADT derived (with or without #660's path hash). A
-  ``sqlcl:`` the user wrote himself stays. A ``db:`` block, and a schema, left
-  holding nothing once those lines go are removed with them.
+  ``sqlcl:`` the user wrote himself stays. A ``db:`` block left holding nothing
+  once those lines go is removed with them; the schema stays listed, as
+  ``APP: {}``, because a schema the file no longer lists no longer resolves
+  (#1094).
 * Empty export filters. ``export: {ignore: '', prefix: ''}`` under every schema
   says nothing. The first schema in the file keeps its block, so the file still
   shows where the filters go; every later schema loses a block whose filters are
@@ -20,7 +22,8 @@ deleting the key through it deleted the user's comment too. The result is parsed
 again and compared with the intended document before anything is written.
 
 :func:`tidy_connection_file` runs whenever a connection file is loaded, so an old
-file is cleaned the first time any command reads it, and :func:`tidy_text` runs
+file is cleaned the first time any command loads it, when the process may write
+it (a read-only file is read as it stands, #1094), and :func:`tidy_text` runs
 on what the `connection` editor is about to write, so nothing ADT writes brings
 the lines back.
 """
@@ -28,6 +31,7 @@ the lines back.
 from __future__ import annotations
 
 import copy
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -57,42 +61,38 @@ def tidy_document(data: Any, source_file: Path | str) -> bool:
 
 
 def planned_removals(data: Any, source_file: Path | str) -> list[Path_]:
-    """Every key path the tidy pass removes from ``data``, outermost covering inner."""
+    """Every key path the tidy pass removes from ``data``, outermost covering inner.
+
+    A schema key and the ``schemas:`` block are never among them (#1094): a file
+    whose password sits on the environment's ``db:`` lists a schema holding
+    nothing but bookkeeping, and unlisting it made `resolve` answer SCHEMA NOT
+    CONFIGURED to a read-only command. An environment or a schema keyed by
+    anything but a string (`123:`, `NO:`) is left alone, since the spelled path
+    would not index the parsed document.
+    """
     if not isinstance(data, dict):
         return []
     removals: list[Path_] = []
     first_schema_seen = False
     for environment, environment_node in data.items():
-        if not isinstance(environment_node, dict):
+        if not isinstance(environment, str) or not isinstance(environment_node, dict):
             continue
         schemas = environment_node.get("schemas")
         if not isinstance(schemas, dict):
             continue
-        env = str(environment)
-        emptied = 0
         for schema, schema_node in schemas.items():
-            if not isinstance(schema_node, dict):
+            if not isinstance(schema, str) or not isinstance(schema_node, dict):
                 continue
-            base: Path_ = (env, "schemas", str(schema))
-            gone: list[Path_] = []
+            base: Path_ = (environment, "schemas", schema)
             db = schema_node.get("db")
-            dropped_db = _sqlcl_keys(db, source_file, env, str(schema))
+            dropped_db = _sqlcl_keys(db, source_file, environment, schema)
             if dropped_db and isinstance(db, dict) and len(dropped_db) == len(db):
-                gone.append((*base, "db"))
+                removals.append((*base, "db"))
             else:
-                gone += [(*base, "db", key) for key in dropped_db]
+                removals += [(*base, "db", key) for key in dropped_db]
             if first_schema_seen and _empty_export(schema_node):
-                gone.append((*base, "export"))
+                removals.append((*base, "export"))
             first_schema_seen = True
-            left = set(schema_node) - {path[3] for path in gone if len(path) == 4}
-            if gone and not left:
-                removals.append(base)
-                emptied += 1
-            else:
-                removals += gone
-        if emptied and emptied == len(schemas):
-            removals = [path for path in removals if path[:2] != (env, "schemas")]
-            removals.append((env, "schemas"))
     return removals
 
 
@@ -107,10 +107,10 @@ def tidy_text(text: str, source_file: Path | str) -> str:
         plain = pyyaml.safe_load(text)
     except Exception:
         return text
-    removals = planned_removals(plain, source_file)
+    removals = set(planned_removals(plain, source_file))
     if not removals:
         return text
-    cut = _cut_lines(text, set(removals))
+    cut = _cut_lines(text, removals, _emptied_schemas(plain, removals))
     intended = copy.deepcopy(plain)
     tidy_document(intended, source_file)
     try:
@@ -129,6 +129,10 @@ def tidy_connection_file(path: Path | str) -> bool:
     """
     try:
         target = Path(path)
+        if not os.access(target, os.W_OK):
+            # A file its owner made read-only is read as it stands: the atomic
+            # rewrite would replace it with a fresh 0600 inode regardless (#1094).
+            return False
         text = target.read_text(encoding="utf-8")
         tidied = tidy_text(text, target)
         if tidied == text:
@@ -161,7 +165,30 @@ def _empty_export(schema_node: dict[str, Any]) -> bool:
     )
 
 
-def _cut_lines(text: str, removals: set[Path_]) -> str:
+def _emptied_schemas(data: dict[str, Any], removals: set[Path_]) -> set[Path_]:
+    """The schema paths left with no child once ``removals`` are cut (#1094)."""
+    emptied: set[Path_] = set()
+    for path in removals:
+        if len(path) != 4:
+            continue
+        schema_path = path[:3]
+        node = data[path[0]]["schemas"][path[2]]
+        if all((*schema_path, key) in removals for key in node):
+            emptied.add(schema_path)
+    return emptied
+
+
+def _with_empty_mapping(line: str, match: re.Match[str]) -> str:
+    """``APP:`` whose every child is cut, written ``APP: {}`` (#1094).
+
+    Alone, the key parses as ``APP: null``, which no reader takes for a schema;
+    a comment after the colon stays where it was.
+    """
+    colon = line.index(":", match.end("key"))
+    return f"{line[:colon + 1]} {{}}{line[colon + 1:]}"
+
+
+def _cut_lines(text: str, removals: set[Path_], emptied: set[Path_]) -> str:
     out: list[str] = []
     stack: list[tuple[int, str]] = []
     skip_indent: int | None = None
@@ -187,9 +214,12 @@ def _cut_lines(text: str, removals: set[Path_]) -> str:
         while stack and stack[-1][0] >= indent:
             stack.pop()
         stack.append((indent, _unquote(match.group("key"))))
-        if tuple(key for _, key in stack) in removals:
+        path = tuple(key for _, key in stack)
+        if path in removals:
             skip_indent = indent
             continue
+        if path in emptied:
+            line = _with_empty_mapping(line, match)
         out.append(line)
     return "".join(out)
 

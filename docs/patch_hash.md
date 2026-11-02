@@ -160,6 +160,8 @@ adtai patch -baseline before-the-refactor.log
 
 A relative value resolves against the project root and an absolute one stands. Naming a file is the whole address, so `-target` is only required when there is no `FILE` for the path to come from.
 
+Only the default per-environment baseline advances on deploy. A patch built with `-hash FILE` compares against `FILE`, and its deploy still merges into `patch_hashes/baseline.<TARGET_ENV>.log`, created from the shipped files alone when it is missing, so a baseline kept elsewhere is re-recorded with `-baseline FILE` once the patch is in.
+
 <br>
 
 ## Table changes
@@ -192,7 +194,7 @@ A hand-written column change claims the table the same way it does in commit mod
 
 ## The baseline advances on deploy
 
-A patch built with `-hash` records what it shipped in a `hashes.log` inside the patch folder, and a successful deploy merges that into the target's baseline:
+A patch built with `-hash` records what it shipped in a `hashes.log` inside the patch folder, and a successful deploy merges that into the target's default baseline, `patch_hashes/baseline.<TARGET_ENV>.log`, whatever `FILE` the build compared against:
 
 ```text
 UPDATING BASELINE:

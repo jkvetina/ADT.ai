@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-# The copy, found by the application it copies and the name the deploy gave
-# it, so a redeploy of the same patch lands on the copy its first run made.
+# The copy, found by the application it copies, the name the deploy gave it
+# and the description it wrote (`apex_working_copy.FINGERPRINT`), so a redeploy
+# of the same patch lands on the copy its first run made and never on a
+# developer's own copy that happens to carry the patch's name (ADT #1094).
 # APEX 26.2+ only: `main_application_id` and `working_copy_name` are not
 # columns below it.
 APEX_WORKING_COPY_QUERY = """
 SELECT application_id AS app_id, alias AS app_alias
 FROM   apex_applications
-WHERE  main_application_id = :app_id
-AND    working_copy_name   = :name
+WHERE  main_application_id      = :app_id
+AND    working_copy_name        = :name
+AND    working_copy_description = :description
 ORDER  BY application_id
 FETCH  FIRST 1 ROW ONLY
 """.strip()

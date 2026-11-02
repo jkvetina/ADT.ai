@@ -22,7 +22,7 @@ from adt_ai.export_data import queries
 from adt_ai.export_data.inventory import DataColumn
 from adt_ai.shared import text_files
 from adt_ai.shared.row_values import row_value
-from adt_ai.shared.sql_identifiers import safe_identifier, safe_qualified_identifier
+from adt_ai.shared.sql_identifiers import column_type, sql_name, sql_qualified_name
 
 _BASE64_CHUNK_SIZE = 30000
 #: The bytes one chunk decodes to, which is what has to fit `v_raw RAW(32767)`.
@@ -65,7 +65,7 @@ def lob_update_sql(
     key_columns: list[str],
     column_types: Mapping[str, str] | None = None,
 ) -> str:
-    """`column_types` maps an upper-case column name to its Oracle data type.
+    """`column_types` maps a column's exact name to its Oracle data type.
 
     It types the key values the WHERE finds the row by, through the same
     renderer the MERGE loads that row with (`#923`). Untyped, a RAW(16)
@@ -179,7 +179,7 @@ def _where_clause(
     column_types: Mapping[str, str],
 ) -> str:
     return " AND ".join(
-        _where_condition(column, row_value(row, column), column_types.get(column.upper(), ""))
+        _where_condition(column, row_value(row, column), column_type(column_types, column))
         for column in key_columns
     )
 
@@ -192,8 +192,8 @@ def _where_condition(column_name: str, value: Any, data_type: str) -> str:
 
 
 def _sql_name(name: str) -> str:
-    safe_identifier(name, role="identifier")
-    return name.lower()
+    # Quoted in its dictionary case when Oracle would not read it back bare (`#1096`).
+    return sql_name(name, role="identifier", lower=True)
 
 
 def _sql_table_name(name: str) -> str:
@@ -202,5 +202,4 @@ def _sql_table_name(name: str) -> str:
     Separate from `_sql_name` on purpose: a column is never owner-qualified, so
     the looser guard applies to the table alone.
     """
-    safe_qualified_identifier(name, role="table name")
-    return name.lower()
+    return sql_qualified_name(name, lower=True)

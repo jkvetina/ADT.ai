@@ -37,7 +37,7 @@ from adt_ai.doctor.init import DoctorInitMixin
 from adt_ai.doctor.layout_check import schema_case_action_lines
 from adt_ai.doctor.upgrade import DoctorUpgradeMixin
 from adt_ai.doctor.version_check import DoctorVersionMixin
-from adt_ai.shared import run_report
+from adt_ai.shared import env_check, run_report
 from adt_ai.shared.subprocess_env import safe_subprocess_environment
 
 __all__ = [
@@ -87,6 +87,7 @@ def _run_command(
     command: Sequence[str],
     cwd    : Path | None = None,
     env    : Mapping[str, str] | None = None,
+    timeout: float | None = None,
 ) -> str:
     completed = subprocess.run(
         command,
@@ -100,8 +101,28 @@ def _run_command(
         # `shared/git_files.py`'s module docstring for the whole rule).
         encoding       = "utf-8",
         errors         = "replace",
+        timeout        = timeout,
     )
     return (completed.stdout or completed.stderr).strip()
+
+
+def _run_probe(
+    command: Sequence[str],
+    cwd    : Path | None = None,
+    env    : Mapping[str, str] | None = None,
+) -> str:
+    """`_run_command` for a version probe, bounded (#1094).
+
+    `#670` gave `shared/env_check._run_command` a timeout and left this runner,
+    the one every `git --version`, `java --version` and `sql -V` actually goes
+    through, without one, so a wedged JVM or a stalled mount still hung the
+    whole screen. The limit is env_check's constant, read at call time so a
+    test can shorten it, and the `TimeoutExpired` reaches the callers as any
+    failing probe does: a FAIL or WARN row naming what gave up. `-update`'s
+    installers (`pip install`, `git`) keep `_run_command`'s unbounded run, since
+    a real install outlasts any probe.
+    """
+    return _run_command(command, cwd, env, timeout=env_check.COMMAND_TIMEOUT_SECONDS)
 
 
 def _request(url: str) -> urllib.request.Request:
@@ -155,11 +176,19 @@ class _HttpsRedirectHandler(urllib.request.HTTPRedirectHandler):
         # Check before urllib follows the redirect, not after downloading from
         # a different server. Metadata may redirect across HTTPS hosts; the
         # executable archive must stay on its original trusted host and port.
-        _request(newurl)
-        parsed = urllib.parse.urlsplit(newurl)
-        origin = (parsed.hostname, parsed.port if parsed.port is not None else 443)
-        if self.origin is not None and origin != self.origin:
-            raise ValueError(f"refusing a download redirect to a different host or port: {newurl}")
+        # urllib closes only the answers it follows, so a refused one is
+        # closed here (#1094).
+        try:
+            _request(newurl)
+            parsed = urllib.parse.urlsplit(newurl)
+            origin = (parsed.hostname, parsed.port if parsed.port is not None else 443)
+            if self.origin is not None and origin != self.origin:
+                raise ValueError(
+                    f"refusing a download redirect to a different host or port: {newurl}"
+                )
+        except ValueError:
+            fp.close()
+            raise
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
@@ -232,6 +261,7 @@ class DoctorRunner(DoctorVersionMixin, DoctorUpgradeMixin, DoctorInitMixin):
         version_cache_ttl  : float = 3600,
     ) -> None:
         self.command_runner      = command_runner or _run_command
+        self.probe_runner        = command_runner or _run_probe
         self.executable_resolver = executable_resolver or shutil.which
         self.env                 = env or os.environ
         self.package_version     = package_version

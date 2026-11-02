@@ -323,10 +323,6 @@ FROM user_tab_cols c
 WHERE c.table_name = :view_name
 """.strip()
 
-ALTER_TABLE_ADD_STATEMENT         = "ALTER TABLE {table_name} ADD {definition};"
-ALTER_TABLE_MODIFY_STATEMENT      = "ALTER TABLE {table_name} MODIFY {definition};"
-ALTER_TABLE_DROP_COLUMN_STATEMENT = "ALTER TABLE {table_name} DROP COLUMN {column};"
-
 SQLERROR_CONTINUE_DIRECTIVE      = "WHENEVER SQLERROR CONTINUE;"
 SQLERROR_EXIT_ROLLBACK_DIRECTIVE = "WHENEVER SQLERROR EXIT ROLLBACK;"
 
@@ -339,12 +335,9 @@ SPOOL_START_DIRECTIVE            = 'SPOOL "./{folder}/{schema}.log" APPEND;'
 SPOOL_OFF_DIRECTIVE              = "SPOOL OFF;"
 
 # `patch_rollback` in old ADT (patch.py:153, emitted at patch.py:1466-1467). The
-# generated script carries the safe default; `-deploy -continue` strips these two
-# lines back out so the deploy-time directive is the one that stands.
-WHENEVER_DIRECTIVES              = (
-    "WHENEVER OSERROR  EXIT ROLLBACK;",
-    "WHENEVER SQLERROR EXIT ROLLBACK;",
-)
+# generated script carries the directives `patch/settings.py` picks for it;
+# `-deploy -continue` strips every line opening on this prefix back out
+# (`patch/deploy.py`) so the deploy-time directive is the one that stands.
 WHENEVER_PREFIX                  = "WHENEVER "
 
 # Old ADT set these on every generated install script before anything else ran

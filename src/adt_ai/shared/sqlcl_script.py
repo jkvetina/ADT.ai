@@ -42,6 +42,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from adt_ai.shared.announce import guard
+from adt_ai.shared.process_kill import run_in_own_group
 from adt_ai.shared.sqlcl_errors import (
     SqlclNotConnectedError,
     SqlclScriptError,
@@ -265,9 +266,9 @@ def run_sqlcl_script(
     ``on_line`` is a live reader (ADT #434). Passing one moves the child onto a
     pty so its output arrives line by line instead of in one block at exit; the
     callback sees each line as it lands and the whole transcript still comes back
-    as the return value. **Without one nothing changes**: the `subprocess.run`
-    pipe below is the same call `diff`, `validate` and `export_apex -rest` have
-    always made, so this card cannot alter how they talk to SQLcl.
+    as the return value. **Without one nothing changes**: the closed-pipe run
+    below is the same transport `diff`, `validate` and `export_apex -rest` have
+    always had, so this card cannot alter how they talk to SQLcl.
 
     **This is the second door into a long wait, and it is guarded here (`#763`).**
     `AnnouncedGateway` wraps the gateway, so it covers every Oracle round trip
@@ -336,24 +337,21 @@ def run_sqlcl_script(
             # Windows console the difference was a `UnicodeDecodeError` raised on
             # ``communicate()``'s reader thread, which returns ``stdout=None``
             # beside ``returncode == 0`` rather than failing (ADT #743).
+            #
+            # `run_in_own_group` and not `subprocess.run` (ADT #1094): `run`
+            # killed the `sql` launcher by its pid on a timeout and left the JVM
+            # it had started running the script against the database after this
+            # raised "was killed". The child is in a session of its own now and
+            # the whole group goes with the deadline.
             try:
-                completed = subprocess.run(
-                    command,
-                    cwd            = root,
-                    check          = False,
-                    capture_output = True,
-                    text           = True,
-                    encoding       = "utf-8",
-                    errors         = "replace",
-                    input          = "",
-                    env            = environment,
-                    timeout        = timeout_seconds,
+                stdout, stderr, returncode = run_in_own_group(
+                    command, root, environment, timeout_seconds
                 )
             except subprocess.TimeoutExpired as expired:
-                # `subprocess.run` kills the child before re-raising, so nothing
-                # is left running. Whatever it managed to say first is the only
-                # clue about where it stalled, so it rides the error rather than
-                # being dropped with the process.
+                # The launcher and the JVM it started are both gone by the time
+                # this is reached. Whatever the child managed to say first is the
+                # only clue about where it stalled, so it rides the error rather
+                # than being dropped with the process.
                 partial = _scrub_secrets(
                     _decode(expired.stdout) + _decode(expired.stderr), secrets
                 ).strip()
@@ -361,8 +359,7 @@ def run_sqlcl_script(
                     f"SQLcl did not finish within {timeout_seconds:g} seconds and was killed."
                     + (f"\n{partial}" if partial else "")
                 ) from expired
-            raw_output = (completed.stdout or "") + (completed.stderr or "")
-            returncode = completed.returncode
+            raw_output = stdout + stderr
     output = _scrub_secrets(raw_output, secrets)
     if _died_before_the_script_ran(output):
         # Exit code 0 with a JVM stack trace and nothing else: SQLcl never

@@ -8,11 +8,21 @@ from adt_ai.cli.constants import (
     print_adt_header,
     print_adt_table,
 )
+from adt_ai.shared.fixed_width import fixed_width_row
 from adt_ai.shared.progress import FixedWidthProgressPrinter, schema_label
 
 #: A constant rather than a literal at the call site, so a rename sweeps through
 #: one edit and the docs grep for it has something to find (`#509`, `#555`).
 WORKSPACE_NOT_FOUND_HEADER = "WARNING - WORKSPACE NOT FOUND:"
+
+#: `#1098`, Jan's pick of the section printed after the run: the exported tables
+#: an enabled SELECT policy may have filtered, the session's exemption, and a
+#: 0-row result marked, since that is what a policy answering for the owner
+#: writes and what a truly empty table writes too.
+VPD_POLICIES_HEADER = "WARNING - VPD POLICIES:"
+SESSION_EXEMPT = "SESSION EXEMPT"
+SESSION_NOT_EXEMPT = "SESSION NOT EXEMPT"
+EMPTY_MARK = "EMPTY"
 
 
 class ConsoleApexRevealReporter:
@@ -129,15 +139,28 @@ class ConsoleExportDataReporter:
             return
         self._progress.begin(table.name.upper())
 
-    def finish_table(self, table: DataTable, row_count: int) -> None:
+    def finish_table(self, table: DataTable, row_count: int, filtered: int = 0) -> None:
         self.tables += 1
         self.rows += row_count
         if self._silent:
+            return
+        if filtered:
+            # The rows a `where` filter left out, on the table's own row (`#1099`,
+            # Jan's pick); `-backup` exports them.
+            self._progress.status(table.name.upper(), f"{row_count} | -{filtered} ROWS")
             return
         self._progress.finish(table.name.upper(), row_count)
 
     def finish_export(self) -> None:
         return None
+
+    def vpd_policies(self, exempt: bool, tables: list[tuple[str, int]]) -> None:
+        """The `WARNING - VPD POLICIES:` section, under `-silent` too (`#1098`)."""
+        print_adt_header(VPD_POLICIES_HEADER)
+        print(f"  {SESSION_EXEMPT if exempt else SESSION_NOT_EXEMPT}")
+        for table, row_count in tables:
+            value = f"{row_count} {EMPTY_MARK}" if row_count == 0 else str(row_count)
+            print(fixed_width_row(table, value))
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

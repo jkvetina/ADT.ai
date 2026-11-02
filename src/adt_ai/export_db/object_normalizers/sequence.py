@@ -19,7 +19,8 @@ _SEQUENCE_DEFAULTS = (
 
 def normalize_sequence(lines: list[str], context: NormalizationContext) -> list[str]:
     line = " ".join(lines)
-    line = re.sub(r" START WITH \d+", "", line)
+    if not context.keep_start_with:
+        line = re.sub(r" START WITH \d+", "", line)
     line = strip_default_clauses(line, _SEQUENCE_DEFAULTS)
     line = re.sub(r"\s+MAXVALUE\s+9{28}(?!\d)", "", line, flags=re.IGNORECASE)
     line = re.sub(r"\s+", " ", line).replace(" ;", ";").strip()

@@ -176,34 +176,47 @@ def migrate_internal_files(root: Path | str) -> list[str]:
     return moved
 
 
-def ensure_internal_ignored(root: Path) -> None:
-    """Idempotently ensure ``config/internal/`` is git-ignored in ``root``.
+def ensure_gitignored(root: Path, entry: str) -> None:
+    """Idempotently append ``entry`` to ``root/.gitignore``, never failing a command.
 
-    Mirrors ``ensure_discovery_ignored`` for ``config/discovery/``, and exists for
-    the reason the first live sweep exposed: a project scaffolded before `#316`
-    carries an older copy of the shipped ``.gitignore``, so relocating the files
-    turned a folder git had never seen into an untracked entry, a 273 MB SQLite
-    store one `git add .` away from a commit. Called whenever the internal folder
-    exists, and idempotent, so an already-migrated root writes nothing.
+    The one read-modify-write every generated folder's ignore entry goes through
+    (ADT #1094): ``config/internal/`` here, and ``config/discovery/``,
+    ``config/temp/`` and ``config/diff/`` from their own modules. Four copies had
+    three unguarded reads, so a ``.gitignore`` this cannot decode (a cp1250
+    comment) crashed `discovery` after its report was written and every
+    passwordless SQLcl script before SQLcl started. Such a file is left exactly
+    as found: rewriting it would lose what could not be read, and a raise here
+    escaped `main` as a traceback before any banner (ADT #923). A missing
+    trailing newline is repaired rather than run into.
     """
     gitignore = root / ".gitignore"
     try:
         existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
     except (OSError, ValueError):
-        # A file this cannot read or decode (a cp1250 comment) is left exactly
-        # as found: rewriting it would lose what could not be read, and a raise
-        # here escaped `main` as a traceback before any banner (ADT #923).
         return
-    if GITIGNORE_ENTRY in {line.strip() for line in existing.splitlines()}:
+    if entry in {line.strip() for line in existing.splitlines()}:
         return
     prefix = existing
     if prefix and not prefix.endswith("\n"):
         prefix += "\n"
     try:
-        text_files.write_text(gitignore, prefix + GITIGNORE_ENTRY + "\n")
+        text_files.write_text(gitignore, prefix + entry + "\n")
     except OSError:
         # Same posture as the move itself: housekeeping never fails a command.
         return
+
+
+def ensure_internal_ignored(root: Path) -> None:
+    """Idempotently ensure ``config/internal/`` is git-ignored in ``root``.
+
+    Exists for the reason the first live sweep exposed: a project scaffolded
+    before `#316` carries an older copy of the shipped ``.gitignore``, so
+    relocating the files turned a folder git had never seen into an untracked
+    entry, a 273 MB SQLite store one `git add .` away from a commit. Called
+    whenever the internal folder exists, and idempotent, so an already-migrated
+    root writes nothing.
+    """
+    ensure_gitignored(root, GITIGNORE_ENTRY)
 
 
 def _relocate(source: Path, target: Path, target_dir: Path, name: str, moved: list[str]) -> None:
@@ -291,6 +304,7 @@ __all__ = [
     "OBSOLETE_FILES",
     "SUPERSEDED_FILES",
     "config_dir",
+    "ensure_gitignored",
     "ensure_internal_ignored",
     "internal_dir",
     "internal_path",

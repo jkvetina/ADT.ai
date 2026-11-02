@@ -51,3 +51,5 @@ Refs matching nothing archive nothing, at exit `0`, and the listing then holds t
 Inside the archive the zips are filed by month, `patch_archive/2026-08/260818-1-CORE_LOGS.zip`. The month is the day the PATCH was built, read off its own folder name and never the day you archive it, so a June patch swept up in August still lands under June and archiving one folder twice puts it in the same place both times.
 
 `patch_archive_subfolder` is the level, a `strftime` format: `'%Y'` files by year, `''` gives one flat folder. A name carrying no readable day goes to the archive root rather than a guessed month. Zips written before this key sit flat and are left there.
+
+A folder re-created and archived again under a name the archive already holds, which a same-day `-create` of the same code produces, lands as `260818-1-CORE_LOGS-2.zip`, then `-3`, and the first zip is never replaced.

@@ -356,7 +356,7 @@ def add_patch_parser(subparsers: SubParsers) -> None:
     )
     # NOT "filter or select branch" (ADT #326): the "or" advertised two
     # behaviours where there is one. The single reader is
-    # `commands_patch.py:268,279`: it validates the ref exists, then passes it
+    # `commands_patch._level_history`: it checks the ref exists, then passes it
     # as the scan's branch, so a name that resolves to nothing fails loudly
     # instead of falling back to HEAD and patching the wrong history.
     patch.add_argument(
@@ -401,8 +401,8 @@ def add_patch_parser(subparsers: SubParsers) -> None:
     # patch still carries only the workspace static files its commits changed;
     # this carries every one of them, in the version the content mode selects.
     # Application static files are deliberately not widened. `-files` itself stays
-    # withdrawn (ADT #353), and a build is the only run it changes, so anything
-    # without `-create` refuses it (`patch_build.files_ws_flag_refusal`).
+    # withdrawn (ADT #353). A build and `-upload` (#903) are the only runs reading
+    # it, so any other refuses it (`patch_build.files_ws_flag_refusal`).
     patch.add_argument(
         "--files-ws",
         "--files_ws",

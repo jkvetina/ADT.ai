@@ -58,11 +58,12 @@ from adt_ai.export_data.runner import (
     _csv_cell,
     _ignored_columns,
     _key_columns,
-    _where_filter,
 )
 from adt_ai.export_data.sidecars import _is_sidecar_column, _sidecar_payload
+from adt_ai.export_data.where_filter import _where_filter
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.row_values import row_value
+from adt_ai.shared.sql_identifiers import sql_name
 from adt_ai.shared.sql_like import matches_sql_like, split_patterns
 
 #: The object type a `-data` run is keyed under in the countdown history.
@@ -182,7 +183,7 @@ def plan_columns(
     kept = [
         column for column in base
         if column.name in other
-        and column.name not in ignored
+        and column.name.upper() not in ignored
         and not any(matches_sql_like(column.name.upper(), pattern) for pattern in patterns)
     ]
     identity = {
@@ -307,14 +308,10 @@ class _Reader:
         columns = plan.names
         csv_names = [c.name for c in (*plan.key, *plan.values) if not _is_sidecar_column(c)]
         order_by = ", ".join(column.name for column in plan.key) or "ROWID"
-        self.sql = self.discovery.data_query(
-            table,
-            columns,
-            _where_filter(dict(config), table, csv_names),
-            order_by,
-            {column.name.upper(): column.data_type for column in (*plan.key, *plan.values)},
-        )
-        self.order_by = order_by
+        where_filter = _where_filter(dict(config), table, csv_names)
+        types = {column.name: column.data_type for column in (*plan.key, *plan.values)}
+        self.sql = self.discovery.data_query(table, columns, where_filter, order_by, types)
+        self.select = self.discovery.data_select(table, columns, where_filter, types)
 
     def rows(self) -> Iterator[_Row]:
         if not self.page_size:
@@ -330,14 +327,17 @@ class _Reader:
 
     def page_sql(self, offset: int) -> str:
         """The same SELECT, in binary key order, one page of it."""
-        order = ", ".join(
-            (f"NLSSORT({column.name}, 'NLS_SORT=BINARY')"
-             if column.data_type.upper() in _CHARACTER_TYPES else column.name)
-            + " NULLS LAST"
-            for column in self.plan.key
+        parts = []
+        for column in self.plan.key:
+            name = sql_name(column.name, role="order by column")
+            if column.data_type.upper() in _CHARACTER_TYPES:
+                name = f"NLSSORT({name}, 'NLS_SORT=BINARY')"
+            parts.append(f"{name} NULLS LAST")
+        order = ", ".join(parts)
+        return (
+            f"{self.select}\nORDER BY {order}\n"
+            f"OFFSET {offset} ROWS FETCH NEXT {self.page_size} ROWS ONLY"
         )
-        base = self.sql[: -len(self.order_by)]
-        return f"{base}{order}\nOFFSET {offset} ROWS FETCH NEXT {self.page_size} ROWS ONLY"
 
     def _render(self, rows: Sequence[Mapping[str, Any]]) -> Iterator[_Row]:
         for row in rows:

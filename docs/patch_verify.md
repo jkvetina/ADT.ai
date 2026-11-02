@@ -24,7 +24,7 @@ The second half is the one nothing in ADT had read. A fragment that fails to par
 
 Both deploy flavours are covered by one pass. The scan uses the application actually deployed: a retargeted APEXlang import checks its target id. An application touched by both an install script and an import is scanned once.
 
-An application whose own deploy row errored is not scanned at all. The deploy has already failed on its own terms, and scanning a half-installed application reports the half.
+An application none of whose deploy rows succeeded is not scanned at all: the deploy has already failed on its own terms. One `SUCCESS` row, the `init` half say, is enough to scan it, failed import or not.
 
 <br>
 
@@ -160,7 +160,7 @@ Every failing outcome reaches the deploy status and the process exit code, exact
 
 It sets the workspace security context and the session PL/Scope flag on the connection the deploy already opened, and opens none of its own.
 
-**The `DEPSCAN$` helper procedures the scan generates are always taken away again.** Install, scan and cleanup sit behind one lifecycle boundary, and the cleanup runs in a `finally`: the obligation to remove the helpers starts when the scan statement is issued, not when it returns, so a scan that fails halfway leaves none of them standing. APEX drops a finished scan's helpers itself, so the cleanup takes only helpers older than 30 minutes: a younger one may belong to a scan another session is running against the same schema, and dropping it would fail that scan with `ORA-04043`. Running the cleanup twice is safe. A deploy that silently grew helper objects would be a worse bug than the one this closes.
+**The `DEPSCAN$` helper procedures the scan generates are taken away again, those older than 30 minutes.** Install, scan and cleanup sit behind one lifecycle boundary, and the cleanup runs in a `finally`: the obligation to remove the helpers starts when the scan statement is issued, not when it returns, so a scan that fails halfway leaves none older than that standing. APEX drops a finished scan's helpers itself, which is why the age line: a younger one may belong to a scan another session is running against the same schema, and dropping it would fail that scan with `ORA-04043`. Running the cleanup twice is safe. A deploy that silently grew helper objects would be a worse bug than the one this closes.
 
 Measured on APEX 26.1, a bare scan with no cleanup behind it left no `DEPSCAN` object on the schema at all, so on that release there is nothing to strand in the first place. The boundary is there for the release or the application that does leave one, and it costs a `finally`.
 
@@ -300,10 +300,10 @@ And the three moments that belong to this deploy on the application's `VERIFYING
 VERIFYING APPLICATIONS:
 -----------------------
   1000/ORDERS ........................................................ 0:00:07
-    BUILD STATUS: Run and Develop -> RUN_ONLY -> Run Only
+    BUILD STATUS: Run and Develop -> RUN_ONLY -> Run and Develop
 ```
 
-**The lock is released inside that row**, after the scan and after any revert, so the final status is known before the row closes and the release's own reads run under a row that is still open. An application the scan does not cover is released under the deploy table's last row instead. A failed scan prints no `BUILD STATUS:` line; its screen is `ERROR - VERIFICATION FAILED:`. **An application nothing locked prints no row**, which is every deploy under `off` and every task sandbox. The import log still carries its `BUILD STATUS` row with the reason on it.
+**The lock is released inside that row**, after the scan and after any revert, so the final status is known before the row closes and the release's own reads run under a row that is still open. Under `run_only` the last moment reads `Run Only`. An application the scan does not cover is released under the deploy table's last row instead. A failed scan prints no `BUILD STATUS:` line; its screen is `ERROR - VERIFICATION FAILED:`. **An application nothing locked prints no row**, which is every deploy under `off` and every task sandbox. The import log still carries its `BUILD STATUS` row with the reason on it.
 
 **`AFTER IMPORT` is APEX's own doing, not ADT's.** An APEXlang import resets build status every time, and `apex_application_install.set_build_status`, which does pin the classic `f<id>.sql` path, is ignored by SQLcl's APEXlang importer, so there is nothing to pin with. The deploy therefore re-applies the final status after the scan instead of trying to carry the lock through the import.
 
@@ -327,4 +327,4 @@ It carries the application, the outcome, the backup file, and a hash of the back
 
 ## Turning the revert off
 
-`False` takes no backup at all and leaves a failed import installed, which is what every release before this one did. It also does nothing on its own when `deploy_verify_scan` is `False`, because there is then no verdict for it to act on.
+`False` takes no backup at all and leaves a failed import installed, which is what every release before this one did. With `deploy_verify_scan` off the backup is still taken and nothing reads it: there is then no verdict for the revert to act on.

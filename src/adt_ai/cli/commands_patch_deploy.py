@@ -371,7 +371,7 @@ def _patch_deploy_gateway_factories(
     startup = _load_startup_context(args)
     connections = startup.connections
     target_env = args.target or connections.default_environment
-    source_env = str(config.get("patch_source_env") or config.get("source_env") or "DEV")
+    source_env = str(config.get("patch_source_env") or "DEV")
 
     def target_connection(schema: str) -> Connection:
         return connections.resolve(environment=target_env, schema=schema)

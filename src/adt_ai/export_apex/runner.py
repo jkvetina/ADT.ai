@@ -9,6 +9,8 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
+from oracledb import Error as OracleError
+
 from adt_ai.export_apex import queries
 from adt_ai.export_apex.actions import (
     ACTION_HEADERS,
@@ -20,6 +22,7 @@ from adt_ai.export_apex.actions import (
     skipped_by_apex_release,
 )
 from adt_ai.export_apex.deep import deep_component_filters, deep_db_object_rows
+from adt_ai.export_apex.failures import ApexExportFailedError, ApexSliceFailure
 from adt_ai.export_apex.files import ApexFileResolver
 from adt_ai.export_apex.filters import (
     ApexComponentFilter,
@@ -102,6 +105,7 @@ from adt_ai.export_apex.rest import (
     _split_rest_modules,
 )
 from adt_ai.export_apex.schema_level import ApexSchemaLevelMixin, schema_level_only
+from adt_ai.export_apex.slices import ApexSliceMixin
 from adt_ai.export_apex.watermarks import (
     _WATERMARKED_FORMATS,
     ApexWatermarkMixin,
@@ -111,6 +115,7 @@ from adt_ai.export_apex.writers import ApexCollectionWriterMixin, CollectionWrit
 from adt_ai.shared import text_files
 from adt_ai.shared.apex_checksum import read_apex_checksum
 from adt_ai.shared.apex_store import ApexStore
+from adt_ai.shared.connection_errors import ConnectionError as AdtConnectionError
 from adt_ai.shared.dates import is_sub_day_window
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.progress import FixedWidthProgressPrinter
@@ -126,6 +131,7 @@ GatewayFactory = Callable[[str], QueryGateway]
 
 
 class ApexExportRunner(
+    ApexSliceMixin,
     ApexCollectionWriterMixin,
     ApexWatermarkMixin,
     ApexActionTimingMixin,
@@ -145,19 +151,43 @@ class ApexExportRunner(
     PAGE_COMMENTS_QUERY = queries.PAGE_COMMENTS_QUERY
     PAGE_REGION_COMMENTS_QUERY = queries.PAGE_REGION_COMMENTS_QUERY
 
-    def __init__(self, gateway_factory: GatewayFactory) -> None:
+    def __init__(
+        self,
+        gateway_factory: GatewayFactory,
+        fatal_error: Callable[[Exception], bool] | None = None,
+    ) -> None:
         self.gateway_factory = gateway_factory
+        # A failure no later slice can get past, a lost connection, still ends
+        # the run at once (`export_db`'s `#917` seam, the same predicate).
+        self.fatal_error = fatal_error
+        self._failures: list[ApexSliceFailure] = []
+        self._keep_going = False
 
     def run(self, request: ApexExportRequest) -> None:
-        if request.apex_store is not None:
-            # An injected store is owned by its caller, which may use it for
-            # several runs or assertions after this one returns.
-            self._run(request, request.apex_store)
-            return
-        with ApexStore.load(request.root) as store:
-            self._run(request, store)
+        try:
+            if request.apex_store is not None:
+                # An injected store is owned by its caller, which may use it for
+                # several runs or assertions after this one returns.
+                self._run(request, request.apex_store)
+            else:
+                with ApexStore.load(request.root) as store:
+                    self._run(request, store)
+        except (OracleError, AdtConnectionError, OSError, RuntimeError, ValueError) as abort:
+            # A run that ends early keeps what it already listed (ADT #1114);
+            # with nothing listed the error itself is raised, as it always was.
+            if not self._failures:
+                raise
+            failures, self._failures = self._failures, []
+            raise ApexExportFailedError(failures, abort=abort) from abort
+        if self._failures:
+            # After every slice that could write did, chained to the first
+            # failure so `-debug`-style tracebacks still reach it.
+            failures, self._failures = self._failures, []
+            raise ApexExportFailedError(failures) from failures[0].error
 
     def _run(self, request: ApexExportRequest, store: ApexStore) -> None:
+        self._failures = []
+        self._keep_going = request.keep_going
         base_resolver = ApexFileResolver.from_config(request.root, dict(request.config))
         reporter = request.reporter or ConsoleApexProgressReporter()
         # One store for the whole run: every ETA read, every ETA write and the
@@ -215,42 +245,98 @@ class ApexExportRunner(
                     segment_bar, segment_reporter, timers, store,
                 )
                 continue
-            for index, application in enumerate(applications):
+            schema_slice = True
+            for application in applications:
                 # `-rest` and `-files_ws` write workspace artifacts, paths with
                 # no app id in them, so they belong to the schema, not to an
                 # application, and must run exactly once however many
-                # applications the schema has. The first one carries them, so
+                # applications the schema has. The first usable one carries them, so
                 # the rows still read among that block's other export rows.
-                schema_slice = index == 0
-                cutoff = self._listing_cutoff(request, application, store)
-                # A sub-day window's title carries the instant it starts at, and
-                # that instant belongs to the database clock (`#340`), so this
-                # one `SELECT ... FROM dual` is the only read that has to come
-                # before the header rather than under it. Every other window
-                # knows its title from the request alone.
-                sub_day = is_sub_day_window(request.recent_days)
-                header_now = read_db_now(gateway) if sub_day else None
-                # **The application's first section title goes up before its
-                # first read** (`#372`); which title that is, and the one run
-                # that can open on neither, are in `open_application_section`.
-                opened = open_application_section(
-                    request,
-                    application,
-                    cutoff,
-                    header_now,
-                    exporting_header = segment_bar is None,
-                )
-                # Database clock BEFORE the component listing: anything changed
-                # mid-export stays at or after it and is re-selected next run. A
-                # sub-day run already asked above, so the round trip happens once.
-                candidate = (
-                    (header_now if sub_day else read_db_now(gateway))
-                    if is_watermarking(request)
-                    else None
-                )
-                if request.recent_report_only:
+                # An application's own setup is guarded like a slice (ADT #1114):
+                # one it refuses is listed and the next application still runs.
+                with self._guarded_setup(application) as setup:
+                    cutoff = self._listing_cutoff(request, application, store)
+                    # A sub-day window's title carries the instant it starts at, and
+                    # that instant belongs to the database clock (`#340`), so this
+                    # one `SELECT ... FROM dual` is the only read that has to come
+                    # before the header rather than under it. Every other window
+                    # knows its title from the request alone.
+                    sub_day = is_sub_day_window(request.recent_days)
+                    header_now = read_db_now(gateway) if sub_day else None
+                    # **The application's first section title goes up before its
+                    # first read** (`#372`); which title that is, and the one run
+                    # that can open on neither, are in `open_application_section`.
+                    opened = open_application_section(
+                        request,
+                        application,
+                        cutoff,
+                        header_now,
+                        exporting_header = segment_bar is None,
+                    )
+                    # Database clock BEFORE the component listing: anything changed
+                    # mid-export stays at or after it and is re-selected next run. A
+                    # sub-day run already asked above, so the round trip happens once.
+                    candidate = (
+                        (header_now if sub_day else read_db_now(gateway))
+                        if is_watermarking(request)
+                        else None
+                    )
+                    if request.recent_report_only:
+                        recent_rows = recent_components(
+                            gateway, application, request, workspace_developers(), cutoff
+                        )
+                        if recent_rows is not None:
+                            print_recent_changes(
+                                application,
+                                request.recent_days,
+                                recent_author_label(request),
+                                recent_rows,
+                                cutoff,
+                                header_now,
+                                header_printed = opened == "changes",
+                            )
+                        continue
+                    component_filters = request.component_filters
+                    deep_rows: list[dict[str, Any]] = []
+                    if request.deep:
+                        component_filters = deep_component_filters(
+                            request.root,
+                            application.app_id,
+                            request.page_selection,
+                            request.component_filters,
+                            gateway=gateway,
+                        )
+                        deep_rows = deep_db_object_rows(
+                            request.root,
+                            application.app_id,
+                            request.page_selection,
+                        )
+                    # Everything below reads back the collection the start query
+                    # fills, so the two have to reach one database session. A
+                    # transport that cannot promise that returns no rows at exit 0,
+                    # and the export would write that emptiness to disk (ADT #449);
+                    # an `ords:` one sends them as one request instead (ADT #1071).
+                    gateway = collection_gateway(gateway, "export_apex", self.EXPORT_START_QUERY)
+                    # Read first: the block detaches the session the start query
+                    # opens, and that session moves the checksum (ADT #962).
+                    checksum = read_apex_checksum(gateway, application.app_id)
+                    gateway.execute(self.EXPORT_START_QUERY, {"app_id": application.app_id})
+                    enrichments = _enrichments(gateway, application)
                     recent_rows = recent_components(
                         gateway, application, request, workspace_developers(), cutoff
+                    )
+                    recent_filter = export_component_filter(recent_rows, request, cutoff)
+                    explicit_filter = ApexExplicitFilter(
+                        request.page_selection,
+                        component_filters,
+                    )
+                    (resolver.app_root(application) / "comments").mkdir(parents=True, exist_ok=True)
+                    page_names = self._write_page_comments(
+                        gateway,
+                        resolver,
+                        application,
+                        recent_filter,
+                        explicit_filter,
                     )
                     if recent_rows is not None:
                         print_recent_changes(
@@ -262,69 +348,18 @@ class ApexExportRunner(
                             header_now,
                             header_printed = opened == "changes",
                         )
+                    # The segment bar already covers every application, so a block
+                    # here would be the rows `-compact` exists to replace; and
+                    # `opened` says the title already went up ahead of the reads.
+                    if (
+                        any(request.actions.values())
+                        and segment_bar is None
+                        and opened != "exporting"
+                    ):
+                        _print_application_export_header(application)
+                if setup.failed:
                     continue
-                component_filters = request.component_filters
-                deep_rows: list[dict[str, Any]] = []
-                if request.deep:
-                    component_filters = deep_component_filters(
-                        request.root,
-                        application.app_id,
-                        request.page_selection,
-                        request.component_filters,
-                        gateway=gateway,
-                    )
-                    deep_rows = deep_db_object_rows(
-                        request.root,
-                        application.app_id,
-                        request.page_selection,
-                    )
-                # Everything below reads back the collection the start query
-                # fills, so the two have to reach one database session. A
-                # transport that cannot promise that returns no rows at exit 0,
-                # and the export would write that emptiness to disk (ADT #449);
-                # an `ords:` one sends them as one request instead (ADT #1071).
-                gateway = collection_gateway(gateway, "export_apex", self.EXPORT_START_QUERY)
-                # Read first: the block detaches the session the start query
-                # opens, and that session moves the checksum (ADT #962).
-                checksum = read_apex_checksum(gateway, application.app_id)
-                gateway.execute(self.EXPORT_START_QUERY, {"app_id": application.app_id})
-                enrichments = _enrichments(gateway, application)
-                recent_rows = recent_components(
-                    gateway, application, request, workspace_developers(), cutoff
-                )
-                recent_filter = export_component_filter(recent_rows, request, cutoff)
-                explicit_filter = ApexExplicitFilter(
-                    request.page_selection,
-                    component_filters,
-                )
-                (resolver.app_root(application) / "comments").mkdir(parents=True, exist_ok=True)
-                page_names = self._write_page_comments(
-                    gateway,
-                    resolver,
-                    application,
-                    recent_filter,
-                    explicit_filter,
-                )
-                if recent_rows is not None:
-                    print_recent_changes(
-                        application,
-                        request.recent_days,
-                        recent_author_label(request),
-                        recent_rows,
-                        cutoff,
-                        header_now,
-                        header_printed = opened == "changes",
-                    )
-                # The segment bar already covers every application, so a block
-                # here would be the rows `-compact` exists to replace; and
-                # `opened` says the title already went up ahead of the reads.
-                if (
-                    any(request.actions.values())
-                    and segment_bar is None
-                    and opened != "exporting"
-                ):
-                    _print_application_export_header(application)
-                self._run_text_actions(
+                exported = self._run_text_actions(
                     gateway,
                     resolver,
                     application,
@@ -339,39 +374,16 @@ class ApexExportRunner(
                     page_names,
                     deep_rows,
                 )
-                if request.actions.get("files"):
-                    self._run_action(
-                        segment_reporter,
-                        timers,
-                        store,
-                        application,
-                        "files",
-                        partial(
-                            self._write_static_files,
-                            gateway,
-                            resolver,
-                            application,
-                            application.app_id,
-                        ),
-                    )
-                if request.actions.get("files_ws") and schema_slice:
-                    self._run_schema_action(
-                        segment_reporter,
-                        timers,
-                        store,
-                        "files_ws",
-                        partial(self._write_static_files, gateway, resolver, application, 0),
-                    )
-                if request.actions.get("rest") and schema_slice:
-                    self._run_schema_action(
-                        segment_reporter,
-                        timers,
-                        store,
-                        "rest",
-                        partial(
-                            self._write_rest_export, gateway, resolver, request.config
-                        ),
-                    )
+                exported = self._run_file_and_schema_slices(
+                    gateway, resolver, application, request,
+                    schema_slice, segment_reporter, timers, store,
+                ) and exported
+                schema_slice = False
+                if not exported:
+                    # An app with a failed slice keeps its previous checksum,
+                    # merge base and watermarks, exactly as when the failure
+                    # ended the run, and a tree it did not finish is not compiled.
+                    continue
                 self._store_checksum(request, application, checksum)
                 self._record_merge_base(request, application)
                 # Reached only when every requested format wrote successfully, so
@@ -379,7 +391,7 @@ class ApexExportRunner(
                 self._advance_watermarks(request, application, candidate, store)
                 if request.validate_apexlang:
                     request.validate_apexlang(application, segment_reporter)
-            if not applications:
+            if not applications or (schema_slice and not request.recent_report_only):
                 self._run_schema_artifacts_tail(
                     request, schema, gateway, resolver,
                     segment_bar, segment_reporter, timers, store,
@@ -388,79 +400,6 @@ class ApexExportRunner(
             # its row with `FAILED`, and a 100% redraw would overwrite it.
             if segment_bar is not None:
                 segment_bar.close()
-
-    def _run_text_actions(
-        self,
-        gateway: QueryGateway,
-        resolver: ApexFileResolver,
-        application: ApexApplication,
-        request: ApexExportRequest,
-        enrichments: Mapping[int, str],
-        developers: Mapping[str, Mapping[str, str]],
-        reporter: ApexProgressReporter,
-        timers: dict[Any, Any],
-        store: ApexStore,
-        recent_filter: RecentComponentFilter,
-        explicit_filter: ApexExplicitFilter,
-        page_names: dict[int, str],
-        deep_rows: list[dict[str, Any]],
-    ) -> None:
-        # Shared `TEXT_ACTIONS` order, never a second list here: the compact
-        # bar's budget walks the same tuple (see `actions.planned_actions`).
-        for action in TEXT_ACTIONS:
-            sql = getattr(self, f"EXPORT_{action.upper()}_QUERY")
-            if not request.actions.get(action):
-                continue
-            if skipped_by_apex_release(action, request.apex_version):
-                # The pre-26.1 `apexlang` miss is announced only to the user who
-                # named that format, the line answers "where is my APEXlang
-                # export?", a question `-all` never asked, so under `-all` it was
-                # a notice about something nobody requested (ADT #235). The 26.1
-                # `readable` skip is silent always (Jan, 2026-07-27).
-                if action == "apexlang" and action in request.explicit_actions:
-                    print_apexlang_skip_row()
-                continue
-
-            def operation(sql: str = sql, action: str = action) -> CollectionWriteResult:
-                gateway.execute(
-                    sql,
-                    _bind_params(
-                        sql, {"app_id": application.app_id, **_export_options(request.config)}
-                    ),
-                )
-                return self._write_collection_files(
-                    gateway,
-                    resolver,
-                    application,
-                    action,
-                    enrichments,
-                    request.config,
-                    developers,
-                    request.release,
-                    recent_filter,
-                    explicit_filter,
-                    page_names,
-                )
-
-            if _is_partial(request):
-                result = self._run_partial_action(
-                    reporter,
-                    timers,
-                    application,
-                    action,
-                    operation,
-                )
-                if _has_explicit(request) or recent_filter.lists_written:
-                    _print_components([*deep_rows, *result.rows])
-            else:
-                self._run_action(
-                    reporter,
-                    timers,
-                    store,
-                    application,
-                    action,
-                    operation,
-                )
 
     def _store_checksum(
         self,

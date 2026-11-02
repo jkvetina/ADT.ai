@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from adt_ai.export_db.normalizers import NormalizationContext, qualified
+from adt_ai.export_db.object_normalizers.literals import restore, set_aside
 
 
 def normalize_job(lines: list[str], context: NormalizationContext) -> list[str]:
@@ -10,22 +11,17 @@ def normalize_job(lines: list[str], context: NormalizationContext) -> list[str]:
     if not job_payload:
         return lines
 
-    action_match = re.search(
-        r"job_action\s*=>\s*(?P<literal>'(?:''|[^'])*')",
-        job_payload,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    # The WHOLE literal is set aside, quotes and edge newlines included, and only
-    # at the span it was matched. An action stripped first left a line holding
-    # just its quote, which the formatter below padded with `=>` as if it named an
-    # attribute: PLS-00103 on deploy, and an action that read differently (#923).
-    job_action = action_match.group("literal") if action_match else ""
-    if action_match:
-        job_payload = (
-            job_payload[: action_match.start("literal")]
-            + "{JOB_ACTION}"
-            + job_payload[action_match.end("literal") :]
-        )
+    # The default job class goes while its literal is still readable; the
+    # set-aside below would hide it from this plain replace.
+    job_payload = job_payload.replace("job_class=>\'\"DEFAULT_JOB_CLASS\"\',", "")
+    # EVERY literal is set aside, quotes and edge newlines included, and comes
+    # back at the span it was matched. An action stripped first left a line
+    # holding just its quote, which the formatter below padded with `=>` as if
+    # it named an attribute: PLS-00103 on deploy (#923). That fix set aside the
+    # action alone, and the `=>` reformat and the line split still ran over
+    # `comments`, `repeat_interval` and the rest, so a comment holding `, b=>c`
+    # or a line break came back with an attribute line injected into it (#1094).
+    job_payload, literals = set_aside(job_payload, "string")
 
     job_payload = re.sub(
         r"start_date=>TO_TIMESTAMP_TZ[^)]*[)]",
@@ -34,7 +30,6 @@ def normalize_job(lines: list[str], context: NormalizationContext) -> list[str]:
         flags=re.IGNORECASE,
     )
     job_payload = job_payload.replace("end_date=>NULL,", "")
-    job_payload = job_payload.replace("job_class=>\'\"DEFAULT_JOB_CLASS\"\',", "")
     payload_lines = ["job_name=>in_job_name,"]
     payload_lines.extend(
         re.sub(
@@ -45,7 +40,7 @@ def normalize_job(lines: list[str], context: NormalizationContext) -> list[str]:
         ).splitlines()
     )
     formatted_payload = "\n".join(_format_job_attribute(line) for line in payload_lines if line)
-    formatted_payload = formatted_payload.replace("{JOB_ACTION}", job_action)
+    formatted_payload = restore(formatted_payload, literals, "string")
 
     return _job_template(
         job_name    = qualified(context.object_name.upper(), context),

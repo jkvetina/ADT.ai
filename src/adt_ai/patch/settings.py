@@ -114,6 +114,7 @@ from adt_ai.patch.deploy_settings import (
 from adt_ai.patch.deploy_settings import (
     verify_deploy_scan as verify_deploy_scan,
 )
+from adt_ai.shared.safe_paths import simple_relative_path
 
 #: Every key this module reads, with the value ADT.ai ships. A project setting
 #: none of them gets exactly what it got before these keys existed. Kept as one
@@ -201,8 +202,14 @@ def scripts_snap_folder(config: dict[str, Any]) -> str:
     the patch folder's own name already carries the code, so repeating it would
     nest a directory answering a question nobody asked. The folder NAME was never
     the reason, so the key comes back.
+
+    Validated like `patch_scripts_dir` (ADT #1094): `-create -force` runs
+    `rmtree(folder / this)`, so `.`, `./` or `/` made the destination the patch
+    folder itself and deleted it whole, deploy logs included, and `..` reached
+    the patch root. A blank is the shipped default, as for every key here.
     """
-    return _text(config, "patch_scripts_snap").strip("/")
+    folder = simple_relative_path(_text(config, "patch_scripts_snap"), role="patch_scripts_snap")
+    return folder.as_posix()
 
 
 # --- slot names --------------------------------------------------------------

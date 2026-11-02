@@ -9,7 +9,7 @@ from adt_ai.export_db.discovery_filters import has_exact_name_filter
 from adt_ai.shared.config import DEFAULT_PATH_OBJECTS
 from adt_ai.shared.db import QueryGateway
 from adt_ai.shared.identity import load_identity, session_identifier
-from adt_ai.shared.object_types import DATA_SECURITY_OBJECT_TYPES
+from adt_ai.shared.object_types import ARTIFACT_OBJECT_TYPES
 from adt_ai.shared.sql_like import matches_sql_like, split_patterns
 
 if TYPE_CHECKING:
@@ -81,9 +81,10 @@ def _configured_object_types(config: dict[str, Any]) -> list[str]:
     return [
         object_type
         for object_type in raw_types
-        # The Deep Data Security types are written beside GRANT, never
-        # discovered: neither has a `user_objects` row (`#1063`).
-        if object_type not in {"DATA", "GRANT", *DATA_SECURITY_OBJECT_TYPES}
+        # The Deep Data Security (`#1063`) and row-level security (`#1098`)
+        # types are written beside GRANT, never discovered: none of them is a
+        # `user_objects` row of the schema.
+        if object_type not in {"DATA", "GRANT", *ARTIFACT_OBJECT_TYPES}
     ]
 
 def _exported_object_types(config: dict[str, Any]) -> list[str]:

@@ -139,8 +139,17 @@ def resolve_key(explicit: str | None = None) -> str:
 
 
 def _key_from(raw: str) -> str:
-    """A key given as a value, or as the path of a file holding one."""
-    key_path = Path(raw).expanduser()
+    """A key given as a value, or as the path of a file holding one.
+
+    The text is a path only when it expands to one that is an existing file:
+    ``expanduser()`` raises RuntimeError for a ``~user`` naming nobody, so a
+    passphrase opening with ``~`` crashed on the RUNTIME ERROR screen before it
+    was ever tried as a key (#1094).
+    """
+    try:
+        key_path = Path(raw).expanduser()
+    except RuntimeError:
+        return raw
     if key_path.is_file():
         value = key_path.read_text(encoding="utf-8").strip()
         if not value:

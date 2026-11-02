@@ -17,6 +17,7 @@ from adt_ai.export_db.normalizers import (
     _replace_outside_sql_strings,
     sql_spans,
 )
+from adt_ai.export_db.object_normalizers.literals import restore, set_aside
 from adt_ai.export_db.object_normalizers.table_folds import _FoldedConstraint
 
 _IDENTITY_DEFAULTS = (
@@ -135,14 +136,15 @@ def _line_comments_closed(item: str) -> str:
 
 def _cleanup_table_item(item: str, context: NormalizationContext) -> str:
     item = _line_comments_closed(item)
-    item = re.sub(r"\s+", " ", item.replace("\n", " ")).strip()
-    item = _strip_domain_owner(item, context)
-    item = re.sub(
-        r"\s+COLLATE\s+\"?USING_NLS_COMP\"?",
-        "",
-        item,
-        flags=re.IGNORECASE,
-    )
+    # A literal is the user's data and a quoted name is one token: neither takes
+    # part in the rewrites below. `DEFAULT 'a  b'` collapsed to one space,
+    # `DEFAULT 'x TABLESPACE y'` lost its tail and a line break inside a literal
+    # became a space (#1094). The names come back before the four rewrites that
+    # READ them -- DOMAIN, COLLATE, XMLTYPE and the sequence default -- and the
+    # literals only once the last rewrite has run.
+    item, literals = set_aside(item, "string")
+    item, names = set_aside(item, "quoted")
+    item = re.sub(r"\s+", " ", item).strip()
     item = re.sub(r"\s+ENABLE\b", "", item, flags=re.IGNORECASE)
     item = re.sub(r"\s+USING\s+INDEX\b.*", "", item, flags=re.IGNORECASE)
     item = re.sub(r"\s+TABLESPACE\s+\S+", "", item, flags=re.IGNORECASE)
@@ -164,15 +166,23 @@ def _cleanup_table_item(item: str, context: NormalizationContext) -> str:
         item,
         flags=re.IGNORECASE,
     )
+    item = re.sub(r"\s+START WITH 1\b", "", item)
+    item = restore(item, names, "quoted")
+    item = _strip_domain_owner(item, context)
+    item = re.sub(
+        r"\s+COLLATE\s+\"?USING_NLS_COMP\"?",
+        "",
+        item,
+        flags=re.IGNORECASE,
+    )
     item = re.sub(
         r'(?<![A-Za-z0-9_$#])(?:"?SYS"?\.)?"?XMLTYPE"?(?![A-Za-z0-9_$#])',
         "XMLTYPE",
         item,
         flags=re.IGNORECASE,
     )
-    item = re.sub(r"\s+START WITH 1\b", "", item)
     item = _strip_sequence_nextval(item, context)
-    return re.sub(r"\s+", " ", item).strip()
+    return restore(item.strip(), literals, "string")
 
 _SEQUENCE_IDENT = r'(?:"[A-Za-z0-9_$#]+"|[A-Za-z0-9_$#]+)'
 
@@ -240,8 +250,9 @@ def _strip_sequence_nextval(item: str, context: NormalizationContext) -> str:
 
 def _format_table_column(item: str) -> list[str]:
     # A quoted name is one token whatever it holds: `"Order Id"` split at its
-    # space exported as `Order` over `Id" NUMBER` (ADT #923).
-    match = re.match(r'(?P<name>"[^"]*"|\S+)\s+(?P<body>.*)', item)
+    # space exported as `Order` over `Id" NUMBER` (ADT #923). DOTALL because a
+    # DEFAULT literal keeps its line breaks now (#1094), and `.` stops at one.
+    match = re.match(r'(?P<name>"[^"]*"|\S+)\s+(?P<body>.*)', item, flags=re.DOTALL)
     if not match:
         return [f"    {item}"]
 

@@ -57,7 +57,7 @@ When a PRIMARY KEY or UNIQUE constraint was added after table creation and tied 
 
 ## Where files land
 
-`path_objects` in `config.yaml` is the export path **template**, not a literal folder. It resolves exactly two placeholders:
+`path_objects` in `config.yaml` is the export path **template**, not a literal folder. It resolves two tokens, `<schema>` in either case and `<object_type>`:
 
 | Placeholder | Resolves to |
 | ----------- | ----------- |

@@ -113,7 +113,10 @@ def add_admin_parsers(subparsers: SubParsers) -> None:
         "--like",
         "-like",
         metavar = "ENV",
-        help    = "with -add-env, clone this environment's db/wallet (secrets stripped)",
+        help    = (
+            "with -add-env, clone this environment's db/wallet (secrets stripped; "
+            "-host/-port/-service also drop its ords, tns and sid)"
+        ),
     )
     # `-create` reads these four the same way `-add-env`/`-add-schema` do
     # (`connection/runner.py` `_create_connection`); the help said `-add-env`

@@ -55,8 +55,8 @@ APEX DEPLOYMENT TOOL - DOCTOR
 
 CURRENT VERSIONS:
 -----------------
-  ADT.ai               | 0.9.3
-  Python               | 3.13.5
+  ADT.ai               | 1.6.2
+  Python               | 3.14.7
   Git                  | 2.50.1 (Apple Git-155)
   Java                 | 20 2023-03-21
   oracledb             | 4.0.2
@@ -94,7 +94,7 @@ TIMER: 1s
 | `WARN` | Read-only `doctor` still runs, but optional setup is missing, uncertain or contradictory: Java, SQLcl, Instant Client, the encryption-key source or `JAVA_TOOL_OPTIONS`. `ADT_ENV` is displayed only and never warns. |
 | `FAIL` | A required prerequisite is missing or broken, Git or the `oracledb` module for instance, or a SQLcl too old for this project's APEXlang exports. The run exits non-zero. |
 
-Plain `doctor` is read-only. It never runs `git pull`, never installs anything, never fetches or replaces SQLcl, and never stashes your work. By default it does check online for newer ADT.ai, Java, SQLcl, `oracledb` and Instant Client, which `-offline` turns off.
+Plain `doctor` is read-only. It never runs `git pull`, never installs anything, never fetches or replaces SQLcl, and never stashes your work. By default it does check online for newer ADT.ai, SQLcl and `oracledb`, which `-offline` turns off; Java and Instant Client are detected locally and never looked up.
 
 For ADT.ai itself, an editable or git install is compared against its own configured `origin`, and a normal install against the latest public GitHub release before falling back to PyPI metadata. Update subprocesses force English and UTF-8 settings, so a local language override cannot change what SQLcl, Oracle or pip report back.
 
@@ -229,7 +229,7 @@ The pins follow the project's `file_crlf`: a project that sets it `True` gets th
 
 The `.apx` and `.json` files under an `apexlang/` folder are pinned `text eol=lf` on three lines of their own, below the others, and stay that way under `file_crlf: True`: `export_apex -apexlang` writes LF whatever `file_crlf` says, since SQLcl's APEXlang compiler reads nothing else. Its `static-files/` payloads are left untranslated.
 
-The patch templates are scaffolded because `patch -create` reads them from the **project** root, so a folder that only ships with ADT.ai is a folder nobody has. All six source files land verbatim; see [patch templates](patch_install.md#templates-and-the-project-sql-around-the-objects) for the slots and what each file does.
+The patch templates are scaffolded because `patch -create` reads them from the **project** root, so a folder that only ships with ADT.ai is a folder nobody has. Every file of the template tree lands verbatim; see [patch templates](patch_install.md#templates-and-the-project-sql-around-the-objects) for the slots and what each file does.
 
 **Read `db_end/` before your first deploy.** Those three refresh every materialized view, gather schema statistics, and run every enabled daily job with a 60-second wait, and the APEX pair carries `<APEX_WORKSPACE>`, `<APEX_APP_ID>` and `<APEX_VERSION>` placeholders you fill in once. Delete what your deploy should not do.
 

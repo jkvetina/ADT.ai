@@ -281,6 +281,12 @@ def _listed_privileges(row: dict[str, Any]) -> list[str]:
     return [privilege.strip() for privilege in listed.split(",") if privilege.strip()]
 
 def _ignored_comment_columns(config: dict[str, Any]) -> set[str]:
+    """`ignored_columns` as table comment rendering reads it: upper-cased, defaults added.
+
+    `export_data/runner._ignored_columns` reads the same key exactly as written
+    and adds nothing; `config.yaml` states both. Making the two agree is a change
+    to the key's meaning and stays gated (`#1094`), so neither matcher moves.
+    """
     default_ignored = {
         "CREATED_AT",
         "CREATED_BY",
@@ -378,10 +384,34 @@ def _render_schema_privileges(rows: list[dict[str, Any]], schema: str) -> list[s
         for row in rows
     )
 
+_MEGABYTE = 1024 * 1024
+
+def _render_quotas(rows: list[dict[str, Any]], schema: str) -> list[str]:
+    """One `ALTER USER <schema> QUOTA <size> ON <tablespace>;` per row (`#1098`).
+
+    `-1` is UNLIMITED; a whole number of megabytes is written as one, which is how
+    a quota is usually granted, and anything else in bytes so nothing is rounded.
+    """
+    lines = []
+    for row in sorted(rows, key=lambda row: str(row.get("TABLESPACE_NAME") or "")):
+        max_bytes = int(row.get("MAX_BYTES") or 0)
+        if max_bytes < 0:
+            size = "UNLIMITED"
+        elif max_bytes and max_bytes % _MEGABYTE == 0:
+            size = f"{max_bytes // _MEGABYTE}M"
+        else:
+            size = str(max_bytes)
+        lines.append(
+            f"ALTER USER {schema.lower()} QUOTA {size:<9} "
+            f"ON {str(row.get('TABLESPACE_NAME') or '').lower()};"
+        )
+    return lines
+
 def _render_user_privileges(
     rows: list[dict[str, Any]],
     schema: str,
     schema_privileges: list[dict[str, Any]] | None = None,
+    quotas: list[dict[str, Any]] | None = None,
 ) -> str:
     roles = sorted(
         (str(row.get("NAME") or ""), _with_admin_option(row))
@@ -403,7 +433,47 @@ def _render_user_privileges(
     if schema_lines := _render_schema_privileges(schema_privileges or [], schema):
         lines.append("--")
         lines.extend(schema_lines)
+    if quota_lines := _render_quotas(quotas or [], schema):
+        lines.append("--")
+        lines.extend(quota_lines)
     return "\n".join(lines).lstrip("-\n") + ("\n\n" if lines else "")
+
+def _render_host_aces(rows: list[dict[str, Any]], schema: str) -> str:
+    """One `APPEND_HOST_ACE` per row, in one block, for `<SCHEMA>_acl.sql` (`#1098`).
+
+    Jan, 2026-10-30: *"network into <SCHEMA>_acl.sql"*. The principal is the
+    schema in the dictionary's own case, since an ACE principal is matched
+    case-sensitively. A `DENIED` row is an ACE as well and replays as one.
+    """
+    calls = []
+    for row in sorted(
+        rows,
+        key=lambda row: (
+            str(row.get("HOST") or ""),
+            str(row.get("PRIVILEGE") or ""),
+            row.get("LOWER_PORT") or 0,
+        ),
+    ):
+        lines = [
+            "    DBMS_NETWORK_ACL_ADMIN.APPEND_HOST_ACE(",
+            f"        host       => '{_escape_sql_text(str(row.get('HOST') or ''))}',",
+        ]
+        for key in ("LOWER_PORT", "UPPER_PORT"):
+            if row.get(key) is not None:
+                lines.append(f"        {key.lower():<10} => {int(row[key])},")
+        lines.extend([
+            "        ace        => xs$ace_type(",
+            f"            privilege_list => xs$name_list("
+            f"'{str(row.get('PRIVILEGE') or '').lower()}'),",
+            f"            principal_name => '{schema.upper()}',",
+            "            principal_type => xs_acl.ptype_db",
+        ])
+        if str(row.get("STATUS") or "").upper() == "DENIED":
+            lines[-1] += ","
+            lines.append("            granted        => FALSE")
+        lines.extend(["        )", "    );"])
+        calls.extend(lines)
+    return "\n".join(["BEGIN", *calls, "END;", "/"]) + "\n" if calls else ""
 
 def _render_directories(rows: list[dict[str, Any]]) -> str:
     """One `CREATE OR REPLACE DIRECTORY` per row, the name never owner-qualified.

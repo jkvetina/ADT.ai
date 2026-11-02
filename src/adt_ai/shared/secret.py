@@ -7,9 +7,10 @@ debug branch, an f-string in an error message, or pytest ``--showlocals`` on a
 test holding a resolved connection puts a database password on stdout, which is
 the stream an agent reads back. That is the gap this type closes, and it closes
 it structurally rather than by care: the plaintext has exactly one exit,
-``reveal()``, and ``tests/contracts/test_secret_reveal_sites.py`` pins the three
-original connection call sites plus the connection editor's single plaintext
-boundary.
+``reveal()``, and ``tests/contracts/test_secret_reveal_sites.py`` pins the four
+functions, five call lines between them, that may call it: the driver's two
+connect kwargs (``db.py``), the SQLcl connect line, the ORDS basic-auth header,
+and the connection editor's single plaintext boundary (measured #1094).
 
 What it does not do is hide anything from an agent that can run ``adtai`` at all,
 because such an agent can simply open its own session. The claim ADT.ai makes is

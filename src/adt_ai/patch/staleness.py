@@ -373,10 +373,6 @@ class ExportFreshness:
     # Owners whose mirrored DDL times cannot be resolved to an instant at all.
     unclocked: list[str]
 
-    @property
-    def is_clean(self) -> bool:
-        return not self.changed and not self.unclocked
-
 
 def export_freshness(
     root: Path,

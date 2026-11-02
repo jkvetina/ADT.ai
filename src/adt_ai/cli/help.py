@@ -174,6 +174,9 @@ MODE_DESTS = {
 # under the plain `FILTERS` title the other commands use.
 
 MODIFIER_DESTS = {
+    # `-backup` (ADT #1099) on the three exports: it widens what a run writes,
+    # never narrows it, and switches no mode.
+    "backup",
     "compact",
     "continue_patch",
     "deep",
