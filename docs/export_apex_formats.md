@@ -19,7 +19,7 @@ ADT.ai exports only the formats named on the command line. There are no configur
 | `-files` | Static application files. |
 | `-files_ws` | Static workspace files. Schema-level. |
 
-`-page` and `-component` narrow the split, readable and embedded output and the matching page comment YAML. They select no format on their own, so name one. Filtered runs do not update the application cache.
+`-page` and `-component` narrow the split, readable and embedded output and the matching page comment YAML. They select no format on their own, so name one. A narrowed run still refreshes the application cache, metadata and whole-application checksum alike; only a report-only `-recent`, one naming no format, leaves it alone.
 
 <br>
 
@@ -35,7 +35,7 @@ Every other export folder is left alone, and so is the `.yaml` a `-readable` exp
 
 Apart from the static files, each sweep is limited to the extensions its format writes, so a file of your own kept beside an export, a `NOTES.md` next to the APEXlang tree or inside `embedded_code/`, is never deleted. `diff -restore` deletes by the same rules.
 
-The sweep runs against what the export actually wrote rather than clearing the folder first, so an unchanged file keeps its modification time. A run narrowed by `-page`, `-component` or `-recent` wrote a subset on purpose and never sweeps, except `-apexlang`, which those flags do not narrow.
+The sweep runs against what the export actually wrote rather than clearing the folder first, so an unchanged file keeps its modification time. A run narrowed by `-page`, `-component` or `-recent` wrote a subset on purpose and never sweeps, except the formats those flags do not narrow: `-apexlang`, `-files`, `-files_ws` and `-rest`.
 
 `-rest` sweeps only once the export reached its closing `COMMIT;`, the one proof that no module is missing. No sweep runs in a folder another export also writes into, such as the application folder that `apex_path_files: ./` names.
 
@@ -53,7 +53,7 @@ Version handling reads the one APEX version the connection block already printed
 
 ## APEXlang is a whole-app format
 
-`-apexlang` writes the folder tree beside `readable/` and `embedded_code/`: `application.apx`, `pages/`, `shared-components/`, `workspace-components/`, `supporting-objects/`, and the deployment and project metadata. Members land verbatim, since `.apx` is compiler input, so none of the SQL-export postprocessing applies.
+`-apexlang` writes the folder tree beside `application/` and `embedded_code/`: `application.apx`, `pages/`, `shared-components/`, `workspace-components/`, `supporting-objects/`, and the deployment and project metadata. Members land verbatim, since `.apx` is compiler input, so none of the SQL-export postprocessing applies.
 
 The folder is swept on every export, so a component deleted in App Builder leaves no stale `.apx`. The sweep covers the `.apx`, `.json`, `.sql` and `.rtf` members the format writes and nothing else, so anything else you keep in that folder stays. `-page`, `-component` and `-recent` never filter it, and an APEXlang run never advances a `-recent` watermark.
 
@@ -63,7 +63,7 @@ The folder is swept on every export, so a component deleted in App Builder leave
 
 **From APEX 26.2 a translated application carries its translations in the tree.** An application using Application-Based translations exports its Translation Repository as `generated-artifacts/translations.sql`, while `application.apx` holds the language mapping. `apex_with_translations` in `config.yaml`, on by default, is what asks for the file, as it does for `-full` and `-split`. The file is written verbatim, and `patch -deploy -app` imports it with the rest of the tree. APEX 26.1 refuses an APEXlang export of such an application outright.
 
-The tree is still directly validatable and importable. `-files` hardlinks each payload into the tree's own `shared-components/static-files/` as it writes it, one inode under two names.
+The tree is still directly validatable and importable. `-files` hardlinks each payload into the tree's own `shared-components/static-files/` as it writes it, one inode under two names. The APEXlang sweep never enters that folder, so a `.json` or `.sql` payload linked there survives an `-apexlang` run without `-files`.
 
 The checkout's private `.git/info/exclude` keeps those links out of git without putting an ignore sentinel inside the compiler input tree. An export also removes the retired `.gitignore` descriptor from applications affected by older ADT builds.
 

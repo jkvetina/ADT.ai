@@ -32,14 +32,25 @@ def ords_url(value: Any, context: str, *, external: bool = False) -> str | None:
             "to send. Remove one of the two keys."
         )
     url = str(value).strip().rstrip("/")
-    parsed = urlsplit(url)
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        # `urlsplit` itself refuses a broken IPv6 host, a bare ValueError that
+        # reached the UNEXPECTED ERROR screen (#1094).
+        raise _not_a_url_refusal(context) from None
     scheme = parsed.scheme.lower()
-    if scheme not in {"http", "https"} or not parsed.hostname:
-        raise InvalidConnectionError(
-            f"CONNECTION {context} HAS AN ORDS VALUE THAT IS NOT A URL\n\n"
-            "Write the REST-enabled schema URL, "
-            "for example https://host/ords/<schema alias>."
-        )
+    if (
+        scheme not in {"http", "https"}
+        or not parsed.hostname
+        # A `user:pwd@` in the URL fails inside http.client with a message that
+        # names the password, or prints it on the did-not-answer screen; a
+        # query or a fragment is no part of the schema URL SQLcl connects to
+        # (#1094). Refused here, so the value itself never reaches a screen.
+        or "@" in parsed.netloc
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise _not_a_url_refusal(context)
     if scheme == "http" and parsed.hostname.lower() not in _LOOPBACK_HOSTS:
         raise InvalidConnectionError(
             f"CONNECTION {context} REACHES ORDS OVER PLAIN HTTP\n\n"
@@ -47,6 +58,14 @@ def ords_url(value: Any, context: str, *, external: bool = False) -> str | None:
             "machine the ords URL has to be HTTPS."
         )
     return url
+
+
+def _not_a_url_refusal(context: str) -> InvalidConnectionError:
+    return InvalidConnectionError(
+        f"CONNECTION {context} HAS AN ORDS VALUE THAT IS NOT A URL\n\n"
+        "Write the REST-enabled schema URL, "
+        "for example https://host/ords/<schema alias>."
+    )
 
 
 __all__ = ["ords_url"]

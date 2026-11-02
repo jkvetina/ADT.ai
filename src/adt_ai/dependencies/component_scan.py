@@ -82,7 +82,15 @@ def run_component_scan(
     page_id: int | None = None,
     session_statements: Sequence[str] = (),
 ) -> None:
-    """Scan one application's components, always taking the helpers away after.
+    """Scan one application's components, then sweep the STALE scan helpers.
+
+    The sweep in the `finally` is `DEPSCAN_CLEANUP_STATEMENT`, which drops only
+    `DEPSCAN$` helpers older than `STALE_AFTER_MINUTES` (ADT #991), so it never
+    takes this scan's own helpers away: APEX drops those itself, and a younger
+    one may be another session's scan in flight. What the `finally` guarantees
+    is that a helper an earlier run stranded goes on the next scan, failed or
+    not. (The docstring promised "always taking the helpers away after" until
+    ADT #1094; the code has been deliberate since #991.)
 
     ``page_id`` narrows the scan to a single page (ADT #751). It is a real
     narrowing rather than a filter over the answer: `APEX_APP_OBJECT_DEPENDENCY.
@@ -107,9 +115,9 @@ def run_component_scan(
         params["page_id"] = page_id
     if batches_in_one_request(gateway):
         # An `ords:` connection (ADT #1071): the context, the scan and the
-        # cleanup share one request, the only session it has. ORDS runs the
-        # cleanup even after a failed scan, which is the `finally` below; the
-        # results persist, so the reads after this need no session of their own.
+        # stale-helper sweep share one request, the only session it has. ORDS
+        # runs the sweep even after a failed scan, which is the `finally` below;
+        # the results persist, so the reads after this need no session of their own.
         gateway.fetch_all_after(
             [
                 (EXPORT_START_QUERY, {"app_id": app_id}),
@@ -130,6 +138,7 @@ def run_component_scan(
     except Exception as error:  # noqa: BLE001 - re-raised below, after the cleanup
         scan_error = error
     finally:
+        # The stale sweep (#991), never this scan's own helpers; see the docstring.
         try:
             gateway.execute(DEPSCAN_CLEANUP_STATEMENT)
         except Exception as error:  # noqa: BLE001 - reported beside the scan's own

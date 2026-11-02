@@ -300,7 +300,7 @@ def _sql_filter(request: SearchRequest, aliases: Mapping[str, str]) -> CommitFil
     each side of the author's clock and still decided exactly afterwards.
     """
     since = date.fromisoformat(request.since).isoformat() if request.since else None
-    if request.recent:
+    if request.recent is not None:
         loose = date.today() - timedelta(days=math.ceil(request.recent) + 1)
         since = max(since or "", loose.isoformat())
     until = date.fromisoformat(request.until).isoformat() if request.until else None

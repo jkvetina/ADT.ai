@@ -9,7 +9,7 @@ from pathlib import Path
 from adt_ai.rebuild.models import RebuildRequest
 from adt_ai.rebuild.runner import RebuildRunner
 from adt_ai.shared.author_aliases import canonical_author
-from adt_ai.shared.commit_cache import DEFAULT_COMMITS_TEMPLATE, open_store
+from adt_ai.shared.commit_cache import DEFAULT_COMMITS_TEMPLATE, branch_filename, open_store
 from adt_ai.shared.commit_store import StoredCommit
 from adt_ai.shared.git_files import default_branch_ref, fetch_origin, run_git
 from adt_ai.shared.identity import resolve_commit_email
@@ -154,12 +154,27 @@ def _select_branches(
     Always the default branch; every branch when no prefix is configured; and
     only the prefix-named branches once a prefix is set, honoring "pull branches
     matching jira_prefix and store them there" without caching dead branches.
+
+    A branch whose ref `branch_filename` refuses (`renovate/foo+bar`, `fix#12`)
+    has no store to top up, so it is left out rather than ending the whole
+    month on the generic error screen, silently: it is somebody else's branch
+    and nothing of the reader's is missing (#1094). The default branch is never
+    left out; a refused default name still raises, that line IS the calendar.
     """
     return [
         (short, ref)
         for short, ref in refs
-        if short == default_short or prefix is None or _branch_has_prefix(short, prefix)
+        if short == default_short
+        or (prefix is None or _branch_has_prefix(short, prefix)) and _storable(ref)
     ]
+
+
+def _storable(ref: str) -> bool:
+    try:
+        branch_filename(ref)
+    except ValueError:
+        return False
+    return True
 
 
 def _ensure_cache(

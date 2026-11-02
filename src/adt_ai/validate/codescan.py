@@ -161,7 +161,12 @@ class CodescanRunner:
                 reporter.finish(target.label, "FAILED")
                 raise
             record_timer(root, target.app_id, CODESCAN_TIMER, time.monotonic() - started)
-            text = report.read_text(encoding="utf-8") if report.is_file() else None
+            # Replacement rather than a raise: a byte SQLcl wrote in no UTF-8 is
+            # the parser's UNRECOGNISED outcome on the screen, not an UNEXPECTED
+            # ERROR that drops the whole run (ADT #1094).
+            text = (
+                report.read_text(encoding="utf-8", errors="replace") if report.is_file() else None
+            )
         finally:
             shutil.rmtree(folder, ignore_errors=True)
             if settings is not None:

@@ -157,7 +157,7 @@ A connection with an `ords:` key reaches the database over HTTPS instead of the 
 
 ADT.ai exports only the formats named on the command line. There are no configured format defaults and no suppressor flags: `-all` is how you ask for everything. What each flag writes, how the APEX version decides what is skipped, and why APEXlang carries no static payloads are on [export_apex_formats.md](export_apex_formats.md).
 
-`-page` and `-component` narrow the split, readable and embedded output and the matching page comment YAML. They select no format on their own, so name one. Filtered runs do not update the application cache.
+`-page` and `-component` narrow the split, readable and embedded output and the matching page comment YAML. They select no format on their own, so name one. A narrowed run still refreshes the application cache, metadata and whole-application checksum alike; only a report-only `-recent`, one naming no format, leaves it alone.
 
 `-deep` beside `-page` also exports the shared components those pages use, LOVs, lists and authorization schemes among them, and prints a `DB OBJECTS` section of the database objects those pages use. It reads the dependency mirror, APEX's component page usage, and the authorization scheme the page or any component on it requires, a "Not" reference included.
 
@@ -189,6 +189,18 @@ WARNING - APEXLANG ISSUES:
 ```
 
 `-reveal` and any other format skip the compile.
+
+<br>
+
+## A refused slice
+
+A slice that fails, such as a format APEX refuses to export, closes its row on `FAILED`, and the run carries on with the remaining slices and applications. Once the schema is done, `ERROR - APP EXPORT FAILED:` lists each failure as `APP <id>/<alias> | <SLICE>` with its reason, and the command exits 1.
+
+The reason is APEX's own, such as a master theme that cannot be found or legacy Tabs the APEXlang format does not support. An application's error-handling function can turn it into `An unexpected internal application error has occurred`, so that refusal is asked again outside the APEX session.
+
+An application whose own setup is refused, the reads before its first slice, is listed as `APP <id>/<alias>` and the run carries on with the next one. It keeps its previous checksum, merge base and watermarks, and is not compiled, like an application with a failed slice.
+
+A lost connection or an invalid argument still ends the run, and `-debug` stops at the first failure with its traceback. A run that ends that way still lists every failure it had collected, then prints the error that ended it, and exits non-zero. `-json` records both.
 
 <br>
 
@@ -244,9 +256,9 @@ When a token resolves to nothing at all for an application, the export stops and
 
 Without an explicit format, a non-reveal `-recent` is report-only: it exports nothing and advances no watermark. With split, readable or embedded selected it also limits the output to those components, and each format advances its own watermark key. With `-reveal` it filters the application list to applications changed in that window, with no per-application detail.
 
-`-by` keeps the components an exact APEX developer username changed last. `-my` matches your `git config user.name` and `user.email` against the workspace developers, covering initials-style and email-form logins.
+`-by` keeps the components an exact APEX developer username changed last. `-my` matches `apex_account` and `email` in `config/IDENTITY.yaml`, else `git config user.name` and `user.email`, against the workspace developers; `apex_account` is the key that makes a `FIRST.LAST` login match, beside the email-form ones.
 
-With no window either reaches over all time and the export lists what it wrote, like `-page`. Inside one, an application with no matching change gets its `CHANGES SINCE` section, empty. A filter matching nothing writes nothing; none updates the application cache.
+With no window either reaches over all time and the export lists what it wrote, like `-page`. Inside one, an application with no matching change gets its `CHANGES SINCE` section, empty. A filter matching nothing writes nothing, and the cache is refreshed all the same; only a report-only `-recent` run leaves it alone.
 
 <br>
 
@@ -268,7 +280,7 @@ With no window either reaches over all time and the export lists what it wrote, 
 | `-component`, `--component` | Yes | none | Shared component filters as `TYPE:NAME_PATTERN`, with `%` and `*` as wildcards. Requires an explicit component-based format. |
 | `-recent [DAYS]`, `--recent [DAYS]` | No | off | Report components changed in the last DAYS days, or since the stored watermark when bare. Report-only without an explicit format. See above. |
 | `-by`, `--by` | No | none | Keep what one APEX developer changed last, over all time unless `-recent` sets a window. |
-| `-my`, `--my` | No | off | The same for the current git user, aliases resolved from the cache and workspace developers. |
+| `-my`, `--my` | No | off | The same for you: `apex_account` and `email` in `config/IDENTITY.yaml`, else `git config user.name` and `user.email`, aliases resolved from the cache and workspace developers. |
 | `-release`, `--release` | No | none | Override `p_release` values in the exported SQL. |
 | `-reveal [APP ...]`, `--reveal [APP ...]` | No | off | Show the matching workspaces and applications, exporting nothing. Ids after it act as `-app` and are searched for beyond the configured owners. |
 | `-owners`, `--owners` | No | off | In reveal mode, count applications for all APEX owners rather than only the configured schemas. It widens the counts, never the list. |
@@ -281,6 +293,7 @@ With no window either reaches over all time and the export lists what it wrote, 
 | `-rest`, `--rest` | No | off | Export REST services. **Schema-level**, written once per schema, and it runs even when the schema hosts no application. Templates, handlers and parameters are written in deterministic order, so unchanged services re-export byte-identically. Runs through SQLcl on a named `ADT_…` connection, wallet included. A schema publishing no REST modules exports an empty folder and succeeds; a session that could not connect, or one whose output carries a database error anywhere in it, fails the run with the full SQLcl output attached. An export that stopped before its closing `COMMIT;`, which is what a run cut off at the deadline looks like, fails the same way. A failed export writes no module file at all, including the modules that had already printed cleanly, so the folder is never left holding half a schema. Bounded by `rest_timeout_seconds` (default 60). |
 | `-files`, `--files` | No | off | Export the static application files. |
 | `-files_ws`, `--files_ws`, `--files-ws` | No | off | Export the static workspace files. **Schema-level**, exactly like `-rest`. |
+| `-backup`, `--backup` | No | off | Export saved public and private interactive reports and their notifications. See backup.md. |
 | `-compact`, `--compact` | No | off | Replace the per-application blocks and their action rows with one time-weighted progress row per unit of work: one per application, one per schema-level slice. The `APEX APPLICATIONS:` overview stays above them, and a closed row names the unit without the slice it ran last. |
 
 Shared options (-root, -env, -schema, -config-dir, -key, -debug, -beep, -nobeep, -json) are on [console.md](console.md#shared-arguments).

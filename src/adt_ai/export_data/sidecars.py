@@ -28,6 +28,7 @@ from adt_ai.export_data.inventory import DataColumn
 from adt_ai.export_data.lob_update_scripts import write_lob_update_script
 from adt_ai.shared import text_files
 from adt_ai.shared.row_values import row_value
+from adt_ai.shared.written_files import SameFile, WrittenFiles
 
 SIDE_CAR_DATA_TYPES = {
     "BLOB"   : "bin",
@@ -45,7 +46,11 @@ def _sidecar_extension(column: DataColumn) -> str | None:
     return SIDE_CAR_DATA_TYPES.get(column.data_type.upper())
 
 
-def _prune_sidecar_folder(folder: Path, written: set[Path]) -> None:
+def _prune_sidecar_folder(
+    folder: Path,
+    written: set[Path],
+    same: SameFile | None = None,
+) -> None:
     """Drop the sidecars and LOB scripts this export did not write.
 
     A row dropped from the source table (or renumbered) must not leave its old
@@ -57,6 +62,13 @@ def _prune_sidecar_folder(folder: Path, written: set[Path]) -> None:
 
     A file whose extension the sidecar layout does not own is still left alone:
     the folder belongs to the export, its stray neighbours do not.
+
+    An entry is matched the way the disk reads its name, never by exact spelling
+    (`#1094`). macOS's default disk ignores case and Unicode normal form, so a
+    sidecar whose key changed only there was written onto the old entry, which
+    kept its spelling, sat outside `written`, and was deleted: the only copy, at
+    exit 0. `WrittenFiles` is the APEXlang sweep's answer to the same defect
+    (`#923`), and respells the survivor; `same` stands in for the disk in tests.
     """
     if not folder.exists():
         return
@@ -65,8 +77,10 @@ def _prune_sidecar_folder(folder: Path, written: set[Path]) -> None:
         for extension in SIDE_CAR_DATA_TYPES.values()
     }
     sidecar_suffixes.add(".sql")
-    for file_path in folder.iterdir():
-        if file_path.suffix not in sidecar_suffixes or file_path in written:
+    keep = WrittenFiles(written, same)
+    # Listed before the walk, since a claimed entry may be renamed on the way.
+    for file_path in sorted(folder.iterdir()):
+        if file_path.suffix not in sidecar_suffixes or keep.claims(file_path):
             continue
         if file_path.is_file():
             file_path.unlink()
@@ -92,7 +106,7 @@ def _write_sidecar_values(
     `claimed_row_keys` is the export's filename-collision ledger, shared across
     the rows of one table; see `_sidecar_row_key`.
 
-    `column_types` is the table's inventory, upper-case name to Oracle type, and
+    `column_types` is the table's inventory, exact name to Oracle type, and
     it types the key the UPDATE finds its row by (`#923`).
     """
     folder_created = False

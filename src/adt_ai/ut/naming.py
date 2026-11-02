@@ -60,12 +60,6 @@ DEFAULT_UT_MATCH = "^(.+)_UT$"
 # required to follow it.
 DEFAULT_UT_MODULE = "^[^_]+_([^_]+)"
 
-# Every expression is matched case-insensitively. Oracle stores identifiers
-# upper case and a config file is hand-written, so a lower-case value that
-# selected nothing would present as an empty green run, the one failure mode
-# this whole module exists to make loud.
-MATCH_PARAMETERS = "i"
-
 
 @dataclass(frozen=True)
 class UtNaming:

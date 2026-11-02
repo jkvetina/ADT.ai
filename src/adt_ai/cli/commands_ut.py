@@ -11,6 +11,7 @@ from adt_ai.cli.constants import (
 from adt_ai.cli.context import (
     StartupContext,
     _flatten_arg_groups,
+    _is_database_connection_error,
     _load_startup_context,
     _print_connection_block,
     _print_startup_debug,
@@ -137,7 +138,12 @@ def _run_ut_for_schema(
         history           = run_history(startup.root, owner, variant),
     )
     try:
-        result = Ut3Runner(gateway, reporter=reporter).run(
+        # A dropped session ends the run on the error screen rather than failing
+        # every later suite the same way (#1094): the test the other commands
+        # already pass as `fatal_error`.
+        result = Ut3Runner(
+            gateway, reporter=reporter, fatal_error=_is_database_connection_error
+        ).run(
             Ut3Request(
                 owner   = owner,
                 names   = names,

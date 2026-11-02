@@ -106,8 +106,9 @@ class ApexFileResolver:
     def apexlang_export(self, application: ApexApplication, relative_path: str) -> Path:
         # APEXlang member names are already the folder tree APEX wants
         # (`application.apx`, `pages/…`, `.apex/apexlang.json`), so the layout is
-        # copied verbatim under one `apexlang/` root beside `readable/` and
-        # `embedded_code/`.
+        # copied verbatim under one `apexlang/` root beside `application/` and
+        # `embedded_code/`. There is no `readable/` folder: `readable_export`
+        # above strips that prefix and lands under `application/` (ADT #1094).
         return self.apexlang_root(application) / _clean_relative(relative_path)
 
     def stale_checksum_files(self) -> list[Path]:

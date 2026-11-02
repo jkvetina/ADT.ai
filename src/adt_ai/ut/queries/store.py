@@ -97,8 +97,6 @@ RUN_PERCENTS_QUERY = (
     "WHERE run_id = ? AND percent IS NOT NULL"
 )
 
-RUN_COUNT_QUERY = "SELECT COUNT(*) FROM runs WHERE schema_name = ?"
-
 INSERT_RUN_STATEMENT = "INSERT INTO runs (schema_name, variant) VALUES (?, ?)"
 
 INSERT_PACKAGE_STATEMENT = (
@@ -156,7 +154,6 @@ __all__ = [
     "META_TABLE_DDL",
     "RUNS_QUERY",
     "RUN_COLUMNS_PRAGMA",
-    "RUN_COUNT_QUERY",
     "RUN_PERCENTS_QUERY",
     "RUN_UNITS_QUERY",
     "STORE_SCHEMA_SCRIPT",

@@ -15,7 +15,7 @@ from adt_ai.export_db.writer import ObjectWritePlan as ObjectWritePlan
 from adt_ai.export_db.writer import ObjectWriteRequest as ObjectWriteRequest
 from adt_ai.shared.config import DEFAULT_PATH_OBJECTS, reject_unresolved_placeholders
 from adt_ai.shared.object_files import object_stem_for_type
-from adt_ai.shared.object_types import DATA_SECURITY_OBJECT_TYPES
+from adt_ai.shared.object_types import ARTIFACT_OBJECT_TYPES
 from adt_ai.shared.path_template import (
     object_type_token,
     render_path_template,
@@ -30,8 +30,9 @@ from adt_ai.shared.safe_paths import (
 )
 
 #: Types that never take a `-groups` subfolder: GRANT's files are keyed on the
-#: schema, and the Deep Data Security files sit inside `grants/` (`#1063`).
-_UNGROUPED_TYPES = frozenset({"GRANT", *DATA_SECURITY_OBJECT_TYPES})
+#: schema, the Deep Data Security files sit inside `grants/` (`#1063`), and the
+#: row-level security files are written beside them by the same pass (`#1098`).
+_UNGROUPED_TYPES = frozenset({"GRANT", *ARTIFACT_OBJECT_TYPES})
 
 
 class ObjectFileError(Exception):
@@ -218,6 +219,21 @@ class ObjectFileResolver:
                     self._missing_paths.setdefault(found, []).append(file_path)
                     missing.append(found)
         return sorted(missing, key=lambda item: (item.object_type, item.name))
+
+    def stale_artifacts(self, database_objects: list[DatabaseObject]) -> list[DatabaseObject]:
+        """Those of `database_objects` whose file exists, queued for the delete.
+
+        `missing_objects` skips GRANT because a privilege file is rebuilt, never
+        discovered; the caller names the one artifact the database just said
+        should no longer exist (`#1113`), and nothing else is looked for.
+        """
+        stale: list[DatabaseObject] = []
+        for database_object in database_objects:
+            path = self.path_for(database_object)
+            if path.is_file():
+                self._missing_paths.setdefault(database_object, []).append(path)
+                stale.append(database_object)
+        return stale
 
     def delete_missing_objects(self, database_objects: list[DatabaseObject]) -> list[Path]:
         """Unlink the files `missing_objects` found, never the name resolved again.

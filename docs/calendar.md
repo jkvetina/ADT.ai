@@ -55,7 +55,7 @@ PROJ-204 (1)       |                    | PROJ-204 (1)       | PROJ-300 (1)     
 
 - `MONTHLY OVERVIEW` names the month and the active `jira_prefix`, then one row per author with their commit total.
 - The per-author header counts distinct tickets and pull requests, never commits per row: commits are aggregated per ticket and per day.
-- **Saturday and Sunday fold into the preceding Friday.** The last Friday cell above carries two commits for that reason, its own and the weekend's.
+- **Saturday and Sunday fold into the preceding Friday**, or forward into the following Monday when that Friday lies in the previous month, so a commit on the month's opening weekend stays in its grid. The last Friday cell above carries two commits for that reason, its own and the weekend's.
 - Every week that touches the month prints, active or not, so the grid keeps the shape of a wall calendar. Only a week lying entirely outside the month is dropped.
 - A cell shows the ticket id, a `PR#<n>` marker for a pull request, or a branch-derived label when neither is available.
 
@@ -63,7 +63,7 @@ PROJ-204 (1)       |                    | PROJ-204 (1)       | PROJ-300 (1)     
 
 ## Topping up the store
 
-Before it reads anything, `calendar` tops the commit store up for exactly the branches it needs: the default branch, plus every branch whose name carries the configured `jira_prefix`. With no prefix set, that is every branch.
+Before it reads anything, `calendar` tops the commit store up for exactly the branches it needs: the default branch, plus every branch whose name carries the configured `jira_prefix`. With no prefix set, that is every branch. A branch the store cannot file (see [`rebuild`](rebuild.md#one-store-per-branch): letters, digits, `.`, `_`, `-` and `/` only) is left out, never the default branch.
 
 The top-up runs `rebuild` in update mode, so a steady-state run reads only the handful of commits since last time. The store lives where `repo_commits_file` points in `config/config.yaml`, one file per branch, and it is the same store [`rebuild`](rebuild.md), [`search`](search.md) and [`patch`](patch.md) use.
 
@@ -83,7 +83,7 @@ Leave `jira_prefix` empty to count every commit you authored across all branches
 
 ## Choosing the author
 
-The default author is your own `git config user.email`, and activity is sourced from the stored commits you wrote. `-by` replaces that with an email substring, and it is repeatable, so several people can share one grid.
+The default author is your own address, `email` in `config/IDENTITY.yaml`, else `git config user.email`, and activity is sourced from the stored commits you wrote. `-by` replaces that with an email substring, and it is repeatable, so several people can share one grid.
 
 If you commit under a personal address as well as the company one, map it in `config/config.yaml` and both land on one row:
 
@@ -103,6 +103,6 @@ The mapped address is what the report shows and what the default author and `-by
 | `-branch`, `--branch` | No | all branches | Restrict the report to a single branch instead of every branch. |
 | `-month`, `--month` | No | current month | Month to show, in `YYYY-MM` format. |
 | `-calendar [OFFSET]`, `--calendar [OFFSET]` | No | `0` | Month selector by offset. Bare `-calendar` is the current month; an integer is that many months back. |
-| `-by`, `--by` | Yes | your `git config user.email` | Author email substring, repeatable. Replaces the default "my commits" author. |
+| `-by`, `--by` | Yes | `email` in `config/IDENTITY.yaml`, else `git config user.email` | Author email substring, repeatable. Replaces the default "my commits" author. |
 
 Shared options (-root, -beep, -nobeep, -json) are on [console.md](console.md#shared-arguments).

@@ -58,11 +58,15 @@ PROMPT -- SCRIPT: patch_scripts/REPORTING/tables_after/00_fix.sql
 
 Three things follow, and they are the whole reason the move is safe:
 
-- **Each statement is hardened on the way in.** A bare `ALTER TABLE ... ADD note` fails with `ORA-01430` the second time it meets a database that already has the column, and that stops the whole install script. Every `CREATE`, `ALTER` and `DROP` is rewritten into an existence-checked PL/SQL block, guarded on the object named after any `IF [NOT] EXISTS`, and `--` comment lines between statements become `PROMPT`s so they reach the deploy log. A comment inside a statement, a PL/SQL block or a quoted literal stays as written. Anything else passes through untouched: making DML idempotent is yours to decide.
-- **A re-create recovers what the first one moved.** The second `-create` finds the source folder emptied and carries the scripts forward out of the patch folder. A script you have since re-edited wins over the recovered copy, and hardening is idempotent.
-- **Only what this patch uses moves.** A script no selected commit touched stays where it is, reported under `WARNING - NOT COMMITTED SCRIPTS, IGNORED:`. One in a slot no `patch_map` group can produce stays too, under `WARNING - UNKNOWN SCRIPTS:`. The filter runs before the move, so it cannot see what the folder already holds: `-force` empties it, and without one a re-create adds to the pile and the install script links all of it, so a folder first built from a wide commit range keeps shipping that range's generated `ALTER TABLE` helpers. Clearing loses nothing hand-written, which goes back to `patch_scripts/<CODE>/<slot>/` and faces the filter again.
+- **Each statement is hardened on the way in, unless `patch_harden: False`.** A bare `ALTER TABLE ... ADD note` fails with `ORA-01430` the second time it meets a database that already has the column, and that stops the whole install script. Every `CREATE`, `ALTER` and `DROP` is rewritten into an existence-checked PL/SQL block, guarded on the object named after any `IF [NOT] EXISTS`, and `--` comment lines between statements become `PROMPT`s so they reach the deploy log. A comment inside a statement, a PL/SQL block or a quoted literal stays as written. Anything else passes through untouched: making DML idempotent is yours to decide. `patch_harden` is `True` by default; `False` ships your scripts verbatim, for a project whose DDL carries its own guards or that the rewrite cannot parse. An `ADD` on a table the target does not hold stops the deploy with `ORA-20001` rather than skipping: the table's own `CREATE` is linked commented out behind an ALTER, so a silent skip would leave that target with neither.
+- **A re-create recovers what the first one moved.** The second `-create` finds the source folder emptied and carries the scripts forward out of the patch folder. A script you have since re-edited wins over the recovered copy, and hardening is idempotent. A re-create also drops the generated helpers an earlier window left in the patch folder and writes its own, so a folder first built from a wide commit range stops shipping that range's `ALTER TABLE` helpers on the next narrower build; your hand-written scripts stay.
+- **Only what this patch uses moves.** A script no selected commit touched stays where it is, reported under `WARNING - NOT COMMITTED SCRIPTS, IGNORED:`. One in a slot no `patch_map` group can produce stays too, under `WARNING - UNKNOWN SCRIPTS:`, and so does one nested in a folder below its slot: the install script links `<slot>/*.sql` one level deep and nothing else. `-force` empties the patch folder's copy; that loses nothing hand-written, which goes back to `patch_scripts/<CODE>/<slot>/` and faces the filter again.
 
 A `name.[ENV].sql` script moves like any other and runs only under its own `-target`, the same as a `name.[ENV].sql` template.
+
+Newly hardened guards require the target schema to be the connected user. A qualified name retains its exact owner; an unqualified name uses `CURRENT_SCHEMA`. If that differs from the connected user, the block raises `ORA-20002` before checking `USER_*` views or running DDL.
+
+Connect as the target schema, or write your own cross-schema guards and use the existing `patch_harden: False` setting. Already-hardened copies recovered from an older patch are retained: re-submit the original script to generate the new guard.
 
 <br>
 
@@ -174,9 +178,11 @@ A reference line above the commented `@` names the ALTER script(s) that replace 
 
 Every script runs from its own folder and nothing reorders it: the generated ALTER from `tables_before/`, ahead of the table's row, and a hand-written one from whichever folder you put it in, so `tables_after/` runs after the table files.
 
-**A hand-written `ALTER TABLE` claims its table before `-create` ever asks Oracle for a diff.** Put the statement anywhere under `patch_scripts/{$PATCH_CODE}/`, whatever slot or filename, and `-create` scans your own scripts for it first: an ALTER can need data work a diff cannot express, a `NOT NULL` backfill, or be a rename the diff would read as drop-and-add.
+**A hand-written `ALTER TABLE` claims its table before `-create` ever asks Oracle for a diff.** Put the statement in any slot under `patch_scripts/{$PATCH_CODE}/`, whatever filename, and `-create` scans your own scripts for it first: an ALTER can need data work a diff cannot express, a `NOT NULL` backfill, or be a rename the diff would read as drop-and-add.
 
 A match means no diff is generated for that table at all, `USER ALTER SCRIPTS:` names the table and your script on the finished screen, and your file is never overwritten, even one carrying the generator's own `<table>.<n>.sql` name.
+
+Only a script that will ship claims: one no selected commit touched, or one nested below its slot, is ignored by the scan too. Scripts a first `-create` already moved into the patch, and those a re-create is about to recover from the previous one, claim like your source scripts: a re-create never diffs over your rename.
 
 A table with no ALTER at all, and whose export carries no `IF NOT EXISTS`, is still linked commented out on its own, because running it against a target that already holds the table would stop the deploy on `ORA-00955`.
 
@@ -192,4 +198,4 @@ The selected commits decide, not the current working tree. A file some later com
 
 What decides is the object's state at the window's two ends: it earns a helper when it existed before the window's first commit that touched it and is gone after its last. An object the window both added and deleted gets none; one it deleted, re-added and deleted again gets one.
 
-A DATA or GRANT file never earns one, because a DROP names neither.
+A DATA, GRANT, DATA GRANT, DATA ROLE, REST or MVIEW LOG file never earns one: a DROP names none of them, and `user_objects` holds no row under those type names for the helper's guard to find. A JOB, SCHEDULE or PROGRAM is dropped through `DBMS_SCHEDULER`, an MLE ENVIRONMENT as `DROP MLE ENV`, since Oracle has no `DROP JOB`.

@@ -3,7 +3,9 @@
 Three sources answer it, by type: `DBMS_METADATA.GET_DDL` for most of them, one
 dictionary view for the two types `GET_DDL` refuses outright but a single row can
 describe (`ASSERTION`, `MLE MODULE`), and the statement `dictionary_ddl.py`
-assembles for the three spread across several views. Beside them sits the one
+assembles for the three spread across several views, plus a scheduler program,
+whose file `program_ddl.py` renders whole because `GET_DDL` leaves half of it
+out (`#1100`). Beside them sits the one
 clause `GET_DDL` leaves out under ADT's own transform settings, the retention of
 an immutable or blockchain table.
 
@@ -16,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from adt_ai.export_db import queries
 from adt_ai.export_db.dictionary_ddl import ASSEMBLED_OBJECT_TYPES, assemble_ddl, with_owner
+from adt_ai.export_db.program_ddl import program_ddl
 
 if TYPE_CHECKING:
     from adt_ai.export_db.inventory import DatabaseObject
@@ -55,6 +58,10 @@ def read_ddl(gateway: QueryGateway, database_object: DatabaseObject) -> str:
             assemble_ddl(object_type, database_object.name, gateway),
             database_object.schema,
         )
+    elif object_type == "PROGRAM":
+        # `GET_DDL` leaves out a program's arguments and its enabled state, so
+        # the whole file is rendered from the scheduler views (ADT #1100).
+        ddl = program_ddl(database_object.name, gateway)
     else:
         query, params = _ddl_query(database_object)
         rows = gateway.fetch_all(query, params)
@@ -79,11 +86,6 @@ def _ddl_query(database_object: DatabaseObject) -> tuple[str, dict[str, str]]:
     if object_type == "SCHEDULE":
         return (
             queries.SCHEDULE_DDL_QUERY,
-            {"object_name": database_object.name},
-        )
-    if object_type == "PROGRAM":
-        return (
-            queries.PROGRAM_DDL_QUERY,
             {"object_name": database_object.name},
         )
     if object_type == "ASSERTION":

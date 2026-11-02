@@ -310,21 +310,6 @@ def record_run(
         return None
 
 
-def run_count(root: Path | str, schema: str) -> int:
-    """How many runs the store holds for one schema."""
-    path = store_path(root)
-    if not path.is_file():
-        return 0
-    try:
-        with contextlib.closing(_connect(path)) as connection, connection:
-            row = connection.execute(
-                queries.RUN_COUNT_QUERY, (_key(schema),)
-            ).fetchone()
-            return int(row[0]) if row else 0
-    except sqlite3.Error:
-        return 0
-
-
 def coverage_changes(
     previous: dict[str, float],
     suites: tuple[SuitePackage, ...],

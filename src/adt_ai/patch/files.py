@@ -16,6 +16,7 @@ from adt_ai.dependencies.store import DependencyStore
 from adt_ai.patch import archive_paths as _archive_paths
 from adt_ai.patch import install_paths as _install_paths
 from adt_ai.patch import settings as _settings
+from adt_ai.patch.archive_names import unused_archive_base
 from adt_ai.patch.layout import (
     is_apex_static_file as _is_apex_static_file,
 )
@@ -225,7 +226,9 @@ def archive_patch_folders(
         # nothing under a month never leaves an empty one behind.
         destination = archive_root / _archive_paths.archive_subfolder(config, folder=folder.folder)
         destination.mkdir(parents=True, exist_ok=True)
-        archive_path = destination / folder.folder
+        # A name already archived today gets `-2`, `-3`, ... (ADT #1094), never
+        # the first zip replaced: see `archive_names`.
+        archive_path = unused_archive_base(destination, folder.folder, archive_format)
         with _backups_set_aside(folder.path):
             made = shutil.make_archive(str(archive_path), archive_format, root_dir=folder.path)
         shutil.rmtree(folder.path)

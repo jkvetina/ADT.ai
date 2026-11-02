@@ -155,17 +155,27 @@ class ConnectionResult:
         if not schema and kind == "apex":
             schema = defaults.get("schema_db")
         if not schema:
-            raise ConnectionNotFoundError(
-                "\n".join(
-                    [
-                        f"NO DEFAULT {kind.upper()} SCHEMA FOR ENVIRONMENT: {environment_name}",
-                        "",
-                        *self._source_lines(),
-                        self._available_schema_line(environment_name),
-                    ]
-                )
+            raise self._no_default_refusal(kind, environment_name)
+        schemas = self.expand_schemas(schema, environment=environment_name)
+        if not schemas:
+            # `schema_db: ' '`, `','` or a pattern matching nothing expands to
+            # nothing, and `default_schema`'s `[0]` on that was an IndexError on
+            # the UNEXPECTED ERROR screen (#1094): a default naming no schema
+            # is a missing default.
+            raise self._no_default_refusal(kind, environment_name)
+        return schemas
+
+    def _no_default_refusal(self, kind: str, environment_name: str) -> ConnectionNotFoundError:
+        return ConnectionNotFoundError(
+            "\n".join(
+                [
+                    f"NO DEFAULT {kind.upper()} SCHEMA FOR ENVIRONMENT: {environment_name}",
+                    "",
+                    *self._source_lines(),
+                    self._available_schema_line(environment_name),
+                ]
             )
-        return self.expand_schemas(schema, environment=environment_name)
+        )
 
     def schema_names(self, environment: str | None = None) -> list[str]:
         environment_name = environment or self.default_environment
@@ -250,6 +260,8 @@ class ConnectionResult:
             password = None
         else:
             password = fetched_secret(db, "pwd", password_context)
+            if password is None:
+                _text_or_absent(db.get("pwd"), password_context, self.files)
             # A schema's own `pwd` or `pwd_cmd` beats `pwd_pattern:` (#1081).
             if password is None and not db.get("pwd") and db.get("pwd_pattern"):
                 password = Secret(expand_pwd_pattern(str(db["pwd_pattern"]), username))
@@ -273,6 +285,8 @@ class ConnectionResult:
         else:
             wallet_password = fetched_secret(db, "wallet_pwd", wallet_context)
             if wallet_password is None:
+                for key in ("wallet_password", "wallet_pwd"):
+                    _text_or_absent(db.get(key), f"{environment_name} {key}", self.files)
                 wallet_password = decrypt_if_enabled(
                     db.get("wallet_password") or db.get("wallet_pwd"),
                     db.get("wallet_password!") or db.get("wallet_pwd!"),
@@ -336,7 +350,6 @@ class ConnectionResult:
             environment_name,
             schema_name,
             multi_environment = len(environments) > 1,
-            multi_schema      = len(self.schema_names(environment_name)) > 1,
         )
 
     # What an environment does not state comes from the first one (ADT #1078).
@@ -423,11 +436,15 @@ class ConnectionLoader:
         tidy_connection_file(chosen)
         try:
             loaded = yaml.safe_load(chosen.read_text(encoding="utf-8")) or {}
-        except yaml.YAMLError as error:
+        except (yaml.YAMLError, ValueError, OSError) as error:
             # Route a hand-edit syntax error through the friendly connection
             # banner instead of the generic UNEXPECTED ERROR catch-all. Only the
             # position: the parser's text quotes the line, which may be `pwd:`,
             # and `from None` keeps a traceback from printing it anyway (#958).
+            # A file saved in cp1250 (a UnicodeDecodeError is a ValueError), a
+            # value PyYAML builds and then rejects (`pwd: 2026-13-45`), and a
+            # file this process cannot open land here too (#1094), as they do
+            # in `shared/yaml_io` for the caches.
             raise InvalidConnectionError(
                 f"CONNECTION FILE IS NOT VALID YAML: {chosen}\n\n"
                 f"{credential_safe_yaml_reason(error)}"
@@ -450,6 +467,24 @@ def _expected_connection_paths(filename: str, search_paths: list[Path]) -> list[
     if path.is_absolute():
         return [path]
     return [search_path / path for search_path in search_paths]
+
+
+def _text_or_absent(value: Any, key: str, files: list[Path]) -> None:
+    """Refuse a stored secret YAML did not read as text (#1094).
+
+    `pwd: 12345678` loads as an int, `pwd: yes` as True and `pwd: no` as False,
+    which reads as no password at all; a number or a bool then failed with a
+    TypeError where the value is quoted for SQLcl. Nothing is coerced: the fix
+    belongs in the file, and the value itself never reaches the screen.
+    """
+    if value is None or isinstance(value, (str, bytes)):
+        return
+    where = f": {files[0]}" if files else ""
+    raise InvalidConnectionError(
+        f"CONNECTION FILE HAS A PASSWORD THAT IS NOT TEXT{where}\n\n"
+        f"{key} loads as a {type(value).__name__}, not as text. "
+        "Quote the value so YAML reads it as text."
+    )
 
 
 def _available_list(label: str, values: Any) -> str:
@@ -488,8 +523,11 @@ def _resolve_wallet_path(
 
 
 def _is_legacy_adt_wallet_path(path: Path) -> bool:
-    parts = path.parts
+    # Case-folded: macOS and Windows fold case, so `~/Projects/ADT/wallets` is
+    # the same folder, and compared exactly it was ACCEPTED as a wallet path,
+    # the opposite of this check's purpose (#1094).
+    parts = tuple(part.casefold() for part in path.parts)
     return any(
-        parts[index:index + 3] == ("PROJECTS", "ADT", "wallets")
+        parts[index:index + 3] == ("projects", "adt", "wallets")
         for index in range(len(parts) - 2)
     )

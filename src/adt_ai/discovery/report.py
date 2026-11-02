@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 from adt_ai.shared import text_files
+from adt_ai.shared.internal_paths import ensure_gitignored
 
 GITIGNORE_ENTRY = "config/discovery/"
 
@@ -50,14 +51,8 @@ def append_sections(path: Path, sections: list[str]) -> None:
 def ensure_discovery_ignored(root: Path) -> None:
     """Idempotently ensure ``config/discovery/`` is git-ignored in ``root``.
 
-    Appends the entry to an existing ``.gitignore`` (preserving its contents and
-    fixing a missing trailing newline) or creates the file when absent.
+    Through the one shared read-modify-write (ADT #1094): this copy read the
+    file unguarded, so a cp1250 comment in ``.gitignore`` crashed `discovery`
+    after its report had already been written.
     """
-    gitignore = root / ".gitignore"
-    existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
-    if GITIGNORE_ENTRY in {line.strip() for line in existing.splitlines()}:
-        return
-    prefix = existing
-    if prefix and not prefix.endswith("\n"):
-        prefix += "\n"
-    text_files.write_text(gitignore, prefix + GITIGNORE_ENTRY + "\n")
+    ensure_gitignored(root, GITIGNORE_ENTRY)

@@ -31,6 +31,7 @@ from typing import Any
 from adt_ai.export_db.normalizers import sql_spans
 from adt_ai.export_db.render import _compute_adt_layout
 from adt_ai.patch.queries import HARDENING_TEMPLATES
+from adt_ai.patch.queries.hardening import SCHEMA_GUARD
 from adt_ai.patch.sql_literal import escape_literal
 
 # The first line of a hardened script, and the sentinel that keeps the transform
@@ -59,14 +60,32 @@ _UNIT_RE = re.compile(
     re.IGNORECASE,
 )
 
-# `<verb> <OBJECT TYPE> [IF [NOT] EXISTS] [schema.]name`, quoted or not. Old ADT
-# patch.py:2319-2322. Old ADT predates the 23ai clause, and without it the guard
-# was written for an object called `IF`: none exists, so `DROP INDEX IF EXISTS x`
-# never ran its DROP and the deploy still reported success (ADT #1084).
+# `<verb> [UNIQUE] <OBJECT TYPE> [IF [NOT] EXISTS] [schema.]name`, quoted or not.
+# Old ADT patch.py:2319-2322. Old ADT predates the 23ai clause, and without it the
+# guard was written for an object called `IF`: none exists, so `DROP INDEX IF
+# EXISTS x` never ran its DROP and the deploy still reported success (ADT #1084).
+# `UNIQUE` is read here, in the one head that takes it, rather than stripped from
+# the whole statement, which turned `ADD UNIQUE (code)` into `ADD (code)` (#1094).
+# `#` is legal in an unquoted name, and `t_orders#ix` was cut at it: the same
+# skipped DROP one character over (#1094). The patterns run case-insensitively
+# on the case-preserved text, and the name's opening quote is a group of its
+# own, so a quoted name keeps the case Oracle holds it in.
 _IF_EXISTS = r"(?:IF\s+(?:NOT\s+)?EXISTS\s+)?"
-_HEAD_RE = r"(CREATE|DROP|ALTER)\s+({})\s+" + _IF_EXISTS
-_QUALIFIED_RE = _HEAD_RE + r'"?[A-Z0-9_$-]+"?\."?([A-Z0-9_$-]+)"?'
-_PLAIN_RE = _HEAD_RE + r'"?([A-Z0-9_$-]+)"?'
+_HEAD_RE = r"(CREATE|DROP|ALTER)\s+(?:UNIQUE\s+)?({})\s+" + _IF_EXISTS
+_NAME = r"[A-Z0-9_$#-]+"
+_OBJECT_RE = (
+    _HEAD_RE
+    + rf'(?:(?P<owner_quote>"?)(?P<owner>{_NAME})"?\.)?'
+    + rf'(?P<quote>"?)(?P<name>{_NAME})"?'
+)
+_ParsedStatement = tuple[str, str, str, str, str, str]
+
+#: The `ALTER TABLE` targets that name no single column or constraint to check:
+#: a constraint given by kind rather than by name, and a rename of the table
+#: itself. The statement ships verbatim, as a multi-column `ADD (a, b)` does.
+#: `ADD UNIQUE (code)` read as `ADD COLUMN code`, whose column exists, so the
+#: constraint was never created and the deploy was green (ADT #1094).
+_UNGUARDED_TARGETS = frozenset({"UNIQUE", "PRIMARY", "FOREIGN", "CHECK", "TO"})
 
 _OVERVIEW_COLUMNS = (
     "line",
@@ -103,10 +122,22 @@ def harden_patch_script(text: str, config: dict[str, Any], *, source: str) -> st
     # What the reader is inside: a SQL statement (`ddl` when it is one this
     # module wraps), PL/SQL, and the literal an earlier line left open.
     statement = ddl = block = False
-    carried = ""
+    carried = comment = ""
     for index, line in enumerate(lines):
         stripped = line.strip()
         if not (statement or block):
+            # A `/* ... */` opened between statements is left as written until
+            # the line that closes it, read through `_lex` like a literal a
+            # statement leaves open: a line of prose inside one beginning
+            # `Alter` opened a statement that swallowed the `*/` and the next
+            # real ALTER with it (ADT #1094).
+            if comment:
+                _ends, comment = _lex(comment, line)
+                continue
+            if stripped.startswith("/*"):
+                _ends, comment = _lex("", line)
+                if comment:
+                    continue
             if stripped.startswith("--"):
                 lines[index] = 'PROMPT "{}";\n'.format(stripped.replace('"', ""))
                 continue
@@ -131,12 +162,15 @@ def harden_patch_script(text: str, config: dict[str, Any], *, source: str) -> st
             # REPLACE`, so the first few lines are asked, never the whole body.
             if not block and len(buffer) <= 3:
                 block = bool(_UNIT_RE.match("".join(buffer).lstrip()))
-        if statement and (ends or slash):
+        # A stored unit ends on its `/` line alone: its first `;` cut `CREATE
+        # PROCEDURE p AS BEGIN NULL;` into the guard and left `END;` and `/`
+        # loose behind it (ADT #1094).
+        if statement and (slash or (ends and not block)):
             if ddl:
                 statement_text = _strip_trailing_comment(buffer)
                 parsed = _parse_statement(statement_text, object_types)
                 rows.append(_overview_row(start, statement_text, parsed))
-                wrapped = _wrap(statement_text, parsed)
+                wrapped = _wrap(statement_text, parsed, unit=block)
                 if wrapped:
                     replacements[start] = (index - 1 if slash else index, wrapped)
                 buffer = []
@@ -200,30 +234,46 @@ def _strip_trailing_comment(buffer: list[str]) -> str:
     return text
 
 
-def _parse_statement(statement: str, object_types: list[str]) -> tuple[str, str, str, str, str]:
-    """`(statement_type, object_type, object_name, operation, cc_name)`.
+def _parse_statement(statement: str, object_types: list[str]) -> _ParsedStatement:
+    """`(statement_type, object_type, object_name, operation, cc_name, owner)`.
 
     Old ADT's `get_object_from_statement` (patch.py:2316-2358). ``cc_name`` is the
-    column or constraint an `ALTER TABLE` names, or `?` when it names several --
+    column or constraint an `ALTER TABLE` names, or `?` when it names several:
     the multi-column form has no single thing to check, so it earns no wrapper.
+
+    Comments are blanked before anything is read: `DROP TABLE -- note` over a
+    second line read the `--` itself as the name (ADT #1094). The text keeps its
+    case so a quoted name comes back as written, `"MyTable"` rather than
+    `MYTABLE`, which is the name `user_objects` holds; an unquoted one is
+    upper-cased, as Oracle does.
     """
-    normalized = re.sub(r"\s+", " ", statement, flags=re.M).strip().upper()
-    normalized = normalized.replace(" UNIQUE ", " ").rstrip(";").strip()
+    collapsed = re.sub(r"\s+", " ", _without_comments(statement), flags=re.M).strip()
+    collapsed = collapsed.rstrip(";").strip()
     for object_type in object_types:
-        for pattern in (_QUALIFIED_RE, _PLAIN_RE):
-            match = re.search(pattern.format(re.escape(object_type)), normalized)
-            if not match:
-                continue
-            statement_type, found_type, object_name = match.groups()
-            operation, cc_name = "", ""
-            if statement_type == "ALTER" and found_type == "TABLE":
-                # Read the clause from where the NAME matched, never by
-                # re-searching the line for its text: both patterns end on the
-                # object-name group, so `match.end()` is exactly the clause
-                # (ADT #558).
-                operation, cc_name = _alter_table_operation(normalized[match.end() :])
-            return statement_type, found_type, object_name, operation, cc_name
-    return "", "", "", "", ""
+        match = re.search(_OBJECT_RE.format(re.escape(object_type)), collapsed, re.IGNORECASE)
+        if not match:
+            continue
+        statement_type, found_type = match.group(1).upper(), match.group(2).upper()
+        object_name = match.group("name")
+        if not match.group("quote"):
+            object_name = object_name.upper()
+        owner = match.group("owner") or ""
+        if not match.group("owner_quote"):
+            owner = owner.upper()
+        operation, cc_name = "", ""
+        if statement_type == "ALTER" and found_type == "TABLE":
+            # Start after the matched name, never at a substring inside ALTER.
+            operation, cc_name = _alter_table_operation(collapsed[match.end() :].upper())
+        return statement_type, found_type, object_name, operation, cc_name, owner
+    return "", "", "", "", "", ""
+
+
+def _without_comments(statement: str) -> str:
+    """``statement`` with every comment span blanked, through `sql_spans()` (ADT #1094)."""
+    return "".join(
+        " " if kind == "comment" else statement[begin:end]
+        for kind, begin, end in sql_spans(statement, identifiers=True)
+    )
 
 
 def _alter_table_operation(clause: str) -> tuple[str, str]:
@@ -239,15 +289,32 @@ def _alter_table_operation(clause: str) -> tuple[str, str]:
     it here by `split(object_name, 1)` cut at the first occurrence of that text
     anywhere: a table called `T` split inside the word `ALTER` and the statement
     came out unparsed, so it shipped with no existence guard at all (ADT #558).
+
+    An `IF [NOT] EXISTS` after the verb and its target is stepped over the way
+    the head clause is (`#1084`): `DROP CONSTRAINT IF EXISTS c1` guarded a
+    constraint called `IF` until ADT #1094. A target in `_UNGUARDED_TARGETS`
+    answers `?`, the no-wrap marker, so the statement ships as written.
     """
     words = clause.strip().split()
     if len(words) < 2:
         return "", ""
     verb, target = words[0], words[1]
+    if target in _UNGUARDED_TARGETS:
+        kind = words[:3] if target in ("PRIMARY", "FOREIGN") else words[:2]
+        return " ".join(kind), "?"
     if target in ("CONSTRAINT", "PARTITION"):
-        return f"{verb} {target}", _first_name(" ".join(words[2:]))
+        return f"{verb} {target}", _first_name(_after_if_exists(words[2:]))
     rest = words[2:] if target == "COLUMN" else words[1:]
-    return f"{verb} COLUMN", _first_name(" ".join(rest))
+    return f"{verb} COLUMN", _first_name(_after_if_exists(rest))
+
+
+def _after_if_exists(words: list[str]) -> str:
+    """The clause words after an optional `IF [NOT] EXISTS`, joined (ADT #1094)."""
+    if words[:2] == ["IF", "EXISTS"]:
+        words = words[2:]
+    elif words[:3] == ["IF", "NOT", "EXISTS"]:
+        words = words[3:]
+    return " ".join(words)
 
 
 def _first_name(text: str) -> str:
@@ -300,8 +367,8 @@ def _has_top_level_comma(text: str) -> bool:
     return False
 
 
-def _template_name(parsed: tuple[str, str, str, str, str]) -> str:
-    statement_type, object_type, _name, operation, cc_name = parsed
+def _template_name(parsed: _ParsedStatement) -> str:
+    statement_type, object_type, _name, operation, cc_name, _owner = parsed
     if not statement_type or cc_name == "?":
         return ""
     for candidate in (
@@ -316,7 +383,7 @@ def _template_name(parsed: tuple[str, str, str, str, str]) -> str:
     return ""
 
 
-def _wrap(statement: str, parsed: tuple[str, str, str, str, str]) -> str:
+def _wrap(statement: str, parsed: _ParsedStatement, *, unit: bool = False) -> str:
     """The guard for one parsed statement, or "" when no template covers it.
 
     Every `{}` slot in `HARDENING_TEMPLATES` except `{header}` lands inside a
@@ -326,31 +393,42 @@ def _wrap(statement: str, parsed: tuple[str, str, str, str, str]) -> str:
     compile (ADT #554). Escaped here, at the one renderer rather than at each
     producer, so a name read some other way inherits it (the SOP's one-owner
     rule), and through `sql_literal.escape_literal`, the rule's one home (#923).
+
+    A stored ``unit`` keeps its closing `;`: inside the literal it ends the
+    PL/SQL body, and `CREATE PROCEDURE p AS BEGIN NULL; END` without it is
+    PLS-00103 the moment the guard runs (ADT #1094). A SQL statement sheds it.
     """
     name = _template_name(parsed)
     if not name:
         return ""
-    statement_type, object_type, object_name, operation, cc_name = parsed
+    statement_type, object_type, object_name, operation, cc_name, owner = parsed
     # `{header}` sits inside a double-quoted `PROMPT`, which is why it drops `"`
     # rather than doubling `'`, the same treatment a comment line gets above.
     header = " | ".join(
         part for part in (statement_type, object_type, object_name, operation, cc_name) if part
     ).replace('"', "")
+    body = statement.strip()
+    if not unit:
+        body = body.strip(";").strip()
+    owner_expression = (
+        f"'{escape_literal(owner)}'" if owner else "SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')"
+    )
     return HARDENING_TEMPLATES[name].format(
         header      = header,
-        statement   = escape_literal(statement.strip().strip(";").strip()),
+        statement   = escape_literal(body),
         object_type = escape_literal(object_type),
         object_name = escape_literal(object_name),
         cc_name     = escape_literal(cc_name),
+        schema_guard = SCHEMA_GUARD.format(owner_expression=owner_expression),
     )
 
 
 def _overview_row(
     start: int,
     statement: str,
-    parsed: tuple[str, str, str, str, str],
+    parsed: _ParsedStatement,
 ) -> dict[str, object]:
-    statement_type, object_type, object_name, _operation, cc_name = parsed
+    statement_type, object_type, object_name, _operation, cc_name, _owner = parsed
     return {
         "line": start + 1,
         "template": _template_name(parsed),

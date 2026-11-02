@@ -120,11 +120,20 @@ def may_advance(
     stored: str | None,
     db_now: str,
     narrowed: bool,
+    day_aligned: bool = False,
 ) -> bool:
     """Whether a *successful* pass may stamp ``db_now`` as the scope's watermark.
 
     Callers own the success half of the gate (per-schema isolation: one broken
     schema must not stop or falsely stamp the others); this decides the rest.
+
+    ``day_aligned`` is how the caller's ``-recent N`` query measures its window.
+    ``export_apex`` binds ``TRUNC(SYSDATE) + 1 - :recent`` for a whole-day
+    window, so ``-recent 1`` at 09:00 lists what changed since midnight and never
+    reaches a stamp from the evening before; the rolling test here said
+    "covered" and moved the watermark past a component the run never exported
+    (`#1094`). ``export_db`` binds ``SYSDATE - :recent_days`` and keeps the
+    default. Below one day both queries roll from the clock, and so does this.
     """
     if narrowed:
         return False
@@ -142,7 +151,12 @@ def may_advance(
     now = parse_timestamp(db_now)
     if now is None:
         return False
-    return now - datetime.timedelta(days=window_days) <= stored_at
+    if day_aligned and window_days >= 1:
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        window_start = midnight + datetime.timedelta(days=1 - window_days)
+    else:
+        window_start = now - datetime.timedelta(days=window_days)
+    return window_start <= stored_at
 
 
 class RecentStore:

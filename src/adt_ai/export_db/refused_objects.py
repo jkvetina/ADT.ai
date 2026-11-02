@@ -114,7 +114,7 @@ def retried_objects(
     one the lookup no longer finds has been dropped and is forgotten here, since
     there is nothing left to retry; a measured run forgets nothing.
     """
-    # `-recent 0` is a window too, the narrowest one, so `None` alone means none.
+    # `None` alone means no window; any number, however narrow, is one.
     if request.recent is None or request.environment is None:
         return []
     store = RefusedObjectStore.load(request.root)

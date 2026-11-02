@@ -83,7 +83,7 @@ ERROR_CODES: tuple[str, ...] = (
 USAGE_CODES = frozenset({"ARGUMENT INVALID", "UNKNOWN COMMAND"})
 
 #: Where a Python traceback is genuinely the next piece of information. The
-#: first two are failures ADT.ai could not classify at all; the second two print
+#: first four are failures ADT.ai could not classify at all; the last two print
 #: foreign output (a SQL statement, a SQLcl transcript) where the ADT call path
 #: that produced it is still missing.
 HINT_CODES = frozenset(

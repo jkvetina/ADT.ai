@@ -9,8 +9,6 @@ from pathlib import Path
 
 from adt_ai.doctor._base import (
     ADT_AI_GITHUB_LATEST_RELEASE_URL,
-    INSTANT_CLIENT_PAGE,
-    JAVA_DOWNLOAD_PAGE,
     PYPI_PACKAGE_URL,
     SQLCL_DOWNLOAD_HOST,
     SQLCL_DOWNLOAD_PAGE,
@@ -90,16 +88,16 @@ class DoctorLatestVersionMixin(DoctorHost):
         return version
 
     def _resolve_latest_version(self, component: str) -> str:
+        # The three components `doctor` checks online, and the three `-update`
+        # reinstalls (`version_check._FULL_UPDATE_COMPONENTS`). Java and
+        # Instant Client had scrapers here that no row ever asked for (their
+        # rows pass `online_status=None`); they went with #1094.
         if component == "adt-ai":
             return self._latest_adt_ai_version()
-        if component == "java":
-            return self._latest_java_version()
         if component == "sqlcl":
             return self._latest_sqlcl_release().version
         if component == "oracledb":
             return self._latest_pypi_version("oracledb")
-        if component == "instant-client":
-            return self._latest_instant_client_version()
         raise ValueError(f"unknown online check component: {component}")
 
     def _version_cache_file(self, component: str) -> Path | None:
@@ -272,25 +270,3 @@ class DoctorLatestVersionMixin(DoctorHost):
             self.oracle_page_fetcher(PYPI_PACKAGE_URL.format(package=package))
         )
         return str(payload.get("info", {}).get("version", ""))
-
-    def _latest_java_version(self) -> str:
-        page = self.oracle_page_fetcher(JAVA_DOWNLOAD_PAGE)
-        for pattern in (
-            r"JDK\s+([0-9]+(?:\.[0-9]+)*)\s+is\s+the\s+latest\s+release",
-            r"Java\s+SE\s+Development\s+Kit\s+([0-9]+(?:\.[0-9]+)*)\s+downloads",
-        ):
-            match = re.search(pattern, page, re.IGNORECASE)
-            if match:
-                return match.group(1)
-        raise ValueError("Java version not found on Oracle download page")
-
-    def _latest_instant_client_version(self) -> str:
-        page = self.oracle_page_fetcher(INSTANT_CLIENT_PAGE)
-        for pattern in (
-            r"latest\s+([0-9]+)(?:ai)?\s+Release\s+Update",
-            r"Instant\s+Client[^0-9]+([0-9]+(?:\.[0-9]+)+)",
-        ):
-            match = re.search(pattern, page, re.IGNORECASE)
-            if match:
-                return match.group(1)
-        raise ValueError("Instant Client version not found on Oracle download page")

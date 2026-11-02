@@ -140,7 +140,7 @@ With no window flag, `rebuild` reads the existing store, takes its highest-numbe
 
 `WHEN` is a `YYYY-MM-DD` date or an integer number of days back. It resolves against the committer date at local midnight, so a commit made on the boundary day is included.
 
-A branch whose store is missing, empty, or whose stored tip no longer exists is rebuilt in full. That fallback is per branch, so one stale branch in a `-branch` list does not force the others to re-scan.
+A branch whose store is missing, empty, unreadable, or whose stored tip no longer exists is rebuilt in full. The fallback is per branch: one stale branch in a `-branch` list does not make the others re-scan.
 
 <br>
 
@@ -259,7 +259,7 @@ A run naming `-schema` or `-app` asked for the database by name, so the same gap
 
 ## Verifying a store
 
-`rebuild -verify` reports what each store holds and changes nothing:
+`rebuild -verify` reports what each store holds and reads no git:
 
 ```text
 COMMIT STORES:
@@ -322,8 +322,8 @@ COMMITS:
 | `-reveal [WORD ...]`, `--reveal [WORD ...]` | No | off | Read-only branch inspector: list the remote branches with no store change, newest-first. Optional filter words are AND-matched against the branch name, each a case-insensitive contains-glob. |
 | `-limit`, `--limit` | No | mode-dependent | **Normal mode:** maximum commits to read per branch, running a full bounded window. Absent, the run is an incremental update. **`-reveal`:** maximum branch rows (default `20`, `0` lists all). **`-reveal -switch`:** maximum commits for the switched branch (default `20`, `0` all); the rank is resolved against the full list, so this does not bound it. |
 | `-since`, `--since` | No | off | A `YYYY-MM-DD` date or an integer number of days back. **Normal mode:** rebuild a full bounded window of every commit since that date; mutually exclusive with `-limit`. **`-reveal`:** keep only branches whose tip commit is on or after it, composing with `-limit` and the word filters. |
-| `-my`, `--my` | No | off | In `-reveal`, keep branches whose tip-commit author email equals `git config user.email`. Under `-switch`, also keep only your own commits in the listing. |
-| `-verify`, `--verify` | No | off | Read-only check: each branch store's commit count, its floor-to-ceiling range, and whether the numbering is `CONTIGUOUS`. Never scans git and never writes. Exits `1` when any branch reports a problem. |
+| `-my`, `--my` | No | off | In `-reveal`, keep branches whose tip commit is yours, `email` in `config/IDENTITY.yaml`, else `git config user.email`. Under `-switch`, also only your own commits. |
+| `-verify`, `--verify` | No | off | Each branch store's commit count, its floor-to-ceiling range, and whether the numbering is `CONTIGUOUS`. Reads no git, writes no commits. Exits `1` when any branch reports a problem. |
 | `-switch [N]`, `--switch [N]` | No | `1` when given | With `-reveal`, check the tree out to the Nth branch in the filtered order and print that branch and its own commits instead of the list. Errors without `-reveal`, and errors on a rank outside the range without switching. |
 
 Shared options (-root, -env, -schema, -config-dir, -key, -beep, -nobeep, -json) are on [console.md](console.md#shared-arguments).

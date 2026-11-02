@@ -115,7 +115,7 @@ When a requested environment or schema is missing, ADT.ai prints the connection 
 adtai doctor
 ```
 
-It reports current versions (ADT.ai, Python, Git, Java, `oracledb`, Instant Client, SQLcl), an `ENVIRONMENT:` section (`ARCH`, `JAVA_TOOL_OPTIONS`, `LANG`, `NLS_LANG`, `ORACLE_HOME`, resolved `SQLCL` launcher, `ADT_ENV` (displayed only, no command reads it), `ADT_KEY`), and online update availability for ADT.ai, Java, SQLcl, `oracledb`, and Instant Client.
+It reports current versions (ADT.ai, Python, Git, Java, `oracledb`, Instant Client, SQLcl), an `ENVIRONMENT:` section (`ARCH`, `JAVA_TOOL_OPTIONS`, `LANG`, `NLS_LANG`, `ORACLE_HOME`, resolved `SQLCL` launcher, `ADT_ENV` (displayed only, no command reads it), `ADT_KEY`), and online update availability for ADT.ai, `oracledb` and SQLcl; the Java and Instant Client rows are detected locally and never checked online.
 
 Row statuses:
 - `UPDATE`, a newer version is available online.
@@ -141,7 +141,7 @@ Upgrade SQLcl only, runs immediately, checks Oracle's download page, fetches new
 adtai doctor -sqlcl
 ```
 
-Standalone `update` and `upgrade` command names are not public commands. They use the generic ADT.ai error screen and point to `doctor -update` or `doctor -sqlcl`.
+Standalone `update` and `upgrade` command names are not public commands. They get the generic `ERROR - UNKNOWN COMMAND:` screen with the module overview and no pointer; `init` is the one unknown name that gets one (`adtai doctor -init`).
 
 ## doctor -init, bootstrap project config
 

@@ -262,7 +262,10 @@ def resolve_sandbox(
     `-deploy -app 0` made, each to its main application (ADT #1069). One clears
     as a sandbox of that main when both sit in one workspace: the description
     the deploy wrote is its fingerprint, as the derived alias is a derived id's,
-    and APEX picked its id, so no prefix rule could recognise it.
+    and APEX picked its id, so no prefix rule could recognise it. Once the main
+    is gone the copy clears on the fingerprint alone, as its own ``source``
+    (ADT #1094): dropping the main leaves its copies standing, and the prefix
+    rule it then fell to refused the very copy `-drop` promises to remove.
     """
     target = applications.get(target_id)
     if target is None:
@@ -271,9 +274,15 @@ def resolve_sandbox(
             "This schema sees no application with that id, so there is nothing to drop.\n"
             "Run: adtai patch -target <ENV> -drop <the id the deploy reported>"
         )
-    main = applications.get((working_copies or {}).get(target_id, -1))
-    if main is not None and main.workspace_id == target.workspace_id:
-        return SandboxApplication(target=target, source=main, task=0)
+    copied = (working_copies or {}).get(target_id)
+    if copied is not None:
+        main = applications.get(copied)
+        if main is None:
+            # The receipt's SOURCE row and the table's SOURCE cell then name
+            # the copy itself, which is what the drop is about.
+            return SandboxApplication(target=target, source=target, task=0)
+        if main.workspace_id == target.workspace_id:
+            return SandboxApplication(target=target, source=main, task=0)
     expected: list[str] = []
     # Longest prefix first: app `1` and app `100` can both prefix `100123`, and
     # only the specific one derived it. The alias settles it either way, so this

@@ -14,6 +14,7 @@ from typing import Any
 from adt_ai.patch import queries
 from adt_ai.patch.generated_helpers import drop_helper_filename, drop_helper_slot
 from adt_ai.patch.object_identity import _object_exported_elsewhere, _object_identity
+from adt_ai.patch.queries.hardening import DROP_STATEMENT_DEFAULT, DROP_STATEMENTS
 from adt_ai.shared import text_files
 from adt_ai.shared.commit_discovery import CommitRecord
 from adt_ai.shared.sql_identifiers import safe_identifier, safe_object_type
@@ -69,7 +70,9 @@ def _write_drop_helpers(
 
     A DATA script is rows, and a GRANT is granted or not; neither is an object
     a `DROP` names, so neither earns a helper (`DROP DATA <TABLE>` is not a
-    statement Oracle has, audit V5).
+    statement Oracle has, audit V5). Nor does a type `user_objects` never lists
+    under that name, and a scheduler object or an MLE environment is dropped
+    by the statement Oracle gives it, never `DROP <type>` (ADT #1094, below).
     """
     deleted_by_window = {file for record in records for file in record.deleted_files}
     ends = _window_ends(records, config)
@@ -111,8 +114,13 @@ def _write_drop_helpers(
         written.append(helper.relative_to(root).as_posix())
     return written
 
-#: Deleted files a DROP helper never answers: rows and privileges, not objects.
-_NOT_DROPPABLE = frozenset({"DATA", "GRANT"})
+#: Deleted files a DROP helper never answers. Rows and privileges are not
+#: objects; a REST module, a data grant or role and a materialized view log
+#: have no `user_objects` row under these type names (the log is a table named
+#: `MLOG$_...`), so the helper's guard could never find one and a helper for it
+#: is a block that never fires (ADT #1094).
+_NOT_DROPPABLE = frozenset({"DATA", "GRANT", "DATA GRANT", "DATA ROLE", "REST", "MVIEW LOG"})
+
 
 
 def _window_ends(
@@ -149,10 +157,13 @@ def _window_ends(
 def _drop_helper_sql(object_type: str, object_name: str) -> str:
     safe_object_type(object_type, role="object type")
     safe_identifier(object_name, role="object name")
+    # `DROP JOB` is not a statement Oracle has (ADT #1094): the type's own
+    # statement, from the queries package, with `DROP <type> <name>` the default.
+    statement = DROP_STATEMENTS.get(object_type, DROP_STATEMENT_DEFAULT)
     return queries.DROP_HELPER_TEMPLATE.format(
         object_type = object_type,
         object_name = object_name,
-        statement   = f"DROP {object_type} {object_name}",
+        statement   = statement.format(type=object_type, name=object_name),
     )
 
 

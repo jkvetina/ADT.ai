@@ -164,7 +164,10 @@ class EnvironmentChecker:
         value = self.env.get("JAVA_TOOL_OPTIONS", "")
         if "-Duser.language=en" not in value:
             return CheckResult("JAVA_TOOL_OPTIONS", "WARN", "missing -Duser.language=en")
-        return CheckResult("JAVA_TOOL_OPTIONS", "OK", value)
+        # Masked at the source (#1094): the rendered row already redacted, but
+        # `-json` reads the check itself (ADT #1070), and a keystore password
+        # passed as a `-D` property is a credential wherever it lands.
+        return CheckResult("JAVA_TOOL_OPTIONS", "OK", redact_java_options(value))
 
     def _adt_variables_check(self) -> CheckResult:
         configured = [

@@ -53,8 +53,12 @@ def load_identity(search_paths: Iterable[str | Path]) -> dict[str, Any]:
         if path.is_file():
             try:
                 data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-            except yaml.YAMLError as error:
-                # The section every YAML reader prints (`#861`), not a line of its own.
+            except (yaml.YAMLError, ValueError, OSError) as error:
+                # The section every YAML reader prints (`#861`), not a line of its
+                # own. A file saved in cp1250 (a UnicodeDecodeError is a
+                # ValueError), a value PyYAML builds and then rejects, and a file
+                # this process cannot open are as hand-edited and as best-effort
+                # as a syntax error (#1094).
                 print_unreadable_yaml(path, error)
                 continue
             if isinstance(data, dict):

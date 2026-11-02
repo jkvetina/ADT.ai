@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from adt_ai.export_data.where_filter import _the_one
 from adt_ai.shared.config import InvalidConfigValueError
 
 #: The three sections a generated MERGE file can carry, and the only keys a
@@ -49,12 +50,9 @@ def _merge_tables_entry(config: dict[str, Any], table_name: str) -> dict[str, An
             "It must be a mapping of table name to merge flags, "
             f"got {type(merge_tables).__name__}."
         )
-    table_key = table_name.upper()
-    for key, value in merge_tables.items():
-        if str(key).upper() != table_key:
-            continue
-        return _merge_block(value, f"merge_tables.{key}")
-    return {}
+    entries = {str(key): value for key, value in merge_tables.items()}
+    key = _the_one(table_name, entries, "`merge_tables` key")
+    return _merge_block(entries[key], f"merge_tables.{key}") if key is not None else {}
 
 
 def _merge_block(block: Any, where: str) -> dict[str, Any]:

@@ -80,7 +80,11 @@ def run_backup(gateway: Any, script: str, backup: Path) -> str:
     if not batches_in_one_request(gateway):
         return str(gateway.sqlcl_request(script, backup.parent))
     text = backup.read_text(encoding="utf-8")
-    kept = "\n".join(line for line in text.splitlines() if not _RESTRICTED_LINE.match(line))
+    # `split("\n")`, never `splitlines()` (ADT #1094): the latter also breaks on
+    # `\x0b`, `\x0c`, `\x1c`-`\x1e`, `\x85`, U+2028 and U+2029, so a text value
+    # in the export carrying one came back rewritten with a newline and the
+    # restored application differed from its backup.
+    kept = "\n".join(line for line in text.split("\n") if not _RESTRICTED_LINE.match(line))
     # Reached only when no statement failed: `run_script` raises on the first.
     return f"{gateway.run_script(kept)}\nSUCCESS"
 

@@ -7,12 +7,13 @@ by name instead of embedding cleartext credentials on every call.
 
 The name is ``ADT_`` + the connection-file basename (its parent folder for the
 generic ``connections.yaml``), then ``_<ENV>`` only when the file defines more
-than one environment, and ``_<SCHEMA>`` only when that environment defines more
-than one schema. It is worked out on every run and never written anywhere: the
-connection file is the user's, and ADT records nothing in it (ADT #1079). A
-``sqlcl:`` the user wrote himself still wins over the derivation; one ADT wrote
-in an earlier version is recognised by :func:`is_generated_sqlcl_name` and
-ignored, and `connection_tidy` removes it from the file.
+than one environment, then always ``_<SCHEMA>`` (ADT #1095: it used to follow
+the schema count too, so adding a second schema renamed the first one's entry).
+It is worked out on every run and never written anywhere: the connection file
+is the user's, and ADT records nothing in it (ADT #1079). A ``sqlcl:`` the user
+wrote himself still wins over the derivation; one ADT wrote or derived in an
+earlier version is recognised by :func:`is_generated_sqlcl_name` and ignored,
+and `connection_tidy` removes it from the file.
 
 Nothing is fingerprinted either. The connect plan tries the stored name first;
 a store that lost the entry, a password the database no longer accepts, or a
@@ -55,13 +56,11 @@ def derive_sqlcl_name(
     schema: str,
     *,
     multi_environment: bool,
-    multi_schema: bool,
 ) -> str:
     parts = [_file_base(source_file)]
     if multi_environment:
         parts.append(environment)
-    if multi_schema:
-        parts.append(schema)
+    parts.append(schema)
     return _join(parts)
 
 
@@ -74,9 +73,10 @@ def is_generated_sqlcl_name(
     """True when ``value`` is a name ADT derived, in any version, for this tuple.
 
     Every shape a past derivation could have produced is accepted: with or
-    without the environment, with or without the schema (both depended on how
-    many the file held at the time), and with or without #660's path hash. A
-    name matching none of them is the user's own and is kept.
+    without the environment (it depends on how many the file holds), with or
+    without the schema (before #1095 it depended on how many the environment
+    held), and with or without #660's path hash. A name matching none of them
+    is the user's own and is kept.
     """
     text = str(value or "").strip()
     if not text:

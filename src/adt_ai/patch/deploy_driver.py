@@ -8,11 +8,12 @@ running the patch by hand runs it in the same order, and it is the one place a
 person changes that order.
 
 A re-create keeps the order a person gave it for every script that is still
-generated, drops the scripts that are gone and appends the new ones in the
-default order; `-force` writes the default order again. `-deploy` runs the `@`
-lines, and refuses before the first script when they and the folder disagree,
-because a script the driver does not name is a script nobody decided where to
-run.
+generated, drops the scripts that are gone and merges each new one in at its
+default-order rank among the kept ones (ADT #1094: appended at the end, a schema
+script added on a re-create ran after the kept `init` / `end` pair); `-force`
+writes the default order again. `-deploy` runs the `@` lines, and refuses before
+the first script when they and the folder disagree, because a script the driver
+does not name is a script nobody decided where to run.
 
 A retargeted APEXlang application gets a comment between its `init` and `end`
 lines naming the application, its tree and the id the import lands it on
@@ -78,13 +79,36 @@ def write_deploy_driver(folder: Path, config: dict[str, Any], *, force: bool) ->
     if driver.is_file() and not force:
         listed, _stray = _read(driver)
         kept = list(dict.fromkeys(name for name in listed if name in names))
-        ordered = [*kept, *(name for name in ordered if name not in kept)]
+        ordered = _merged_order(ordered, kept)
     lines = list(HEADER)
     for name in ordered:
         lines.append(f'@"./{name}"')
         lines.extend(_import_comment(folder / name, config))
     text_files.write_text(driver, "\n".join([*lines, ""]))
     return driver
+
+
+def _merged_order(default: list[str], kept: list[str]) -> list[str]:
+    """The kept order, with every new script at its default-order rank (ADT #1094).
+
+    Walk the default order: a new name is emitted where it stands; a kept name
+    emits the kept names up to and including it, in the KEPT order, so a
+    person's reordering of the scripts that are still there survives intact
+    and a new one lands ahead of the first kept script the default ranks it
+    before. Appended at the end instead, `APP.sql` added on a re-create ran
+    after the kept `APP.100.init.sql` / `.end.sql`, which undid the
+    schema-before-application guarantee a first build gives.
+    """
+    merged: list[str] = []
+    pending = list(kept)
+    for name in default:
+        if name not in kept:
+            merged.append(name)
+        elif name in pending:
+            position = pending.index(name) + 1
+            merged.extend(pending[:position])
+            del pending[:position]
+    return merged
 
 
 def _import_comment(script: Path, config: dict[str, Any]) -> list[str]:

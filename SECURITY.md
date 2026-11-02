@@ -53,11 +53,11 @@ Three specialist scanners run against `src` and `tests` on a daily schedule, out
 
 | Scanner | What it looks at |
 | --- | --- |
-| Bandit | Python source, for the patterns a security review would grep for |
+| Bandit | Python source, `.github/scripts` included, for the patterns a security review would grep for |
 | Semgrep | The `p/python`, `p/security-audit` and `p/secrets` rule packs |
 | pip-audit | Published advisories against the dependencies in `requirements.txt` |
 
-They run daily rather than per pull request on purpose. Two of the three answer a question a code change does not move: pip-audit compares an unchanged dependency set against an advisory database that updates every day, and Semgrep fetches its rule packs over the network. A gate that only fires when somebody edits a file would never find a vulnerability published against code nobody touched.
+They run daily rather than per pull request on purpose. Two of the three answer a question a code change does not move: pip-audit compares an unchanged dependency set against an advisory database that updates every day, and Semgrep fetches its rule packs over the network. A gate that only fires when somebody edits a file would never find a vulnerability published against code nobody touched. A pull request also gets a scoped pass: the scanned files it changes, and pip-audit whenever it changes `requirements.txt` or `pyproject.toml`.
 
 Every finding either gets fixed or gets a row in `tests/contracts/security_finding_allowlist.txt` saying why it is accepted. The gate fails on a finding with no row, and it fails just as hard on a row the scan has stopped producing, so an accepted finding cannot quietly outlive the code it was written about.
 

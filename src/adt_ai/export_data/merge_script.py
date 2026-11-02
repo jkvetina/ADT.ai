@@ -19,13 +19,48 @@ spelling the tests use; `runner.py` re-exports it.
 from __future__ import annotations
 
 import csv
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from adt_ai.export_data import queries
 from adt_ai.export_data.csv_formulas import restored
+from adt_ai.export_data.inventory import DataColumn
 from adt_ai.export_data.merge_config import merge_config
 from adt_ai.shared.config import is_enabled
+from adt_ai.shared.sql_identifiers import sql_name
+
+#: What a NOT NULL sidecar column of each type is inserted with, so the row can
+#: land before its per-row LOB UPDATE script fills the value (`#1094`). JSON and
+#: XMLTYPE have no empty locator of their own and are not here.
+LOB_INSERT_VALUES = {"BLOB": "EMPTY_BLOB()", "CLOB": "EMPTY_CLOB()"}
+
+
+def lob_insert_values(sidecar_columns: list[DataColumn]) -> dict[str, str]:
+    """The INSERT literal for each NOT NULL BLOB or CLOB sidecar, by dictionary name.
+
+    A sidecar column is left out of the CSV, so the INSERT list built from the
+    CSV header never named it and the first row into an empty target failed with
+    ORA-01400 before any LOB UPDATE script ran (`#1094`). An empty locator meets
+    the constraint and the script then writes the value; a nullable LOB stays
+    out, NULL until its script runs, the way it always was.
+    """
+    return {
+        column.name: LOB_INSERT_VALUES[column.data_type.upper()]
+        for column in sidecar_columns
+        if not column.nullable and column.data_type.upper() in LOB_INSERT_VALUES
+    }
+
+
+def lob_update_values(sidecar_columns: list[DataColumn]) -> dict[str, str]:
+    """`NULL` for each nullable sidecar column, the MERGE's UPDATE SET for it (`#1100`).
+
+    A per-row LOB script is written only for a value that exists, so a NULL in
+    the source left a target's old value in place on replay. Setting the column
+    to NULL on every matched row, ahead of the scripts that refill the rest, is
+    what carries it. A NOT NULL column never holds a NULL to carry.
+    """
+    return {column.name: "NULL" for column in sidecar_columns if column.nullable}
 
 
 def merge_sql_from_csv(
@@ -39,6 +74,8 @@ def merge_sql_from_csv(
     column_types: dict[str, str] | None = None,
     identity_columns: set[str] | None = None,
     primary_key_columns: set[str] | None = None,
+    insert_values: Mapping[str, str] | None = None,
+    update_values: Mapping[str, str] | None = None,
 ) -> str:
     """`column_types` types the CSV cells; `identity_columns` are the unwritable ones.
 
@@ -50,11 +87,18 @@ def merge_sql_from_csv(
     the rule held without saying; a MERGE joined on a UNIQUE key would otherwise
     set the target's primary key to the source's number and orphan every row
     pointing at it.
+
+    `insert_values` are the NOT NULL LOB columns the CSV does not carry and the
+    literal each is inserted with (`lob_insert_values`, `#1094`); INSERT only.
+    `update_values` are the nullable ones and their UPDATE SET literal
+    (`lob_update_values`, `#1100`); UPDATE only.
     """
     columns, batches = _csv_select_batches(path, config, column_types)
     # The MERGE/DELETE target carries the owner under `keep_owner`; every config
     # lookup below still keys off the unqualified `table_name`.
-    table = (sql_table_name or table_name).lower()
+    # Kept in its dictionary case: `merge_statement` renders it, lower-cased
+    # when ordinary and quoted when not (`#1096`).
+    table = sql_table_name or table_name
     table_merge_config = merge_config(config, table_name)
     if not columns:
         # `#982` V5, Jan's yes on `#985`: `delete: true` over an empty export
@@ -73,18 +117,19 @@ def merge_sql_from_csv(
             skip_update  = "--",
             where_filter = where_filter,
         )
-    lower_columns = [column.lower() for column in columns]
-    lower_primary = [column.lower() for column in primary_columns]
+    primary = primary_columns
     # An ALWAYS identity column is exported and may be the key, but Oracle
     # refuses an INSERT that names it (ORA-32795) and an UPDATE that sets it.
     identity = identity_columns or set()
-    never_updated = set(lower_primary) | identity | (primary_key_columns or set())
+    never_updated = (
+        set(primary) | identity | (primary_key_columns or set())
+    )
     update_columns = [
         column
-        for column in lower_columns
+        for column in columns
         if column not in never_updated
     ]
-    insert_columns = [column for column in lower_columns if column not in identity]
+    insert_columns = [column for column in columns if column not in identity]
     skip_delete = "" if is_enabled(table_merge_config.get("delete"), default=False) else "--"
     skip_insert = (
         ""
@@ -93,14 +138,15 @@ def merge_sql_from_csv(
     )
     skip_update = (
         ""
-        if is_enabled(table_merge_config.get("update"), default=True) and update_columns
+        if is_enabled(table_merge_config.get("update"), default=True)
+        and (update_columns or update_values)
         else "--"
     )
     primary_join = "\n    " + "\n    AND ".join(
         _join_predicate(column, null_safe_key)
-        for column in lower_primary
+        for column in primary
     ) + "\n"
-    updates = queries.update_assignments(update_columns, skip_update)
+    updates = queries.update_assignments(update_columns, skip_update, update_values)
     if skip_insert and skip_update:
         # A MERGE with both WHEN clauses commented out is a statement Oracle
         # refuses, so it is left out and the DELETE stands on its own (`#982`).
@@ -116,7 +162,7 @@ def merge_sql_from_csv(
         statements.append(
             queries.merge_statement(
                 table          = table,
-                columns        = lower_columns,
+                columns        = columns,
                 csv_selects    = batch,
                 primary_join   = primary_join,
                 updates        = updates,
@@ -125,6 +171,7 @@ def merge_sql_from_csv(
                 skip_update    = skip_update,
                 where_filter   = commented_where_filter(where_filter, batch_skip_delete),
                 insert_columns = insert_columns,
+                insert_values  = insert_values,
             )
         )
     return "".join(statements)
@@ -167,9 +214,10 @@ def _join_predicate(column: str, null_safe: bool) -> str:
     (`#670`). A primary key cannot be NULL, so it keeps the plain equality and
     the index path that comes with it.
     """
+    name = sql_name(column, lower=True)
     if not null_safe:
-        return f"t.{column} = s.{column}"
-    return f"(t.{column} = s.{column} OR (t.{column} IS NULL AND s.{column} IS NULL))"
+        return f"t.{name} = s.{name}"
+    return f"(t.{name} = s.{name} OR (t.{name} IS NULL AND s.{name} IS NULL))"
 
 
 def _csv_select_batches(

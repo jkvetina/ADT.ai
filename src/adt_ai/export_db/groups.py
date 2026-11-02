@@ -15,7 +15,7 @@ from adt_ai.shared.object_files import object_name_from_file as object_name_from
 from adt_ai.shared.object_files import owns_file as owns_file
 from adt_ai.shared.progress import print_adt_header
 from adt_ai.shared.safe_paths import simple_component
-from adt_ai.shared.yaml_io import load_yaml_mapping, store_yaml_mapping
+from adt_ai.shared.yaml_io import load_yaml_mapping
 
 #: `#861`, spelled by Jan picking it. The state leads and what ADT did about it
 #: trails, the shape `WARNING - NOT COMMITTED SCRIPTS, IGNORED:` already has.
@@ -238,11 +238,6 @@ def detect_groups_from_tree(
 def load_groups_file(path: Path | str) -> GroupRules:
     """Load persisted `config/groups.yaml` rules, or empty rules when absent."""
     return GroupRules.from_mapping(load_yaml_mapping(Path(path)))
-
-
-def save_groups_file(path: Path | str, rules: GroupRules) -> None:
-    """Persist rules as a flat `config/groups.yaml` mapping."""
-    store_yaml_mapping(Path(path), rules.to_mapping())
 
 
 def resolve_group_inputs(

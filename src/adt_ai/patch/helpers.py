@@ -66,6 +66,7 @@ from adt_ai.patch.object_identity import (  # noqa: F401 (re-exported for existi
 # answer with ADT #753: `table_alter.py` parsed the two `CREATE TABLE` texts and
 # covered columns only, so a PK, UNIQUE, FK, CHECK or index change generated
 # nothing at all. `table_diff_runner.table_alter_sql` asks Oracle instead.
+from adt_ai.patch.scripts import _known_slots, carried_user_scripts, in_linked_slot
 from adt_ai.patch.sequence_alter import write_sequence_alter_helpers
 from adt_ai.patch.table_diff_runner import TableDiffRefused, table_alter_sql
 from adt_ai.patch.table_versions import (  # noqa: F401 (re-exported for existing importers)
@@ -91,6 +92,7 @@ def _write_generated_patch_scripts(
     window: list[CommitRecord] | None = None,
     gateway_factory: Callable[[str], Any] | None = None,
     hash_tables: Mapping[str, str] | None = None,
+    folder: Path | None = None,
 ) -> GeneratedScripts:
     """Write the one-off SQL, and report what was written.
 
@@ -105,6 +107,11 @@ def _write_generated_patch_scripts(
     actually holds. That is a better comparison base than the commit walk below,
     not a workaround for one, and it is the only base available when the patch
     selected no commit range to walk.
+
+    ``folder`` is the patch folder being built (ADT #1094): the user ALTER claim
+    reads the scripts already moved into it, and the ones recovery is about to
+    carry in from the previous folder, beside the source tree. `None` reads the
+    source tree alone, which is every caller but `build.py`.
     """
     if not config.get("patch_add_scripts", True):
         return GeneratedScripts(alters=[], paths=[])
@@ -121,10 +128,17 @@ def _write_generated_patch_scripts(
     # Read once for the whole run rather than once per table (ADT #969): a
     # patch with several changed tables would otherwise re-read and re-strip
     # the same hand-written scripts once per table it is about to consider.
-    # This is the SOURCE tree, read before either writer below puts anything
-    # into it, so a script a person already placed or edited there is what the
-    # scan sees, filename shape included.
-    user_scripts = scan_user_scripts(script_root, root)
+    # The SOURCE tree is read before either writer below puts anything into it,
+    # so a script a person already placed or edited there is what the scan
+    # sees, filename shape included, and only what the move will ship (ADT
+    # #1094). The patch folder's own scripts come after it, for the re-create
+    # whose first run already moved the claiming script in.
+    user_scripts = _shippable_user_scripts(root, script_root, records, config, drops)
+    if folder is not None:
+        user_scripts = [
+            *user_scripts,
+            *carried_user_scripts(root, folder, config, patch_code=patch_code),
+        ]
     if hash_previous is None:
         alters, claimed = _write_table_diff_helpers(
             root, script_root, files, records, config, gateways, refused, user_scripts
@@ -160,6 +174,32 @@ def _write_generated_patch_scripts(
         refused_tables    = refused,
         claimed_tables    = claimed,
     )
+
+def _shippable_user_scripts(
+    root: Path,
+    script_root: Path,
+    records: list[CommitRecord],
+    config: dict[str, Any],
+    generated: list[str],
+) -> list[tuple[str, str]]:
+    """The source folder's scripts the move will ship, as `(text, repo_path)` pairs (ADT #1094).
+
+    Filtered exactly as `scripts.collect_patch_scripts` filters the move: its
+    own `in_linked_slot`, and the same committed set, with this run's generated
+    paths exempt as they are there. Scanned unfiltered, an untracked leftover
+    `tables_before/old.sql` holding `ALTER TABLE t ADD x` claimed T, so no
+    helper was written and the table's CREATE was linked commented out naming
+    a script the move then reported IGNORED: the target got neither.
+    """
+    slots = _known_slots(config)
+    shippable = {path for record in records for path in record.usable_files} | set(generated)
+    return [
+        (text, repo_path)
+        for text, repo_path in scan_user_scripts(script_root, root)
+        if repo_path in shippable
+        and in_linked_slot((root / repo_path).relative_to(script_root), slots)
+    ]
+
 
 #: What `database_schema` answers for a layout that carries no schema level at
 #: all (`patch/layout.py`). It names a GROUP, never a schema, so handing it to a

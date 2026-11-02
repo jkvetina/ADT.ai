@@ -66,6 +66,19 @@ _PLSQL_START = re.compile(
 
 _TRAILING_TERMINATOR = re.compile(r";\s*$")
 
+# A line that ends a statement, read by shape (ADT #1094): code, complete string
+# literals and quoted identifiers (inside which `;` and `--` are characters),
+# then the terminator, then at most a comment. `stripped.endswith(";")` alone
+# let `alter session set x = 1; -- note` run into the statement below it, which
+# failed as `STARTUP.sql FAILED AT LINE n` on the python-oracledb path while
+# SQLcl ran the same file. A regex and not a scan: `export_db.normalizers.sql_spans`
+# is the tree's one SQL scanner and `shared/` may not import a command package,
+# so this reads the one shape the splitter needs. A line whose quotes do not
+# pair falls back to the old rule, and a `/* ... */` spanning lines stays open.
+_TERMINATED_LINE = re.compile(
+    r"""^(?P<code>(?:[^'"-]|'(?:[^']|'')*'(?!')|"[^"]*"|-(?!-))*?);\s*(?:/\*.*?\*/\s*)*(?:--.*)?$"""
+)
+
 
 @dataclass(frozen=True)
 class Statement:
@@ -116,6 +129,12 @@ def _script_include(line: str) -> bool:
     return bool(tokens) and (line.startswith("@") or tokens[0].upper() == "START")
 
 
+def _code_before_terminator(line: str) -> str | None:
+    """``line``'s code up to its terminator, or ``None`` when it ends no statement."""
+    match = _TERMINATED_LINE.match(line)
+    return None if match is None else match.group("code")
+
+
 def split_statements(text: str) -> list[Statement]:
     """Split a SQL*Plus/SQLcl script into executable statements.
 
@@ -161,9 +180,17 @@ def split_statements(text: str) -> list[Statement]:
 
         buffer.append(line)
 
-        if not in_plsql and stripped.endswith(";"):
-            buffer[-1] = _TRAILING_TERMINATOR.sub("", buffer[-1])
-            flush("sql")
+        if not in_plsql:
+            code = _code_before_terminator(line)
+            if code is not None:
+                buffer[-1] = code
+                flush("sql")
+            elif stripped.endswith(";"):
+                # A quote the shape reader could not pair (a `/* don't */` ahead
+                # of the terminator): the line ends the statement as it always
+                # did, by ending with `;`.
+                buffer[-1] = _TRAILING_TERMINATOR.sub("", buffer[-1])
+                flush("sql")
 
     if any(part.strip() for part in buffer):
         flush("plsql" if in_plsql else "sql")
@@ -180,7 +207,10 @@ def _emulation_for(statement: Statement) -> str | None:
     """
     tokens = statement.text.split()
     if len(tokens) >= 2 and tokens[0].upper() in _EXEC_COMMANDS:
-        call = _TRAILING_TERMINATOR.sub("", statement.text.split(None, 1)[1]).strip()
+        rest = statement.text.split(None, 1)[1]
+        # The call alone: a `-- note` after its terminator is no part of it, or
+        # the block closed inside its own comment (ADT #1094).
+        call = _TRAILING_TERMINATOR.sub("", _code_before_terminator(rest) or rest).strip()
         return f"BEGIN {call}; END;"
     if len(tokens) >= 2 and tokens[0].upper() == "SET" and tokens[1].upper() == "SERVEROUTPUT":
         # `SET SERVEROUTPUT OFF;` is as valid as the bare form, and its `;` made

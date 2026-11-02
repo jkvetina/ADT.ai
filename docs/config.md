@@ -246,7 +246,7 @@ The order is `DDL_LOCK_TIMEOUT`, then the automatic session identifier from `con
 It is authored as an ordinary SQLcl script and may mix three statement kinds:
 
 - **SQL\*Plus and SQLcl directives** (`SET SERVEROUTPUT ON`, `SET DEFINE OFF`, `SET SQLFORMAT ANSICONSOLE`, `VAR`, `PRINT`, `PROMPT`) are client-side and the database never sees them. On the Python path they are filtered out, with `SET SERVEROUTPUT` emulated server-side and `EXEC call` run as `BEGIN call; END;`, the block SQL\*Plus wraps it in. SQLcl deploys read the file natively.
-- **`ALTER SESSION` and plain SQL** end with `;`. `SET TRANSACTION`, `SET ROLE` and `SET CONSTRAINTS` are real SQL rather than directives, and are sent to the database.
+- **`ALTER SESSION` and plain SQL** end with `;`, and a `-- comment` after the terminator is fine. `SET TRANSACTION`, `SET ROLE` and `SET CONSTRAINTS` are real SQL rather than directives, and are sent to the database.
 - **PL/SQL blocks** end with a lone `/` on its own line.
 
 Running another script with `@file`, `@@file` or `START file` works only in SQLcl. On the Python path the database refuses that line and the connection fails naming it, so put those statements in `STARTUP.sql` itself.
@@ -273,11 +273,13 @@ A group of keys decides what a patch is called and how it is laid out. None of t
 
 **`patch_folder` is read in both directions.** ADT writes a folder name from it and parses folder names back with it, so a project that changes it stops recognising the folders it already has.
 
-Nothing is renamed or migrated, and the old folders are simply no longer listed or selectable. Change it before a project's first patch, or accept that the ones on disk become history.
+Nothing is renamed or migrated: the old folders are no longer listed or selectable, so change it before a project's first patch.
+
+**`patch_source_env`**, `DEV` as shipped, is what `patch -deploy` compares tables and checks views against; set it when yours differs.
 
 One rule covers the rest of the file: **every default ships the value ADT.ai used before the key existed**, so a project that sets nothing gets exactly what it got before.
 
-That cuts both ways while you are testing a change, since a default matching the old hardcode is precisely what hides a key nothing reads. Prove a key by setting it to something else and watching the output move.
+So a default matching the old hardcode hides a key nothing reads: prove one by setting it to something else and watching the output move.
 
 <br>
 
@@ -307,7 +309,7 @@ Hydration announces nothing of its own. What it did is visible where it matters:
 Which variable does the real work, in case you are debugging a connection rather than reading for pleasure:
 
 - **Thick-mode connections need `ORACLE_HOME`**, and nothing else. The Python driver reads it when initializing the Oracle Client and finds the client library under that folder.
-- **SQLcl needs `PATH`**, and nothing else. It runs on the JDBC thin driver, so it wants no Oracle client libraries, only to be found.
+- **SQLcl needs `PATH`**, and no client library: it runs on thin JDBC. Only `auth: external` runs it thick, keeping `ORACLE_HOME`.
 
 `DYLD_LIBRARY_PATH` and `LD_LIBRARY_PATH` are carried across because they are right on Linux and harmless on macOS. On macOS they achieve nothing: the loader fixes its search path when a process starts and never rereads the variable, and System Integrity Protection strips `DYLD_*` when launching a protected binary.
 

@@ -26,8 +26,10 @@ helper-shaped names here would defeat exactly that. A file the generator
 itself is about to write over is never scanned twice for the same run, because
 the caller checks and skips generation in the same pass this module answers.
 
-Comment lines are stripped before matching, so an `ALTER TABLE` a person only
-wrote ABOUT in a `--` note claims nothing.
+Comments and string literals are blanked before matching, so an `ALTER TABLE` a
+person only wrote ABOUT, in a `--` note, a `/* ... */` block or a literal,
+claims nothing (ADT #1094: a block comment claimed, and a `--` inside a literal
+cut the line the real ALTER sat on).
 """
 
 from __future__ import annotations
@@ -35,7 +37,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-_LINE_COMMENT_RE = re.compile(r"--[^\n]*")
+from adt_ai.export_db.normalizers import sql_spans
 
 #: `ALTER TABLE`, an optional 23ai `IF EXISTS`, an optional schema qualifier,
 #: then the table name, quoted or not. Case-insensitive throughout, matching
@@ -72,8 +74,22 @@ def scan_user_scripts(script_root: Path, root: Path) -> list[tuple[str, str]]:
         if not path.is_file():  # pragma: no cover
             continue
         raw = path.read_text(encoding="utf-8", errors="replace")
-        texts.append((_LINE_COMMENT_RE.sub("", raw), path.relative_to(root).as_posix()))
+        texts.append((_code_only(raw), path.relative_to(root).as_posix()))
     return texts
+
+
+def _code_only(text: str) -> str:
+    """``text`` with every comment and string span blanked to spaces (ADT #1094).
+
+    Read through `sql_spans`, the scanner `harden.py` uses, with quoted
+    identifiers kept: `"T_ORDERS"` is the name. Blanked to the same length
+    rather than cut, so the character after a name is still what the pattern's
+    lookahead expects.
+    """
+    return "".join(
+        " " * (end - begin) if kind in ("comment", "string") else text[begin:end]
+        for kind, begin, end in sql_spans(text, identifiers=True)
+    )
 
 
 def claiming_scripts(scripts: list[tuple[str, str]], table_name: str) -> tuple[str, ...]:

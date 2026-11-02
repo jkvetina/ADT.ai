@@ -48,6 +48,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from collections import ChainMap
 from collections.abc import Callable, MutableMapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,13 +58,6 @@ ShellRunner = Callable[[Sequence[str]], str]
 # The two ways to supply the key that decrypts connection passwords (ADT #397).
 # Either one set satisfies the key half of the sentinel.
 KEY_VARIABLES = ("ADT_KEY", "ADT_KEY_CMD")
-
-# No key source, or no ORACLE_HOME, means the process may never have seen the
-# user's startup file, so hydration runs. Only what a command actually reads
-# decides that (#924 F69): the sentinel used to be `ADT_ENV`, which nothing
-# reads for its work, so a process holding ADT_ENV and ORACLE_HOME but no key
-# skipped the one hydration an encrypted connection needed.
-SENTINEL_VARIABLES = (*KEY_VARIABLES, "ORACLE_HOME")
 
 # The variables worth carrying over. PATH is absent on purpose: it is derived
 # from the hydrated ORACLE_HOME below rather than copied wholesale.
@@ -114,6 +108,10 @@ _ASSIGNMENT = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=")
 _VARIABLE_REFERENCE = re.compile(
     r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)"
 )
+# A command substitution, which only a shell can evaluate. Left as text, the
+# literal `$(security` read as a resolved key and suppressed the login-shell
+# fallback that would have got it right (#1094), so such a value is not stored.
+_SUBSTITUTION = re.compile(r"\$\(|`")
 
 
 @dataclass(frozen=True)
@@ -221,12 +219,28 @@ def _parse_exports(
     env   : MutableMapping[str, str],
     home  : Path,
 ) -> None:
+    """Every `export` assignment in one startup file, merged into ``values``.
+
+    The last assignment in a file wins, as it does in a shell, and a reference
+    below it (`$ORACLE_HOME`) reads that value; across files the first one
+    wins. Read per LINE, "first wins" lost a rotated `export ORACLE_HOME` written
+    under the old one (#1094). A command substitution is not stored at all, and
+    drops an earlier plain value of the same name: the shell would hold the
+    command's output, which no parse can know.
+    """
+    found: dict[str, str] = {}
+    lookup: MutableMapping[str, str] = ChainMap(found, values)
     for line in text.splitlines():
         for name, raw in _assignments(line, _EXPORT_PREFIX):
-            if name in values:
-                continue  # first file wins
             literal, quoted = _unquote(raw)
-            values[name] = literal if quoted else _expand(literal, values, env, home)
+            if quoted:
+                found[name] = literal
+            elif _SUBSTITUTION.search(literal):
+                found.pop(name, None)
+            else:
+                found[name] = _expand(literal, lookup, env, home)
+    for name, value in found.items():
+        values.setdefault(name, value)
 
 
 def _assignments(line: str, *prefixes: re.Pattern[str]) -> list[tuple[str, str]]:
@@ -249,19 +263,29 @@ def _assignments(line: str, *prefixes: re.Pattern[str]) -> list[tuple[str, str]]
     A word that carries no `NAME=` (`export -f helper`, a bare `export ADT_ENV`)
     sets nothing and is stepped over rather than ending the line, so the real
     assignments beside it still arrive.
+
+    A quote the tokenizer cannot close (`export ADT_KEY='abc`) is a line the
+    shell would refuse, so nothing on it is read (#1094): read past the stray
+    quote, `ADT_KEY` arrived holding whatever stood before it.
     """
     for prefix in prefixes:
         match = prefix.match(line)
         if match is None:
             continue
         found: list[tuple[str, str]] = []
-        for word in _WORD.findall(line[match.end():]):
-            if word.startswith("#"):
-                break
-            assignment = _ASSIGNMENT.match(word)
+        rest = line[match.end():]
+        cursor = 0
+        for word in _WORD.finditer(rest):
+            if rest[cursor:word.start()].strip():
+                return []
+            cursor = word.end()
+            text = word.group()
+            if text.startswith("#"):
+                return found
+            assignment = _ASSIGNMENT.match(text)
             if assignment is not None:
-                found.append((assignment.group(1), word[assignment.end():]))
-        return found
+                found.append((assignment.group(1), text[assignment.end():]))
+        return [] if rest[cursor:].strip() else found
     return []
 
 
@@ -313,6 +337,10 @@ def _run_login_shell(command: Sequence[str]) -> str:
         command,
         check          = True,
         capture_output = True,
+        # A login shell with the parent's stdin reads the terminal, and a
+        # startup file that prompts (`read`, `vared`) waited on it until the
+        # timeout (#1094); with no input it fails at once instead.
+        stdin          = subprocess.DEVNULL,
         text           = True,
         # `export -p` prints values a user typed, so a non-ASCII path or
         # password is ordinary here. `_read_from_shell` swallows every

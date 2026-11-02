@@ -4,7 +4,7 @@
 
 Every ADT.ai command prints the same chrome, and a refusal is written to tell you where to go and fix it. This page is what those screens mean: how to read `--help`, what the banner, sections and timer are, which failure header you are looking at, and how the completion sound is decided.
 
-The eight flags every command shares are documented at the end of it, so a command page can list only the flags that are its own.
+The nine shared flags are documented at the end of it, so a command page can list only the flags that are its own.
 
 <br>
 
@@ -22,7 +22,7 @@ Command help opens with the `APEX DEPLOYMENT TOOL - <CMD>` banner, then the usag
 - Help is static reference output, so it prints no `TIMER`.
 - `-h` and `--help` are accepted and are not listed as rows.
 - Option rows show the single-dash alias and hide the redundant `--` form. Both are still accepted by the parser.
-- Shared options are always listed last, in the order `-debug`, `-beep`, `-nobeep`, `-env`, `-root`, `-config-dir`, `-key`. They are documented under [Shared arguments](#shared-arguments), at the end of this page.
+- Shared options are always listed last, in the order `-debug`, `-beep`, `-nobeep`, `-json`, `-env`, `-root`, `-config-dir`, `-key`. They are documented under [Shared arguments](#shared-arguments), at the end of this page.
 - Sections wrap to a default 80-column terminal.
 
 <br>
@@ -147,11 +147,11 @@ The code is chosen by what your next move is rather than by which layer raised t
 | `RUNTIME ERROR` | A `RuntimeError`, printed the same way. | The `-debug` hint. |
 | `UNEXPECTED ERROR` | Anything else ADT.ai could not classify, printed as `<Type>: <message>`. | The `-debug` hint. |
 
-The set is closed: a code outside it is refused, and all fourteen headers are held in the checked-in console inventory, so adding one is a reviewed console change like any other section header.
+The set is closed: a code outside it is refused, and all sixteen headers are held in the checked-in console inventory, so adding one is a reviewed console change like any other section header.
 
 **Every refusal goes to stderr**, and the `TIMER` footer follows it there. **The exit code is a property of the code**: `2` for `ARGUMENT INVALID` and `UNKNOWN COMMAND`, which are about what you typed, `1` for every other, which happened during the work.
 
-**The `-debug` hint prints on four codes only**, the ones where a Python traceback is the next thing worth reading. A screen that names its own cause and its own remedy does not carry it: the hint above a located config file or a refused connect is advice that leads nowhere. `-debug` itself re-raises for the traceback on any command whose parser declares it, and `calendar`, `doctor`, `rebuild` and `search` never did, so the hint never prints there either.
+**The `-debug` hint prints on six codes only**, the ones where a Python traceback is the next thing worth reading. A screen that names its own cause and its own remedy does not carry it: the hint above a located config file or a refused connect is advice that leads nowhere. `-debug` itself re-raises for the traceback on any command whose parser declares it, and `calendar`, `doctor`, `rebuild` and `search` never did, so the hint never prints there either.
 
 **A run that carries on past a failure is not a refusal.** `export_db` records an object the database refuses, writes the rest, and lists the refused objects under `WARNING - OBJECT EXPORT FAILED:` straight after the export, as `TYPE | NAME` rows with no query and no hint; `-debug` adds each error under its row ([export_db](export_db.md#when-the-database-refuses-an-object)). The run exits `1` all the same.
 

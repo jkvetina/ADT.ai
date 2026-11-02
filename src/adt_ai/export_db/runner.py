@@ -40,7 +40,7 @@ from adt_ai.export_db.files import (
     ObjectWritePlan,
     ObjectWriteRequest,
 )
-from adt_ai.export_db.grants import exports_grants, grant_artifacts
+from adt_ai.export_db.grants import exports_grants, grant_artifacts, stale_acl_artifacts
 from adt_ai.export_db.groups import (
     GroupRules,
     detect_groups_from_tree,
@@ -313,8 +313,13 @@ class ExportDbRunner:
                 # target lacks is a difference for `patch -hash` to decide about.
                 # The artifacts count as listed, so a Data Grant file survives
                 # while its grant does and goes with it (`#1063`).
-                missing_objects = resolver.missing_objects(
-                    database_objects + [item for item, _ in schema_grants], schema=schema
+                missing_objects = sorted(
+                    resolver.missing_objects(
+                        database_objects + [item for item, _ in schema_grants],
+                        schema=schema,
+                    )
+                    + stale_acl_artifacts(request, schema, discovery, resolver),
+                    key=lambda item: (item.object_type, item.name),
                 )
                 reporter.deleted_objects(
                     schema,

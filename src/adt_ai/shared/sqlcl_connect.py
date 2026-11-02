@@ -27,6 +27,7 @@ caller has to answer.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from zipfile import ZipFile
@@ -195,17 +196,15 @@ def identity_check(connection: Connection) -> tuple[str, ...]:
     "no session" (`sqlcl_script._ran_without_a_session`).
 
     The user is compared exactly (a proxy `A[B]` logs in as `B`). The service
-    is compared only when the file names a host, because only then is
-    `service:` the database's own service name rather than a TNS alias; it
+    is compared wherever the file names one (see `_named_service`), and it
     matches when its first label stands as whole words among the session's
     service, database, instance and container names, which accepts
     `APP_DEV.EXAMPLE.COM` for `APP_DEV` and a cloud `g1_core_high.adb...` for
-    `core_high`, and refuses `APP_DEV2` for `APP_DEV`.
+    `core_high`, and refuses `APP_DEV2` for `APP_DEV`. The port is never
+    compared: `SYS_CONTEXT` does not expose the listener's.
     """
     user = _expected_user(connection.username)
-    service = ""
-    if connection.hostname:
-        service = str(connection.service or connection.sid or "").split(".", 1)[0].strip()
+    service = _named_service(connection).split(".", 1)[0].strip()
     _reject_connect_line_breaks(user, role="database username")
     _reject_connect_line_breaks(service, role="database service")
     conditions = [f"USER <> {_sql_literal(user)}"]
@@ -229,6 +228,41 @@ def identity_check(connection: Connection) -> tuple[str, ...]:
         "END;",
         "/",
     )
+
+
+# `SERVICE_NAME=` or `SID=` inside a connect descriptor, any case and spacing.
+_DESCRIPTOR_KEY = re.compile(r"\(\s*(SERVICE_NAME|SID)\s*=\s*([^()\s]+)\s*\)", re.IGNORECASE)
+
+# The `tcp://` / `tcps://` an EZConnect Plus string may open with.
+_EZCONNECT_SCHEME = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://")
+
+
+def _named_service(connection: Connection) -> str:
+    """The service the connect line reaches, when the file states it (ADT #1095).
+
+    With a `hostname`, `service:` (or `sid:`) is the service itself. Without
+    one it is whatever SQLcl is handed after the `@`: a full descriptor names
+    it in `SERVICE_NAME=` (or `SID=`), and an EZConnect string after its first
+    `/`. Anything else is a TNS alias, a wallet's included, resolved through a
+    `tnsnames.ora` ADT does not read, so it yields `""` and only the user is
+    compared: guessing would refuse a valid connection and then fail the
+    re-register as well.
+    """
+    value = str(connection.service or connection.sid or "").strip()
+    if connection.hostname or not value:
+        return value
+    if "(" in value:
+        found = {key.upper(): name for key, name in _DESCRIPTOR_KEY.findall(value)}
+        return (found.get("SERVICE_NAME") or found.get("SID") or "").strip("\"'")
+    scheme = _EZCONNECT_SCHEME.match(value)
+    if scheme:
+        if scheme.group(1).lower() not in {"tcp", "tcps"}:
+            return ""
+        value = value[scheme.end():]
+    _, slash, rest = value.lstrip("/").partition("/")
+    if not slash:
+        return ""
+    return re.split(r"[:/?]", rest, maxsplit=1)[0].strip()
 
 
 def _expected_user(username: str) -> str:

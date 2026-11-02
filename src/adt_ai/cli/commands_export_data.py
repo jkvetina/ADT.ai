@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import time
+from dataclasses import replace
 
 from adt_ai.cli import json_findings_database
 from adt_ai.cli.commands_export_data_groups import run_data_groups_move
@@ -24,6 +25,7 @@ from adt_ai.cli.gateways import build_gateway, cached_schema_gateway_factory
 from adt_ai.cli.schema_sections import run_schema_sections
 from adt_ai.export_data.groups import resolve_group_inputs
 from adt_ai.shared.error_screen import exit_code_for, print_adt_error
+from adt_ai.shared.safe_paths import UnsafePathError
 
 
 def _run_export_data(
@@ -64,15 +66,6 @@ def _run_export_data(
             "1) add -groups\n2) or drop -force to export",
         )
         return exit_code_for("ARGUMENT INVALID")
-    # `auto_sync_git` (ADT #938): keeps the root `.gitattributes` block current
-    # and already-tracked CRLF sources on disk in LF before anything below
-    # writes a file. Silent unless something actually changed; never staged.
-    # Past the `-groups`/`-force` early returns, so a move or a refusal never
-    # touches it.
-    sync_git_metadata_before_export(root, config)
-    if args.debug:
-        _print_startup_debug(startup)
-
     group_rules = resolve_group_inputs(startup.config_search_paths)
 
     def default_gateway_factory(schema: str) -> QueryGateway:
@@ -85,6 +78,10 @@ def _run_export_data(
     )
 
     runner = ExportDataRunner(export_data_gateway_factory)
+    request = ExportDataRequest(
+        root=root, schemas=schemas, config=config, schema_export=schema_export,
+        names=_flatten_arg_groups(args.name), group_rules=group_rules, backup=args.backup,
+    )
 
     def run_one(schema: str) -> int:
         _print_connection_block(
@@ -92,14 +89,9 @@ def _run_export_data(
         )
         reporter = ConsoleExportDataReporter(silent=args.silent)
         written = runner.run(
-            ExportDataRequest(
-                root          = root,
-                schemas       = [schema],
-                config        = config,
-                schema_export = {schema: schema_export[schema]},
-                names         = _flatten_arg_groups(args.name),
-                group_rules   = group_rules,
-                reporter      = reporter,
+            replace(
+                request, schemas=[schema],
+                schema_export={schema: schema_export[schema]}, reporter=reporter,
             )
         )
         # Summed across schemas: each one is its own pass (ADT #1070).
@@ -110,4 +102,15 @@ def _run_export_data(
         )
         return 0
 
-    return run_schema_sections(schemas, run_one, first_started_at=handler_started_at)
+    try:
+        # Preflight reads under the module header, before other output closes it.
+        try:
+            runner.run(request, preflight_only=True)
+            sync_git_metadata_before_export(root, config)
+        finally:
+            if args.debug:
+                _print_startup_debug(startup)
+        return run_schema_sections(schemas, run_one, first_started_at=handler_started_at)
+    except UnsafePathError as error:
+        print_adt_error("VALUE ERROR", str(error))
+        return exit_code_for("VALUE ERROR")

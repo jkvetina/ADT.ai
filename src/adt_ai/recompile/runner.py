@@ -76,8 +76,14 @@ class RecompileRunner:
         self,
         gateway_factory: GatewayFactory,
         reporter: RecompileReporter | None = None,
+        fatal_error: Callable[[Exception], bool] | None = None,
     ) -> None:
         self.gateway_factory = gateway_factory
+        # Which compile failures end the run instead of parking the object as a
+        # troublemaker (#1094): the CLI passes its connection-error test, so a
+        # lost session is not read as one compile failure per object on a dead
+        # connection. The default names nothing, so every other caller is as it was.
+        self.fatal_error: Callable[[Exception], bool] = fatal_error or (lambda error: False)
         # streaming hooks; the no-op base keeps non-console callers unchanged. The
         # CLI swaps in a console reporter post-construction, so the fake runners in
         # the CLI tests (single-arg __init__) stay untouched.
@@ -251,8 +257,8 @@ class RecompileRunner:
             try:
                 gateway.execute(self._statement_for(obj, request))
                 compiled.append(obj)
-            except Exception:
-                if request.debug:
+            except Exception as error:
+                if request.debug or self.fatal_error(error):
                     raise
                 troublemakers.append(obj)
 
@@ -306,9 +312,8 @@ class RecompileRunner:
             success       = not invalid,
         )
 
-    @classmethod
     def _retry_pass(
-        cls,
+        self,
         gateway: QueryGateway,
         pending: list[RecompileObject],
         request: RecompileRequest,
@@ -323,15 +328,16 @@ class RecompileRunner:
         remaining: list[RecompileObject] = []
         for obj in reversed(pending):
             try:
-                gateway.execute(cls._statement_for(obj, request))
-            except Exception:
-                # Unreachable with request.debug=True: the *first* compile loop
-                # in run() already re-raises the moment any object fails, before
-                # troublemakers is ever populated, so this pass only ever runs
-                # with debug False. Kept for structural symmetry with that
-                # loop's except.
-                if request.debug:
-                    raise  # pragma: no cover, see comment above
+                gateway.execute(self._statement_for(obj, request))
+            except Exception as error:
+                # `request.debug` is unreachable here: the *first* compile loop
+                # in run() re-raises the moment any object fails, before
+                # troublemakers is ever populated, so this pass only runs with
+                # debug False. It stays beside the fatal test (#1094) so the two
+                # excepts read the same way; a lost session on the retry
+                # connection ends the run exactly as one on the first does.
+                if request.debug or self.fatal_error(error):
+                    raise
                 remaining.append(obj)
         return remaining
 

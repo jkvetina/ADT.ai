@@ -2,18 +2,21 @@ from __future__ import annotations
 
 import csv
 import io
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
 from adt_ai.export_data.csv_cells import csv_cell
+from adt_ai.export_data.destinations import refuse_colliding_destinations
 from adt_ai.export_data.groups import GroupRules, group_for, resolve_data_group_rules
 from adt_ai.export_data.inventory import DataColumn, DataDiscovery, DataTable
 from adt_ai.export_data.lob_update_scripts import include_update_scripts
 from adt_ai.export_data.merge_config import merge_config
 from adt_ai.export_data.merge_script import (
     commented_where_filter,
+    lob_insert_values,
+    lob_update_values,
     merge_sql_from_csv,
     no_merge_script,
 )
@@ -27,6 +30,10 @@ from adt_ai.export_data.sidecars import (  # noqa: F401  (re-exported for existi
     _sidecar_payload,
     _sidecar_row_key,
     _write_sidecar_values,
+)
+from adt_ai.export_data.where_filter import (  # noqa: F401  (re-exported, `#1099`)
+    _table_config,
+    _where_filter,
 )
 from adt_ai.shared import text_files
 from adt_ai.shared.config import (
@@ -59,6 +66,8 @@ class ExportDataRequest:
     #: has learned about itself before each schema's export (ADT #520), same
     #: split as `export_db`'s own `_resolve_group_rules`.
     group_rules  : GroupRules | None = None
+    #: `-backup` (`#1099`): no `where` filter and no `ignored_columns`.
+    backup       : bool = False
 
 
 GatewayFactory = Callable[[str], QueryGateway]
@@ -71,10 +80,18 @@ class ExportDataReporter(Protocol):
     def export_table(self, table: DataTable) -> None:
         ...
 
-    def finish_table(self, table: DataTable, row_count: int) -> None:
+    def finish_table(self, table: DataTable, row_count: int, filtered: int = 0) -> None:
         ...
 
     def finish_export(self) -> None:
+        ...
+
+    def vpd_policies(self, exempt: bool, tables: list[tuple[str, int]]) -> None:
+        """The exported tables an enabled SELECT policy may have filtered (`#1098`).
+
+        `tables` is `(TABLE, rows written)` in export order; `exempt` is whether
+        every session read past the policies. Called only when there are any.
+        """
         ...
 
 
@@ -82,19 +99,25 @@ class ExportDataRunner:
     def __init__(self, gateway_factory: GatewayFactory) -> None:
         self.gateway_factory = gateway_factory
 
-    def run(self, request: ExportDataRequest) -> list[Path]:
+    def run(self, request: ExportDataRequest, *, preflight_only: bool = False) -> list[Path]:
         written: list[Path] = []
         export_items: list[tuple[DataDiscovery, DataTable]] = []
         group_rules_by_schema: dict[str, GroupRules] = {}
+        # Read only for a reporter: the answer is a warning and nothing else.
+        policy_tables: dict[str, set[str]] = {}
+        exempt: dict[str, bool] = {}
         for schema in request.schemas:
             gateway = self.gateway_factory(schema)
             discovery = DataDiscovery(gateway)
             schema_export = (request.schema_export or {}).get(schema, {})
             data_folder = _data_folder(request.root, request.config, schema)
-            _migrate_merge_scripts(data_folder, request.config)
             group_rules_by_schema[schema] = resolve_data_group_rules(
                 data_folder, request.group_rules
             )
+            if request.reporter:
+                policy_tables[schema] = discovery.policy_tables()
+                if policy_tables[schema]:
+                    exempt[schema] = discovery.exempt()
             # default the name list per schema – data folders may be schema-scoped
             names = request.names or _existing_data_names(request.root, request.config, schema)
             for table_name in discovery.table_names(
@@ -105,19 +128,45 @@ class ExportDataRunner:
                 export_items.append(
                     (discovery, DataTable(schema=schema, name=table_name, columns=[]))
                 )
+        # Every selected table's files are known before the first is written, so
+        # two tables sharing one refuse the run while the last export is intact.
+        refuse_colliding_destinations(
+            [
+                (
+                    f"{table.schema}.{table.name}",
+                    _data_path(
+                        request.root, request.config, table.name, table.schema,
+                        group_rules_by_schema[table.schema],
+                    ),
+                )
+                for _, table in export_items
+            ],
+            _merge_extension(request.config),
+        )
+        if preflight_only:
+            return []
+        for schema in request.schemas:
+            _migrate_merge_scripts(
+                _data_folder(request.root, request.config, schema), request.config
+            )
         if request.reporter:
             request.reporter.start_export(len(export_items))
+        filtered: list[tuple[str, int]] = []
         for discovery, table in export_items:
             if request.reporter:
                 request.reporter.export_table(table)
-            path, row_count = self._write_table(
+            path, row_count, left_out = self._write_table(
                 request, discovery, table, group_rules_by_schema[table.schema]
             )
             written.append(path)
+            if table.name in policy_tables.get(table.schema, set()):
+                filtered.append((table.name, row_count))
             if request.reporter:
-                request.reporter.finish_table(table, row_count)
+                request.reporter.finish_table(table, row_count, filtered=left_out)
         if request.reporter:
             request.reporter.finish_export()
+            if filtered:
+                request.reporter.vpd_policies(all(exempt.values()), filtered)
         return written
 
     def _write_table(
@@ -126,7 +175,7 @@ class ExportDataRunner:
         discovery: DataDiscovery,
         table: DataTable,
         group_rules: GroupRules | None = None,
-    ) -> tuple[Path, int]:
+    ) -> tuple[Path, int, int]:
         table = (
             table
             if table.columns
@@ -136,11 +185,7 @@ class ExportDataRunner:
                 columns = discovery.columns(table.name),
             )
         )
-        columns = [
-            column
-            for column in table.columns
-            if column.name not in _ignored_columns(request.config)
-        ]
+        columns = table.columns if request.backup else _exported_columns(table, request.config)
         csv_columns = [
             column.name
             for column in columns
@@ -153,11 +198,13 @@ class ExportDataRunner:
         ]
         query_columns = [column.name for column in columns]
         column_types = {
-            column.name.upper(): column.data_type
+            column.name: column.data_type
             for column in columns
         }
         order_by = ", ".join(_key_columns(table, query_columns)) or "ROWID"
-        where_filter = _where_filter(request.config, table.name, csv_columns)
+        where_filter = "" if request.backup else _where_filter(
+            request.config, table.name, csv_columns
+        )
         rows = discovery.rows(table.name, query_columns, where_filter, order_by, column_types)
         path = _data_path(request.root, request.config, table.name, table.schema, group_rules)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -213,7 +260,7 @@ class ExportDataRunner:
         # A GENERATED ALWAYS identity is numbered by each environment and never
         # inserted, so a MERGE joined on it matches nothing on the target and
         # inserts every row again (`#982`).
-        identity_key = any(column.lower() in identity_columns for column in primary_columns)
+        identity_key = any(column in identity_columns for column in primary_columns)
         merge_sql = ""
         if primary_columns and not identity_key:
             merge_sql = _merge_sql_from_csv(
@@ -227,6 +274,8 @@ class ExportDataRunner:
                 column_types    = column_types,
                 identity_columns = identity_columns,
                 primary_key_columns = _primary_key_columns(columns),
+                insert_values   = lob_insert_values(sidecar_columns),
+                update_values   = lob_update_values(sidecar_columns),
             )
         merge_path = _merge_path(path, request.config)
         if merge_sql:
@@ -249,13 +298,15 @@ class ExportDataRunner:
                     identity_key = identity_key,
                 ),
             )
-        return path, row_count
+        # What the filter left out, counted only when one applied (`#1099`).
+        filtered = max(0, discovery.count(table.name) - row_count) if where_filter else 0
+        return path, row_count, filtered
 
 
 def _always_identity_columns(columns: list[DataColumn]) -> set[str]:
-    """The lower-cased columns Oracle refuses to let DML write (`#670`)."""
+    """The exact columns Oracle refuses to let DML write (`#670`)."""
     return {
-        column.name.lower()
+        column.name
         for column in columns
         if column.identity.strip().upper() == "ALWAYS"
     }
@@ -358,18 +409,24 @@ def _merge_path(csv_path: Path, config: dict[str, Any]) -> Path:
 def _migrate_merge_scripts(data_folder: Path, config: dict[str, Any]) -> None:
     """Move each MERGE an older export wrote as `.sql` to the configured extension.
 
-    Runs before discovery, so a bare re-export still finds every table it
-    tracked. Only a `<table>.sql` beside its own `<table>.csv` is the export's,
+    Runs after collision preflight; discovery reads legacy names without moving
+    files. Only a `<table>.sql` beside its own `<table>.csv` is the export's,
     flat or one group folder down, and a MERGE already under the configured
     extension is never overwritten.
     """
+    for legacy, target in _merge_migrations(data_folder, config):
+        legacy.rename(target)
+
+
+def _merge_migrations(data_folder: Path, config: dict[str, Any]) -> Iterator[tuple[Path, Path]]:
+    """The pending legacy moves, readable before any filesystem mutation."""
     if not data_folder.is_dir():
         return
     for csv_path in sorted(data_folder.glob("*.csv")) + sorted(data_folder.glob("*/*.csv")):
         legacy = csv_path.with_suffix(LEGACY_MERGE_EXTENSION)
         target = _merge_path(csv_path, config)
         if legacy != target and legacy.is_file() and not target.exists():
-            legacy.rename(target)
+            yield legacy, target
 
 
 
@@ -397,48 +454,42 @@ def _existing_data_names(root: Path, config: dict[str, Any], schema: str = "") -
         if extension and name.endswith(extension):
             name = name[: -len(extension)]
         names.append(name.upper())
+    extension = _merge_extension(config)
+    names.extend(
+        target.name[:-len(extension)].upper()
+        for _, target in _merge_migrations(data_folder, config)
+    )
     return names
 
 
 def _ignored_columns(config: dict[str, Any]) -> set[str]:
+    """The configured names in upper case, to be compared with an upper-cased column name.
+
+    Oracle folds an unquoted name to upper case, so `created_by` and `CREATED_BY`
+    are one column, as they already are for `export_db`'s comment rendering
+    (ADT #1095).
+    """
     return {
-        str(column)
+        str(column).upper()
         for column in config.get("ignored_columns", [])
     }
 
 
-def _where_filter(config: dict[str, Any], table_name: str, columns: list[str]) -> str:
-    where_columns: dict[str, Any] = {}
-    tables_global = config.get("tables_global", {})
-    if isinstance(tables_global, dict) and isinstance(tables_global.get("where"), dict):
-        _merge_where(where_columns, tables_global["where"])
-    table_config = _table_config(config, table_name)
-    if isinstance(table_config, dict) and isinstance(table_config.get("where"), dict):
-        _merge_where(where_columns, table_config["where"])
+def _exported_columns(table: DataTable, config: dict[str, Any]) -> list[DataColumn]:
+    """`table.columns` less `ignored_columns`, with the replay key always kept (`#1094`).
 
-    present_columns = {column.upper() for column in columns}
-    filtered = [
-        (str(column_name), condition)
-        for column_name, condition in where_columns.items()
-        if str(column_name).upper() in present_columns
+    `_key_columns` only picks from the columns handed to it, so an ignored
+    primary-key or UNIQUE column silently fell out of the key and the MERGE
+    joined on what was left, matching the wrong rows. The key is decided on the
+    whole table first, and a listed column that belongs to it stays exported.
+    """
+    ignored = _ignored_columns(config)
+    key = set(_key_columns(table, [column.name for column in table.columns]))
+    return [
+        column
+        for column in table.columns
+        if column.name.upper() not in ignored or column.name in key
     ]
-    if not filtered:
-        return ""
-    lines = ["", "WHERE 1 = 1"]
-    lines.extend(
-        f"    AND {column_name} {condition}"
-        for column_name, condition in filtered
-    )
-    return "\n".join(lines)
-
-
-def _merge_where(target: dict[str, Any], source: dict[str, Any]) -> None:
-    for column_name, condition in source.items():
-        column_key = str(column_name).upper()
-        for existing in list(target):
-            if existing.upper() == column_key:
-                target.pop(existing)
-        target[str(column_name)] = condition
 
 
 def _key_columns(table: DataTable, columns: list[str]) -> list[str]:
@@ -496,9 +547,9 @@ def _has_primary_key(table: DataTable, columns: list[str]) -> bool:
 
 
 def _primary_key_columns(columns: list[DataColumn]) -> set[str]:
-    """The lower-cased primary key columns, which a MERGE never updates (`#811`)."""
+    """The exact primary key columns, which a MERGE never updates (`#811`)."""
     return {
-        column.name.lower()
+        column.name
         for column in columns
         if column.pk is not None
     }
@@ -518,17 +569,6 @@ _commented_where_filter = commented_where_filter
 # imports it from here under the old private name.
 _csv_cell = csv_cell
 
-
-
-def _table_config(config: dict[str, Any], table_name: str) -> dict[str, Any]:
-    tables = config.get("tables", {})
-    if not isinstance(tables, dict):
-        return {}
-    table_key = table_name.upper()
-    for key, value in tables.items():
-        if str(key).upper() == table_key and isinstance(value, dict):
-            return value
-    return {}
 
 
 # One splitter with `export_db`, which read the same config key its own way

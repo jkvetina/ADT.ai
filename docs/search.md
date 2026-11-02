@@ -313,7 +313,7 @@ The walk stops at `dependencies_max_depth` levels (project `config.yaml`, defaul
 
 Two sections can follow the `IMPACT OF` table. Each is omitted when the mirror holds nothing for it, and nothing fails:
 
-- **`AFFECTED COLUMNS`** lists the view columns sourced from the impacted table, as `VIEW`, `COLUMN` and `SOURCE`. It reads the PL/Scope data a schema refresh collects. A column resolves only when exactly one of the view's sources exposes it; an ambiguous or unknown one is kept with a null source rather than dropped.
+- **`AFFECTED COLUMNS`** lists the view columns sourced from the impacted table, as `VIEW`, `COLUMN` and `SOURCE`. It reads the PL/Scope data a schema refresh collects. A column resolves only when exactly one of the view's sources exposes it; an ambiguous or unknown one is left out.
 - **`APEX CALLERS`** names the application, page, component and property that use the impacted object, once [`rebuild -app`](rebuild.md#an-apex-application) has scanned that application. Where PL/Scope traces an impacted column through a view that the property references, the row carries the column, and `yaml` adds its source `TABLE.COLUMN`.
 
 <br>
@@ -336,10 +336,11 @@ Every link carries a flag saying how far its target resolved:
 | ---- | ------- |
 | `PAGE` | A page in the same application: the link names no application, a substitution string such as `&APP_ID.`, or the application's own id or alias. The common case. |
 | `CROSS_APP` | A link into another application by its id or its alias (`f?p=HR:5`), indexed by the resolved target application and page. An alias is looked up in the linking application's workspace. |
-| `DYNAMIC` | The target page is computed at runtime, from a substitution string or an item value, and cannot be resolved statically. |
+| `DYNAMIC` | The target page is a substitution string, resolved only at runtime. |
+| `OTHER` | Any other page token, an alias or an item name say; it does not resolve. |
 | `NONE` | The link leaves APEX entirely, or carries no page target at all. |
 
-`-to` and `-from` list only `PAGE` and `CROSS_APP`, and so do the Mermaid and DOT diagrams `rebuild -app` writes. The JSON diagram keeps every link, `DYNAMIC` and `NONE` included, so other tooling can decide for itself what to draw, as does the CSV.
+`-to` and `-from` list only `PAGE` and `CROSS_APP`, and so do the Mermaid and DOT diagrams `rebuild -app` writes. The JSON diagram and the CSV keep every link, `DYNAMIC`, `OTHER` and `NONE` included, so other tooling can decide for itself what to draw.
 
 <br>
 
@@ -403,7 +404,7 @@ Terms inside one flag are AND-matched, and different flags are AND-matched with 
 
 ## Restoring an old version
 
-`-restore` writes each matching historical version over its original path, so `git diff` shows what it changes: `-file monthly_report_v -commit 7 -restore` puts commit 7's `monthly_report_v.sql` back where it lives. Restore is the one mode that reads live git, and only to fetch the payloads of versions already selected from the store.
+`-restore` writes each matching historical version over its original path, so `git diff` shows what it changes: `-file monthly_report_v -commit 7 -restore` puts commit 7's `monthly_report_v.sql` back where it lives. Restore alone reads file payloads from git, for versions selected from the store, which is [topped up first](#finding-a-piece-of-text).
 
 Anything uncommitted is saved first, as one local commit named `WIP`, untracked files included. It is never pushed and nothing is staged. A clean checkout, or a restore that changes no file, gets no such commit. If git refuses it, the run prints `ERROR - GIT COMMIT FAILED:` with git's own message, writes nothing, and exits `1`.
 
@@ -438,7 +439,7 @@ When a restore matches more than one version of one file, the newest match wins,
 | `-my`, `--my` | No | off | Your commits: `email` in `config/IDENTITY.yaml`, else `git config user.email`. |
 | `-commit`, `-commits`, `--commit`, `--commits` | Yes | none | Commit numbers or hashes. `N` is that commit, `N+` is that one and newer, `N-M` is the inclusive span. Several values inside this flag are OR-matched. |
 | `-hash`, `--hash` | Yes | none | Commit hash prefixes, OR-matched. Combined with `-commit`, both filters must match. |
-| `-recent [DAYS]`, `--recent [DAYS]` | No | none | Keep commits newer than today minus DAYS. DAYS may be a fraction of a day, `1/24` for the past hour. A whole-day window compares dates, so `-recent 1` keeps a commit made at 23:00 yesterday; a shorter one compares the commit's own timestamp. Bare `-recent` means one day. |
+| `-recent [DAYS]`, `--recent [DAYS]` | No | none | The last DAYS days, today included: `-recent 1` is today only, `-recent 7` today and the six days before. A fraction of a day, `1/24` for the past hour, compares the commit's timestamp. Bare `-recent` is one day. `0` is refused; omit the flag for no filter. |
 | `-since`, `--since` | No | none | Oldest commit date, `YYYY-MM-DD`, or a number of days back. Else exit `2`. |
 | `-until`, `--until` | No | none | Newest commit date, `YYYY-MM-DD`, or a number of days back. Else exit `2`. |
 | `-restore`, `--restore` | No | off | Write each matching historical version over its original path, the newest match per file, over a `WIP` commit of any uncommitted work. |

@@ -8,9 +8,11 @@ from typing import Any
 
 from adt_ai.export_data.intervals import ds_interval_text, is_ym_interval, ym_interval_text
 from adt_ai.shared.sql_identifiers import (
-    safe_identifier,
-    safe_identifiers,
+    column_type,
     safe_qualified_identifier,
+    sql_name,
+    sql_names,
+    sql_qualified_name,
 )
 
 TABLES_QUERY = """
@@ -35,12 +37,37 @@ FROM user_objects o
 JOIN objects_prefix p
     ON o.object_name LIKE p.object_like ESCAPE '\\'
 JOIN objects_names n
-    ON o.object_name LIKE n.object_like ESCAPE '\\'
+    -- ADT #1096: a table created quoted in lower case is still found by the
+    -- unquoted name a user types
+    ON UPPER(o.object_name) LIKE n.object_like ESCAPE '\\'
 LEFT JOIN objects_ignore g
     ON o.object_name LIKE g.object_like ESCAPE '\\'
 WHERE o.object_type = 'TABLE'
     AND g.object_like IS NULL
+    -- ADT #1100: a nested table's storage table is listed as a TABLE, but
+    -- COLUMNS_QUERY finds no column in it, so its SELECT had none at all
+    -- (ORA-00936); its rows belong to the parent row and DML cannot name it
+    AND o.object_name NOT IN (SELECT n.table_name FROM user_nested_tables n)
 ORDER BY o.object_name
+""".strip()
+
+# The schema's tables a SELECT is filtered on (`#1098`): an enabled policy that
+# covers SELECT. One on INSERT or UPDATE alone narrows nothing this export reads.
+POLICY_TABLES_QUERY = """
+SELECT DISTINCT object_name
+FROM   user_policies
+WHERE  enable = 'YES'
+AND    sel    = 'YES'
+ORDER  BY object_name
+""".strip()
+
+# Whether this session reads past every policy (`#1098`). A bypass the app's own
+# policy function grants, such as a context a `STARTUP.sql` sets, is invisible
+# here: it is a decision inside the function, never a privilege.
+EXEMPT_QUERY = """
+SELECT COUNT(*) AS exempt
+FROM   session_privs
+WHERE  privilege = 'EXEMPT ACCESS POLICY'
 """.strip()
 
 COLUMNS_QUERY = """
@@ -81,7 +108,7 @@ LEFT JOIN (
         JOIN user_tab_cols tc
             ON tc.table_name        = uc.table_name
             AND tc.column_name      = uc.column_name
-        WHERE u.table_name          = UPPER(:table_name)
+        WHERE u.table_name          = :table_name
             AND u.constraint_type   = 'U'
         GROUP BY u.constraint_name
     ) k
@@ -90,7 +117,10 @@ LEFT JOIN (
 LEFT JOIN user_tab_identity_cols i
     ON i.table_name         = t.table_name
     AND i.column_name       = t.column_name
-WHERE t.table_name          = UPPER(:table_name)
+-- ADT #1111: the exact dictionary name, so `FOO` and a table created quoted as
+-- "Foo" are never read as one another; a caller holding a file name resolves it
+-- through TABLES_QUERY first
+WHERE t.table_name          = :table_name
     AND t.column_id         > 0
     AND t.virtual_column    = 'NO'  -- a virtual column HAS a column_id, so the line
                                     -- above never excluded one; its value is derived,
@@ -119,7 +149,31 @@ def data_query(
     order_by: str,
     column_types: Mapping[str, str] | None = None,
 ) -> str:
-    """`column_types` names the columns Oracle has to render for us (`#695`).
+    """The SELECT of `data_select` in `order_by` order.
+
+    `order_by` is a comma-separated list of names, or `ROWID`.
+    """
+    ordering = ", ".join(
+        part.strip() if part.strip().upper() == "ROWID"
+        else sql_name(part.strip(), role="order by column")
+        for part in order_by.split(",")
+        if part.strip()
+    )
+    select = data_select(table_name, columns, where_filter, column_types)
+    return f"{select}\nORDER BY {ordering}"
+
+
+def data_select(
+    table_name: str,
+    columns: list[str],
+    where_filter: str,
+    column_types: Mapping[str, str] | None = None,
+) -> str:
+    """The SELECT and FROM of a table's rows, with no ordering, so a caller
+    that orders them differently (`diff -data -limit`, `#1111`) appends its own
+    rather than cutting one off this text.
+
+    `column_types` names the columns Oracle has to render for us (`#695`).
 
     A spatial column arrives over the wire as a driver object with no text form,
     and Python cannot make one: the coordinates, the SRID and the element
@@ -132,29 +186,25 @@ def data_query(
     for a table that actually has such a column, so every other query is the
     plain shape it always was.
     """
-    safe_identifier(table_name, role="table name")
-    safe_identifiers(columns, role="column name")
-    safe_identifiers(
-        [
-            part.strip()
-            for part in order_by.split(",")
-            if part.strip() and part.strip().upper() != "ROWID"
-        ],
-        role="order by column",
-    )
-    types = {
-        str(name).upper(): str(data_type).strip().upper()
-        for name, data_type in (column_types or {}).items()
+    table = sql_name(table_name, role="table name")
+    sql_names(columns, role="column name")
+    spatial = {
+        column for column in columns if column_type(column_types, column) in SPATIAL_TYPES
     }
-    spatial = {column for column in columns if types.get(column.upper()) in SPATIAL_TYPES}
     selected = ", ".join(
         _wkt_projection(column) if column in spatial
-        else _zoned_projection(column) if _ZONED.match(types.get(column.upper(), ""))
-        else column
+        else _zoned_projection(column) if _ZONED.match(column_type(column_types, column))
+        else _date_projection(column) if column_type(column_types, column) == "DATE"
+        else sql_name(column)
         for column in columns
     )
     alias = f" {SOURCE_ALIAS}" if spatial else ""
-    return f"SELECT {selected}\nFROM {table_name}{alias}{where_filter}\nORDER BY {order_by}"
+    return f"SELECT {selected}\nFROM {table}{alias}{where_filter}"
+
+
+def count_query(table_name: str) -> str:
+    """Every row of the table, which a `where` filter's export is measured against (`#1099`)."""
+    return f"SELECT COUNT(*) AS row_count\nFROM {sql_name(table_name, role='table name')}"
 
 
 #: Every Oracle type this export renders through WKT rather than reading raw.
@@ -173,11 +223,12 @@ def _wkt_projection(column: str) -> str:
     concatenation around it is not, so without the guard an empty geometry would
     export as the string `SRID=NULL;` and reload as a geometry that is not there.
     """
-    reference = f"{SOURCE_ALIAS}.{column}"
+    name = sql_name(column)
+    reference = f"{SOURCE_ALIAS}.{name}"
     return (
         f"CASE WHEN {reference} IS NULL THEN NULL ELSE "
         f"'SRID=' || NVL(TO_CHAR({reference}.SDO_SRID), 'NULL') || ';' || "
-        f"SDO_UTIL.TO_WKTGEOMETRY({reference}) END AS {column}"
+        f"SDO_UTIL.TO_WKTGEOMETRY({reference}) END AS {name}"
     )
 
 
@@ -194,17 +245,48 @@ def _zoned_projection(column: str) -> str:
     zone on the moment. Oracle writes the text instead, and `_temporal_literal`
     reads the offset back into `TO_TIMESTAMP_TZ`.
     """
-    return f"TO_CHAR({column}, '{_DATE_MASK}.FF6TZH:TZM') AS {column}"
+    name = sql_name(column)
+    return f"TO_CHAR({name}, '{_DATE_MASK}.FF6TZH:TZM') AS {name}"
 
 
-def update_assignments(columns: list[str], skip_update: str) -> str:
-    if not columns:
+def _date_projection(column: str) -> str:
+    """One SELECT item: a DATE as the text `str()` of a datetime would give (ADT #1100).
+
+    Oracle's DATE reaches back to -4712 and Python's datetime stops at year 1,
+    so the driver raised on the first BC row and took the table with it. A BC
+    year carries its sign through `SYYYY`; every other date is `YYYY` alone,
+    because `SYYYY` pads a positive year with a space the CSV has never held.
+    """
+    name = sql_name(column)
+    return (
+        f"CASE WHEN {name} < DATE '0001-01-01' "
+        f"THEN TO_CHAR({name}, 'S{_DATE_MASK}') "
+        f"ELSE TO_CHAR({name}, '{_DATE_MASK}') END AS {name}"
+    )
+
+
+def update_assignments(
+    columns: list[str],
+    skip_update: str,
+    values: Mapping[str, str] | None = None,
+) -> str:
+    """The UPDATE SET lines: each column from the source, then each literal in `values`.
+
+    `values` are the nullable sidecar columns, set to NULL so a NULL replays
+    before the per-row LOB scripts write every value that exists (`#1100`).
+    """
+    literals = dict(values or {})
+    assigned = [
+        (f"t.{name}", f"s.{name}") for name in sql_names(columns, lower=True)
+    ] + [
+        (f"t.{sql_name(column, lower=True)}", value) for column, value in literals.items()
+    ]
+    if not assigned:
         return ""
-    safe_identifiers(columns, role="column name")
-    width = max(len(f"t.{column}") for column in columns)
+    width = max(len(target) for target, _ in assigned)
     return f",\n{skip_update}        ".join(
-        f"{f't.{column}':<{width}} = s.{column}"
-        for column in columns
+        f"{target:<{width}} = {value}"
+        for target, value in assigned
     )
 
 
@@ -219,6 +301,7 @@ def merge_statement(
     skip_update: str,
     where_filter: str,
     insert_columns: list[str] | None = None,
+    insert_values: Mapping[str, str] | None = None,
 ) -> str:
     """`insert_columns` narrows the INSERT list; `columns` still drives the SELECT.
 
@@ -226,9 +309,17 @@ def merge_statement(
     `#670`), so it is exported and joined on but never inserted. An empty list
     falls back to every column, which only happens when the INSERT is commented
     out anyway. With both the INSERT and the UPDATE off there is no MERGE at all.
+
+    `insert_values` adds columns the SELECT does not carry, each with the literal
+    it is inserted with (`#1094`): a NOT NULL BLOB or CLOB lives in a sidecar, so
+    an INSERT built from the CSV left it out and the first row into an empty
+    target failed with ORA-01400 before the LOB UPDATE scripts ran. They are
+    appended to the INSERT list alone; the UPDATE SET and the join never see them.
     """
-    safe_qualified_identifier(table, role="table name")
-    safe_identifiers(columns, role="column name")
+    table = sql_qualified_name(table, lower=True)
+    sql_names(columns, role="column name")
+    literals = dict(insert_values or {})
+    sql_names(literals, role="column name")
     header = f"""BEGIN
     DBMS_OUTPUT.PUT_LINE('--');
     DBMS_OUTPUT.PUT_LINE('-- MERGE ' || UPPER('{table}'));
@@ -243,9 +334,11 @@ END;
         # `#982`: both WHEN clauses off leaves a MERGE Oracle refuses to parse,
         # so the statement is left out whole and the DELETE runs on its own.
         return f"{header}COMMIT;\n"
-    inserted = insert_columns or columns
-    all_columns = "t." + ",\n        t.".join(inserted)
-    all_values = "s." + ",\n        s.".join(inserted)
+    inserted = [*(insert_columns or columns), *literals]
+    all_columns = "t." + ",\n        t.".join(sql_names(inserted, lower=True))
+    all_values = ",\n        ".join(
+        literals.get(column, f"s.{sql_name(column, lower=True)}") for column in inserted
+    )
     csv_content = " UNION ALL\n    ".join(csv_selects)
     return f"""{header}MERGE INTO {table} t
 USING (
@@ -288,7 +381,7 @@ def row_select(
     columns: list[str],
     column_types: Mapping[str, str] | None = None,
 ) -> str:
-    """`column_types` maps an upper-case column name to its Oracle data type.
+    """`column_types` maps a column's exact name to its Oracle data type.
 
     The MERGE path reads its values back out of the CSV, where every cell is
     text, so the destination column's type is the only thing that can say
@@ -296,11 +389,10 @@ def row_select(
     each value by its Python type instead, which is what a caller holding the
     driver's own row (`lob_update_scripts`) wants.
     """
-    safe_identifiers(columns, role="column name")
-    types = column_types or {}
+    names = sql_names(columns, role="column name")
     values = [
-        f"{sql_value(row[column], types.get(column.upper(), ''))} AS {column}"
-        for column in columns
+        f"{sql_value(row[column], column_type(column_types, column))} AS {name}"
+        for column, name in zip(columns, names, strict=True)
     ]
     return f"SELECT {', '.join(values)} FROM DUAL"
 
@@ -333,6 +425,8 @@ _WKT_CHUNK = 3000
 #: The mask both sides of the export agree on. `row_value` writes a datetime with
 #: `str()`, which is this shape, so the literal and the mask cannot drift.
 _DATE_MASK = "YYYY-MM-DD HH24:MI:SS"
+#: A BC date as `_date_projection` writes it, which no datetime can parse.
+_BC_DATE_TEXT = re.compile(r"^-\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
 #: Oracle's own spellings of its two interval types, `[+|-]D HH:MI:SS[.FF]` and
 #: `[+|-]Y-MM`, which `TO_DSINTERVAL` and `TO_YMINTERVAL` read whatever the
 #: session's NLS settings are. `export_data/intervals.py` writes both.
@@ -401,6 +495,8 @@ def _temporal_literal(text: str, data_type: str) -> str:
     LOCAL TIME ZONE back in the session zone with no offset attached, and Oracle
     normalizes a plain TIMESTAMP into that column on assignment.
     """
+    if data_type == "DATE" and _BC_DATE_TEXT.match(text):
+        return f"TO_DATE('{text}', 'S{_DATE_MASK}')"
     moment = _parsed_moment(text)
     if moment is None:
         return _quoted(text)

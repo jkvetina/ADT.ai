@@ -61,8 +61,12 @@ def store_path(root: Path | str) -> Path:
 def baseline(root: Path | str, label: str) -> Counter[Key] | None:
     """The tree's newest recorded run, or ``None`` when it has none.
 
-    Never creates the store, and an unreadable one is no baseline rather than a
-    failed command: the first run after it records afresh.
+    Never creates the store. No store, or no run recorded for this label, is
+    ``None``, the first run `compare` reads as all known. A store on disk that
+    cannot be read, locked or corrupt, is an EMPTY baseline instead (ADT #1094):
+    read as a first run it reset the ratchet, every finding known, the run
+    passing and `record` failing quietly behind it. Empty, every finding is new
+    and the run fails closed, the way `patch/codescan_gate.py` already read it.
     """
     path = store_path(root)
     if not path.is_file():
@@ -79,7 +83,7 @@ def baseline(root: Path | str, label: str) -> Counter[Key] | None:
                 )
             })
     except sqlite3.Error:
-        return None
+        return Counter()
 
 
 def record(root: Path | str, label: str, findings: Iterable[Finding]) -> bool:

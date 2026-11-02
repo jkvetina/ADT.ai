@@ -121,8 +121,9 @@ class DependencyStore(DependencyQueries):
     def open(cls, db_path: str | Path, *, rebuild: bool = False) -> DependencyStore:
         """Open, creating the schema when absent and lifting an older file.
 
-        A file the migrations know (version 3 or 4) is lifted in place on either
-        path. One they do not is wiped and recreated with ``rebuild=True``
+        A file at an earlier version the migrations know (`schema.py` names the
+        range) is lifted in place on either path. One they do not is wiped and
+        recreated with ``rebuild=True``
         (refresh path only) and refused with a ``StoreVersionError`` otherwise,
         so a version mismatch never silently destroys data mid-query.
         """

@@ -24,6 +24,7 @@ from collections.abc import Iterable, Sequence
 from typing import Any, Protocol
 
 from adt_ai.export_db.queries import types_26ai as q
+from adt_ai.patch.sql_literal import escape_literal
 
 #: Types assembled here rather than fetched as one row.
 ASSEMBLED_OBJECT_TYPES = frozenset({"DOMAIN", "MLE ENVIRONMENT", "PROPERTY GRAPH"})
@@ -158,7 +159,9 @@ def _annotations(rows: Iterable[dict[str, Any]]) -> str:
     for row in rows:
         name = _quoted(_value(row, "annotation_name"))
         value = _value(row, "annotation_value")
-        rendered.append(f"{name} '{value}'" if value else name)
+        # The value is a literal, so an apostrophe in it doubles; written bare
+        # it ended the literal early and the file did not parse (`#1094`).
+        rendered.append(f"{name} '{escape_literal(str(value))}'" if value else name)
     return ", ".join(rendered)
 
 
@@ -229,11 +232,37 @@ def _graph_element(
             f" REFERENCES {vertex} ({_column_list(ends, 'vertex_col_name')})"
         )
     for label in labels:
-        rendered = f"            LABEL {_quoted(_value(label, 'label_name'))}"
-        if properties:
-            rendered += f" PROPERTIES ({_properties(properties)})"
+        label_name = _value(label, "label_name")
+        rendered = f"            LABEL {_quoted(label_name)}"
+        own = _label_properties(properties, label_name)
+        if own:
+            rendered += f" PROPERTIES ({_properties(own)})"
         lines.append(rendered)
     return lines
+
+
+def _label_properties(rows: Sequence[dict[str, Any]], label_name: Any) -> list[dict[str, Any]]:
+    """The property rows one label carries, in its own order.
+
+    `PROPERTY_GRAPH_PROPERTIES_QUERY` joins the element's labels, so a row comes
+    back once per label with `property_order` set only on the label it belongs
+    to. Grouped by element alone, a two-label element wrote the whole list under
+    every label, and twice over (`#1094`). A label with no ordered row -- a row
+    set that names no label -- falls back to the element's distinct properties,
+    which is the single-label shape exactly as it rendered before.
+    """
+    own = [
+        row
+        for row in rows
+        if str(_value(row, "label_name") or "").upper() == str(label_name).upper()
+        and _value(row, "property_order") is not None
+    ]
+    if own:
+        return own
+    distinct: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        distinct.setdefault(str(_value(row, "property_name")), row)
+    return list(distinct.values())
 
 
 def _properties(rows: Sequence[dict[str, Any]]) -> str:

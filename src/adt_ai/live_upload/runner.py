@@ -138,18 +138,25 @@ class LiveUploadRunner:
                     known[path] = stamp
                     name = files.upload_name(request.folder, path)
                     # One bad file must not take the whole watch down: caught
-                    # per file so a gateway error or an unreadable save is
-                    # reported and the pass moves on to the next one (#670).
-                    # `Exception` only, so Control+C still reaches the outer
-                    # `except KeyboardInterrupt` below and ends the watch.
+                    # per file so a gateway error, an unreadable save or an
+                    # unwritable sibling is reported and the pass moves on to
+                    # the next one (#670). `Exception` only, so Control+C still
+                    # reaches the outer `except KeyboardInterrupt` and ends it.
                     try:
                         self._upload(request, path, name)
                     except Exception:
                         self.reporter.upload_failed(name)
                         continue
                     uploaded += 1
-                    if self._minify(path, name):
-                        minified += 1
+                    # The sibling write is guarded the same way (#1094): an
+                    # OSError from a read-only `.min.*` target escaped the guard
+                    # above and ended the watch. The stamp is already recorded,
+                    # so the file is reported once rather than retried each tick.
+                    try:
+                        if self._minify(path, name):
+                            minified += 1
+                    except Exception:
+                        self.reporter.minify_failed(name)
                 self.sleep(request.interval)
             except KeyboardInterrupt:
                 break

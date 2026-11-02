@@ -17,6 +17,7 @@ off three files.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from functools import partial
 from typing import Any
 
 from adt_ai.export_apex.files import ApexFileResolver
@@ -133,11 +134,11 @@ class ApexSchemaLevelMixin:
         timers: dict[Any, Any],
         store: ApexStore,
     ) -> None:
-        """The workspace slices a schema hosting no APEX application still owns.
+        """The workspace slices left when no application could carry them.
 
         Reached on a MIXED run only, one that asked for per-application formats
-        too: its application loop ran for nothing, so the slices riding the first
-        application were never reached. This is the one case left that prints a
+        too: there were no applications, or every application's setup was refused.
+        The schema's independent slices still run. This case prints a
         `SCHEMA <name>, EXPORTING:` header, there being no application block for
         the rows to sit under. Skipping the schema entirely here is what made
         `-rest` finish printing nothing at all (ADT #190); `-files_ws` had the
@@ -146,10 +147,7 @@ class ApexSchemaLevelMixin:
         operations = self._schema_level_operations(request, None, gateway, resolver)
         if operations and segment_bar is None:
             _print_schema_export_header(schema)
-        for action, operation in operations:
-            self._run_schema_action(  # type: ignore[attr-defined]
-                segment_reporter, timers, store, action, operation
-            )
+        self._run_each_schema_action(operations, segment_reporter, timers, store)
 
     def _run_schema_level_operations(
         self,
@@ -161,11 +159,30 @@ class ApexSchemaLevelMixin:
         timers: dict[Any, Any],
         store: ApexStore,
     ) -> None:
-        for action, operation in self._schema_level_operations(
-            request, application, gateway, resolver
-        ):
-            self._run_schema_action(  # type: ignore[attr-defined]
-                segment_reporter, timers, store, action, operation
+        self._run_each_schema_action(
+            self._schema_level_operations(request, application, gateway, resolver),
+            segment_reporter,
+            timers,
+            store,
+        )
+
+    def _run_each_schema_action(
+        self,
+        operations: list[tuple[str, Callable[[], None]]],
+        segment_reporter: ApexProgressReporter,
+        timers: dict[Any, Any],
+        store: ApexStore,
+    ) -> None:
+        """Each slice through the runner's `_slice`, so one failing never stops
+        the next (ADT #1092)."""
+        for action, operation in operations:
+            self._slice(  # type: ignore[attr-defined]
+                None,
+                action,
+                partial(
+                    self._run_schema_action,  # type: ignore[attr-defined]
+                    segment_reporter, timers, store, action, operation,
+                ),
             )
 
     def _schema_level_operations(

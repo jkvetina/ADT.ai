@@ -11,8 +11,8 @@ _FRACTION_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)$")
 # The headline names the value and the remedy follows on its own line, so the
 # argument screen opens on a short uppercase line (ADT #934).
 _WINDOW_HELP = (
-    "A window must be a number of days, or a fraction of a day such as 1/24\n"
-    "(one hour) or 5/1440 (five minutes)."
+    "A window must be a number of days above zero, or a fraction of a day such as\n"
+    "1/24 (one hour) or 5/1440 (five minutes). Leave -recent off for no window."
 )
 
 
@@ -38,14 +38,22 @@ def recent_window(value: str) -> int | float:
         numerator, denominator = (float(part) for part in fraction.groups())
         if denominator == 0:
             raise argparse.ArgumentTypeError(f"'{value}' DIVIDES BY ZERO\n\n{_WINDOW_HELP}")
-        return _whole_if_possible(numerator / denominator)
-    try:
-        window = float(text)
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"'{value}' IS NOT A WINDOW\n\n{_WINDOW_HELP}") from None
-    # `float` also accepts 'nan' and 'inf', which no arithmetic downstream
-    # survives: a NaN bind silently matches nothing and never says why.
-    if window != window or window in (float("inf"), float("-inf")):
+        window = numerator / denominator
+    else:
+        try:
+            window = float(text)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"'{value}' IS NOT A WINDOW\n\n{_WINDOW_HELP}"
+            ) from None
+    # `float` also accepts 'nan', 'inf' and a negative number, which no
+    # arithmetic downstream survives: a NaN bind silently matches nothing and
+    # never says why, and a negative window is a cutoff in the future, which
+    # matches nothing either (ADT #1094). Zero is a window of no time, so
+    # `SYSDATE - 0` lists nothing, and `search` once read it as "no filter": two
+    # meanings for one spelling. It is refused, and no filter is the flag
+    # omitted (ADT #1095).
+    if window != window or window in (float("inf"), float("-inf")) or window <= 0:
         raise argparse.ArgumentTypeError(f"'{value}' IS NOT A WINDOW\n\n{_WINDOW_HELP}")
     return _whole_if_possible(window)
 
@@ -182,8 +190,18 @@ def resolve_since(value: str, *, option: str = "-since") -> str:
             raise ValueError(f"{option}: '{value}' IS NOT A VALID DATE") from exc
         return text
     if re.fullmatch(r"\d+", text):
-        return (date.today() - timedelta(days=int(text))).isoformat()
-    raise ValueError(
+        try:
+            return (date.today() - timedelta(days=int(text))).isoformat()
+        except OverflowError as exc:
+            # Thirty digits read as an `int` and then overflow `timedelta` or
+            # the calendar, which the callers' `except ValueError` never saw: the
+            # run ended on UNEXPECTED ERROR instead of this screen (ADT #1094).
+            raise _not_a_date(option, value) from exc
+    raise _not_a_date(option, value)
+
+
+def _not_a_date(option: str, value: str) -> ValueError:
+    return ValueError(
         f"{option}: '{value}' IS NOT A DATE\n\n"
         "Use a YYYY-MM-DD date or a number of days back."
     )
