@@ -86,6 +86,19 @@ class StartupContext:
     connection_files        : list[Path]
     connections             : ConnectionResult
     startup_sql             : str | None = None
+    #: Every config file the run read, ADT.ai's shipped defaults included.
+    config_files            : tuple[Path, ...] = ()
+
+    @property
+    def project_config(self) -> bool:
+        """Whether any config file the run read is the project's own.
+
+        False when only ADT.ai's shipped `config/` was read, which is what
+        `-config-dir` on a folder without `config.yaml` amounts to (ADT #1119):
+        the run's settings then say nothing about the project.
+        """
+        shipped = (self.repo_root / "config").resolve()
+        return any(not path.resolve().is_relative_to(shipped) for path in self.config_files)
 
 def _repo_root() -> Path:
     # Anchored on the package, not on this module's own depth: src/adt_ai/__init__.py
@@ -122,6 +135,7 @@ def _load_startup_context(args: argparse.Namespace) -> StartupContext:
         connection_files        = connections.files,
         connections             = connections,
         startup_sql             = _load_startup_sql(args.config_dir, root, repo_root),
+        config_files            = tuple(config_result.files),
     )
 
 def _existing_paths(paths: list[Path]) -> list[Path]:

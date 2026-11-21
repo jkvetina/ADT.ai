@@ -122,7 +122,7 @@ def _run_export_db(args: argparse.Namespace, gateway_factory: GatewayFactory | N
     # writes a file. Silent unless something actually changed; never staged.
     # Past the `-groups`/`-force` early returns, so a move or a refusal never
     # touches it.
-    sync_git_metadata_before_export(root, config)
+    sync_git_metadata_before_export(root, config, project_config=startup.project_config)
     # -type resolves onto Oracle's vocabulary at the edge, as recompile does. -name is
     # an identifier pattern: its underscores are real wildcards, so it is left alone.
     flattened_types = _flatten_arg_groups(args.type)
@@ -261,7 +261,7 @@ def _run_export_apex(
     if not reveal:
         # `auto_sync_git` (ADT #938): same pre-write hook `_run_export_db` runs.
         # `-reveal` only lists applications and writes nothing, so it never syncs.
-        sync_git_metadata_before_export(root, config)
+        sync_git_metadata_before_export(root, config, project_config=startup.project_config)
     try:
         app_selection = _parse_apex_app_selection(_flatten_arg_groups(args.app))
         page_selection, component_filters = _parse_apex_export_filter_groups(

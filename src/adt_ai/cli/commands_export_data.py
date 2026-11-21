@@ -106,7 +106,7 @@ def _run_export_data(
         # Preflight reads under the module header, before other output closes it.
         try:
             runner.run(request, preflight_only=True)
-            sync_git_metadata_before_export(root, config)
+            sync_git_metadata_before_export(root, config, project_config=startup.project_config)
         finally:
             if args.debug:
                 _print_startup_debug(startup)

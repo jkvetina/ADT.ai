@@ -183,6 +183,8 @@ Two deliberate details. Raw LOB sidecar files are never translated, mirroring th
 
 `auto_sync_git: True` (default) runs the same block-and-EOL sync as `doctor -init -sync`, on disk, before every export; `patch` skips it. `False` disables it. Contract: [doctor.md](doctor.md#syncing-the-managed-block).
 
+The sync runs only when the export read a project `config.yaml`. A `-config-dir` folder without one leaves the run on ADT.ai's shipped defaults, which say nothing about the project's line endings, so the export leaves `.gitattributes`, `.gitignore` and every tracked file as they are.
+
 So [`doctor -init`](doctor.md#scaffolding-a-project) scaffolds a `.gitattributes` pinning `*.sql`, `*.apx`, `*.json`, `*.yaml`, `*.csv` and `*.md` to `text eol=lf`, leaving the `files/` payloads untranslated. The managed block follows this key: `True` renders those pins `eol=crlf` on the next sync.
 
 **The APEXlang tree is the one exception.** `export_apex -apexlang` writes it with LF whatever this key says, because SQLcl's APEXlang compiler reads nothing else, and the block pins its `.apx` and `.json` files to `eol=lf` either way.

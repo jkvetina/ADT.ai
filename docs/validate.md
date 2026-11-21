@@ -255,7 +255,7 @@ The run connects through the application's owner as `config/internal/apex.db` re
 
 ## Scanning the code with codescan
 
-`-codescan` runs SQLcl's `codescan` over the trees `codescan_paths` names, one row per tree, holds each tree to the baseline its last clean run recorded in `config/internal/codescan.db`, and fails on what is new. It needs SQLcl 26.3 or newer.
+`-codescan` runs SQLcl's `codescan` over the trees `codescan_paths` names, one row per tree, holds each tree to the baseline its last clean run recorded in `config/internal/codescan.db`, and fails on what is new. It needs SQLcl 26.3 or newer, and `codescan_ignore` needs SQLcl 26.3.1 or newer.
 
 The screen, the baseline, `codescan_fail_on`, suppressing a finding with `codescan_ignore`, the `codescan_rules` profile and the one-line CI chain are on [validate_codescan.md](validate_codescan.md).
 

@@ -2,6 +2,13 @@
 
 All notable changes to the public ADT.ai release are recorded here, newest first.
 
+## 1.6.4 - 2026-11-21
+
+- **`export_db` no longer fails on Oracle 19c and other pre-23ai databases**: it asks the dictionary for the Data Grant views before reading them.
+- **`export_db` writes wrapped packages, procedures, functions and type bodies exactly as the database holds them**, with no `;` added inside the encoded text.
+- **`export_db`, `export_apex` and `export_data` with `-config-dir` on a folder without `config.yaml` leave the git files of the project alone**, so a CRLF project is no longer converted to LF.
+- **`validate`: `codescan_ignore` works with SQLcl 26.3.1**, which renamed the rule key in its ignore settings.
+
 ## 1.6.3 - 2026-11-02
 
 - **`export_db` exports VPD policies, application contexts, tablespace quotas and network ACEs**, and `export_data` warns when a table it exports sits under a policy that may have hidden its rows.
