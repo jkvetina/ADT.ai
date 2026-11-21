@@ -295,6 +295,8 @@ Set [`auto_sync_git`](config.md#syncing-git-metadata-before-export) to run the s
 
 An export never stages the result (that is `-sync`'s job alone) and never reports an override; it prints at most one short row, and only when something actually changed. `patch` never runs this sync. It is on by default; set the key `False` to turn it off.
 
+An export that read no project `config.yaml`, such as one given a `-config-dir` folder without one, skips the sync and leaves every git file as it is.
+
 <br>
 
 ## Arguments

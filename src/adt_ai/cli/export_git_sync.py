@@ -38,18 +38,29 @@ def sync_git_metadata_before_export(
     root: Path,
     config: Mapping[str, Any] | None,
     *,
+    project_config: bool,
     gitattributes_block: str | None = None,
     gitignore_block: str | None = None,
 ) -> None:
     """Run the `auto_sync_git` pre-write hook for one export command.
 
-    A no-op unless `auto_sync_git` (default `True`) is enabled and `root` is a
-    git work tree. At most one short line is printed, and only when something
+    A no-op unless `auto_sync_git` (default `True`) is enabled, `root` is a git
+    work tree, and `project_config` says a project config file supplied the
+    run's settings. At most one short line is printed, and only when something
     actually changed.
+
+    `project_config` is False when the run read ADT.ai's shipped defaults and
+    nothing else: `-config-dir` on a folder without `config.yaml` replaces the
+    project's own `config/`, so `file_crlf` read False and the hook rewrote a
+    CRLF project's `.gitattributes` to `eol=lf` and converted every tracked file
+    (ADT #1119). Rewriting committed files from settings the project never gave
+    is the one thing this silent hook must not do, so it does nothing instead.
 
     `gitattributes_block` / `gitignore_block` override the shipped templates,
     for a test that wants a short, deterministic block instead of ADT.ai's own.
     """
+    if not project_config:
+        return
     settings = config or {}
     if not is_enabled(settings.get("auto_sync_git"), default=True):
         return

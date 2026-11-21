@@ -22,6 +22,7 @@ from adt_ai.export_db.normalizer_identifiers import (
 # The plugin loader went the same way when `#740` took it past that cap again.
 from adt_ai.export_db.normalizer_plugins import NormalizerError as NormalizerError
 from adt_ai.export_db.normalizer_plugins import load_plugin as _load_plugin
+from adt_ai.export_db.normalizer_wrapped import is_wrapped_unit
 
 BODY_PRESERVING_OBJECT_TYPES = {
     "FUNCTION",
@@ -455,7 +456,9 @@ def _ensure_sql_terminator(lines: list[str]) -> list[str]:
     return lines + ["/", ""]
 
 def _ensure_statement_semicolon(lines: list[str]) -> list[str]:
-    if not lines or lines[-1].strip() == "/":
+    # A wrapped unit's last line is encoded text, so a `;` there is a byte of the
+    # payload, never a terminator (ADT #1121, old ADT PR 4).
+    if not lines or lines[-1].strip() == "/" or is_wrapped_unit(lines):
         return lines
     if not lines[-1].rstrip().endswith(";"):
         lines[-1] = lines[-1].rstrip() + ";"

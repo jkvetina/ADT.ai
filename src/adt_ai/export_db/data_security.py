@@ -73,7 +73,7 @@ def data_security_contents(
     if not types:
         return
     keep_owner = is_enabled(request.config.get("keep_owner", False))
-    grants = _grouped(_read(discovery, ObjectDiscovery.DATA_GRANTS_QUERY) or [])
+    grants = _grouped(_read_grants(discovery) or [])
     skipped = sorted(name for name, rows in grants.items() if _is_cross_table(rows))
     discovery.skipped_data_grants[schema] = skipped
     rebuilt = {name: rows for name, rows in grants.items() if name not in skipped}
@@ -199,6 +199,19 @@ def _grouped(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     for row in rows:
         grouped.setdefault(str(_value(row, "grant_name")), []).append(row)
     return grouped
+
+
+def _read_grants(discovery: ObjectDiscovery) -> list[dict[str, Any]] | None:
+    """The Data Grant rows, or None on a database that has no Data Grants (pre-23ai).
+
+    The grants query names a BOOLEAN column that an older parser refuses with
+    `ORA-00920`, so it is never sent there: the dictionary is asked first
+    (`#1118`). Everything the other readers do about a missing view stays.
+    """
+    available = _read(discovery, ObjectDiscovery.DATA_GRANTS_AVAILABLE_QUERY)
+    if not available:
+        return None
+    return _read(discovery, ObjectDiscovery.DATA_GRANTS_QUERY)
 
 
 def _read(discovery: ObjectDiscovery, query: str) -> list[dict[str, Any]] | None:

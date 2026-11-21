@@ -23,10 +23,11 @@ fails on them, leaving each file exactly as it was.
 **`codescan_ignore` reaches SQLcl as a settings file in the scanned folder**
 (ADT #1024), since `-settings` resolves against `-path`: a dot-name unique per
 call, kept out of git through `.git/info/exclude`, and removed however the scan
-ends. What SQLcl 26.3 does with each entry shape is captured beside the other
-transcripts (`ignored*`): a code alone suppresses it everywhere, a `file`
-narrows it to that file, a `component` to that component, and a component with
-no file is refused by SQLcl with no report written.
+ends. Each entry names its rule as `ruleNo`, the key SQLcl 26.3.1 reads. What
+SQLcl 26.3 does with each entry shape is captured beside the other transcripts
+(`ignored*`): a rule alone suppresses it everywhere, a `file` narrows it to that
+file, a `component` to that component, and a component with no file is refused
+by SQLcl with no report written.
 """
 
 from __future__ import annotations
@@ -203,7 +204,10 @@ def settings_entries(
     """
     entries: list[dict[str, Any]] = []
     for ignore in ignores:
-        entry: dict[str, Any] = {"code": ignore.code}
+        # SQLcl 26.3.1 names the rule `ruleNo` and refuses the 26.3.0 `code`
+        # with `Unknown ignore attribute "code"`, scanning nothing it was told
+        # to ignore; `codescan_ignore` keeps `code` as its own config key.
+        entry: dict[str, Any] = {"ruleNo": ignore.code}
         if ignore.file is not None:
             relative = path_inside(root / ignore.file, mirror)
             if relative is None:

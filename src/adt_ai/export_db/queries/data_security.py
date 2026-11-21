@@ -8,6 +8,16 @@ Measured on the live 26ai fixture (Oracle AI Database 23.26.3.0.0, SANDBOX,
 
 from __future__ import annotations
 
+# Whether this database has the Data Grant views at all. `DATA_GRANTS_QUERY` names
+# a BOOLEAN column, and a pre-23ai parser refuses `CASE WHEN <column>` with
+# `ORA-00920` before it looks the view up, which no "missing view" answer covers
+# (`#1118`). `dictionary` lists the view on 23ai and has no such row before it.
+DATA_GRANTS_AVAILABLE_QUERY = """
+SELECT 1 AS available
+FROM   dictionary
+WHERE  table_name = 'USER_DATA_GRANTS'
+""".strip()
+
 # One row per privilege, column and grantee. `ALL COLUMNS EXCEPT` comes back
 # expanded, one row per granted column per excepted column, which is why the
 # excepted column is read beside the granted one. Both column ids are joined in
